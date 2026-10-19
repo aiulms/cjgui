@@ -52,10 +52,11 @@ WINDOW_METHODS = (
     # A→B→A 交接锚点（2026-10-03 GLM 裁决）：release 时把已对齐的会话落点冻结进
     # nodeSelectionMemory；重绑时 carriedSelectionFor 再把它交回新会话。两者都是
     # 生产决策文本，逐字抽取——改名/改判据即编译失败。
-    "freezeHandoffAnchorFor", "carriedSelectionFor")
+    "freezeHandoffAnchorFor", "carriedSelectionFor", "retireSupersededOwnedRestore")
 SCENE_METHODS = ("nodeForId", "resolveSelection")
 SESSION_METHODS = ("needsNativeSelectionRestore", "canAdoptNativeRestore", "confirmProxyRestored",
-                   "adoptNativeSelectionRestored", "awaitingCalibration", "selectionAlignmentFacts")
+                   "adoptNativeSelectionRestored", "awaitingCalibration", "selectionAlignmentFacts",
+                   "markNativeSelectionRestoreRequired")
 
 KIND33_START = "} else if (nativeEvent.eventKind == 33u32) {"
 KIND33_END = "} else if (nativeEvent.eventKind == 41u32) {"
@@ -429,6 +430,12 @@ class HarnessSessionWindow {{
     var confirmCalls: Int64 = 0
     var advanceAfterConfirmCalls: Int64 = 0
     var advanceToVersion: Int64 = 0
+    // This legacy seam fixture has no external source choice. Actual source
+    // choice/UTF mapping is covered by the real-session service harness.
+    func selectionOwner(): ?HarnessSelectionOwner {{ return None }}
+    func documentRangeForUtf16(start: Int64, length: Int64): ?(Int64, Int64) {{
+        return Some((start, start + length))
+    }}
     func contentVersion(): Int64 {{
         return sourceVersion
     }}
@@ -449,6 +456,16 @@ class HarnessSessionWindow {{
     }}
 }}
 
+class HarnessSelectionSnapshot {{
+    let version: Int64 = 0
+    let revision: Int64 = 0
+    let anchorByte: Int64 = 0
+    let focusByte: Int64 = 0
+}}
+class HarnessSelectionOwner {{
+    func sourceSelectionSnapshot(): HarnessSelectionSnapshot {{ return HarnessSelectionSnapshot() }}
+}}
+
 class CjguiTextSession {{
     let window = HarnessSessionWindow()
     var selectionNeedsNativeRestore: Bool = false
@@ -460,6 +477,14 @@ class CjguiTextSession {{
     var selStart16: Int64 = 0
     var selEnd16: Int64 = 0
     var selectionVersion: Int64 = 0
+    var selectionRevision: Int64 = 0
+    var selectionAnchorByte: Int64 = 0
+    var selectionFocusByte: Int64 = 0
+    var selectionStartByte: Int64 = 0
+    var selectionEndByte: Int64 = 0
+    func sourceChoiceOutsideMirror(): Bool {{ return false }}
+    func nativeSelectionEchoMatches(start: Int64, end: Int64): Bool {{ return false }}
+    func refreshSourceChoiceProjection(prepare: Bool): Bool {{ return false }}
     var lastReason: String = ""
     /// 人类锚的会话侧能力由 native harness 与设备验收覆盖（12/12）；这里只做脚本化
     /// 替身，被测的是窗口拿到锚结果之后的三态决策。
@@ -471,6 +496,7 @@ class CjguiTextSession {{
         return window.contentVersion()
     }}
     func boundNode(): Int64 {{ return 107 }}
+    func ohosInputSourceBasis(): String {{ return "" }}
     func selection16(): (Int64, Int64) {{ return (selStart16, selEnd16) }}
     func contextEpochValue(): Int64 {{ return contextEpoch }}
     func mirrorSnapshot(): CjguiTextSessionMirrorSnapshot {{
@@ -499,6 +525,8 @@ class CjguiTextSession {{
         selStart16 = start16
         selEnd16 = end16
         selectionVersion = window.contentVersion()
+        selectionStartByte = start16
+        selectionEndByte = end16
     }}
 
 {session_methods}
@@ -515,14 +543,31 @@ var harnessRestoreIssueStatus: Int32 = 0
 let CJGUI_INTERNAL_RENDERER_OK: Int32 = 0
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
 let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING: Int32 = 36
+let CJGUI_OHOS_RESTORE_SUPERSEDED_BY_ADMITTED_INPUT: Int32 = 39
 
 func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, resourceId: Int64,
     nodeKind: Int64, version: Int64, text: String, start: Int64,
-    end: Int64): (Int32, InternalRendererProxyRestoreTicket) {{
+    end: Int64, automaticIntentRevision!: Int64 = -1): (Int32, InternalRendererProxyRestoreTicket) {{
     let _ = (session, nodeId, resourceId, nodeKind, text)
     harnessRestoreIssueCalls += 1
     return (harnessRestoreIssueStatus, InternalRendererProxyRestoreTicket(UInt64(harnessRestoreIssueCalls), 7, 3u64,
         UInt64(version), UInt64(version), start, end))
+}}
+
+func internalRendererQueryProxyRestoreTicket(session: UInt64, request: UInt64): (Int32, InternalRendererProxyRestoreTicket) {{
+    return (0, InternalRendererProxyRestoreTicket(request, 7, 3u64, 5u64, 5u64, 0, 0))
+}}
+
+// This older fixture drives legacy installed observations. Typed choice paths
+// belong to the real-session/service harness and must not silently be stubbed green.
+class CjguiOhosChoiceFact {{ let transfer: Bool = false }}
+func internalRendererObservedChoice(session: UInt64): ?CjguiOhosChoiceFact {{ return None }}
+func internalRendererCompleteObservedChoice(session: UInt64, choice: CjguiOhosChoiceFact,
+    basis: String, accepted: Bool): Int32 {{ throw Exception("typed choice is outside legacy restore fixture") }}
+func internalRendererPublishObservedChoice(session: UInt64, basis: String, accepted: Bool): Bool {{ return true }}
+func internalRendererOhosCommandPending(session: UInt64, command: UInt64): Bool {{
+    if (command != 0u64) {{ throw Exception("physical command is outside legacy restore fixture") }}
+    return false
 }}
 
 func internalRendererTakeHumanSelectionAnchor(session: UInt64, nodeId: Int64, resourceId: Int64,
@@ -612,6 +657,17 @@ class CjguiComposableUiWindow {{
     var ownedSelectionRestoreIntentRevision: Int64 = -1
     var ownedAnchorRestoreNeedObserved: Bool = false
     var ownedRestoreNamedTerminal: Bool = false
+    var ownedRestoreSupersededByInput: Bool = false
+    var ownedPhysicalCommandId: UInt64 = 0u64
+    var pointerCaptureActive: Bool = false
+    var pendingOhosChoiceCompletions = ArrayList<(CjguiOhosChoiceFact, String, Bool)>()
+    func normalizeOhosObservedChoice(choice: ?CjguiOhosChoiceFact): ?CjguiOhosChoiceFact {{ return choice }}
+    func adoptOhosObservedChoice(node: CjguiComposableUiLayoutNode, choice: CjguiOhosChoiceFact): Int64 {{
+        throw Exception("typed choice is outside legacy restore fixture")
+    }}
+    func confirmCompletedOhosObservedChoice(choice: CjguiOhosChoiceFact, basis: String): Unit {{
+        throw Exception("typed choice is outside legacy restore fixture")
+    }}
     var humanSelectionAnchorsAdopted: Int64 = 0
     var staleOwnedSelectionEvents: Int64 = 0
     var focusedNodeId: Int64 = -1
@@ -665,6 +721,7 @@ class CjguiComposableUiWindow {{
     /// 一个恒假的前置分支把它接成合法的 if/else-if 链，分支体一个字符都没改。
     func pumpSelectionEvent(nativeEvent: InternalRendererPumpResult): CjguiComposableUiWindowPumpResult {{
         var didApply = false
+        var requiresProjection = false
         if (nativeEvent.recordIndex == 4294967295u32) {{
         {branch}        }}
         return result(true, didApply)
@@ -723,7 +780,7 @@ def validate_sources() -> None:
                      # round9-A：采纳事实必须带冻结来源，缺来源写 unverified
                      "source_ctx=", "source_gen=", 'if (provValid) { "${provCtx}" } else { "unverified" }',
                      'if (provValid) { "${provGen}" } else { "unverified" }'):
-        if required not in harness:
+        if " ".join(required.split()) not in " ".join(harness.split()):
             raise ValueError(f"generated harness lost production text: {required}")
     if not TEST_SOURCE.exists():
         raise ValueError(f"missing fixture test source: {TEST_SOURCE}")

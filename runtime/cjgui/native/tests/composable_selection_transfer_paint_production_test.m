@@ -6,12 +6,25 @@ static int failures = 0;
 #define CHECK(condition, name) do { BOOL ok = (condition); \
     fprintf(stderr, "%s %s\n", ok ? "PASS" : "FAIL", name); if (!ok) failures++; } while (0)
 
+@interface RetirementReentrantScroll : NSScrollView
+@property(nonatomic, copy) void (^onDetach)(void);
+@end
+@implementation RetirementReentrantScroll
+- (void)removeFromSuperview {
+    void (^callback)(void) = self.onDetach;
+    self.onDetach = nil;
+    if (callback) callback();
+    [super removeFromSuperview];
+}
+@end
+
+static Class ProductionFixtureWindowClass;
 static CJGuiInternalSession *ProductionFixture(id<MTLDevice> device) {
     CJGuiInternalSession *ctx = [CJGuiInternalSession new];
     ctx.app = [NSApplication sharedApplication];
     ctx.view = [[CJGuiInternalMetalView alloc] initWithFrame:NSMakeRect(0, 0, 680, 500)
         device:device commandQueue:[device newCommandQueue]];
-    ctx.window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 680, 500)
+    ctx.window = [[(ProductionFixtureWindowClass ?: NSWindow.class) alloc] initWithContentRect:NSMakeRect(0, 0, 680, 500)
         styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:YES];
     ctx.window.releasedWhenClosed = NO;
     ctx.composableNodes = [NSMutableArray array];
@@ -108,6 +121,10 @@ static BOOL InstallSelectionOnSameAcceptedScene(CJGuiInternalSession *ctx,
         return NO;
     }
     CjguiInternalSelectionTransferReceipt receipt = {0};
+    uint8_t sourceReady = 0;
+    CjguiInternalRendererStatus sourcePrepared = cjgui_internal_renderer_selection_transfer_prepare_b(
+        token, transfer, cjgui_internal_renderer_owner_clock_ns() + UINT64_C(16000000), &sourceReady);
+    if (sourcePrepared != CJGUI_INTERNAL_RENDERER_OK || !sourceReady) return NO;
     CjguiInternalRendererStatus installed =
         cjgui_internal_renderer_selection_transfer_install_b(token, transfer, &receipt);
     fprintf(stderr, "install selection status=%u scene=%llu target_payload=%llu active_payload=%llu range=%u:%u\n",
@@ -318,6 +335,140 @@ static void VerifySparseCowTransfer(id<MTLDevice> device) {
     }
 }
 
+// The fallback exercises the previous production ABI so the missing in-place
+// native retirement is a runtime RED, rather than an undefined-symbol failure.
+static CjguiInternalRendererStatus InstallWithTerminalRetirement(uint64_t session,
+    uint64_t transfer, CjguiInternalSelectionTransferReceipt *receipt, uint8_t *retired) {
+    *retired = 0;
+#ifdef CJGUI_INTERNAL_SELECTION_INSTALL_RETIREMENT
+    return cjgui_internal_renderer_selection_transfer_install_b_retiring(
+        session, transfer, receipt, retired);
+#else
+    return cjgui_internal_renderer_selection_transfer_install_b(session, transfer, receipt);
+#endif
+}
+
+static void VerifyExplicitTerminalRetirement(id<MTLDevice> device) {
+    CJGuiInternalSession *ctx = ProductionFixture(device);
+    CHECK(ctx != nil, "terminal_retirement_real_production_fixture");
+    if (!ctx) return;
+    uint64_t token = ctx.rendererSessionToken, transfer = 0;
+    CHECK(cjgui_internal_renderer_selection_transfer_create(token, &transfer) == 0,
+          "terminal_retirement_creates_two_references");
+    NSData *body = [ctx.composableSceneOverlay.nodes[1].value dataUsingEncoding:NSUTF8StringEncoding];
+    CjguiInternalSelectionTransferCandidate candidate = CaptureCandidateForTarget(
+        ctx, transfer, ctx.composableSceneVersion, 0, body);
+    uint8_t bytes[65536] = {0};
+    CHECK(cjgui_internal_renderer_selection_transfer_capture_current(token, &candidate,
+          bytes, sizeof(bytes)) == 0 &&
+          cjgui_internal_renderer_selection_transfer_publish_pending(token, transfer) == 0,
+          "terminal_retirement_captures_and_publishes_real_A");
+    uint8_t ready = 0;
+    CHECK(cjgui_internal_renderer_selection_transfer_prepare_b(token, transfer,
+          cjgui_internal_renderer_owner_clock_ns() + UINT64_C(16000000), &ready) == 0 && ready,
+          "terminal_retirement_prepares_real_B");
+    CjguiInternalSelectionTransferReceipt receipt = {0}; uint8_t retired = 255;
+    CjguiInternalRendererStatus installed = InstallWithTerminalRetirement(token, transfer, &receipt, &retired);
+    uint32_t state = 0, references = 0; uint8_t cancelled = 0;
+    CjguiInternalRendererStatus observed = cjgui_internal_renderer_selection_transfer_state(
+        token, transfer, &state, &cancelled, &references);
+    CHECK(installed == 0 && receipt.transferId == transfer && ctx.installedRangeBasis.hasReceipt,
+          "terminal_retirement_keeps_actual_committed_B_receipt");
+    CHECK(retired == 1 && ctx.selectionTransferCapsule == nil && ctx.selectionTransferId == 0,
+          "terminal_retirement_finishes_inside_original_main_install");
+    CHECK(observed == 0 && state == CJGUI_SELECTION_TRANSFER_COMMITTED && !cancelled && references == 1,
+          "terminal_retirement_keeps_exact_owner_reference_and_terminal_until_settle");
+    uint64_t refused = 99;
+    CHECK(cjgui_internal_renderer_selection_transfer_create(token, &refused) != 0 && refused == 0,
+          "terminal_retirement_cannot_reuse_cell_before_owner_release");
+    // Emulate only the owner reference release after the real terminal read.
+    // The common reservation/settle is covered by the Cangjie owner tests.
+    if (!retired) (void)cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer);
+    CHECK(cjgui_internal_renderer_selection_transfer_release(token, transfer) == 0,
+          "terminal_retirement_releases_owner_once_after_terminal_observation");
+    uint64_t successor = 0;
+    CHECK(cjgui_internal_renderer_selection_transfer_create(token, &successor) == 0 && successor != transfer,
+          "terminal_retirement_allows_successor_after_owner_release");
+    CHECK(cjgui_internal_renderer_selection_transfer_release(token, transfer) != 0 &&
+          cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer) != 0 &&
+          gCjguiSelectionTransferCells[token-1].references == 2,
+          "terminal_retirement_late_old_cleanup_cannot_release_new_transfer");
+    cjgui_internal_renderer_destroy(token);
+}
+
+static void VerifyRetirementGuardsAndReentry(id<MTLDevice> device) {
+#ifdef CJGUI_INTERNAL_SELECTION_INSTALL_RETIREMENT
+    CjguiInternalSelectionTransferReceipt invalid; memset(&invalid, 0xa5, sizeof(invalid));
+    uint8_t retired = 255;
+    CHECK(cjgui_internal_renderer_selection_transfer_install_b_retiring(0, 1, &invalid, &retired) != 0 &&
+          retired == 0 && invalid.transferId == 0,
+          "terminal_retirement_initializes_outputs_on_invalid_session");
+    memset(&invalid, 0xa5, sizeof(invalid));
+    CHECK(cjgui_internal_renderer_selection_transfer_install_b_retiring(0, 1, &invalid, NULL) != 0 &&
+          invalid.transferId == 0,
+          "terminal_retirement_missing_resource_output_cannot_install");
+    CJGuiInternalSession *ctx = ProductionFixture(device);
+    CHECK(ctx != nil, "terminal_retirement_negative_fixture");
+    if (!ctx) return;
+    uint64_t token = ctx.rendererSessionToken, transfer = 0;
+    CHECK(cjgui_internal_renderer_selection_transfer_create(token, &transfer) == 0,
+          "terminal_retirement_negative_create");
+    NSData *body = [ctx.composableSceneOverlay.nodes[1].value dataUsingEncoding:NSUTF8StringEncoding];
+    CjguiInternalSelectionTransferCandidate candidate = CaptureCandidateForTarget(ctx, transfer,
+        ctx.composableSceneVersion, 0, body);
+    uint8_t bytes[65536] = {0}, ready = 0;
+    CHECK(cjgui_internal_renderer_selection_transfer_capture_current(token, &candidate, bytes, sizeof(bytes)) == 0 &&
+          cjgui_internal_renderer_selection_transfer_publish_pending(token, transfer) == 0 &&
+          cjgui_internal_renderer_selection_transfer_prepare_b(token, transfer,
+            cjgui_internal_renderer_owner_clock_ns() + UINT64_C(16000000), &ready) == 0 && ready,
+          "terminal_retirement_negative_real_preparation");
+    CjguiInternalSelectionTransferReceipt receipt = {0};
+    CHECK(cjgui_internal_renderer_selection_transfer_install_b(token, transfer, &receipt) == 0,
+          "terminal_retirement_legacy_entry_preserves_existing_cleanup_contract");
+    CjguiSelectionTransferCapsule *original = ctx.selectionTransferCapsule;
+    CjguiSelectionTransferCell *cell = &gCjguiSelectionTransferCells[token-1];
+    // Synthetic state guards only; original FINALIZING input/replay is tested
+    // separately by composable_selection_transfer_input_test's real callback.
+    for (NSNumber *state in @[@(CJGUI_SELECTION_TRANSFER_PENDING), @(CJGUI_SELECTION_TRANSFER_FINALIZING),
+                             @(CJGUI_SELECTION_TRANSFER_ABORTED), @(CJGUI_SELECTION_TRANSFER_RECOVERY_BLOCKED)]) {
+        atomic_store(&cell->decision, state.unsignedLongLongValue);
+        CHECK(cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer) != 0 &&
+              ctx.selectionTransferCapsule == original && cell->references == 2,
+              "terminal_retirement_noncommitted_state_keeps_capsule_and_both_references");
+    }
+    atomic_store(&cell->decision, CJGUI_SELECTION_TRANSFER_COMMITTED);
+    CjguiSelectionTransferRetainedInput *pendingInput = [CjguiSelectionTransferRetainedInput new];
+    [original.retainedInputs addObject:pendingInput];
+    CHECK(cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer) != 0 &&
+          original.retainedInputs.count == 1 && ctx.selectionTransferCapsule == original && cell->references == 2,
+          "terminal_retirement_never_clears_retained_input_to_admit_cleanup");
+    // Restore the synthetic fixture only after observing the refusal above.
+    [original.retainedInputs removeObjectIdenticalTo:pendingInput];
+    CHECK(CjguiDiscardSelectionTransferCapsuleOnMain(ctx, original, transfer, ctx.sessionGeneration + 1) != 0 &&
+          ctx.selectionTransferCapsule == original && cell->references == 2,
+          "terminal_retirement_wrong_generation_cannot_release_original");
+    CJGuiInternalComposableSceneOverlay *prepared = original.preparedOverlay;
+    CHECK(prepared != nil, "terminal_retirement_retains_real_retired_A_graph_for_reentry");
+    if (prepared) {
+        RetirementReentrantScroll *scroll = [[RetirementReentrantScroll alloc] initWithFrame:NSMakeRect(0,0,200,100)];
+        prepared.inputScrollProxy = scroll;
+        CjguiSelectionTransferCapsule *replacement = [CjguiSelectionTransferCapsule new];
+        replacement.transferId = transfer + 100;
+        scroll.onDetach = ^{ ctx.selectionTransferCapsule = replacement; ctx.selectionTransferId = replacement.transferId; };
+        CHECK(cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer) != 0 &&
+              ctx.selectionTransferCapsule == replacement && ctx.selectionTransferId == replacement.transferId &&
+              cell->references == 2,
+              "terminal_retirement_reentrant_replacement_is_not_cleared_or_released");
+        ctx.selectionTransferCapsule = original; ctx.selectionTransferId = transfer;
+    }
+    CHECK(cjgui_internal_renderer_selection_transfer_discard_capsule(token, transfer) == 0 && cell->references == 1 &&
+          cjgui_internal_renderer_selection_transfer_release(token, transfer) == 0 && cell->references == 0,
+          "terminal_retirement_negative_fixture_recovers_exact_two_reference_cleanup");
+    CHECK(cjgui_internal_renderer_destroy(token) == 0 && CjguiLookupSession(token) == nil,
+          "terminal_retirement_normal_destroy_leaves_no_owned_session");
+#endif
+}
+
 int main(void) {
     @autoreleasepool {
         unsetenv("CJGUI_OWNER_PHASE_TRACE");
@@ -327,6 +478,8 @@ int main(void) {
             fprintf(stderr, "SKIP no Metal device\n");
             return 77;
         }
+        VerifyExplicitTerminalRetirement(device);
+        VerifyRetirementGuardsAndReentry(device);
         CJGuiInternalSession *ctx = ProductionFixture(device);
         if (!ctx) {
             fprintf(stderr, "FAIL production fixture\n");

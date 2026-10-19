@@ -68,6 +68,8 @@ typedef struct CjguiWindowsTextTextureLease {
     uint64_t bytes;
     uint64_t *sessionBytesInUse;
     uint64_t *sessionCountInUse;
+    uint64_t *sessionAllocationCount;
+    uint64_t *sessionReleaseCount;
     ID3D11Texture2D *texture;
     ID3D11ShaderResourceView *view;
     /* Image CPU pixels are immutable and share exactly this lease lifetime.
@@ -139,6 +141,12 @@ typedef struct CjguiWindowsSceneNode {
        任一真实排版输入变化即重建并换 lease，严格门继续生效。0 表未知。 */
     uint64_t textLayoutInputKey;
     uint64_t textMaskNonzeroPixels;
+    /* The range of selection decoration this node's live text bitmap actually
+       carries. The fill is baked into the raster, so a frame may only be credited
+       with this range, never with the session's latest desired selection. */
+    uint32_t rasterSelectionStart16;
+    uint32_t rasterSelectionEnd16;
+    uint8_t rasterSelectionValid;
     uint64_t ownedBytes;
     uint8_t hasNode;
     uint8_t candidateValueStaged;
@@ -150,12 +158,23 @@ typedef struct CjguiWindowsSceneNode {
     uint8_t hasGeometry;
 } CjguiWindowsSceneNode;
 
+/* Private, fixed-size diagnostic fact. No public Node/Event POD or native
+   pointer crosses the ABI. Fresh scenes start empty; only their frozen receipt
+   travels through preparation -> candidate -> successful Present. */
+typedef struct CjguiWindowsInputObservation {
+    uint64_t identity[12];
+    uint64_t preparationId, sceneVersion, mirrorStart, bodyBytes, bodyHash;
+    uint64_t editStart, editEnd;
+    uint8_t valid;
+} CjguiWindowsInputObservation;
+
 typedef struct CjguiWindowsScene {
     uint64_t version;
     uint32_t count;
     uint64_t ownedBytes;
     CjguiWindowsSceneNode *nodes;
     uint8_t configured;
+    CjguiWindowsInputObservation inputObservation;
 } CjguiWindowsScene;
 
 typedef struct CjguiWindowsTextRunDeclaration {
@@ -174,6 +193,33 @@ typedef struct CjguiWindowsTextStyleRun {
     uint8_t hasBackground;
     uint8_t selectionBackgroundOnly;
 } CjguiWindowsTextStyleRun;
+
+#define CJGUI_WINDOWS_PREVIEW_PAINT_FRAGMENT_CAPACITY 64u
+typedef struct CjguiWindowsPreviewPaintFragment {
+    uint64_t nodeId;
+    int64_t resourceId;
+    uint64_t layoutLease;
+    uint64_t textLayoutInputKey;
+    uint64_t geometryKey;
+    uint32_t start16;
+    uint32_t end16;
+} CjguiWindowsPreviewPaintFragment;
+
+typedef struct CjguiWindowsPreviewPaintBatch {
+    uint64_t key;
+    uint64_t publicationId;
+    uint64_t rendererGeneration;
+    uint64_t bindingEpoch;
+    uint64_t ownerVersion;
+    uint64_t ownerRevision;
+    uint64_t projectionId;
+    uint64_t sceneVersion;
+    uint64_t deviceGeneration;
+    uint32_t count;
+    FLOAT red, green, blue, alpha;
+    uint8_t active;
+    CjguiWindowsPreviewPaintFragment fragments[CJGUI_WINDOWS_PREVIEW_PAINT_FRAGMENT_CAPACITY];
+} CjguiWindowsPreviewPaintBatch;
 
 typedef struct CjguiWindowsTextColorEffect {
     const IUnknownVtbl *lpVtbl;
@@ -379,6 +425,51 @@ typedef struct CjguiWindowsDeferredInput {
 #define CJGUI_WINDOWS_FINISH_CONFLICT 4u
 #define CJGUI_WINDOWS_FINISH_CLOSED 5u
 
+/* Frozen pre-Present frame evidence. The swap chain is DXGI_SWAP_EFFECT_DISCARD,
+   so a buffer read AFTER Present no longer guarantees the presented pixels; the
+   freeze happens before Present and the emitter correlates it with the actual
+   Present result. valid: 0 = no attempt, 1 = frozen, 2 = unsupported format. */
+/* Optional diagnostic observations only; no owner, scheduling or draw authority. */
+#define CJGUI_WINDOWS_ROI_NODE_CAPACITY 64u
+#define CJGUI_WINDOWS_ROI_RANGE_CAPACITY 8u
+#define CJGUI_WINDOWS_ROI_BYTE_LIMIT (128u * 1024u * 1024u)
+typedef struct CjguiWindowsSelectionDrawRow {
+    uint64_t nodeId, inputKey, geometryKey, layoutLease, bodyHash, bodyBytes;
+    int64_t resourceId;
+    uint32_t source, rangeCount, overflow;
+    uint32_t start16[8], end16[8], painted[8];
+    double originX, originY, clipX, clipY, clipWidth, clipHeight;
+} CjguiWindowsSelectionDrawRow;
+typedef struct CjguiWindowsSelectionDrawFacts {
+    uint64_t scene, renderer, device, binding, drawnKey;
+    uint32_t count, overflow, batchEligible;
+    CjguiWindowsPreviewPaintBatch batch;
+    CjguiWindowsSelectionDrawRow rows[CJGUI_WINDOWS_ROI_NODE_CAPACITY];
+} CjguiWindowsSelectionDrawFacts;
+
+typedef struct CjguiWindowsFrameEvidence {
+    uint8_t valid;
+    uint32_t format;
+    uint32_t width, bandTop, bandHeight, mappedRowPitch;
+    uint64_t hash, docHash, railHash, tint, colored;
+    uint64_t sceneVersion;
+    uint64_t selDesiredKey, selPresentedKey;
+    uint32_t selVisible, selPaintPending;
+    uint32_t firstX, lastX, firstY, lastY, rows, runs;
+    uint64_t lum[16];
+    /* Per-text-node region hashes over the frozen frame: the acceptance gate can
+       prove the highlight moved in the pointer's row and that a cross-paragraph
+       selection covers BOTH fragments in one frame, instead of crediting "some
+       picture changed somewhere". Bounded to the first 8 text nodes. */
+    uint64_t nodeId[8];
+    uint64_t nodeHash[8];
+    uint32_t nodeHashCount;
+    uint64_t freezeNs, frameIndexAtFreeze;
+    CjguiWindowsSelectionDrawFacts selectionDraw;
+    char roiMetaPath[1024];
+    uint32_t roiStatus;
+} CjguiWindowsFrameEvidence;
+
 #define CJGUI_WINDOWS_RECOVERY_NONE 0u
 #define CJGUI_WINDOWS_RECOVERY_GATE_OUTCOME 1u
 #define CJGUI_WINDOWS_RECOVERY_OVERFLOW 2u
@@ -417,6 +508,18 @@ struct CjguiWindowsRendererSession {
     ID3D11Device *device;
     ID3D11DeviceContext *context;
     IDXGISwapChain *swapChain;
+    /* Pre-Present frozen frame evidence (PHAROS_WINDOWS_FRAME_RECEIPT). The
+       staging texture is cached per session so the instrument never adds a
+       GPU allocation to the frames whose latency it is measuring. */
+    ID3D11Texture2D *receiptStaging;
+    uint32_t receiptStagingWidth;
+    uint32_t receiptStagingHeight;
+    CjguiWindowsFrameEvidence frameEvidence;
+    CjguiWindowsSelectionDrawFacts selectionDrawFacts;
+    uint32_t selectionRoiRemaining, selectionRoiOrdinal;
+    uint64_t selectionRoiBytes;
+    uint64_t receiptFrames;
+    uint32_t receiptRejectedRegions;
     ID3D11RenderTargetView *renderTarget;
     ID3D11VertexShader *sceneVertexShader;
     ID3D11PixelShader *sceneSolidPixelShader;
@@ -427,6 +530,21 @@ struct CjguiWindowsRendererSession {
     ID3D11BlendState *sceneBlendState;
     ID3D11RasterizerState *sceneRasterizer;
     ID3D11SamplerState *sceneSampler;
+    /* Backdrop blur (effectBackdropBlurRadiusPoints in 1..16). A dedicated
+       separable-Gaussian pixel shader and two target-sized ping-pong textures
+       are created on the first blur frame and released with the render target.
+       All pointers stay NULL until a scene actually declares a blur, so radius
+       0 and resource failure keep the exact pre-blur path. */
+    ID3D11PixelShader *backdropBlurPixelShader;
+    ID3D11Texture2D *backdropTextureA;
+    ID3D11ShaderResourceView *backdropViewA;
+    ID3D11RenderTargetView *backdropTargetA;
+    ID3D11Texture2D *backdropTextureB;
+    ID3D11ShaderResourceView *backdropViewB;
+    ID3D11RenderTargetView *backdropTargetB;
+    uint32_t backdropWidth;
+    uint32_t backdropHeight;
+    DXGI_FORMAT backdropFormat;
     IDWriteFactory *writeFactory;
     /* 线程模型（完整 UI dispatcher，phase 1 覆盖 pump/destroy）：
        每个 session 由自持 UI（泵）线程拥有窗口、消息队列与全部会话逻辑；
@@ -441,6 +559,7 @@ struct CjguiWindowsRendererSession {
     uint64_t rawDropped;
     uint8_t traceEnabled;
     uint64_t traceCount;
+    uint64_t traceCurrentCommandId; /* UI-only diagnostic association, never authority. */
     CjguiWindowsTraceRow traceRows[CJGUI_WINDOWS_TRACE_CAPACITY];
     HANDLE rawWakeEvent;
     CRITICAL_SECTION cmdLock;
@@ -464,6 +583,20 @@ struct CjguiWindowsRendererSession {
     CjguiInternalRendererPointerEventGeometry pointerGeometries[CJGUI_WINDOWS_EVENT_CAPACITY];
     uint64_t pointerSessionGenerations[CJGUI_WINDOWS_EVENT_CAPACITY];
     uint64_t pointerCoordinateEpochs[CJGUI_WINDOWS_EVENT_CAPACITY];
+    uint64_t pointerSequences[CJGUI_WINDOWS_EVENT_CAPACITY];
+    /* Private original-production identity, independent of pointer FIFO/POD.
+       0 generation,1 gesture,2 production sequence,3 phase,4 node,5 resource,
+       6 kind,7 binding,8 scene,9 coordinate,10 lease,11/12 sorted range,
+       13/14 native directed anchor/focus,15 outcome,16/17/18 DOWN basis.
+       Outcome:1 active,2 final queued,3 owner accepted,4 owner refused,
+       5 capture cancelled,6 original production enqueue failed. */
+    uint64_t selectionGestureSlots[CJGUI_WINDOWS_EVENT_CAPACITY][19];
+    uint64_t selectionGesturePopped[19];
+    uint64_t selectionGestureCurrent[19];
+    uint64_t selectionGestureNext;
+    uint64_t selectionGestureProductionNext;
+    uint32_t selectionGesturePhase;
+
     char *eventTextPayloads[CJGUI_WINDOWS_EVENT_CAPACITY];
     uint32_t eventTextLengths[CJGUI_WINDOWS_EVENT_CAPACITY];
     uint32_t eventHead;
@@ -561,8 +694,10 @@ struct CjguiWindowsRendererSession {
     uint64_t sceneVersion;
     uint64_t resizeVersion;
     uint64_t textLayoutPreparationCount;
+    uint64_t textLayoutReuseCount;
     uint64_t textRasterCount, textRasterBytes, textRasterMicros;
     uint64_t textUploadCount, textUploadBytes, textUploadMicros;
+    uint64_t textTextureLeaseAllocationCount, textTextureLeaseReleaseCount;
     uint64_t textTexturePeakBytes;
     uint64_t textPositionQueryCount;
     uint64_t textPositionLineMetricsCount;
@@ -580,6 +715,10 @@ struct CjguiWindowsRendererSession {
     uint64_t lastPumpedCoordinateEpoch;
     uint8_t multilineViewportEpochPending, multilineViewportPaintPending;
     uint64_t lastPumpedSessionGeneration;
+    uint64_t mousePointerSequence;
+    uint64_t lastPointerFifoGeneration, lastPointerFifoCoordinate;
+    uint64_t lastPointerFifoBinding, lastPointerFifoSequence;
+    uint32_t lastPointerFifoPhase;
     uint64_t focusedNodeId;
     int64_t focusedResourceId;
     uint32_t focusedNodeKind;
@@ -593,6 +732,30 @@ struct CjguiWindowsRendererSession {
     uint8_t selectionPaintVisible;
     uint8_t selectionPaintPresentedVisible;
     uint8_t selectionPaintHasPresentation;
+    /* Painting has three separate states and they must not share one slot:
+       desired  = the choice that should be on screen right now,
+       drawn    = the choice the frame currently being rendered actually carries,
+       presented= the choice the last successfully submitted frame carried.
+       Settling presented from desired lets a frame that never contained a staged
+       preview decoration take that decoration's redraw obligation away. */
+    uint64_t selectionPaintDrawnKey;
+    uint8_t selectionPaintDrawnVisible;
+    /* How many draw turns one outstanding decoration has been given. Bounds the
+       service so an obligation nothing can paint never becomes a permanent
+       double Present; any real change of the wanted decoration resets it. */
+#define CJGUI_WINDOWS_SELECTION_PAINT_SERVICE_TURNS 3u
+    uint32_t selectionPaintServiceTurns;
+    /* Accepted-source selection paint is a bounded immutable batch. Each row
+       is pinned to the accepted scene's body/layout lease and text key; new
+       selections replace the whole desired batch atomically. */
+    CjguiWindowsPreviewPaintBatch previewPaintBatch;
+    uint64_t previewPaintDrawnKey;
+    uint64_t previewPaintDrawnScene;
+    uint64_t previewPaintPresentedKey;
+    uint64_t previewPaintPresentedScene;
+    uint8_t previewPaintDrawnVisible;
+    uint8_t previewPaintPresentedVisible;
+    uint8_t previewPaintHasPresentation;
 
     uint32_t ownedTextSessionEnabled;
     uint64_t ownedTextSessionNodeId;
@@ -690,6 +853,8 @@ struct CjguiWindowsRendererSession {
     uint8_t presentReceiptPublished, presentClosing;
     uint64_t preparationId;
     uint64_t preparationProjectionVersion;
+    /* Read-only display trace identity; never grants input or paint authority. */
+    uint64_t displayTracePreparationId;
     /* ---- 通用有界场景准备（R7）----
        全部字段只由 UI（泵）线程的命令执行体访问；工作线程不读取后来变化的
        owner/Session，只消费 begin 时冻结的身份与 prepare 复制的不可变声明。
@@ -825,6 +990,17 @@ struct CjguiWindowsRendererSession {
     uint64_t dbgUpOld;
     uint64_t dbgUpNew;
     uint64_t dbgUpFreshHit;
+    /* Same code table as upStage/upReject, for the MOVE path, plus a count of
+       how many moves continued on a re-published instance. A held drag that
+       stops producing POINTER_UPDATE is otherwise indistinguishable from a
+       message pump that never received the move. */
+    uint32_t dbgMoveStage;
+    uint32_t dbgMoveReject;
+    uint64_t dbgMoveOld;
+    uint64_t dbgMoveNew;
+    uint32_t dbgMoveUpdates;
+    uint32_t dbgMoveContinued;
+    uint32_t dbgMoveCancelled;
     uint32_t dbgRawLog[8];
     uint32_t dbgRawCount;
     uint64_t mouseCoordinateEpoch;
@@ -865,8 +1041,8 @@ struct CjguiWindowsRendererSession {
     uint32_t occupied;
 };
 
-/* Optional bounded diagnostics: record on the UI owner, batch-write only when
- * the existing file probe explicitly asks for TRACE. No per-input I/O. */
+/* Optional bounded diagnostics: record on the UI owner, batch-write on TRACE
+ * or once after the owned pump joins. No per-input I/O. */
 static void windows_trace(CjguiWindowsRendererSession *s,const char *stage,
     uint64_t a,uint64_t b,uint64_t c,uint64_t d,uint64_t e,uint64_t f) {
     if (!s || !s->traceEnabled) return;
@@ -886,6 +1062,28 @@ static void windows_trace_dump(CjguiWindowsRendererSession *s,FILE *out) {
             (unsigned long long)r->scene,(unsigned long long)r->seq,(unsigned long long)r->ownerVersion,
             (unsigned long long)r->a,(unsigned long long)r->b,(unsigned long long)r->c,
             (unsigned long long)r->d,(unsigned long long)r->e,(unsigned long long)r->f);
+    }
+}
+
+static CjguiInternalRendererStatus windows_finish_pump_work(
+    CjguiWindowsRendererSession *s, uint64_t started,
+    CjguiInternalRendererStatus status) {
+    if (s->traceEnabled) {
+        uint64_t elapsed = cjgui_internal_renderer_owner_clock_ns() - started;
+        DWORD self = GetCurrentThreadId();
+        windows_trace(s, "pump_work", s->traceCurrentCommandId, 0u, elapsed,
+            status, self, self);
+    }
+    return status;
+}
+static void windows_dispatch_observed_message(CjguiWindowsRendererSession *s, MSG *message) {
+    uint64_t started = s->traceEnabled ? cjgui_internal_renderer_owner_clock_ns() : 0u;
+    TranslateMessage(message);
+    DispatchMessageW(message);
+    if (s->traceEnabled) {
+        uint64_t elapsed = cjgui_internal_renderer_owner_clock_ns() - started;
+        DWORD self = GetCurrentThreadId();
+        windows_trace(s, "ui_message", message->message, 0u, elapsed, 0u, self, self);
     }
 }
 
@@ -973,6 +1171,7 @@ static void release_text_texture_lease(CjguiWindowsTextTextureLease **slot) {
     free(lease->imageEncoded);
     if (lease->sessionCountInUse && *lease->sessionCountInUse)
         --*lease->sessionCountInUse;
+    if (lease->sessionReleaseCount) ++*lease->sessionReleaseCount;
 #ifdef CJGUI_WINDOWS_SCENE_CONTRACT_TEST
     (void)InterlockedExchangeAdd64(&g_contractLiveTextTextureBytes, -(LONG64)lease->bytes);
     (void)InterlockedDecrement(&g_contractLiveTextTextureResources);
@@ -1418,6 +1617,8 @@ static int nav_barrier_hold_delete(CjguiWindowsRendererSession *s,
 static void finish_windows_composition_after_presentation(CjguiWindowsRendererSession *s);
 static void start_pending_ime_successor(CjguiWindowsRendererSession *s);
 static void synchronize_owned_proxy_after_presentation(CjguiWindowsRendererSession *s);
+static void windows_freeze_frame_evidence(CjguiWindowsRendererSession *s, struct CjguiWindowsScene *scene);
+static void windows_emit_frame_receipt(CjguiWindowsRendererSession *s, const char *stage, HRESULT presentResult);
 
 static uint64_t next_positive_counter(volatile LONG64 *counter) {
     LONG64 current = InterlockedCompareExchange64(counter, 0, 0);
@@ -1463,7 +1664,20 @@ static CjguiInternalRendererStatus require_session(const CjguiWindowsRendererSes
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+static void release_backdrop_resources(CjguiWindowsRendererSession *s) {
+    if (s->backdropTargetA) { ID3D11RenderTargetView_Release(s->backdropTargetA); s->backdropTargetA = NULL; }
+    if (s->backdropViewA) { ID3D11ShaderResourceView_Release(s->backdropViewA); s->backdropViewA = NULL; }
+    if (s->backdropTextureA) { ID3D11Texture2D_Release(s->backdropTextureA); s->backdropTextureA = NULL; }
+    if (s->backdropTargetB) { ID3D11RenderTargetView_Release(s->backdropTargetB); s->backdropTargetB = NULL; }
+    if (s->backdropViewB) { ID3D11ShaderResourceView_Release(s->backdropViewB); s->backdropViewB = NULL; }
+    if (s->backdropTextureB) { ID3D11Texture2D_Release(s->backdropTextureB); s->backdropTextureB = NULL; }
+    s->backdropWidth = 0u;
+    s->backdropHeight = 0u;
+    s->backdropFormat = DXGI_FORMAT_UNKNOWN;
+}
+
 static void release_render_target(CjguiWindowsRendererSession *s) {
+    release_backdrop_resources(s);
     if (s->renderTarget) {
         ID3D11RenderTargetView_Release(s->renderTarget);
         s->renderTarget = NULL;
@@ -1471,6 +1685,7 @@ static void release_render_target(CjguiWindowsRendererSession *s) {
 }
 
 static void release_scene_pipeline(CjguiWindowsRendererSession *s) {
+    if (s->backdropBlurPixelShader) { ID3D11PixelShader_Release(s->backdropBlurPixelShader); s->backdropBlurPixelShader = NULL; }
     if (s->sceneSampler) { ID3D11SamplerState_Release(s->sceneSampler); s->sceneSampler = NULL; }
     if (s->sceneRasterizer) { ID3D11RasterizerState_Release(s->sceneRasterizer); s->sceneRasterizer = NULL; }
     if (s->sceneBlendState) { ID3D11BlendState_Release(s->sceneBlendState); s->sceneBlendState = NULL; }
@@ -1486,6 +1701,8 @@ static void release_graphics(CjguiWindowsRendererSession *s) {
     release_render_target(s);
     release_scene_pipeline(s);
     release_text_flight_queries(s);
+    if (s->receiptStaging) { ID3D11Texture2D_Release(s->receiptStaging); s->receiptStaging = NULL; }
+    s->receiptStagingWidth = s->receiptStagingHeight = 0u;
     if (s->swapChain) { IDXGISwapChain_Release(s->swapChain); s->swapChain = NULL; }
     if (s->context) { ID3D11DeviceContext_Release(s->context); s->context = NULL; }
     if (s->device) { ID3D11Device_Release(s->device); s->device = NULL; }
@@ -1504,6 +1721,100 @@ static CjguiInternalRendererStatus create_render_target(CjguiWindowsRendererSess
         s->lastGraphicsFailure = hr;
         return CJGUI_INTERNAL_RENDERER_METAL_LAYER_UNAVAILABLE;
     }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+/* The two separable blur passes reuse the scene vertex shader/input layout and
+   the 16-byte scene constant buffer: color.xy is the per-tap UV step, color.z
+   the Gaussian sigma and color.w the integer kernel radius. Compilation is
+   optional: a scene whose blur cannot run falls back to the ABI's unblurred
+   result instead of taking the whole renderer down. */
+static void create_backdrop_pixel_shader(CjguiWindowsRendererSession *s) {
+    static const char source[] =
+        "cbuffer BlurBuffer : register(b0) { float4 color; };\n"
+        "struct VSOut { float4 pos : SV_POSITION; float2 uv : TEXCOORD0; };\n"
+        "Texture2D blurTexture : register(t0); SamplerState blurSampler : register(s0);\n"
+        "float4 ps_blur(VSOut i) : SV_TARGET {\n"
+        "  int radius = max(0, (int)color.w);\n"
+        "  float4 sum = float4(0.0, 0.0, 0.0, 0.0);\n"
+        "  float weightSum = 0.0;\n"
+        "  [loop] for (int k = -radius; k <= radius; ++k) {\n"
+        "    float w = exp(-0.5 * (float)(k * k) / (color.z * color.z));\n"
+        "    sum += blurTexture.SampleLevel(blurSampler, i.uv + color.xy * (float)k, 0.0) * w;\n"
+        "    weightSum += w;\n"
+        "  }\n"
+        "  return sum / weightSum;\n"
+        "}\n";
+    ID3DBlob *blur = NULL, *errors = NULL;
+    HRESULT hr = D3DCompile(source, sizeof(source) - 1u, "cjgui-windows-backdrop.hlsl",
+        NULL, NULL, "ps_blur", "ps_4_0", D3DCOMPILE_ENABLE_STRICTNESS, 0, &blur, &errors);
+    if (SUCCEEDED(hr) && blur) {
+        hr = ID3D11Device_CreatePixelShader(s->device, ID3D10Blob_GetBufferPointer(blur),
+            ID3D10Blob_GetBufferSize(blur), NULL, &s->backdropBlurPixelShader);
+        if (FAILED(hr)) s->backdropBlurPixelShader = NULL;
+    }
+    if (blur) ID3D10Blob_Release(blur);
+    if (errors) ID3D10Blob_Release(errors);
+}
+
+static HRESULT create_backdrop_texture(CjguiWindowsRendererSession *s,
+    const D3D11_TEXTURE2D_DESC *desc, ID3D11Texture2D **texture,
+    ID3D11ShaderResourceView **view, ID3D11RenderTargetView **target) {
+    HRESULT hr = ID3D11Device_CreateTexture2D(s->device, desc, NULL, texture);
+    if (SUCCEEDED(hr)) hr = ID3D11Device_CreateShaderResourceView(s->device,
+        (ID3D11Resource *)*texture, NULL, view);
+    if (SUCCEEDED(hr)) hr = ID3D11Device_CreateRenderTargetView(s->device,
+        (ID3D11Resource *)*texture, NULL, target);
+    return hr;
+}
+
+/* Lazily allocate the full-target ping-pong textures. Full-target storage keeps
+   the final composite a plain 1:1 textured quad over the node rectangle, the
+   same coordinate model as images, and only the requested sub-rectangles are
+   copied/blurred each frame. */
+static CjguiInternalRendererStatus ensure_backdrop_resources(CjguiWindowsRendererSession *s) {
+    if (!s || !s->device || !s->renderTarget) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ID3D11Resource *resource = NULL;
+    ID3D11Texture2D *backbuffer = NULL;
+    ID3D11RenderTargetView_GetResource(s->renderTarget, &resource);
+    if (resource) {
+        (void)ID3D11Resource_QueryInterface(resource, &IID_ID3D11Texture2D, (void **)&backbuffer);
+        ID3D11Resource_Release(resource);
+    }
+    if (!backbuffer) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    D3D11_TEXTURE2D_DESC source;
+    memset(&source, 0, sizeof(source));
+    ID3D11Texture2D_GetDesc(backbuffer, &source);
+    ID3D11Texture2D_Release(backbuffer);
+    if (!source.Width || !source.Height || source.Format == DXGI_FORMAT_UNKNOWN ||
+        source.SampleDesc.Count != 1u) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (s->backdropTextureA && s->backdropTextureB &&
+        s->backdropWidth == source.Width && s->backdropHeight == source.Height &&
+        s->backdropFormat == source.Format) return CJGUI_INTERNAL_RENDERER_OK;
+    release_backdrop_resources(s);
+    D3D11_TEXTURE2D_DESC desc;
+    memset(&desc, 0, sizeof(desc));
+    desc.Width = source.Width;
+    desc.Height = source.Height;
+    desc.MipLevels = 1u;
+    desc.ArraySize = 1u;
+    desc.Format = source.Format;
+    desc.SampleDesc.Count = 1u;
+    desc.SampleDesc.Quality = 0u;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+    HRESULT hr = create_backdrop_texture(s, &desc, &s->backdropTextureA,
+        &s->backdropViewA, &s->backdropTargetA);
+    if (SUCCEEDED(hr)) hr = create_backdrop_texture(s, &desc, &s->backdropTextureB,
+        &s->backdropViewB, &s->backdropTargetB);
+    if (FAILED(hr)) {
+        s->lastGraphicsFailure = hr;
+        release_backdrop_resources(s);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    s->backdropWidth = source.Width;
+    s->backdropHeight = source.Height;
+    s->backdropFormat = source.Format;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -1590,6 +1901,7 @@ static CjguiInternalRendererStatus create_scene_pipeline(CjguiWindowsRendererSes
         release_scene_pipeline(s);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    create_backdrop_pixel_shader(s);
     return CJGUI_INTERNAL_RENDERER_OK;
 failed:
     s->lastGraphicsFailure = hr;
@@ -1644,6 +1956,257 @@ static CjguiInternalRendererStatus draw_scene_quad(CjguiWindowsRendererSession *
         ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &none);
     }
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// Paint-only rotation and geometry-sidecar scale around the node centre. A
+// zero angle with scale 1/1 keeps the legacy axis-aligned submission
+// byte-identical; any finite rotation or non-identity scale takes the corner
+// path. Order matches macOS/Linux: scale first, then rotate, both about the
+// same visual centre. Clipping and hit testing stay unrotated by contract.
+typedef struct {
+    int active;
+    double cx, cy;
+    double scaleX, scaleY;
+    double cosValue, sinValue;
+} CjguiWindowsRotation;
+
+static CjguiWindowsRotation windows_node_rotation(const CjguiInternalRendererComposableNode *node,
+                                                   const CjguiInternalRendererComposableGeometry *geometry,
+                                                   FLOAT x, FLOAT y, FLOAT width, FLOAT height) {
+    CjguiWindowsRotation r = {0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0};
+    double scaleX = 1.0, scaleY = 1.0;
+    if (geometry) {
+        if (isfinite(geometry->scaleX) && geometry->scaleX > 0.0) scaleX = geometry->scaleX;
+        if (isfinite(geometry->scaleY) && geometry->scaleY > 0.0) scaleY = geometry->scaleY;
+    }
+    int rotates = node && isfinite(node->rotateDegrees) && node->rotateDegrees != 0.0;
+    if (!rotates && scaleX == 1.0 && scaleY == 1.0) return r;
+    r.active = 1;
+    r.cx = (double)x + (double)width / 2.0;
+    r.cy = (double)y + (double)height / 2.0;
+    r.scaleX = scaleX;
+    r.scaleY = scaleY;
+    if (rotates) {
+        const double radians = node->rotateDegrees * 3.14159265358979323846 / 180.0;
+        r.cosValue = cos(radians);
+        r.sinValue = sin(radians);
+    }
+    return r;
+}
+
+static void windows_rotate_point(const CjguiWindowsRotation *r, double x, double y,
+                                 FLOAT *outX, FLOAT *outY) {
+    if (!r || !r->active) { *outX = (FLOAT)x; *outY = (FLOAT)y; return; }
+    const double dx = (x - r->cx) * r->scaleX, dy = (y - r->cy) * r->scaleY;
+    *outX = (FLOAT)(r->cx + dx * r->cosValue - dy * r->sinValue);
+    *outY = (FLOAT)(r->cy + dx * r->sinValue + dy * r->cosValue);
+}
+
+static CjguiInternalRendererStatus draw_scene_quad_rotated(CjguiWindowsRendererSession *s,
+    FLOAT x, FLOAT y, FLOAT width, FLOAT height, const FLOAT color[4],
+    ID3D11ShaderResourceView *maskView, const CjguiWindowsRotation *rotation) {
+    if (!rotation || !rotation->active)
+        return draw_scene_quad(s, x, y, width, height, color, maskView);
+    if (!s || !s->context || !s->width || !s->height || width <= 0.0f || height <= 0.0f)
+        return CJGUI_INTERNAL_RENDERER_OK;
+    FLOAT x0, y0, x1, y1, x2, y2, x3, y3;
+    windows_rotate_point(rotation, x, y, &x0, &y0);
+    windows_rotate_point(rotation, x + width, y, &x1, &y1);
+    windows_rotate_point(rotation, x, y + height, &x2, &y2);
+    windows_rotate_point(rotation, x + width, y + height, &x3, &y3);
+    const CjguiWindowsVertex vertices[4] = {
+        {2.0f * x0 / (FLOAT)s->width - 1.0f, 1.0f - 2.0f * y0 / (FLOAT)s->height, 0.0f, 0.0f},
+        {2.0f * x1 / (FLOAT)s->width - 1.0f, 1.0f - 2.0f * y1 / (FLOAT)s->height, 1.0f, 0.0f},
+        {2.0f * x2 / (FLOAT)s->width - 1.0f, 1.0f - 2.0f * y2 / (FLOAT)s->height, 0.0f, 1.0f},
+        {2.0f * x3 / (FLOAT)s->width - 1.0f, 1.0f - 2.0f * y3 / (FLOAT)s->height, 1.0f, 1.0f}
+    };
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    HRESULT hr = ID3D11DeviceContext_Map(s->context, (ID3D11Resource *)s->sceneVertexBuffer,
+        0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) { s->lastGraphicsFailure = hr; return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; }
+    memcpy(mapped.pData, vertices, sizeof(vertices));
+    ID3D11DeviceContext_Unmap(s->context, (ID3D11Resource *)s->sceneVertexBuffer, 0);
+    hr = ID3D11DeviceContext_Map(s->context, (ID3D11Resource *)s->sceneColorBuffer,
+        0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) { s->lastGraphicsFailure = hr; return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; }
+    memcpy(mapped.pData, color, 16u);
+    ID3D11DeviceContext_Unmap(s->context, (ID3D11Resource *)s->sceneColorBuffer, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(s->context, 0, 1, &s->sceneColorBuffer);
+    ID3D11DeviceContext_PSSetShader(s->context,
+        maskView ? s->sceneMaskPixelShader : s->sceneSolidPixelShader, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &maskView);
+    ID3D11DeviceContext_Draw(s->context, 4, 0);
+    if (maskView) {
+        ID3D11ShaderResourceView *none = NULL;
+        ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &none);
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+/* One separable Gaussian pass. The destination is a target-sized texture, so
+   the quad covers the pixel rectangle 1:1 and UVs equal pixel/size; only the
+   requested rectangle is written (scissor + geometry). */
+static CjguiInternalRendererStatus draw_windows_blur_pass(CjguiWindowsRendererSession *s,
+    ID3D11RenderTargetView *target, ID3D11ShaderResourceView *source,
+    LONG left, LONG top, LONG right, LONG bottom,
+    FLOAT stepU, FLOAT stepV, FLOAT sigma, FLOAT radius) {
+    if (!s || !s->context || !target || !source || !s->sceneVertexBuffer ||
+        !s->sceneColorBuffer || s->width == 0u || s->height == 0u)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ID3D11DeviceContext_OMSetRenderTargets(s->context, 1, &target, NULL);
+    D3D11_VIEWPORT viewport = {0.0f, 0.0f, (FLOAT)s->width, (FLOAT)s->height, 0.0f, 1.0f};
+    ID3D11DeviceContext_RSSetViewports(s->context, 1, &viewport);
+    D3D11_RECT scissor = {left, top, right, bottom};
+    ID3D11DeviceContext_RSSetScissorRects(s->context, 1, &scissor);
+    const FLOAT uvLeft = (FLOAT)left / (FLOAT)s->width;
+    const FLOAT uvTop = (FLOAT)top / (FLOAT)s->height;
+    const FLOAT uvRight = (FLOAT)right / (FLOAT)s->width;
+    const FLOAT uvBottom = (FLOAT)bottom / (FLOAT)s->height;
+    const CjguiWindowsVertex vertices[4] = {
+        {2.0f * (FLOAT)left / (FLOAT)s->width - 1.0f,
+            1.0f - 2.0f * (FLOAT)top / (FLOAT)s->height, uvLeft, uvTop},
+        {2.0f * (FLOAT)right / (FLOAT)s->width - 1.0f,
+            1.0f - 2.0f * (FLOAT)top / (FLOAT)s->height, uvRight, uvTop},
+        {2.0f * (FLOAT)left / (FLOAT)s->width - 1.0f,
+            1.0f - 2.0f * (FLOAT)bottom / (FLOAT)s->height, uvLeft, uvBottom},
+        {2.0f * (FLOAT)right / (FLOAT)s->width - 1.0f,
+            1.0f - 2.0f * (FLOAT)bottom / (FLOAT)s->height, uvRight, uvBottom}
+    };
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    HRESULT hr = ID3D11DeviceContext_Map(s->context, (ID3D11Resource *)s->sceneVertexBuffer,
+        0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) { s->lastGraphicsFailure = hr; return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; }
+    memcpy(mapped.pData, vertices, sizeof(vertices));
+    ID3D11DeviceContext_Unmap(s->context, (ID3D11Resource *)s->sceneVertexBuffer, 0);
+    FLOAT constants[4] = {stepU, stepV, sigma, radius};
+    hr = ID3D11DeviceContext_Map(s->context, (ID3D11Resource *)s->sceneColorBuffer,
+        0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) { s->lastGraphicsFailure = hr; return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; }
+    memcpy(mapped.pData, constants, sizeof(constants));
+    ID3D11DeviceContext_Unmap(s->context, (ID3D11Resource *)s->sceneColorBuffer, 0);
+    ID3D11DeviceContext_PSSetConstantBuffers(s->context, 0, 1, &s->sceneColorBuffer);
+    ID3D11DeviceContext_PSSetShader(s->context, s->backdropBlurPixelShader, NULL, 0);
+    ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &source);
+    ID3D11DeviceContext_Draw(s->context, 4, 0);
+    ID3D11ShaderResourceView *none = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &none);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+/* Slow path for effectBackdropBlurRadiusPoints in 1..16. The already-painted
+   frame is sampled from the back buffer, Gaussian-blurred horizontally then
+   vertically in the node's expanded pixel rect (sigma = radius*scale/2,
+   halo = ceil(3*sigma), exactly the shared desktop contract), and composited
+   under the node rectangle before the node's own fill/border/image/text draw.
+   Every failure (non-opaque clear, kernel limit, allocation, map) leaves the
+   frame unblurred and keeps the node painting, matching the ABI's unblurred
+   fallback instead of inventing an approximate effect. */
+static void draw_windows_backdrop_blur(CjguiWindowsRendererSession *s,
+    const CjguiInternalRendererComposableNode *node, FLOAT x, FLOAT y, FLOAT width,
+    FLOAT height, FLOAT groupOpacity, const CjguiWindowsRotation *rotation,
+    const D3D11_RECT *clip) {
+    if (!s || !node || !clip || width <= 0.0f || height <= 0.0f) return;
+    const uint32_t requested = node->effectBackdropBlurRadiusPoints;
+    if (requested == 0u || requested > 16u) return;
+    /* A translucent clear has no stable backdrop; the reference implementation
+       deliberately keeps the unblurred path here. */
+    if (!(s->clearAlpha >= 1.0)) return;
+    if (!s->backdropBlurPixelShader || !s->sceneVertexShader || !s->sceneInputLayout ||
+        !s->sceneVertexBuffer || !s->sceneColorBuffer || !s->sceneSampler ||
+        !s->sceneRasterizer || !s->sceneBlendState || !s->renderTarget) return;
+    if (ensure_backdrop_resources(s) != CJGUI_INTERNAL_RENDERER_OK) return;
+    const FLOAT scale = (FLOAT)(s->dpi ? s->dpi : 96u) / 96.0f;
+    const FLOAT sigma = (FLOAT)requested * scale / 2.0f;
+    if (!isfinite((double)sigma) || sigma <= 0.0f) return;
+    const FLOAT haloValue = ceilf(3.0f * sigma);
+    if (!(haloValue >= 1.0f) || haloValue > 48.0f) return;
+    const LONG halo = (LONG)haloValue;
+    double minX = (double)x, minY = (double)y;
+    double maxX = (double)x + (double)width, maxY = (double)y + (double)height;
+    if (rotation && rotation->active) {
+        const double corners[4][2] = {
+            {(double)x, (double)y},
+            {(double)x + (double)width, (double)y},
+            {(double)x, (double)y + (double)height},
+            {(double)x + (double)width, (double)y + (double)height}
+        };
+        minX = minY = DBL_MAX;
+        maxX = maxY = -DBL_MAX;
+        for (uint32_t corner = 0u; corner < 4u; ++corner) {
+            FLOAT rotatedX = 0.0f, rotatedY = 0.0f;
+            windows_rotate_point(rotation, corners[corner][0], corners[corner][1],
+                &rotatedX, &rotatedY);
+            if ((double)rotatedX < minX) minX = (double)rotatedX;
+            if ((double)rotatedY < minY) minY = (double)rotatedY;
+            if ((double)rotatedX > maxX) maxX = (double)rotatedX;
+            if ((double)rotatedY > maxY) maxY = (double)rotatedY;
+        }
+    }
+    LONG qx = (LONG)floor(minX), qy = (LONG)floor(minY);
+    LONG right = (LONG)ceil(maxX), bottom = (LONG)ceil(maxY);
+    if (qx < 0) qx = 0;
+    if (qy < 0) qy = 0;
+    if (qx < clip->left) qx = clip->left;
+    if (qy < clip->top) qy = clip->top;
+    if (right > (LONG)s->width) right = (LONG)s->width;
+    if (bottom > (LONG)s->height) bottom = (LONG)s->height;
+    if (right > clip->right) right = clip->right;
+    if (bottom > clip->bottom) bottom = clip->bottom;
+    if (right <= qx || bottom <= qy) return;
+    LONG expLeft = qx > halo ? qx - halo : 0;
+    LONG expTop = qy > halo ? qy - halo : 0;
+    LONG expRight = right + halo < (LONG)s->width ? right + halo : (LONG)s->width;
+    LONG expBottom = bottom + halo < (LONG)s->height ? bottom + halo : (LONG)s->height;
+    ID3D11Resource *resource = NULL;
+    ID3D11Texture2D *backbuffer = NULL;
+    ID3D11RenderTargetView_GetResource(s->renderTarget, &resource);
+    if (resource) {
+        (void)ID3D11Resource_QueryInterface(resource, &IID_ID3D11Texture2D, (void **)&backbuffer);
+        ID3D11Resource_Release(resource);
+    }
+    if (!backbuffer) return;
+    /* Copy only the expanded ROI. The sampler clamps at texture edges, and both
+       passes read only pixels inside this box (the halo is carried explicitly),
+       so untouched texels are never sampled. */
+    ID3D11ShaderResourceView *noSource = NULL;
+    ID3D11DeviceContext_PSSetShaderResources(s->context, 0, 1, &noSource);
+    ID3D11DeviceContext_OMSetRenderTargets(s->context, 0, NULL, NULL);
+    const D3D11_BOX box = {(UINT)expLeft, (UINT)expTop, 0u,
+                           (UINT)expRight, (UINT)expBottom, 1u};
+    ID3D11DeviceContext_CopySubresourceRegion(s->context,
+        (ID3D11Resource *)s->backdropTextureA, 0u, (UINT)expLeft, (UINT)expTop, 0u,
+        (ID3D11Resource *)backbuffer, 0u, &box);
+    ID3D11Texture2D_Release(backbuffer);
+    UINT stride = sizeof(CjguiWindowsVertex), offset = 0u;
+    FLOAT factors[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    ID3D11DeviceContext_IASetInputLayout(s->context, s->sceneInputLayout);
+    ID3D11DeviceContext_IASetVertexBuffers(s->context, 0, 1, &s->sceneVertexBuffer,
+        &stride, &offset);
+    ID3D11DeviceContext_IASetPrimitiveTopology(s->context,
+        D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+    ID3D11DeviceContext_VSSetShader(s->context, s->sceneVertexShader, NULL, 0);
+    ID3D11DeviceContext_RSSetState(s->context, s->sceneRasterizer);
+    ID3D11DeviceContext_OMSetBlendState(s->context, NULL, factors, 0xffffffffu);
+    ID3D11DeviceContext_PSSetSamplers(s->context, 0, 1, &s->sceneSampler);
+    CjguiInternalRendererStatus status = draw_windows_blur_pass(s, s->backdropTargetB,
+        s->backdropViewA, qx, expTop, right, expBottom,
+        1.0f / (FLOAT)s->width, 0.0f, sigma, (FLOAT)halo);
+    if (status == CJGUI_INTERNAL_RENDERER_OK)
+        status = draw_windows_blur_pass(s, s->backdropTargetA, s->backdropViewB,
+            qx, qy, right, bottom, 0.0f, 1.0f / (FLOAT)s->height, sigma, (FLOAT)halo);
+    ID3D11DeviceContext_OMSetRenderTargets(s->context, 1, &s->renderTarget, NULL);
+    D3D11_VIEWPORT viewport = {0.0f, 0.0f, (FLOAT)s->width, (FLOAT)s->height, 0.0f, 1.0f};
+    ID3D11DeviceContext_RSSetViewports(s->context, 1, &viewport);
+    ID3D11DeviceContext_RSSetScissorRects(s->context, 1, clip);
+    ID3D11DeviceContext_OMSetBlendState(s->context, s->sceneBlendState, factors, 0xffffffffu);
+    if (status == CJGUI_INTERNAL_RENDERER_OK) {
+        /* Group opacity fades the sampled backdrop into the original backdrop
+           (the reference multiplies its whole composite by the group alpha). A
+           radius-only effect group passes 1 and replaces the rect exactly. */
+        FLOAT white[4] = {1.0f, 1.0f, 1.0f, groupOpacity};
+        (void)draw_scene_quad_rotated(s, x, y, width, height, white, s->backdropViewA,
+            rotation);
+    }
 }
 
 static CjguiInternalRendererStatus readback_scene_pixel_counts(CjguiWindowsRendererSession *s,
@@ -2010,9 +2573,11 @@ static int push_event_payload_internal(CjguiWindowsRendererSession *s,
     }
     uint32_t slot = s->eventTail;
     s->events[slot] = *event;
+    memset(s->selectionGestureSlots[slot],0,sizeof(s->selectionGestureSlots[slot]));
     memset(&s->pointerGeometries[slot], 0, sizeof(s->pointerGeometries[slot]));
     s->pointerSessionGenerations[slot] = 0u;
     s->pointerCoordinateEpochs[slot] = 0u;
+    s->pointerSequences[slot] = 0u;
     s->eventTextPayloads[slot] = copy;
     s->eventTextLengths[slot] = payloadLength;
     s->eventTail = (s->eventTail + 1) % CJGUI_WINDOWS_EVENT_CAPACITY;
@@ -2104,6 +2669,56 @@ static void windows_clip_constraint(const CjguiWindowsSceneNode *entry, uint32_t
     }
 }
 
+// Paint scissor for the rectangular clip chain: every ancestor aperture
+// intersects, each shifted by the owner offset mirrored in the sidecar. This
+// matches the hit-test chain; a non-positive constraint means "no constraint".
+// Corner radii stay unpainted here (the scissor is the only clip primitive).
+static int windows_node_clip_bounds(const CjguiWindowsSceneNode *entry, double scale,
+    LONG width, LONG height, LONG *outLeft, LONG *outTop, LONG *outRight, LONG *outBottom) {
+    if (!entry || !(scale > 0.0)) return 0;
+    const CjguiInternalRendererComposableNode *node = &entry->node;
+    uint32_t count = node->clipConstraintCount;
+    if (count > 4u) return 0;
+    double left = 0.0, top = 0.0, right = (double)width, bottom = (double)height;
+    if (count == 0u) {
+        if (node->clipWidth > 0.0 && node->clipHeight > 0.0) {
+            left = (double)node->clipX * scale;
+            top = (double)node->clipY * scale;
+            right = ((double)node->clipX + (double)node->clipWidth) * scale;
+            bottom = ((double)node->clipY + (double)node->clipHeight) * scale;
+        }
+    } else {
+        for (uint32_t index = 0u; index < count; index += 1u) {
+            double clipX = 0.0, clipY = 0.0, clipWidth = 0.0, clipHeight = 0.0, radius = 0.0;
+            windows_clip_constraint(entry, index, &clipX, &clipY, &clipWidth, &clipHeight, &radius);
+            if (!(clipWidth > 0.0) || !(clipHeight > 0.0)) continue;
+            double constraintLeft = clipX * scale;
+            double constraintTop = clipY * scale;
+            double constraintRight = (clipX + clipWidth) * scale;
+            double constraintBottom = (clipY + clipHeight) * scale;
+            if (constraintLeft > left) left = constraintLeft;
+            if (constraintTop > top) top = constraintTop;
+            if (constraintRight < right) right = constraintRight;
+            if (constraintBottom < bottom) bottom = constraintBottom;
+            if (right <= left || bottom <= top) return 0;
+        }
+    }
+    LONG clipLeft = (LONG)floor(left);
+    LONG clipTop = (LONG)floor(top);
+    LONG clipRight = (LONG)ceil(right);
+    LONG clipBottom = (LONG)ceil(bottom);
+    if (clipLeft < 0) clipLeft = 0;
+    if (clipTop < 0) clipTop = 0;
+    if (clipRight > width) clipRight = width;
+    if (clipBottom > height) clipBottom = height;
+    if (clipRight <= clipLeft || clipBottom <= clipTop) return 0;
+    if (outLeft) *outLeft = clipLeft;
+    if (outTop) *outTop = clipTop;
+    if (outRight) *outRight = clipRight;
+    if (outBottom) *outBottom = clipBottom;
+    return 1;
+}
+
 static int windows_entry_contains_point(const CjguiWindowsRendererSession *s,
     const CjguiWindowsSceneNode *entry, double x, double y) {
     if (!s || !entry || !entry->hasNode || !entry->hasGeometry) return 0;
@@ -2174,6 +2789,19 @@ static int windows_push_node_event(CjguiWindowsRendererSession *s, uint32_t inde
     uint32_t selectionStart, uint32_t selectionEnd, double x, double y,
     uint64_t bindingEpoch, const char *payload) {
     if (!s || !entry || !entry->hasNode) return 0;
+    int pointer = kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN ||
+        kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE ||
+        kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END ||
+        kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL;
+    uint64_t sequence = 0u;
+    if (pointer) {
+        if (!bindingEpoch || bindingEpoch != s->mouseGestureEpoch) return 0;
+        if (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN) sequence = 1u;
+        else {
+            if (!s->mousePointerSequence || s->mousePointerSequence == UINT64_MAX) return 0;
+            sequence = s->mousePointerSequence + 1u;
+        }
+    }
     uint32_t payloadBytes = payload ? (uint32_t)strlen(payload) : 0u;
     CjguiInternalRendererEvent event;
     memset(&event, 0, sizeof(event));
@@ -2211,6 +2839,29 @@ static int windows_push_node_event(CjguiWindowsRendererSession *s, uint32_t inde
     geometry->translateY = entry->geometry.translateY;
     s->pointerSessionGenerations[slot] = s->sessionGeneration;
     s->pointerCoordinateEpochs[slot] = s->coordinateEpoch;
+    s->pointerSequences[slot] = sequence;
+    if (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED &&
+        s->selectionGesturePhase && s->selectionGestureCurrent[1] &&
+        s->selectionGestureCurrent[4] == entry->node.nodeId &&
+        s->selectionGestureCurrent[5] == (uint64_t)entry->node.resourceId &&
+        s->selectionGestureCurrent[6] == entry->node.nodeKind) {
+        uint64_t *fact=s->selectionGestureSlots[slot];
+        if(s->selectionGestureProductionNext==UINT64_MAX){
+            s->selectionGestureCurrent[15]=6u;s->selectionGesturePhase=0u;
+        }else{
+        memcpy(fact,s->selectionGestureCurrent,sizeof(s->selectionGestureCurrent));
+        fact[2]=++s->selectionGestureProductionNext;fact[3]=s->selectionGesturePhase;
+        fact[7]=entry->node.acceptedBindingEpoch;fact[8]=projectionVersion;
+        fact[9]=s->coordinateEpoch;fact[10]=entry->layoutLease;
+        fact[11]=selectionStart;fact[12]=selectionEnd;
+        fact[13]=s->selectionGesturePhase==1u?selectionStart:s->mouseAnchor16;
+        fact[14]=s->selectionGesturePhase==1u?selectionEnd:s->mouseLastCaret16;
+        fact[15]=s->selectionGesturePhase==3u?2u:1u;
+        memcpy(s->selectionGestureCurrent,fact,sizeof(s->selectionGestureCurrent));
+        s->selectionGesturePhase=0u;
+        }
+    }
+    if (pointer) s->mousePointerSequence = sequence;
     s->dbgPushLog[s->dbgPushCount % 8u] = kind;
     s->dbgPushCount += 1u;
     return 1;
@@ -2235,6 +2886,7 @@ static void windows_free_mouse_target(CjguiWindowsRendererSession *s) {
     s->mouseFrozenValue = NULL;
     memset(&s->mouseFrozenNode, 0, sizeof(s->mouseFrozenNode));
     memset(&s->mouseFrozenGeometry, 0, sizeof(s->mouseFrozenGeometry));
+    s->mousePointerSequence = 0u;
     s->mouseNodeId = 0u;
     s->mouseProjectionVersion = 0u;
     s->mouseResourceId = -1;
@@ -2249,6 +2901,7 @@ static void windows_free_mouse_target(CjguiWindowsRendererSession *s) {
     s->mouseLastY = 0.0;
     s->mouseCaptureActive = 0u;
     s->mouseSelectionActive = 0u;
+    s->selectionGesturePhase=0u;
     s->mousePressActive = 0u;
     s->mousePressCancelled = 0u;
     s->mouseGestureEpoch = 0u;
@@ -2293,7 +2946,7 @@ static uint64_t windows_dbl_bits(double v) {
    严格（排版/正文即 caret 依据）。首个失配字段码与前后值经 out 参数返回，
    供 UP 诊断一次定位实际失败分支。 */
 static int windows_mouse_gate_check(const CjguiWindowsRendererSession *s,
-    const CjguiWindowsSceneNode *entry, int pressMode,
+    const CjguiWindowsSceneNode *entry, int pressMode, int ignoreLease,
     uint32_t *outReject, uint64_t *outOld, uint64_t *outNew) {
     uint32_t reject = 1u;
     uint64_t oldV = 0u, newV = 0u;
@@ -2339,8 +2992,11 @@ static int windows_mouse_gate_check(const CjguiWindowsRendererSession *s,
         else if (cur->clip3Width != fro->clip3Width) { reject = 10u; oldV = windows_dbl_bits(fro->clip3Width); newV = windows_dbl_bits(cur->clip3Width); }
         else if (cur->clip3Height != fro->clip3Height) { reject = 10u; oldV = windows_dbl_bits(fro->clip3Height); newV = windows_dbl_bits(cur->clip3Height); }
         else if (cur->clip3CornerRadius != fro->clip3CornerRadius) { reject = 10u; oldV = windows_dbl_bits(fro->clip3CornerRadius); newV = windows_dbl_bits(cur->clip3CornerRadius); }
-        else if (!pressMode && entry->layoutLease != s->mouseLayoutLease) { reject = 11u; oldV = s->mouseLayoutLease; newV = entry->layoutLease; }
-        else if ((!pressMode || cur->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) &&
+        else if (!pressMode && !ignoreLease && cur->nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER && entry->layoutLease != s->mouseLayoutLease) { reject = 11u; oldV = s->mouseLayoutLease; newV = entry->layoutLease; }
+        /* Slider output is certified by the shared mapping/receipt contract.
+           It can change its value while the captured identity and geometry stay. */
+        else if (cur->nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER &&
+            (!pressMode || cur->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) &&
             strcmp(entry->value ? entry->value : "", s->mouseFrozenValue) != 0) { reject = 12u; oldV = (uint64_t)strlen(s->mouseFrozenValue); newV = (uint64_t)strlen(entry->value ? entry->value : ""); }
         else if (entry->geometry.translateX != s->mouseFrozenGeometry.translateX) { reject = 13u; oldV = windows_dbl_bits(s->mouseFrozenGeometry.translateX); newV = windows_dbl_bits(entry->geometry.translateX); }
         else if (entry->geometry.translateY != s->mouseFrozenGeometry.translateY) { reject = 13u; oldV = windows_dbl_bits(s->mouseFrozenGeometry.translateY); newV = windows_dbl_bits(entry->geometry.translateY); }
@@ -2363,17 +3019,17 @@ static int windows_mouse_gate_check(const CjguiWindowsRendererSession *s,
 
 static int windows_mouse_geometry_still_matches(const CjguiWindowsRendererSession *s,
     const CjguiWindowsSceneNode *entry) {
-    return windows_mouse_gate_check(s, entry, 0, NULL, NULL, NULL);
+    return windows_mouse_gate_check(s, entry, 0, 0, NULL, NULL, NULL);
 }
 
 static int windows_mouse_press_still_matches(const CjguiWindowsRendererSession *s,
     const CjguiWindowsSceneNode *entry,
     uint32_t *outReject, uint64_t *outOld, uint64_t *outNew) {
-    return windows_mouse_gate_check(s, entry, 1, outReject, outOld, outNew);
+    return windows_mouse_gate_check(s, entry, 1, 0, outReject, outOld, outNew);
 }
 
 static CjguiWindowsSceneNode *windows_current_mouse_target(CjguiWindowsRendererSession *s,
-    uint32_t *outIndex, int pressMode,
+    uint32_t *outIndex, int pressMode, int ignoreLease,
     uint32_t *outReject, uint64_t *outOld, uint64_t *outNew) {
     if (outIndex) *outIndex = UINT32_MAX;
     if (outReject) *outReject = 0u;
@@ -2398,7 +3054,7 @@ static CjguiWindowsSceneNode *windows_current_mouse_target(CjguiWindowsRendererS
     }
     uint32_t gateReject = 0u;
     uint64_t gateOld = 0u, gateNew = 0u;
-    if (!windows_mouse_gate_check(s, entry, pressMode, &gateReject, &gateOld, &gateNew)) {
+    if (!windows_mouse_gate_check(s, entry, pressMode, ignoreLease, &gateReject, &gateOld, &gateNew)) {
         if (outReject) *outReject = gateReject;
         if (outOld) *outOld = gateOld;
         if (outNew) *outNew = gateNew;
@@ -2478,6 +3134,8 @@ static int windows_focus_and_select_at(CjguiWindowsRendererSession *s, uint32_t 
 
 static void windows_cancel_mouse_gesture(CjguiWindowsRendererSession *s) {
     if (!s) return;
+    if (s->mouseSelectionActive && s->selectionGestureCurrent[15] < 2u)
+        s->selectionGestureCurrent[15]=5u;
     uint64_t binding = s->mouseGestureEpoch;
     CjguiWindowsSceneNode frozen;
     memset(&frozen, 0, sizeof(frozen));
@@ -2553,6 +3211,22 @@ static void windows_handle_mouse_down(CjguiWindowsRendererSession *s, LPARAM lPa
     s->dbgUpFlags = 0u;
     s->dbgSceneUp = 0u;
     s->dbgUpEntryMark = 0u;
+    if (entry->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER) {
+        if (!windows_event_room(s, 2u, 0u) || s->mouseNextGestureEpoch == UINT64_MAX ||
+            !windows_freeze_mouse_target(s, index, entry, x, y)) return;
+        s->mouseGestureEpoch = ++s->mouseNextGestureEpoch;
+        if (!s->mouseGestureEpoch || !windows_push_node_event(s, index, entry,
+            s->acceptedScene.version, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN,
+            0u, 0u, x, y, s->mouseGestureEpoch, NULL)) {
+            windows_free_mouse_target(s);
+            return;
+        }
+        s->pointerTerminalReservedSlots = 1u;
+        s->mouseCaptureActive = 1u;
+        SetCapture(s->hwnd);
+        if (GetCapture() != s->hwnd) windows_cancel_mouse_gesture(s);
+        return;
+    }
     if (windows_is_text_input_node(entry->node.nodeKind)) {
         uint32_t caret = 0u;
         uint32_t requiredSlots = entry->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ? 4u : 2u;
@@ -2568,7 +3242,23 @@ static void windows_handle_mouse_down(CjguiWindowsRendererSession *s, LPARAM lPa
 #ifdef CJGUI_WINDOWS_SCENE_CONTRACT_TEST
         s->contractMouseDiag[2] = 5;
 #endif
+        if (entry->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) {
+            if (s->selectionGestureNext==UINT64_MAX ||
+                s->selectionGestureProductionNext==UINT64_MAX) {windows_free_mouse_target(s);return;}
+            memset(s->selectionGestureCurrent,0,sizeof(s->selectionGestureCurrent));
+            s->selectionGestureCurrent[0]=s->sessionGeneration;
+            s->selectionGestureCurrent[1]=++s->selectionGestureNext;
+            s->selectionGestureCurrent[4]=entry->node.nodeId;
+            s->selectionGestureCurrent[5]=(uint64_t)entry->node.resourceId;
+            s->selectionGestureCurrent[6]=entry->node.nodeKind;
+            s->selectionGestureCurrent[15]=1u;
+            s->selectionGestureCurrent[16]=s->acceptedScene.version;
+            s->selectionGestureCurrent[17]=entry->layoutLease;
+            s->selectionGestureCurrent[18]=s->coordinateEpoch;
+            s->selectionGesturePhase=1u;
+        }
         if (!windows_focus_and_select_at(s, index, entry, x, y, &caret)) {
+            if (s->selectionGesturePhase) s->selectionGestureCurrent[15]=6u;
             windows_free_mouse_target(s);
             return;
         }
@@ -2601,7 +3291,7 @@ static void windows_handle_mouse_down(CjguiWindowsRendererSession *s, LPARAM lPa
 #endif
         if (GetCapture() != s->hwnd) {
             if (s->mouseCaptureActive) windows_cancel_mouse_gesture(s);
-            else windows_free_mouse_target(s);
+            else {s->selectionGestureCurrent[15]=5u;windows_free_mouse_target(s);}
         }
         return;
     }
@@ -2637,18 +3327,45 @@ static void windows_handle_mouse_move(CjguiWindowsRendererSession *s, LPARAM lPa
     s->mouseLastX = x; s->mouseLastY = y;
     int pressMode = (!s->mouseCaptureActive && !s->mouseSelectionActive && s->mousePressActive);
     uint32_t index = UINT32_MAX;
-    CjguiWindowsSceneNode *entry = windows_current_mouse_target(s, &index, pressMode, NULL, NULL, NULL);
-    if (!entry) { windows_cancel_mouse_gesture(s); return; }
+    uint32_t moveReject = 0u;
+    uint64_t moveOld = 0ull, moveNew = 0ull;
+    CjguiWindowsSceneNode *entry = windows_current_mouse_target(s, &index, pressMode, 0,
+        &moveReject, &moveOld, &moveNew);
+    if (!entry && moveReject == 11u) {
+        /* The instance was re-published with the same identity, content and
+           geometry but a fresh layout lease -- that is what a selection
+           repaint does to a display text node. Cancel here would end the drag
+           after the first move, so the gesture continues on the legal new
+           geometry (the app keeps its own source anchor and gesture epoch);
+           every other field is still checked strictly before this is allowed. */
+        uint32_t rest = 0u;
+        entry = windows_current_mouse_target(s, &index, pressMode, 1, &rest, &moveOld, &moveNew);
+        if (entry) {
+            s->mouseLayoutLease = entry->layoutLease;
+            s->mouseProjectionVersion = s->acceptedScene.version;
+            s->dbgMoveContinued += 1u;
+            moveReject = 0u;
+        } else {
+            moveReject = rest;
+        }
+    }
+    s->dbgMoveStage = entry ? 3u : 2u;
+    s->dbgMoveReject = moveReject;
+    s->dbgMoveOld = moveOld;
+    s->dbgMoveNew = moveNew;
+    if (!entry) { s->dbgMoveCancelled += 1u; windows_cancel_mouse_gesture(s); return; }
     if (s->mouseCaptureActive) {
         if (!windows_push_node_event(s, index, entry, s->acceptedScene.version,
             CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE,
-            0u, 0u, x, y, s->mouseGestureEpoch, NULL)) windows_cancel_mouse_gesture(s);
+            0u, 0u, x, y, s->mouseGestureEpoch, NULL)) { s->dbgMoveReject = 20u; windows_cancel_mouse_gesture(s); }
+        else s->dbgMoveUpdates += 1u;
         return;
     }
     if (s->mouseSelectionActive) {
         uint32_t caret = 0u;
         if (!windows_text_position_at(s, entry, x, y, &caret)) { windows_cancel_mouse_gesture(s); return; }
         s->mouseLastCaret16 = caret;
+        s->selectionGesturePhase=2u;
         s->selectionStart16 = s->mouseAnchor16 < caret ? s->mouseAnchor16 : caret;
         s->selectionEnd16 = s->mouseAnchor16 < caret ? caret : s->mouseAnchor16;
         if (!windows_push_node_event(s, index, entry, s->acceptedScene.version,
@@ -2682,8 +3399,22 @@ static void windows_handle_mouse_up(CjguiWindowsRendererSession *s, LPARAM lPara
     uint32_t index = UINT32_MAX;
     uint32_t gateReject = 0u;
     uint64_t gateOld = 0u, gateNew = 0u;
-    CjguiWindowsSceneNode *entry = windows_current_mouse_target(s, &index, pressMode,
+    CjguiWindowsSceneNode *entry = windows_current_mouse_target(s, &index, pressMode, 0,
         &gateReject, &gateOld, &gateNew);
+    if (!entry && gateReject == 11u) {
+        /* Same repaint continuation as MOVE: the terminal must land on the
+           instance the drag is actually on, or releasing the button would
+           cancel a selection the held moves already established. */
+        uint32_t rest = 0u;
+        entry = windows_current_mouse_target(s, &index, pressMode, 1, &rest, &gateOld, &gateNew);
+        if (entry) {
+            s->mouseLayoutLease = entry->layoutLease;
+            s->mouseProjectionVersion = s->acceptedScene.version;
+            gateReject = 0u;
+        } else {
+            gateReject = rest;
+        }
+    }
     if (!entry) {
         s->dbgUpStage = 2u;
         s->dbgUpReject = gateReject;
@@ -2716,12 +3447,15 @@ static void windows_handle_mouse_up(CjguiWindowsRendererSession *s, LPARAM lPara
     if (s->mouseSelectionActive) {
         uint32_t caret = 0u;
         if (windows_text_position_at(s, entry, x, y, &caret)) {
+            s->mouseLastCaret16=caret;s->selectionGesturePhase=3u;
             s->selectionStart16 = s->mouseAnchor16 < caret ? s->mouseAnchor16 : caret;
             s->selectionEnd16 = s->mouseAnchor16 < caret ? caret : s->mouseAnchor16;
-            (void)windows_push_node_event(s, index, entry, s->acceptedScene.version,
+            if (!windows_push_node_event(s, index, entry, s->acceptedScene.version,
                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED,
-                s->selectionStart16, s->selectionEnd16, x, y, 0u, NULL);
-        }
+                s->selectionStart16, s->selectionEnd16, x, y, 0u, NULL)) {
+                s->selectionGestureCurrent[15]=6u;
+            }
+        } else {s->selectionGestureCurrent[15]=4u;}
         windows_free_mouse_target(s);
         if (GetCapture() == s->hwnd) ReleaseCapture();
         return;
@@ -3758,16 +4492,27 @@ static const CjguiWindowsTextRendererVtbl g_textRendererVtbl = {
     text_renderer_draw_inline_object
 };
 
+static int windows_selection_paint_disabled(void) {
+    static int disabled = -1;
+    if (disabled < 0) disabled = getenv("PHAROS_TEST_DISABLE_SELECTION_PAINT") ? 1 : 0;
+    return disabled;
+}
+
 static CjguiInternalRendererStatus apply_text_run_backgrounds(CjguiWindowsRendererSession *s,
     CjguiWindowsSceneNode *node, const char *runText, IDWriteTextLayout *layout,
-    CjguiWindowsTextRenderer *renderer) {
+    CjguiWindowsTextRenderer *renderer, uint32_t *outDecorStart16, uint32_t *outDecorEnd16) {
     CjguiWindowsTextStyleRun *runs = NULL;
     uint32_t count = 0u;
+    if (outDecorStart16) *outDecorStart16 = 0u;
+    if (outDecorEnd16) *outDecorEnd16 = 0u;
     CjguiInternalRendererStatus status = parse_style_run_list(
         node->textRuns ? node->textRuns : "", runText ? runText : "", &runs, &count);
     if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
     for (uint32_t i = 0; i < count; ++i) {
         CjguiWindowsTextStyleRun *run = &runs[i];
+        /* Selection is a paint-time decoration over the accepted layout. It is
+           never baked into the body bitmap or allowed to invalidate geometry. */
+        if (run->selectionBackgroundOnly) continue;
         if (!run->hasBackground) continue;
         UINT32 metricCount = 0u;
         DWRITE_TEXT_RANGE range = {run->start16, run->end16 - run->start16};
@@ -3814,6 +4559,8 @@ static CjguiInternalRendererStatus apply_text_run_backgrounds(CjguiWindowsRender
         text_budget_release_scratch(s, bytes);
     }
     free(runs);
+    if (outDecorStart16) *outDecorStart16 = 0u;
+    if (outDecorEnd16) *outDecorEnd16 = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3867,8 +4614,10 @@ static CjguiInternalRendererStatus rasterize_text_layout(CjguiWindowsRendererSes
     renderer.diagnostic.layoutLineCount = diagnosticMetrics.lineCount;
 #endif
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_OK;
+    uint32_t decorStart = 0u, decorEnd = 0u;
     if (applyRuns)
-        status = apply_text_run_backgrounds(s, node, runText, layout, &renderer);
+        status = apply_text_run_backgrounds(s, node, runText, layout, &renderer,
+            &decorStart, &decorEnd);
     HRESULT hr = status == CJGUI_INTERNAL_RENDERER_OK
         ? IDWriteTextLayout_Draw(layout, NULL, (IDWriteTextRenderer *)&renderer,
             -(FLOAT)originX, -(FLOAT)originY) : E_FAIL;
@@ -3878,6 +4627,12 @@ static CjguiInternalRendererStatus rasterize_text_layout(CjguiWindowsRendererSes
     s->sceneTextDiagnostic = renderer.diagnostic;
 #endif
     if (status != CJGUI_INTERNAL_RENDERER_OK || FAILED(hr) || FAILED(renderer.failure)) {
+        /* This bitmap is discarded, so it carries no decoration: an older record must
+           not survive the failure and credit a frame that never painted the range. */
+        if (layout == node->textLayout) {
+            node->rasterSelectionStart16 = 0u; node->rasterSelectionEnd16 = 0u;
+            node->rasterSelectionValid = 0u;
+        }
         free(rgba);
         text_budget_release_scratch(s, textureBytes);
         if (renderer.budgetRejected) return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
@@ -3887,6 +4642,11 @@ static CjguiInternalRendererStatus rasterize_text_layout(CjguiWindowsRendererSes
             fprintf(stderr,"CJGUI_WINDOWS_RASTER_FAIL node=%llu draw=%08lx renderer=%08lx runs=%d size=%ux%u\n",
                 (unsigned long long)node->node.nodeId,(unsigned long)hr,(unsigned long)renderer.failure,applyRuns,width,height);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (layout == node->textLayout) {
+        node->rasterSelectionStart16 = decorStart;
+        node->rasterSelectionEnd16 = decorEnd;
+        node->rasterSelectionValid = decorEnd > decorStart ? 1u : 0u;
     }
     uint64_t maskNonzero = 0u;
     for (uint64_t i = 0; i < pixels; ++i)
@@ -3938,8 +4698,11 @@ static CjguiInternalRendererStatus rasterize_text_layout(CjguiWindowsRendererSes
     lease->refs = 1u; lease->bytes = textureBytes;
     lease->sessionBytesInUse = &s->textTextureBytesInUse;
     lease->sessionCountInUse = &s->textTextureResourceCount;
+    lease->sessionAllocationCount = &s->textTextureLeaseAllocationCount;
+    lease->sessionReleaseCount = &s->textTextureLeaseReleaseCount;
     lease->texture = texture; lease->view = view;
     s->textTextureResourceCount += 1u;
+    s->textTextureLeaseAllocationCount += 1u;
 #ifdef CJGUI_WINDOWS_SCENE_CONTRACT_TEST
     (void)InterlockedExchangeAdd64(&g_contractLiveTextTextureBytes, (LONG64)textureBytes);
     (void)InterlockedIncrement(&g_contractLiveTextTextureResources);
@@ -4159,6 +4922,23 @@ static uint64_t windows_fnv1a64(uint64_t seed, const void *data, size_t length) 
     return hash;
 }
 
+static void windows_trace_small_display(CjguiWindowsRendererSession *s, const char *stage,
+    uint64_t preparation, uint64_t scene, const CjguiWindowsSceneNode *node) {
+    if (!windows_owner_trace_enabled() || !node || !node->hasNode ||
+        (node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT &&
+         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT)) return;
+    const char *value = node->value ? node->value : "";
+    size_t bytes = strlen(value);
+    if (bytes > 32u) return;
+    fprintf(stderr, "CJGUI_WINDOWS_DISPLAY_NATIVE stage=%s session=%llu generation=%llu prep=%llu scene=%llu node=%llu resource=%lld bytes=%llu preserve=%u value_hex=",
+        stage, (unsigned long long)s->token, (unsigned long long)s->sessionGeneration,
+        (unsigned long long)preparation, (unsigned long long)scene,
+        (unsigned long long)node->node.nodeId, (long long)node->node.resourceId,
+        (unsigned long long)bytes, node->node.preservesActiveLocalText);
+    for (size_t i = 0; i < bytes; ++i) fprintf(stderr, "%02x", (unsigned char)value[i]);
+    fprintf(stderr, "\n"); fflush(stderr);
+}
+
 static uint64_t windows_text_layout_input_key(CjguiWindowsRendererSession *s,
     const CjguiWindowsSceneNode *node, const char *bodyText) {
     uint64_t key = 1469598103934665603ull;
@@ -4187,7 +4967,35 @@ static uint64_t windows_text_layout_input_key(CjguiWindowsRendererSession *s,
     const char *label = (node && node->label) ? node->label : "";
     key = windows_fnv1a64(key, label, strlen(label) + 1u);
     const char *runs = (node && node->textRuns) ? node->textRuns : "";
-    key = windows_fnv1a64(key, runs, strlen(runs) + 1u);
+    CjguiWindowsTextStyleRun *parsed = NULL;
+    uint32_t runCount = 0u;
+    CjguiInternalRendererStatus parsedStatus = parse_style_run_list(runs, body, &parsed, &runCount);
+    if (parsedStatus == CJGUI_INTERNAL_RENDERER_OK) {
+        for (uint32_t i = 0; i < runCount; ++i) {
+            const CjguiWindowsTextStyleRun *run = &parsed[i];
+            if (run->selectionBackgroundOnly) continue;
+            key = windows_fnv1a64(key, &run->start16, sizeof(run->start16));
+            key = windows_fnv1a64(key, &run->end16, sizeof(run->end16));
+            key = windows_fnv1a64(key, &run->fontSize, sizeof(run->fontSize));
+            key = windows_fnv1a64(key, &run->fontWeight, sizeof(run->fontWeight));
+            key = windows_fnv1a64(key, &run->fontFamily, sizeof(run->fontFamily));
+            key = windows_fnv1a64(key, &run->red, sizeof(run->red));
+            key = windows_fnv1a64(key, &run->green, sizeof(run->green));
+            key = windows_fnv1a64(key, &run->blue, sizeof(run->blue));
+            key = windows_fnv1a64(key, &run->alpha, sizeof(run->alpha));
+            key = windows_fnv1a64(key, &run->hasBackground, sizeof(run->hasBackground));
+            key = windows_fnv1a64(key, &run->backgroundRed, sizeof(run->backgroundRed));
+            key = windows_fnv1a64(key, &run->backgroundGreen, sizeof(run->backgroundGreen));
+            key = windows_fnv1a64(key, &run->backgroundBlue, sizeof(run->backgroundBlue));
+            key = windows_fnv1a64(key, &run->backgroundAlpha, sizeof(run->backgroundAlpha));
+        }
+        free(parsed);
+    } else {
+        /* Invalid runs fail preparation later; keep them distinct so no stale
+           valid layout can be adopted while that rejection is in flight. */
+        key = windows_fnv1a64(key, runs, strlen(runs) + 1u);
+        free(parsed);
+    }
     if (!key) key = 1u;
     return key;
 }
@@ -4228,6 +5036,10 @@ static void release_node_textures_only(CjguiWindowsSceneNode *node) {
     node->labelTextureWidth = 0u;
     node->labelTextureHeight = 0u;
     node->textMaskNonzeroPixels = 0u;
+    /* No bitmap, no painted decoration: the record describes pixels that are gone. */
+    node->rasterSelectionStart16 = 0u;
+    node->rasterSelectionEnd16 = 0u;
+    node->rasterSelectionValid = 0u;
 }
 
 static int adopt_old_text_layout(CjguiWindowsSceneNode *next,
@@ -4280,6 +5092,11 @@ static int adopt_old_text_layout(CjguiWindowsSceneNode *next,
     next->layoutLease = old->layoutLease;
     next->textLayoutInputKey = old->textLayoutInputKey;
     next->textMaskNonzeroPixels = old->textMaskNonzeroPixels;
+    /* The adopted bitmap is the old one, byte for byte, so it carries exactly the
+       decoration the old node was credited with painting. */
+    next->rasterSelectionStart16 = old->rasterSelectionStart16;
+    next->rasterSelectionEnd16 = old->rasterSelectionEnd16;
+    next->rasterSelectionValid = old->rasterSelectionValid;
     return 1;
 }
 
@@ -4404,6 +5221,11 @@ static CjguiInternalRendererStatus prepare_scene_node_raster(CjguiWindowsRendere
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// ABI 5 adds letterSpacing / lineHeightPoints / maxLines / ellipsisEnabled /
+// cornerRadii* to the node POD. Windows currently CARRIES these fields WITHOUT
+// painting them: DWrite keeps natural tracking and line height, overflow stays
+// on the legacy textMaxLines/textOverflow path, and corners stay uniform.
+// Implement them here and in the rounded-rect helpers before claiming support.
 static CjguiInternalRendererStatus prepare_scene_node_text(CjguiWindowsRendererSession *s,
     CjguiWindowsScene *scene, uint32_t nodeIndex, CjguiWindowsSceneNode *node) {
     if (!windows_text_node_kind(node->node.nodeKind)) return CJGUI_INTERNAL_RENDERER_OK;
@@ -4424,6 +5246,7 @@ static CjguiInternalRendererStatus prepare_scene_node_text(CjguiWindowsRendererS
         CjguiWindowsSceneNode *old = &scene->nodes[nodeIndex];
         if (old->hasNode && old->node.nodeId == node->node.nodeId &&
             old->textLayoutInputKey == layoutKey && old->textLayout && adopt_old_text_layout(node, old)) {
+            ++s->textLayoutReuseCount;
             uint64_t rasterKey = windows_text_raster_input_key(layoutKey,
                 node->node.textRed, node->node.textGreen, node->node.textBlue, node->node.textAlpha);
             uint64_t oldRasterKey = windows_text_raster_input_key(old->textLayoutInputKey,
@@ -4479,6 +5302,27 @@ failed:
 
 /* Build replacement raster coverage before changing the accepted viewport.
    Allocation/GPU refusal preserves the entire raw wheel and old pixels. */
+static CjguiInternalRendererStatus replace_windows_multiline_viewport(
+    CjguiWindowsRendererSession *s, uint32_t index, double offset) {
+    CjguiWindowsSceneNode *node = &s->acceptedScene.nodes[index];
+    if (!isfinite(offset) || offset < 0.0 || !node->textLayout || !node->layoutLease ||
+        node->textDpi != s->dpi || node->node.height <= 0 || s->graphicsRecoveryPending)
+        return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+    if (offset == node->multilineScrollY) return CJGUI_INTERNAL_RENDERER_OK;
+    CjguiWindowsSceneNode next;
+    CjguiInternalRendererStatus st = clone_scene_node(&next, node);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) return st;
+    next.hasGeometry = node->hasGeometry;
+    next.multilineScrollY = offset;
+    st = prepare_scene_node_raster(s, &s->acceptedScene, index, &next);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) { release_scene_node(&next); return st; }
+    release_scene_node(node);
+    *node = next;
+    s->multilineViewportEpochPending = 1u;
+    s->multilineViewportPaintPending = 1u;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 static int scroll_windows_multiline_viewport(CjguiWindowsRendererSession *s,
     uint32_t index, int delta, UINT wheelLines) {
     CjguiWindowsSceneNode *node = &s->acceptedScene.nodes[index];
@@ -4491,19 +5335,24 @@ static int scroll_windows_multiline_viewport(CjguiWindowsRendererSession *s,
     double step = wheelLines == WHEEL_PAGESCROLL ? node->node.height : wheelLines * lineHeight;
     double offset = fmin(fmax(0.0, node->multilineScrollY - (double)delta / WHEEL_DELTA * step),
         fmax(0.0, (double)metrics.height - node->node.height));
-    if (offset == node->multilineScrollY) return 1;
-    CjguiWindowsSceneNode next;
-    CjguiInternalRendererStatus st = clone_scene_node(&next, node);
-    if (st != CJGUI_INTERNAL_RENDERER_OK) return 0;
-    next.hasGeometry = node->hasGeometry;
-    next.multilineScrollY = offset;
-    st = prepare_scene_node_raster(s, &s->acceptedScene, index, &next);
-    if (st != CJGUI_INTERNAL_RENDERER_OK) { release_scene_node(&next); return 0; }
-    release_scene_node(node);
-    *node = next;
-    s->multilineViewportEpochPending = 1u;
-    s->multilineViewportPaintPending = 1u;
-    return 1;
+    return replace_windows_multiline_viewport(s, index, offset) == CJGUI_INTERNAL_RENDERER_OK;
+}
+
+/* A pending candidate may have copied the viewport before a selection reveal
+   or a wheel was accepted. Reconcile at the original final raster boundary,
+   only for the identical body, owner, layout and binding. */
+static void preserve_accepted_multiline_viewport(CjguiWindowsRendererSession *s,
+    CjguiWindowsSceneNode *candidate) {
+    CjguiWindowsSceneNode *live = scene_node_by_id(&s->acceptedScene,candidate->node.nodeId);
+    if (candidate->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT ||
+        !live || live->node.nodeKind != candidate->node.nodeKind ||
+        live->node.resourceId != candidate->node.resourceId ||
+        live->node.acceptedBindingEpoch != candidate->node.acceptedBindingEpoch ||
+        live->textLayoutInputKey != candidate->textLayoutInputKey ||
+        strcmp(live->value ? live->value : "",candidate->value ? candidate->value : "") ||
+        strcmp(live->semanticId ? live->semanticId : "",candidate->semanticId ? candidate->semanticId : "") ||
+        strcmp(live->bindingKey ? live->bindingKey : "",candidate->bindingKey ? candidate->bindingKey : "")) return;
+    candidate->multilineScrollY = live->multilineScrollY;
 }
 
 static CjguiInternalRendererStatus validate_composable_node(
@@ -4704,8 +5553,30 @@ static CjguiInternalRendererStatus windows_prep_copy_strings(CjguiWindowsSceneNo
 
 /* 回收一个有界单元：从队首尾部释放同一下标的已准备节点与在途声明。
    返回 1 表示本单元确实回收了资源；队列为空返回 0。 */
+
+/* Bounded diagnostic of the actual reclaim primitive. The executor may be
+   the UI pump or, after join, the last dispatcher waiter; never infer its TID. */
+static void windows_prep_retire_unit_observe(CjguiWindowsRendererSession *s,
+    uint64_t ticket,uint64_t start,uint64_t nodes,uint64_t bytes,uint64_t complete) {
+    if (!s->traceEnabled) return;
+    uint64_t end=windows_prep_clock_ns(),index=s->traceCount;
+    DWORD executing=GetCurrentThreadId();
+    windows_trace(s,"prep_retire_unit",ticket,complete,end-start,
+        CJGUI_INTERNAL_RENDERER_OK,executing,s->pumpThreadId);
+    fprintf(stderr,"CJGUI_WINDOWS_RETIRE_UNIT pid=%lu session=%llu generation=%llu index=%llu ticket=%llu start_ns=%llu end_ns=%llu executing_tid=%lu ui_tid=%lu pump_running=%u released_nodes=%llu released_bytes=%llu graph_complete=%llu retiring=%u live=%llu accounting_errors=%llu\n",
+        (unsigned long)GetCurrentProcessId(),(unsigned long long)s->token,(unsigned long long)s->sessionGeneration,
+        (unsigned long long)index,(unsigned long long)ticket,
+        (unsigned long long)start,(unsigned long long)end,(unsigned long)executing,
+        (unsigned long)s->pumpThreadId,(unsigned)s->pumpThreadRunning,
+        (unsigned long long)nodes,(unsigned long long)bytes,(unsigned long long)complete,
+        s->preparationRetiringCount,(unsigned long long)s->preparationLiveBytes,
+        (unsigned long long)s->preparationRetireAccountingErrors);
+}
+
 static int windows_prep_retire_unit(CjguiWindowsRendererSession *s) {
     if (!s || s->preparationRetiringCount == 0u) return 0;
+    uint64_t unitStarted=s->traceEnabled?windows_prep_clock_ns():0u;
+    uint64_t unitTicket=s->preparationRetiring[0].preparationId;
     if (s->preparationRetiring[0].releaseCursor > 0u) {
         uint32_t cursor = s->preparationRetiring[0].releaseCursor - 1u;
         CjguiWindowsSceneNode *sceneNode = &s->preparationRetiring[0].scene.nodes[cursor];
@@ -4726,6 +5597,7 @@ static int windows_prep_retire_unit(CjguiWindowsRendererSession *s) {
         }
         s->preparationRetiredNodeCount += 1u;
         s->preparationRetiredBytes += bytes;
+        windows_prep_retire_unit_observe(s,unitTicket,unitStarted,1u,bytes,0u);
         return 1;
     }
     /* 节点已全部释放：此时才交还数组与槽位——这才是这张票真实回收完成的时刻。
@@ -4764,6 +5636,7 @@ static int windows_prep_retire_unit(CjguiWindowsRendererSession *s) {
     s->preparationLastGraphBytes = graphBytes;
     windows_prep_log_ticket("reclaim_complete", s, graphNodes, graphBytes, ticket,
         cancelNs, retiredNs, releasedNodes, releasedBytes, graphNodes, graphBytes);
+    windows_prep_retire_unit_observe(s,unitTicket,unitStarted,0u,0u,1u);
     return 1;
 }
 
@@ -4780,8 +5653,13 @@ static int windows_prep_drain(CjguiWindowsRendererSession *s, uint64_t ownerDead
         if (!windows_prep_retire_unit(s)) break;
         reclaimed += 1u;
     }
-    if (reclaimed != 0u)
+    if (reclaimed != 0u) {
         windows_prep_log("drain", s, reclaimed, s->preparationRetiringCount < 2u ? 1u : 0u);
+        if (s->traceEnabled)
+            windows_trace(s, "prep_drain", reclaimed, s->preparationLastTicket,
+                windows_prep_clock_ns() - now, CJGUI_INTERNAL_RENDERER_OK,
+                GetCurrentThreadId(), s->pumpThreadId);
+    }
     return s->preparationRetiringCount < 2u;
 }
 
@@ -5040,6 +5918,8 @@ static CjguiInternalRendererStatus prepare_composable_node_impl(
         return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
     }
     s->preparationIncoming[index] = next;
+    windows_trace_small_display(s, "prepared", preparationId,
+        s->preparationProjectionVersion, &s->preparationIncoming[index]);
     s->preparationState[index] = 1u;
     s->preparationOwnedBytes += next.ownedBytes;
     s->preparationLiveBytes += next.ownedBytes;
@@ -5155,7 +6035,12 @@ static CjguiInternalRendererStatus advance_composable_preparation_impl(
             return CJGUI_INTERNAL_RENDERER_OK;
         }
         uint32_t preparedBefore = s->preparationPreparedCount;
+        uint64_t unitStartedNs = s->traceEnabled ? windows_prep_clock_ns() : 0u;
         CjguiInternalRendererStatus status = windows_prep_advance_unit(s);
+        if (s->traceEnabled)
+            windows_trace(s, "prep_work", s->preparationPreparedCount - preparedBefore,
+                preparationId, windows_prep_clock_ns() - unitStartedNs,
+                status, GetCurrentThreadId(), s->pumpThreadId);
         if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
         *outReady = s->preparationReady ? 1u : 0u;
         if (*outReady) {
@@ -5215,6 +6100,8 @@ static CjguiInternalRendererStatus promote_composable_preparation_impl(
             s->preparationLiveBytes = 0u;
         }
     }
+    s->candidateScene.inputObservation = s->preparationScene.inputObservation;
+    s->displayTracePreparationId = preparationId;
     release_scene(&s->preparationScene);
     windows_prep_release_scene_nodes(s->preparationIncoming, s->preparationNodeCount);
     free(s->preparationState);
@@ -5252,6 +6139,10 @@ static CjguiInternalRendererStatus cancel_composable_preparation_impl(
         s->preparationLastTicket, cancelEnteredNs, s->preparationLastRetiredNs,
         s->preparationLastReleasedNodes, s->preparationLastReleasedBytes,
         s->preparationLastGraphNodes, s->preparationLastGraphBytes);
+    if (s->traceEnabled)
+        windows_trace(s, "prep_cancel", preparationId, 0u,
+            windows_prep_clock_ns() - cancelEnteredNs, CJGUI_INTERNAL_RENDERER_OK,
+            GetCurrentThreadId(), s->pumpThreadId);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5261,7 +6152,9 @@ static CjguiInternalRendererStatus configure_composable_scene_impl(
     CjguiWindowsRendererSession *s = find_session(token);
     CjguiInternalRendererStatus owner = require_session(s);
     if (owner != CJGUI_INTERNAL_RENDERER_OK) return owner;
-    return scene_configure(s, projectionVersion, nodeCount);
+    CjguiInternalRendererStatus configured = scene_configure(s, projectionVersion, nodeCount);
+    if (configured == CJGUI_INTERNAL_RENDERER_OK) s->displayTracePreparationId = 0u;
+    return configured;
 }
 
 static CjguiInternalRendererStatus discard_composable_scene_candidate_impl(
@@ -5493,6 +6386,8 @@ static CjguiInternalRendererStatus set_composable_scene_node_impl(
     next.candidateValueStaged = 1u;
     next.candidateRunsPending = 0u;
     s->candidateScene.nodes[nodeIndex] = next;
+    windows_trace_small_display(s, "staged", 0u, s->candidateScene.version,
+        &s->candidateScene.nodes[nodeIndex]);
     s->candidateScene.ownedBytes += next.ownedBytes;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -5761,6 +6656,8 @@ static void publish_present_receipt_locked(CjguiWindowsRendererSession *s) {
     }
 }
 
+static int windows_revalidate_preview_batch(CjguiWindowsRendererSession *s);
+static void windows_request_selection_paint_service(CjguiWindowsRendererSession *s);
 
 /* Device replacement is an explicit generation transition on the same UI
    thread/window. Document bytes, accepted bindings and DWrite geometry survive;
@@ -5790,6 +6687,16 @@ static CjguiInternalRendererStatus recover_graphics(CjguiWindowsRendererSession 
         if (lease->texture) ID3D11Texture2D_Release(lease->texture);
         lease->view=NULL; lease->texture=NULL;
     }
+    /* GPU resources and prior presentation state belong to the retired device.
+       The accepted-source batch is revalidated against the new generation below. */
+    s->selectionPaintHasPresentation=0u;
+    s->previewPaintDrawnKey=0u;
+    s->previewPaintDrawnScene=0u;
+    s->previewPaintDrawnVisible=0u;
+    s->previewPaintPresentedKey=0u;
+    s->previewPaintPresentedScene=0u;
+    s->previewPaintPresentedVisible=0u;
+    s->previewPaintHasPresentation=0u;
     release_graphics(s);
     RECT rect;
     if (!s->hwnd || !GetClientRect(s->hwnd,&rect) || rect.right<=0 || rect.bottom<=0)
@@ -5810,6 +6717,8 @@ static CjguiInternalRendererStatus recover_graphics(CjguiWindowsRendererSession 
         if (status!=CJGUI_INTERNAL_RENDERER_OK) return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
     }
     s->graphicsRecoveryPending=0u;s->graphicsRecoveryAttempts=0u;s->graphicsRecoveryControlled=0u;++s->deviceRecoveryCount;
+    (void)windows_revalidate_preview_batch(s);
+    windows_request_selection_paint_service(s);
     fprintf(stderr,"CJGUI_WINDOWS_DEVICE_RECOVERED token=%llu generation=%llu count=%llu hwnd=%p images=%llu\n",
         (unsigned long long)s->token,(unsigned long long)s->deviceGeneration,
         (unsigned long long)s->deviceRecoveryCount,(void*)s->hwnd,(unsigned long long)s->imageCountInUse);
@@ -5873,6 +6782,96 @@ static CjguiInternalRendererStatus prepare_candidate_pending_runs(
    helpers never create/finish a source install, write owner bytes, or move
    selection. They use the same body/layout/clip as the frame being drawn. */
 static CjguiInternalRendererStatus windows_text_layout_units(const char*,uint64_t*,uint32_t*);
+static uint64_t windows_preview_node_geometry_key(CjguiWindowsRendererSession *s,
+    const CjguiWindowsSceneNode *node) {
+    if (!s || !node) return 0u;
+    uint64_t ids[] = {node->node.nodeId, (uint64_t)node->node.resourceId,
+        node->node.nodeKind, node->node.projectionVersion, node->layoutLease,
+        node->textLayoutInputKey, s->sessionGeneration, s->dpi};
+    double geometry[] = {node->node.x, node->node.y, node->node.width,
+        node->node.height, node->geometry.translateX, node->geometry.translateY,
+        node->node.clipX, node->node.clipY, node->node.clipWidth,
+        node->node.clipHeight, node->node.clipCornerRadius,
+        node->textLogicalOffsetX, node->multilineScrollY};
+    uint64_t key = windows_fnv1a64(1469598103934665603ull, ids, sizeof(ids));
+    key = windows_fnv1a64(key, geometry, sizeof(geometry));
+    return key ? key : 1u;
+}
+
+static uint64_t windows_preview_batch_key(const CjguiWindowsPreviewPaintBatch *batch) {
+    if (!batch || !batch->active || !batch->count ||
+        batch->count > CJGUI_WINDOWS_PREVIEW_PAINT_FRAGMENT_CAPACITY) return 0u;
+    uint64_t key = 1469598103934665603ull;
+    key = windows_fnv1a64(key, &batch->publicationId, sizeof(batch->publicationId));
+    key = windows_fnv1a64(key, &batch->rendererGeneration, sizeof(batch->rendererGeneration));
+    key = windows_fnv1a64(key, &batch->bindingEpoch, sizeof(batch->bindingEpoch));
+    key = windows_fnv1a64(key, &batch->ownerVersion, sizeof(batch->ownerVersion));
+    key = windows_fnv1a64(key, &batch->ownerRevision, sizeof(batch->ownerRevision));
+    key = windows_fnv1a64(key, &batch->projectionId, sizeof(batch->projectionId));
+    key = windows_fnv1a64(key, &batch->sceneVersion, sizeof(batch->sceneVersion));
+    key = windows_fnv1a64(key, &batch->deviceGeneration, sizeof(batch->deviceGeneration));
+    key = windows_fnv1a64(key, &batch->red, sizeof(batch->red));
+    key = windows_fnv1a64(key, &batch->green, sizeof(batch->green));
+    key = windows_fnv1a64(key, &batch->blue, sizeof(batch->blue));
+    key = windows_fnv1a64(key, &batch->alpha, sizeof(batch->alpha));
+    key = windows_fnv1a64(key, batch->fragments,
+        batch->count * sizeof(batch->fragments[0]));
+    return key ? key : 1u;
+}
+
+static int windows_preview_batch_dependencies_match(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene) {
+    if (!s || !scene || !scene->configured ||
+        !s->previewPaintBatch.active || !s->previewPaintBatch.key ||
+        !s->previewPaintBatch.count ||
+        s->previewPaintBatch.count > CJGUI_WINDOWS_PREVIEW_PAINT_FRAGMENT_CAPACITY ||
+        s->previewPaintBatch.rendererGeneration != s->sessionGeneration ||
+        s->previewPaintBatch.bindingEpoch != s->ownedTextSessionBindingEpoch ||
+        s->previewPaintBatch.sceneVersion != scene->version) return 0;
+    for (uint32_t i = 0; i < s->previewPaintBatch.count; ++i) {
+        const CjguiWindowsPreviewPaintFragment *fragment = &s->previewPaintBatch.fragments[i];
+        CjguiWindowsSceneNode *node = scene_node_by_id(scene, fragment->nodeId);
+        if (!node || !node->hasNode || !node->hasGeometry ||
+            node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
+            node->node.resourceId != fragment->resourceId ||
+            node->node.projectionVersion != scene->version || !node->textLayout ||
+            node->textDpi != s->dpi || node->layoutLease != fragment->layoutLease ||
+            node->textLayoutInputKey != fragment->textLayoutInputKey ||
+            windows_preview_node_geometry_key(s, node) != fragment->geometryKey) return 0;
+    }
+    return 1;
+}
+
+static int windows_preview_batch_matches(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene) {
+    return s && s->previewPaintBatch.deviceGeneration == s->deviceGeneration &&
+        windows_preview_batch_dependencies_match(s, scene);
+}
+
+static int windows_revalidate_preview_batch(CjguiWindowsRendererSession *s) {
+    if (!s || !s->previewPaintBatch.active) return 0;
+    if (!windows_preview_batch_dependencies_match(s, &s->acceptedScene)) {
+        s->previewPaintBatch.active = 0u;
+        s->previewPaintDrawnKey = 0u;
+        s->previewPaintPresentedKey = 0u;
+        s->previewPaintHasPresentation = 0u;
+        return 0;
+    }
+    if (s->previewPaintBatch.deviceGeneration != s->deviceGeneration) {
+        s->previewPaintBatch.deviceGeneration = s->deviceGeneration;
+        s->previewPaintBatch.key = windows_preview_batch_key(&s->previewPaintBatch);
+        s->selectionPaintServiceTurns = 0u;
+        s->previewPaintDrawnKey = 0u;
+        s->previewPaintDrawnScene = 0u;
+        s->previewPaintDrawnVisible = 0u;
+        s->previewPaintPresentedKey = 0u;
+        s->previewPaintPresentedScene = 0u;
+        s->previewPaintPresentedVisible = 0u;
+        s->previewPaintHasPresentation = 0u;
+    }
+    return 1;
+}
+
 static CjguiWindowsSceneNode *windows_selection_paint_node(CjguiWindowsRendererSession *s,
     CjguiWindowsScene *scene) {
     if (!s || !s->hwnd || s->retiring || s->minimized || GetFocus()!=s->hwnd ||
@@ -5890,9 +6889,13 @@ static CjguiWindowsSceneNode *windows_selection_paint_node(CjguiWindowsRendererS
         n->node.nodeKind!=s->ownedTextSessionNodeKind || !s->ownedTextSessionBindingEpoch)) return NULL;
     return n;
 }
-static uint64_t windows_selection_paint_key(CjguiWindowsRendererSession *s,
-    CjguiWindowsScene *scene) {
+/* Focus-bound identity for the native input proxy only. Preview display fragments
+   use windows_preview_batch_dependencies_match and must not pass through this
+   focus/owned-node gate; their ranges are pinned to each accepted fragment layout. */
+static uint64_t windows_selection_paint_identity(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene, CjguiWindowsSceneNode **outNode) {
     CjguiWindowsSceneNode *n=windows_selection_paint_node(s,scene);
+    if (outNode) *outNode=n;
     if (!n) return 0;
     uint64_t ids[]={s->sessionGeneration,n->node.nodeId,(uint64_t)n->node.resourceId,
         n->node.nodeKind,n->layoutLease,n->textLayoutInputKey,s->dpi,
@@ -5904,6 +6907,13 @@ static uint64_t windows_selection_paint_key(CjguiWindowsRendererSession *s,
     uint64_t key=windows_fnv1a64(1469598103934665603ull,ids,sizeof(ids));
     key=windows_fnv1a64(key,geometry,sizeof(geometry));
     if (!key) key=1;
+    return key;
+}
+static uint64_t windows_selection_paint_key(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene) {
+    CjguiWindowsSceneNode *n=NULL;
+    uint64_t key=windows_selection_paint_identity(s,scene,&n);
+    if (!key) return 0;
     /* A paint key is bookkeeping, never a substitute for full proxy bytes. */
     if (strcmp((const char*)s->proxyValueUtf8,n->value?n->value:"")!=0) return 0;
     return key;
@@ -5914,6 +6924,7 @@ static void update_windows_selection_paint(CjguiWindowsRendererSession *s,
     uint64_t now=cjgui_internal_renderer_owner_clock_ns();
     if (key!=s->selectionPaintDesiredKey) {
         s->selectionPaintDesiredKey=key;s->selectionPaintStartedNs=now;
+        s->selectionPaintServiceTurns=0u;
     }
     s->selectionPaintVisible=key!=0;
     UINT blink=GetCaretBlinkTime();
@@ -5922,9 +6933,165 @@ static void update_windows_selection_paint(CjguiWindowsRendererSession *s,
         s->selectionPaintVisible=((elapsed/((uint64_t)blink*1000000ull))&1u)==0u;
     }
 }
+/* Record what a successfully submitted frame actually contained. Called only on a
+   Present that did not fail: a rejected Present leaves the obligation intact so the
+   next turn retries the same work instead of reporting a picture that never landed. */
+static void windows_settle_selection_paint_presentation(
+    CjguiWindowsRendererSession *s) {
+    s->selectionPaintPresentedKey=s->selectionPaintDrawnKey;
+    s->selectionPaintPresentedVisible=s->selectionPaintDrawnVisible;
+    s->selectionPaintHasPresentation=1u;
+}
+
+static void windows_settle_preview_paint_presentation(CjguiWindowsRendererSession *s) {
+    if (!s || !s->previewPaintBatch.active || !s->previewPaintDrawnKey ||
+        s->previewPaintDrawnKey != s->previewPaintBatch.key ||
+        s->previewPaintDrawnScene != s->previewPaintBatch.sceneVersion ||
+        !s->previewPaintDrawnVisible) return;
+    s->previewPaintPresentedKey = s->previewPaintDrawnKey;
+    s->previewPaintPresentedScene = s->previewPaintDrawnScene;
+    s->previewPaintPresentedVisible = 1u;
+    s->previewPaintHasPresentation = 1u;
+}
+
+/* Credit a native-input selection only when its range overlay was part of the draw.
+   Preview text fragments have their own batch identity and settlement path below. */
+static void windows_record_selection_paint_drawn(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene) {
+    CjguiWindowsSceneNode *node = NULL;
+    uint64_t drawn = s && !windows_selection_paint_disabled() &&
+        s->selectionPaintDesiredKey && s->selectionPaintVisible &&
+        windows_selection_paint_identity(s, scene, &node) && node ?
+        s->selectionPaintDesiredKey : 0u;
+    s->selectionPaintDrawnKey = drawn;
+    s->selectionPaintDrawnVisible = drawn ? s->selectionPaintVisible : 0u;
+}
+
+static int windows_selection_paint_pending(CjguiWindowsRendererSession *s) {
+    if (!s) return 0;
+    int nativePending = s->multilineViewportPaintPending ||
+        s->selectionPaintDesiredKey != s->selectionPaintPresentedKey ||
+        s->selectionPaintVisible != s->selectionPaintPresentedVisible;
+    int previewPending = windows_preview_batch_matches(s, &s->acceptedScene) &&
+        (!s->previewPaintHasPresentation ||
+         s->previewPaintPresentedKey != s->previewPaintBatch.key ||
+         s->previewPaintPresentedScene != s->previewPaintBatch.sceneVersion ||
+         !s->previewPaintPresentedVisible);
+    return nativePending || previewPending;
+}
+
+/* Hand an unmet selection-paint obligation to the pump wake the renderer already
+   uses, so a publication that did not carry the staged decoration gets one service
+   turn instead of waiting for the next pointer message. Signals only while a turn
+   could actually make progress: it never re-arms once the picture is settled, and it
+   stays silent while retired/minimized/recovering, where refresh_windows_selection_paint
+   would return without doing the work. No timer, no poll shortening, no busy loop. */
+static void windows_request_selection_paint_service(CjguiWindowsRendererSession *s) {
+    if (!s->rawWakeEvent || !s->acceptedScene.configured || s->retiring || s->minimized ||
+        s->graphicsRecoveryPending || !s->renderTarget) return;
+    if (!windows_selection_paint_pending(s)) return;
+    /* Arm only while another draw turn could still change the picture. Once the
+       bounded service is spent, re-signalling would keep the pump spinning on work
+       that cannot produce the decoration. */
+    if (s->selectionPaintServiceTurns >= CJGUI_WINDOWS_SELECTION_PAINT_SERVICE_TURNS) return;
+    SetEvent(s->rawWakeEvent);
+}
+
+/* Validate the bounded post-image against this candidate's immutable mirror.
+   Version alone is insufficient when a mirror is stale or re-windowed. */
+static int windows_observation_body_matches(int64_t mirrorStart, const char *body,
+    int64_t postStart, const char *postBody, int64_t editStart, int64_t editEnd) {
+    if (!body || !postBody || mirrorStart < 0 || postStart < 0 || editStart < 0 || editEnd < editStart)
+        return 0;
+    size_t bn = strlen(body), pn = strlen(postBody);
+    if (bn > CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY || pn > CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY ||
+        bn > (uint64_t)INT64_MAX - (uint64_t)mirrorStart ||
+        pn > (uint64_t)INT64_MAX - (uint64_t)postStart) return 0;
+    int64_t be = mirrorStart + (int64_t)bn, pe = postStart + (int64_t)pn;
+    if (editStart < mirrorStart || editEnd > be || editStart < postStart || editEnd > pe) return 0;
+    int64_t lo = mirrorStart > postStart ? mirrorStart : postStart;
+    int64_t hi = be < pe ? be : pe;
+    return hi > lo && memcmp(body + (lo - mirrorStart), postBody + (lo - postStart),
+        (size_t)(hi - lo)) == 0;
+}
+
+static int windows_observation_identity_matches(const CjguiWindowsInputObservation *o,
+    uint64_t scene, uint64_t generation, uint64_t instance, uint64_t node,
+    uint64_t resource, uint64_t binding, const char *body) {
+    return o->valid && body && o->sceneVersion == scene && o->identity[0] == instance &&
+        o->identity[1] == generation && o->identity[2] == node && o->identity[3] == resource &&
+        o->identity[4] == binding && o->identity[5] && o->identity[6] && o->identity[9] &&
+        o->bodyBytes == strlen(body) && o->bodyHash ==
+        windows_fnv1a64(1469598103934665603ull, body, strlen(body));
+}
+
+static void windows_observation_present(CjguiWindowsRendererSession *s, uint64_t acceptedNs) {
+    CjguiWindowsInputObservation *o = &s->acceptedScene.inputObservation;
+    if (!o->valid || acceptedNs < o->identity[9] || !s->hwnd ||
+        !IsWindowVisible(s->hwnd) || IsIconic(s->hwnd)) return;
+    CjguiWindowsSceneNode *n = NULL;
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        if (s->acceptedScene.nodes[i].node.nodeId == o->identity[2]) { n = &s->acceptedScene.nodes[i]; break; }
+    }
+    if (!n || !windows_observation_identity_matches(o, s->acceptedScene.version,
+        s->sessionGeneration, s->rangeWindowToken, n->node.nodeId,
+        (uint64_t)n->node.resourceId, s->ownedTextSessionBindingEpoch, n->value) || !n->textLayout || !n->textView ||
+        n->node.textAlpha <= 0.0 || n->textMaskNonzeroPixels == 0 ||
+        o->editStart < o->mirrorStart || o->editEnd < o->editStart ||
+        o->editEnd - o->mirrorStart > o->bodyBytes) return;
+    uint32_t a = 0, z = 0;
+    if (windows_validate_text_grapheme_boundary(n->value, o->bodyBytes,
+        o->editStart - o->mirrorStart, &a) != CJGUI_INTERNAL_RENDERER_OK ||
+        windows_validate_text_grapheme_boundary(n->value, o->bodyBytes,
+        o->editEnd - o->mirrorStart, &z) != CJGUI_INTERNAL_RENDERER_OK) return;
+    FLOAT x = (FLOAT)(n->node.x + n->geometry.translateX + n->textLogicalOffsetX);
+    FLOAT y = (FLOAT)(n->node.y + n->geometry.translateY - n->multilineScrollY);
+    DWRITE_HIT_TEST_METRICS metrics[32]; UINT32 count = 0;
+    HRESULT hr;
+    if (z > a) {
+        hr = IDWriteTextLayout_HitTestTextRange(n->textLayout, a, z-a, x, y, metrics, 32, &count);
+    } else {
+        FLOAT lx = 0, ly = 0;
+        hr = IDWriteTextLayout_HitTestTextPosition(n->textLayout, a, FALSE, &lx, &ly, metrics);
+        metrics[0].left = x + lx; metrics[0].top = y + ly;
+        metrics[0].width = 1.0f; count = 1;
+    }
+    if (FAILED(hr) || !count || count > 32) return;
+    double scale = (double)(s->dpi ? s->dpi : 96u) / 96.0;
+    double left = fmax(0, fmax(n->node.clipX, n->node.x + n->geometry.translateX));
+    double top = fmax(0, fmax(n->node.clipY, n->node.y + n->geometry.translateY));
+    double right = fmin(s->width / scale, n->node.x + n->geometry.translateX + n->node.width);
+    double bottom = fmin(s->height / scale, n->node.y + n->geometry.translateY + n->node.height);
+    if (n->node.clipWidth > 0) right = fmin(right, n->node.clipX + n->node.clipWidth);
+    if (n->node.clipHeight > 0) bottom = fmin(bottom, n->node.clipY + n->node.clipHeight);
+    /* Conservative inner rectangle also excludes rounded corner cut-outs. */
+    double radius = n->node.clipCornerRadius;
+    if (radius > 0) { left += radius; top += radius; right -= radius; bottom -= radius; }
+    for (UINT32 i = 0; i < count; ++i) {
+        if (!(metrics[i].width > 0 && metrics[i].height > 0) || metrics[i].left < left ||
+            metrics[i].top < top || metrics[i].left + metrics[i].width > right ||
+            metrics[i].top + metrics[i].height > bottom) return;
+    }
+    fprintf(stderr, "R7_PRESENT instance=%llu generation=%llu node=%llu resource=%llu binding=%llu nonce=%llu seq=%llu ticket=%llu owner_version=%llu owner_ns=%llu context=%llu proxy=%llu scene=%llu preparation=%llu mirror_start=%llu body_bytes=%llu body_hash=%llu edit_start=%llu edit_end=%llu accepted_ns=%llu frame=%llu visible_rects=%u\n",
+        (unsigned long long)o->identity[0], (unsigned long long)o->identity[1],
+        (unsigned long long)o->identity[2], (unsigned long long)o->identity[3],
+        (unsigned long long)o->identity[4], (unsigned long long)o->identity[5],
+        (unsigned long long)o->identity[6], (unsigned long long)o->identity[7],
+        (unsigned long long)o->identity[8], (unsigned long long)o->identity[9],
+        (unsigned long long)o->identity[10], (unsigned long long)o->identity[11],
+        (unsigned long long)o->sceneVersion, (unsigned long long)o->preparationId,
+        (unsigned long long)o->mirrorStart, (unsigned long long)o->bodyBytes,
+        (unsigned long long)o->bodyHash, (unsigned long long)o->editStart,
+        (unsigned long long)o->editEnd, (unsigned long long)acceptedNs,
+        (unsigned long long)s->frameIndex, count);
+    fflush(stderr);
+    o->valid = 0; /* Repainting the same accepted scene is not a new receipt. */
+}
+
 static CjguiInternalRendererStatus draw_windows_selection_paint(CjguiWindowsRendererSession *s,
-    CjguiWindowsSceneNode *n,FLOAT scale,FLOAT opacity,int caret) {
-    if (!s->selectionPaintDesiredKey || !s->selectionPaintVisible ||
+    CjguiWindowsSceneNode *n,FLOAT scale,FLOAT opacity,int caret,
+    const CjguiWindowsRotation *rotation) {
+    if (windows_selection_paint_disabled() || !s->selectionPaintDesiredKey || !s->selectionPaintVisible ||
         n->node.nodeId!=s->focusedNodeId || !n->textLayout) return CJGUI_INTERNAL_RENDERER_OK;
     uint32_t a=s->selectionStart16,z=s->selectionEnd16;
     if (z<a) { uint32_t t=a;a=z;z=t; }
@@ -5940,8 +7107,8 @@ static CjguiInternalRendererStatus draw_windows_selection_paint(CjguiWindowsRend
         if (FAILED(hr)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         FLOAT color[4]={(FLOAT)n->node.textRed,(FLOAT)n->node.textGreen,
             (FLOAT)n->node.textBlue,(FLOAT)n->node.textAlpha*opacity};
-        return draw_scene_quad(s,(x+localX)*scale,(y+localY)*scale,scale,
-            (hit.height>0?hit.height:(FLOAT)(n->node.fontSize*1.25))*scale,color,NULL);
+        return draw_scene_quad_rotated(s,(x+localX)*scale,(y+localY)*scale,scale,
+            (hit.height>0?hit.height:(FLOAT)(n->node.fontSize*1.25))*scale,color,NULL,rotation);
     }
     DWRITE_HIT_TEST_METRICS local[32],*rects=local;UINT32 count=0;
     HRESULT hr=IDWriteTextLayout_HitTestTextRange(n->textLayout,a,z-a,x,y,local,32,&count);
@@ -5960,15 +7127,188 @@ static CjguiInternalRendererStatus draw_windows_selection_paint(CjguiWindowsRend
     FLOAT color[4]={0.15f,0.45f,0.9f,0.28f*opacity};
     for (UINT32 i=0;i<count&&st==CJGUI_INTERNAL_RENDERER_OK;i++) {
         DWRITE_HIT_TEST_METRICS *r=&rects[i];
-        if (r->width>0&&r->height>0) st=draw_scene_quad(s,r->left*scale,r->top*scale,
-            r->width*scale,r->height*scale,color,NULL);
+        if (r->width>0&&r->height>0) st=draw_scene_quad_rotated(s,r->left*scale,r->top*scale,
+            r->width*scale,r->height*scale,color,NULL,rotation);
     }
     if (scratch) { free(rects);text_budget_release_scratch(s,scratch); }
     return st;
 }
+
+static int windows_selection_draw_observation_enabled(void) {
+    return getenv("PHAROS_WINDOWS_FRAME_RECEIPT") != NULL;
+}
+static CjguiWindowsSelectionDrawRow *windows_observe_selection_node(
+    CjguiWindowsRendererSession *s, CjguiWindowsSceneNode *n) {
+    if (!windows_selection_draw_observation_enabled() || !n || !n->textLayout ||
+        n->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT) return NULL;
+    CjguiWindowsSelectionDrawFacts *f=&s->selectionDrawFacts;
+    for(uint32_t i=0;i<f->count;++i)if(f->rows[i].nodeId==n->node.nodeId)return &f->rows[i];
+    if(f->count>=CJGUI_WINDOWS_ROI_NODE_CAPACITY){f->overflow=1;return NULL;}
+    CjguiWindowsSelectionDrawRow *r=&f->rows[f->count++];memset(r,0,sizeof(*r));
+    r->nodeId=n->node.nodeId;r->resourceId=n->node.resourceId;r->layoutLease=n->layoutLease;
+    r->inputKey=n->textLayoutInputKey;r->geometryKey=windows_preview_node_geometry_key(s,n);
+    const char *body=n->value?n->value:"";r->bodyBytes=strlen(body);
+    r->bodyHash=windows_fnv1a64(1469598103934665603ull,body,(size_t)r->bodyBytes);
+    r->originX=n->node.x+n->geometry.translateX+n->textLogicalOffsetX;
+    r->originY=n->node.y+n->geometry.translateY-n->multilineScrollY;
+    r->clipX=n->node.clipX;r->clipY=n->node.clipY;
+    r->clipWidth=n->node.clipWidth;r->clipHeight=n->node.clipHeight;
+    return r;
+}
+static void windows_observe_selection_range(CjguiWindowsRendererSession *s,
+    CjguiWindowsSceneNode *n,uint32_t source,uint32_t start,uint32_t end,int painted) {
+    CjguiWindowsSelectionDrawRow *r=windows_observe_selection_node(s,n);if(!r)return;
+    r->source=source;
+    if(r->rangeCount>=CJGUI_WINDOWS_ROI_RANGE_CAPACITY){r->overflow=1;s->selectionDrawFacts.overflow=1;return;}
+    uint32_t i=r->rangeCount++;r->start16[i]=start;r->end16[i]=end;r->painted[i]=painted?1u:0u;
+}
+
+static CjguiInternalRendererStatus draw_windows_selection_range(
+    CjguiWindowsRendererSession *s, CjguiWindowsSceneNode *node, FLOAT scale,
+    FLOAT opacity, uint32_t start16, uint32_t end16, const FLOAT baseColor[4],
+    int *outPainted, const CjguiWindowsRotation *rotation) {
+    if (outPainted) *outPainted = 0;
+    if (!s || !node || !node->textLayout || !node->value || !baseColor ||
+        start16 > end16) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    if (windows_selection_paint_disabled() || start16 == end16) return CJGUI_INTERNAL_RENDERER_OK;
+    CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_OK;
+    UINT32 metricCount = 0u;
+    HRESULT hr = IDWriteTextLayout_HitTestTextRange(node->textLayout, start16,
+        end16 - start16, 0.0f, 0.0f, NULL, 0u, &metricCount);
+    if (!metricCount) return SUCCEEDED(hr) ? CJGUI_INTERNAL_RENDERER_OK :
+        (hr == E_NOT_SUFFICIENT_BUFFER || hr == HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER)
+            ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+    if (metricCount > 16384u)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    uint64_t scratchBytes = (uint64_t)metricCount * sizeof(DWRITE_HIT_TEST_METRICS);
+    if (!text_budget_reserve_scratch(s, scratchBytes))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    DWRITE_HIT_TEST_METRICS *metrics = (DWRITE_HIT_TEST_METRICS *)calloc(
+        metricCount, sizeof(*metrics));
+    if (!metrics) {
+        text_budget_release_scratch(s, scratchBytes);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    UINT32 actualCount = 0u;
+    FLOAT originX = (FLOAT)(node->node.x + node->geometry.translateX + node->textLogicalOffsetX);
+    FLOAT originY = (FLOAT)(node->node.y + node->geometry.translateY - node->multilineScrollY);
+    hr = IDWriteTextLayout_HitTestTextRange(node->textLayout, start16,
+        end16 - start16, originX, originY, metrics, metricCount, &actualCount);
+    if (FAILED(hr) || actualCount > metricCount) status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    else status = CJGUI_INTERNAL_RENDERER_OK;
+    FLOAT color[4] = {baseColor[0], baseColor[1], baseColor[2], baseColor[3] * opacity};
+    double clipLeft = node->node.clipWidth > 0.0 ? node->node.clipX * scale : 0.0;
+    double clipTop = node->node.clipHeight > 0.0 ? node->node.clipY * scale : 0.0;
+    double clipRight = node->node.clipWidth > 0.0
+        ? (node->node.clipX + node->node.clipWidth) * scale : (double)s->width;
+    double clipBottom = node->node.clipHeight > 0.0
+        ? (node->node.clipY + node->node.clipHeight) * scale : (double)s->height;
+    int painted = 0;
+    for (UINT32 i = 0; i < actualCount && status == CJGUI_INTERNAL_RENDERER_OK; ++i) {
+        const DWRITE_HIT_TEST_METRICS *rect = &metrics[i];
+        if (!(rect->width > 0.0f && rect->height > 0.0f)) continue;
+        double left = (double)rect->left * scale, top = (double)rect->top * scale;
+        double right = left + (double)rect->width * scale;
+        double bottom = top + (double)rect->height * scale;
+        if (right <= clipLeft || left >= clipRight || bottom <= clipTop || top >= clipBottom)
+            continue;
+        status = draw_scene_quad_rotated(s, (FLOAT)left, (FLOAT)top,
+            (FLOAT)(right - left), (FLOAT)(bottom - top), color, NULL, rotation);
+        if (status == CJGUI_INTERNAL_RENDERER_OK) painted = 1;
+    }
+    free(metrics);
+    text_budget_release_scratch(s, scratchBytes);
+    if (outPainted) *outPainted = painted;
+    return status;
+}
+
+static const CjguiWindowsPreviewPaintFragment *windows_preview_fragment_for_node(
+    const CjguiWindowsPreviewPaintBatch *batch, uint64_t nodeId) {
+    if (!batch || !batch->active || !nodeId) return NULL;
+    for (uint32_t i = 0; i < batch->count; ++i)
+        if (batch->fragments[i].nodeId == nodeId) return &batch->fragments[i];
+    return NULL;
+}
+
+static CjguiInternalRendererStatus draw_windows_selection_decoration(
+    CjguiWindowsRendererSession *s, CjguiWindowsSceneNode *node, FLOAT scale,
+    FLOAT opacity, int batchEligible, int *outBatchPainted,
+    const CjguiWindowsRotation *rotation) {
+    if (outBatchPainted) *outBatchPainted = 0;
+    if (!s || !node || windows_selection_paint_disabled() || !node->textLayout)
+        return CJGUI_INTERNAL_RENDERER_OK;
+    const CjguiWindowsPreviewPaintFragment *fragment = batchEligible
+        ? windows_preview_fragment_for_node(&s->previewPaintBatch, node->node.nodeId) : NULL;
+    (void)windows_observe_selection_node(s,node);
+    if (fragment) {
+        if (fragment->end16 == fragment->start16) {
+            windows_observe_selection_range(s,node,1u,fragment->start16,fragment->end16,0);
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        FLOAT color[4] = {s->previewPaintBatch.red, s->previewPaintBatch.green,
+            s->previewPaintBatch.blue, s->previewPaintBatch.alpha};
+        int painted = 0;
+        CjguiInternalRendererStatus status = draw_windows_selection_range(s, node,
+            scale, opacity, fragment->start16, fragment->end16, color, &painted, rotation);
+        if (status==CJGUI_INTERNAL_RENDERER_OK)
+            windows_observe_selection_range(s,node,1u,fragment->start16,fragment->end16,painted);
+        if (outBatchPainted) *outBatchPainted = painted;
+        return status;
+    }
+    if (!node->textRuns || !node->textRuns[0]) return CJGUI_INTERNAL_RENDERER_OK;
+    CjguiWindowsTextStyleRun *runs = NULL;
+    uint32_t count = 0u;
+    CjguiInternalRendererStatus status = parse_style_run_list(
+        node->textRuns, node->value ? node->value : "", &runs, &count);
+    if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    for (uint32_t i = 0; i < count && status == CJGUI_INTERNAL_RENDERER_OK; ++i) {
+        const CjguiWindowsTextStyleRun *run = &runs[i];
+        if (!run->selectionBackgroundOnly || run->end16 <= run->start16) continue;
+        FLOAT color[4] = {run->backgroundRed, run->backgroundGreen,
+            run->backgroundBlue, run->backgroundAlpha};
+        int painted=0;
+        status = draw_windows_selection_range(s, node, scale, opacity,
+            run->start16, run->end16, color, &painted, rotation);
+        if(status==CJGUI_INTERNAL_RENDERER_OK)
+            windows_observe_selection_range(s,node,2u,run->start16,run->end16,painted);
+    }
+    free(runs);
+    return status;
+}
+
+static void windows_record_preview_paint_drawn(CjguiWindowsRendererSession *s,
+    CjguiWindowsScene *scene, int batchEligible, int batchPainted) {
+    if (!s) return;
+    s->previewPaintDrawnKey = 0u;
+    s->previewPaintDrawnScene = 0u;
+    s->previewPaintDrawnVisible = 0u;
+    if (!batchEligible || !scene ||
+        windows_selection_paint_disabled() || !windows_preview_batch_matches(s, scene)) return;
+    int anyNonempty = 0;
+    for (uint32_t i = 0; i < s->previewPaintBatch.count; ++i)
+        if (s->previewPaintBatch.fragments[i].end16 > s->previewPaintBatch.fragments[i].start16)
+            anyNonempty = 1;
+    if (anyNonempty && !batchPainted) return;
+    s->previewPaintDrawnKey = s->previewPaintBatch.key;
+    s->previewPaintDrawnScene = scene->version;
+    s->previewPaintDrawnVisible = 1u;
+}
+
 static CjguiInternalRendererStatus draw_windows_scene(CjguiWindowsRendererSession *s,
     CjguiWindowsScene *scene) {
+    if (scene == &s->acceptedScene) (void)windows_revalidate_preview_batch(s);
     update_windows_selection_paint(s,scene);
+    int batchEligible = windows_preview_batch_matches(s, scene);
+    int batchPainted = 0;
+    if(windows_selection_draw_observation_enabled()) {
+        CjguiWindowsSelectionDrawFacts *f=&s->selectionDrawFacts;memset(f,0,sizeof(*f));
+        f->scene=scene->version;f->renderer=s->sessionGeneration;f->device=s->deviceGeneration;
+        f->binding=s->ownedTextSessionBindingEpoch;f->batchEligible=batchEligible?1u:0u;
+        if(batchEligible)f->batch=s->previewPaintBatch;
+    }
+    s->previewPaintDrawnKey = 0u;
+    s->previewPaintDrawnScene = 0u;
+    s->previewPaintDrawnVisible = 0u;
     if (!s->sceneVertexShader || !s->sceneInputLayout || !s->renderTarget)
         return CJGUI_INTERNAL_RENDERER_METAL_LAYER_UNAVAILABLE;
     CjguiWindowsTextFlight *flight = NULL;
@@ -5990,25 +7330,24 @@ static CjguiInternalRendererStatus draw_windows_scene(CjguiWindowsRendererSessio
         FLOAT y = ((FLOAT)node->y + (FLOAT)entry->geometry.translateY) * scale;
         FLOAT width = (FLOAT)node->width * scale;
         FLOAT height = (FLOAT)node->height * scale;
-        LONG clipLeft = (LONG)floor((double)node->clipX * scale);
-        LONG clipTop = (LONG)floor((double)node->clipY * scale);
-        LONG clipRight = node->clipWidth > 0
-            ? (LONG)ceil((double)(node->clipX + node->clipWidth) * scale) : (LONG)s->width;
-        LONG clipBottom = node->clipHeight > 0
-            ? (LONG)ceil((double)(node->clipY + node->clipHeight) * scale) : (LONG)s->height;
-        if (clipLeft < 0) clipLeft = 0;
-        if (clipTop < 0) clipTop = 0;
-        if (clipRight > (LONG)s->width) clipRight = (LONG)s->width;
-        if (clipBottom > (LONG)s->height) clipBottom = (LONG)s->height;
-        if (clipRight <= clipLeft || clipBottom <= clipTop) continue;
+        CjguiWindowsRotation rotation = windows_node_rotation(node, &entry->geometry, x, y, width, height);
+        LONG clipLeft = 0, clipTop = 0, clipRight = (LONG)s->width, clipBottom = (LONG)s->height;
+        if (!windows_node_clip_bounds(entry, (double)scale, (LONG)s->width, (LONG)s->height,
+                                      &clipLeft, &clipTop, &clipRight, &clipBottom)) continue;
         D3D11_RECT scissor = {clipLeft, clipTop, clipRight, clipBottom};
         ID3D11DeviceContext_RSSetScissorRects(s->context, 1, &scissor);
         FLOAT opacity = (FLOAT)node->effectGroupOpacity;
         if (!(opacity > 0.0f && opacity <= 1.0f)) opacity = 1.0f;
+        /* In-app backdrop sample: blur what is already painted under this
+           node's rectangle before the node paints. radius 0 never enters the
+           slow path, so the legacy submission stays byte-identical. */
+        if (node->effectBackdropBlurRadiusPoints > 0u)
+            draw_windows_backdrop_blur(s, node, x, y, width, height, opacity, &rotation,
+                &scissor);
         if (node->fillAlpha > 0.0) {
             FLOAT fill[4] = {(FLOAT)node->fillRed, (FLOAT)node->fillGreen,
                 (FLOAT)node->fillBlue, (FLOAT)node->fillAlpha * opacity};
-            status = draw_scene_quad(s, x, y, width, height, fill, NULL);
+            status = draw_scene_quad_rotated(s, x, y, width, height, fill, NULL, &rotation);
         }
         FLOAT borderWidth = (FLOAT)node->borderWidth * scale;
         if (status == CJGUI_INTERNAL_RENDERER_OK && borderWidth > 0.0f && node->borderAlpha > 0.0) {
@@ -6016,19 +7355,31 @@ static CjguiInternalRendererStatus draw_windows_scene(CjguiWindowsRendererSessio
                 (FLOAT)node->borderBlue, (FLOAT)node->borderAlpha * opacity};
             if (borderWidth > width) borderWidth = width;
             if (borderWidth > height) borderWidth = height;
-            status = draw_scene_quad(s, x, y, width, borderWidth, border, NULL);
+            status = draw_scene_quad_rotated(s, x, y, width, borderWidth, border, NULL, &rotation);
             if (status == CJGUI_INTERNAL_RENDERER_OK && height > borderWidth)
-                status = draw_scene_quad(s, x, y + height - borderWidth, width, borderWidth, border, NULL);
+                status = draw_scene_quad_rotated(s, x, y + height - borderWidth, width, borderWidth, border, NULL, &rotation);
             if (status == CJGUI_INTERNAL_RENDERER_OK && height > 2.0f * borderWidth)
-                status = draw_scene_quad(s, x, y + borderWidth, borderWidth,
-                    height - 2.0f * borderWidth, border, NULL);
+                status = draw_scene_quad_rotated(s, x, y + borderWidth, borderWidth,
+                    height - 2.0f * borderWidth, border, NULL, &rotation);
             if (status == CJGUI_INTERNAL_RENDERER_OK && height > 2.0f * borderWidth && width > borderWidth)
-                status = draw_scene_quad(s, x + width - borderWidth, y + borderWidth,
-                    borderWidth, height - 2.0f * borderWidth, border, NULL);
+                status = draw_scene_quad_rotated(s, x + width - borderWidth, y + borderWidth,
+                    borderWidth, height - 2.0f * borderWidth, border, NULL, &rotation);
         }
         if (status == CJGUI_INTERNAL_RENDERER_OK && entry->imageLease && entry->imageLease->view) {
             FLOAT ink[4]={1.0f,1.0f,1.0f,opacity};
-            status=draw_scene_quad(s,x,y,width,height,ink,entry->imageLease->view);
+            /* Monochrome image tint: the mask shader multiplies the sampled
+               glyph by this colour, so alpha 0 keeps the source pixels. Only
+               image nodes consult iconTint*. */
+            if (node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE &&
+                isfinite(entry->node.iconTintRed) && isfinite(entry->node.iconTintGreen) &&
+                isfinite(entry->node.iconTintBlue) && isfinite(entry->node.iconTintAlpha) &&
+                entry->node.iconTintAlpha > 0.0) {
+                ink[0]=(FLOAT)entry->node.iconTintRed;
+                ink[1]=(FLOAT)entry->node.iconTintGreen;
+                ink[2]=(FLOAT)entry->node.iconTintBlue;
+                ink[3]=(FLOAT)(opacity * entry->node.iconTintAlpha);
+            }
+            status=draw_scene_quad_rotated(s,x,y,width,height,ink,entry->imageLease->view,&rotation);
         }
         if (node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) {
             scissor.left = (LONG)fmax(scissor.left, floor(x));
@@ -6039,28 +7390,39 @@ static CjguiInternalRendererStatus draw_windows_scene(CjguiWindowsRendererSessio
             ID3D11DeviceContext_RSSetScissorRects(s->context, 1, &scissor);
         }
         if (status == CJGUI_INTERNAL_RENDERER_OK) {
-            status=draw_windows_selection_paint(s,entry,scale,opacity,0);
+            status=draw_windows_selection_paint(s,entry,scale,opacity,0,&rotation);
+        }
+        if (status == CJGUI_INTERNAL_RENDERER_OK) {
+            int rowPainted = 0;
+            status = draw_windows_selection_decoration(s, entry, scale, opacity,
+                batchEligible, &rowPainted, &rotation);
+            if (rowPainted) batchPainted = 1;
         }
         if (status == CJGUI_INTERNAL_RENDERER_OK && entry->labelTextView &&
             node->textAlpha > 0.0 && entry->labelTextureWidth && entry->labelTextureHeight) {
             FLOAT ink[4] = {1.0f, 1.0f, 1.0f, opacity};
-            status = draw_scene_quad(s, x + (FLOAT)entry->labelRasterRect.x * scale,
+            status = draw_scene_quad_rotated(s, x + (FLOAT)entry->labelRasterRect.x * scale,
                 y + (FLOAT)entry->labelRasterRect.y * scale,
-                (FLOAT)entry->labelTextureWidth, (FLOAT)entry->labelTextureHeight, ink, entry->labelTextView);
+                (FLOAT)entry->labelTextureWidth, (FLOAT)entry->labelTextureHeight, ink, entry->labelTextView,
+                &rotation);
         }
         if (status == CJGUI_INTERNAL_RENDERER_OK && entry->textView &&
             node->textAlpha > 0.0 && entry->textTextureWidth && entry->textTextureHeight) {
             FLOAT ink[4] = {1.0f, 1.0f, 1.0f, opacity};
-            status = draw_scene_quad(s, x + (FLOAT)(entry->textLogicalOffsetX + entry->textRasterRect.x) * scale,
+            status = draw_scene_quad_rotated(s, x + (FLOAT)(entry->textLogicalOffsetX + entry->textRasterRect.x) * scale,
                 y + (FLOAT)(entry->textRasterRect.y - entry->multilineScrollY) * scale,
-                (FLOAT)entry->textTextureWidth, (FLOAT)entry->textTextureHeight, ink, entry->textView);
+                (FLOAT)entry->textTextureWidth, (FLOAT)entry->textTextureHeight, ink, entry->textView,
+                &rotation);
         }
         if (status == CJGUI_INTERNAL_RENDERER_OK) {
-            status=draw_windows_selection_paint(s,entry,scale,opacity,1);
+            status=draw_windows_selection_paint(s,entry,scale,opacity,1,&rotation);
         }
     }
     end_text_flight(s, flight);
     if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
+    windows_record_selection_paint_drawn(s, scene);
+    windows_record_preview_paint_drawn(s, scene, batchEligible, batchPainted);
+    if(windows_selection_draw_observation_enabled())s->selectionDrawFacts.drawnKey=s->previewPaintDrawnKey;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 static CjguiInternalRendererStatus present_composable_scene_impl(
@@ -6084,6 +7446,7 @@ static CjguiInternalRendererStatus present_composable_scene_impl(
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         CjguiInternalRendererStatus prepared = prepare_candidate_pending_runs(s, i);
         if (prepared != CJGUI_INTERNAL_RENDERER_OK) return windows_unsubmitted_present_status(s,prepared);
+        preserve_accepted_multiline_viewport(s, node);
         prepared = prepare_scene_node_raster(s, &s->candidateScene, i, node);
         if (prepared != CJGUI_INTERNAL_RENDERER_OK) return windows_unsubmitted_present_status(s,prepared);
         if (windows_text_node_kind(node->node.nodeKind) &&
@@ -6105,8 +7468,10 @@ static CjguiInternalRendererStatus present_composable_scene_impl(
     }
     int controlled=s->controlledDeviceFault!=0u;
     s->controlledDeviceFault=0u;
+    windows_freeze_frame_evidence(s,&s->candidateScene);
     uint64_t presentAt=s->traceEnabled?cjgui_internal_renderer_owner_clock_ns():0;
     HRESULT hr = controlled ? DXGI_ERROR_DEVICE_RESET : IDXGISwapChain_Present(s->swapChain, 1, 0);
+    windows_emit_frame_receipt(s,"scene",hr);
     windows_trace(s,"present",s->candidateScene.count,s->candidateScene.ownedBytes,
         s->traceEnabled?cjgui_internal_renderer_owner_clock_ns()-presentAt:0,(uint32_t)hr,
         s->deviceGeneration,controlled);
@@ -6125,9 +7490,18 @@ static CjguiInternalRendererStatus present_composable_scene_impl(
     s->sceneVersion = s->acceptedScene.version;
     ++s->frameIndex;
     ++s->presentationAcceptedCount;
-    s->selectionPaintPresentedKey=s->selectionPaintDesiredKey;
-    s->selectionPaintPresentedVisible=s->selectionPaintVisible;
-    s->selectionPaintHasPresentation=1;
+    if (windows_owner_trace_enabled()) {
+        for (uint32_t i = 0; i < s->acceptedScene.count; ++i)
+            windows_trace_small_display(s, "accepted", s->displayTracePreparationId,
+                s->acceptedScene.version, &s->acceptedScene.nodes[i]);
+    }
+    windows_observation_present(s, cjgui_internal_renderer_owner_clock_ns());
+    /* A successful scene may settle only the decoration that draw_windows_scene
+       recorded for that exact candidate. */
+    windows_settle_selection_paint_presentation(s);
+    windows_settle_preview_paint_presentation(s);
+    update_windows_selection_paint(s,&s->acceptedScene);
+    windows_request_selection_paint_service(s);
     synchronize_owned_proxy_after_presentation(s);
     finish_windows_composition_after_presentation(s);
     outObservation->frameIndex = s->frameIndex;
@@ -6161,9 +7535,22 @@ static CjguiInternalRendererStatus composable_image_resource_state_impl(
 
 static CjguiInternalRendererStatus pop_event(CjguiWindowsRendererSession *s,
     CjguiInternalRendererEvent *outEvent) {
+    s->lastPointerFifoGeneration = s->lastPointerFifoCoordinate = 0u;
+    s->lastPointerFifoBinding = s->lastPointerFifoSequence = 0u;
+    s->lastPointerFifoPhase = 0u;
+    memset(s->selectionGesturePopped,0,sizeof(s->selectionGesturePopped));
     if (s->eventCount == 0) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
     uint32_t slot = s->eventHead;
     *outEvent = s->events[slot];
+    uint64_t *gesture=s->selectionGestureSlots[slot];
+    if (outEvent->kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED &&
+        gesture[0]==s->sessionGeneration && gesture[4]==outEvent->nodeId &&
+        gesture[5]==(uint64_t)outEvent->resourceId && gesture[6]==outEvent->nodeKind &&
+        gesture[8]==outEvent->projectionVersion && gesture[11]==outEvent->selectionStart &&
+        gesture[12]==outEvent->selectionEnd) {
+        memcpy(s->selectionGesturePopped,gesture,sizeof(s->selectionGesturePopped));
+    }
+    memset(gesture,0,sizeof(s->selectionGestureSlots[slot]));
     s->lastPointerGeometry = s->pointerGeometries[slot];
     uint64_t pointerSessionGeneration = s->pointerSessionGenerations[slot];
     uint64_t pointerCoordinateEpoch = s->pointerCoordinateEpochs[slot];
@@ -6175,12 +7562,20 @@ static CjguiInternalRendererStatus pop_event(CjguiWindowsRendererSession *s,
         pointerSessionGeneration == s->sessionGeneration && pointerCoordinateEpoch != 0u) {
         s->lastPumpedSessionGeneration = pointerSessionGeneration;
         s->lastPumpedCoordinateEpoch = pointerCoordinateEpoch;
+        if (s->pointerSequences[slot] && outEvent->bindingEpoch) {
+            s->lastPointerFifoGeneration = pointerSessionGeneration;
+            s->lastPointerFifoCoordinate = pointerCoordinateEpoch;
+            s->lastPointerFifoBinding = outEvent->bindingEpoch;
+            s->lastPointerFifoSequence = s->pointerSequences[slot];
+            s->lastPointerFifoPhase = outEvent->kind;
+        }
     } else {
         s->lastPumpedSessionGeneration = 0u;
         s->lastPumpedCoordinateEpoch = 0u;
     }
     s->pointerSessionGenerations[slot] = 0u;
     s->pointerCoordinateEpochs[slot] = 0u;
+    s->pointerSequences[slot] = 0u;
     free(s->formEventText);
     s->formEventText = s->eventTextPayloads[slot];
     if (s->eventTextBytes >= s->eventTextLengths[slot])
@@ -6215,29 +7610,440 @@ static void initialize_empty_event(CjguiInternalRendererEvent *event) {
 }
 
 
-/* On the existing bounded UI pump, repaint only a changed native choice or
-   blink phase. Accepted projection/selection and any candidate stay intact. */
+/* This guest cannot photograph its own display: an animated GDI overlay stays
+   byte-identical under both CopyFromScreen and PrintWindow, so neither the
+   desktop nor a window DC ever shows what this swapchain handed over. The
+   swap chain is also DXGI_SWAP_EFFECT_DISCARD, so a GetBuffer AFTER Present no
+   longer guarantees the presented pixels -- the previous post-Present receipt
+   photographed an arbitrary buffer and is retired as an instrument. The honest
+   order is reversed here: freeze this frame's pixels and identity BEFORE
+   Present, then correlate the frozen copy with the actual Present result.
+   Default off, one bounded stderr line per presented frame, cached staging
+   texture, 4x4 subsampled so the receipt cannot inflate the latency it is
+   measuring; freeze_ns in every line declares the diagnostic's own cost, and
+   "receipt line" means "committed to the display pipeline", never "already
+   visible on the desktop". */
+static uint8_t windows_receipt_enabled(CjguiWindowsRendererSession *s) {
+    if (!s || !s->swapChain || !s->device || !s->context) return 0u;
+    if (!getenv("PHAROS_WINDOWS_FRAME_RECEIPT")) return 0u;
+    return s->receiptFrames < 4000u ? 1u : 0u;
+}
+
+/* Read-only optional evidence, bounded independently of document length. */
+static int windows_frame_sample_bounds(double left,double top,double right,double bottom,
+    uint32_t width,uint32_t bandTop,uint32_t bandBottom,uint32_t out[4]) {
+    if(!out || !width || bandBottom<=bandTop || !isfinite(left) || !isfinite(top) ||
+       !isfinite(right) || !isfinite(bottom) || right<left || bottom<top)return -1;
+    if(right==left || bottom==top || right<=0.0 || bottom<=(double)bandTop ||
+       left>=(double)width || top>=(double)bandBottom)return 0;
+    double l=fmax(0.0,left),t=fmax((double)bandTop,top);
+    double r=fmin((double)width,right),b=fmin((double)bandBottom,bottom);
+    if(r<=l || b<=t)return 0;
+    out[0]=(uint32_t)l;out[1]=(uint32_t)t;out[2]=(uint32_t)r;out[3]=(uint32_t)b;
+    return out[2]>out[0] && out[3]>out[1];
+}
+static int windows_frame_mapped_readable(const void *pixels,size_t pitch,size_t width,size_t height) {
+    if(!pixels || !width || !height || width>SIZE_MAX/4u)return 0;
+    size_t bytes=width*4u;
+    if(pitch<bytes || (height-1u)>(SIZE_MAX-bytes)/pitch)return 0;
+    return 1;
+}
+/* The real sparse scanner shares the checked domain with ROI capture. Legal
+   inputs retain their original truncation, starting pixel and 4x4 sequence. */
+static int windows_frame_sample_node_hash(const void *pixels,size_t pitch,
+    uint32_t width,uint32_t top,uint32_t bottom,double left,double nodeTop,
+    double right,double nodeBottom,uint64_t *outHash,uint32_t bounds[4]) {
+    if(!outHash || bottom<=top || !windows_frame_mapped_readable(pixels,pitch,width,bottom-top))return -2;
+    int status=windows_frame_sample_bounds(left,nodeTop,right,nodeBottom,width,top,bottom,bounds);
+    if(status!=1)return status;
+    uint32_t x0=bounds[0],y0=bounds[1],x1=bounds[2],y1=bounds[3];
+    if(x1-x0<=4u || y1-y0<=4u)return 0;
+    uint64_t hash=1469598103934665603ull;
+    for(size_t y=(size_t)y0-top;y<(size_t)y1-top;y+=4u){
+        const uint8_t *row=(const uint8_t*)pixels+y*pitch;
+        for(size_t x=x0;x<x1;x+=4u){uint32_t pixel;memcpy(&pixel,row+x*4u,4u);pixel&=0x00ffffffu;hash=windows_fnv1a64(hash,&pixel,sizeof(pixel));}
+    }
+    *outHash=hash;return 1;
+}
+
+static int windows_roi_admit(CjguiWindowsRendererSession *s,uint64_t bytes) {
+    if(bytes>CJGUI_WINDOWS_ROI_BYTE_LIMIT || s->selectionRoiBytes>CJGUI_WINDOWS_ROI_BYTE_LIMIT-bytes)return 0;
+    s->selectionRoiBytes+=bytes;return 1;
+}
+static int windows_roi_path(char out[1024],const char *directory,const char *name) {
+    int size=snprintf(out,1024,"%s/%s",directory,name);return size>0 && size<1024;
+}
+static int windows_roi_asset(CjguiWindowsRendererSession *s,CjguiWindowsSceneNode *n,
+    const CjguiWindowsSelectionDrawRow *r,const char *directory,char inputName[128]) {
+    snprintf(inputName,128,"i-%016llx-%016llx-%016llx.json",(unsigned long long)r->inputKey,
+        (unsigned long long)r->geometryKey,(unsigned long long)r->bodyHash);
+    char path[1024];if(!windows_roi_path(path,directory,inputName))return 0;
+    FILE *existing=fopen(path,"rb");if(existing){fclose(existing);return 1;}
+    const char *body=n->value?n->value:"",*runs=n->textRuns?n->textRuns:"";
+    size_t bodyBytes=strlen(body),runBytes=strlen(runs);
+    if(bodyBytes>262144u || runBytes>262144u || !windows_roi_admit(s,bodyBytes+runBytes+2048u))return 0;
+    char bodyName[128],runName[128];snprintf(bodyName,sizeof(bodyName),"%s.utf8",inputName);
+    snprintf(runName,sizeof(runName),"%s.runs",inputName);
+    if(!windows_roi_path(path,directory,bodyName))return 0;FILE *f=fopen(path,"wb");if(!f)return 0;
+    int ok=fwrite(body,1,bodyBytes,f)==bodyBytes;ok=fclose(f)==0 && ok;if(!ok)return 0;
+    if(!windows_roi_path(path,directory,runName))return 0;f=fopen(path,"wb");if(!f)return 0;
+    ok=fwrite(runs,1,runBytes,f)==runBytes;ok=fclose(f)==0 && ok;if(!ok)return 0;
+    if(!windows_roi_path(path,directory,inputName))return 0;f=fopen(path,"wb");if(!f)return 0;
+    double scale=(double)(s->dpi?s->dpi:96u)/96.0;
+    double clipR=r->clipWidth>0?(r->clipX+r->clipWidth)*scale:(double)s->width;
+    double clipB=r->clipHeight>0?(r->clipY+r->clipHeight)*scale:(double)s->height;
+    int wrote=fprintf(f,"{\"bodyFile\":\"%s\",\"runsFile\":\"%s\",\"fontSize\":%.17g,\"fontWeight\":%u,\"fontFamily\":%u,"
+        "\"width\":%.17g,\"height\":%.17g,\"dpi\":%llu,\"origin\":[%.17g,%.17g],\"clip\":[%.17g,%.17g,%.17g,%.17g],"
+        "\"layoutLease\":\"%llu\",\"inputKey\":\"%llu\",\"geometryKey\":\"%llu\",\"bodyHash\":\"%llu\"}\n",
+        bodyName,runName,n->node.fontSize,n->node.fontWeight,n->node.fontFamily,(double)n->node.width,(double)n->node.height,
+        (unsigned long long)s->dpi,r->originX*scale,r->originY*scale,r->clipX*scale,r->clipY*scale,clipR,clipB,
+        (unsigned long long)r->layoutLease,(unsigned long long)r->inputKey,(unsigned long long)r->geometryKey,(unsigned long long)r->bodyHash);
+    return fclose(f)==0 && wrote>0;
+}
+static int windows_roi_bmp(CjguiWindowsRendererSession *s,const char *directory,const char *name,
+    const D3D11_MAPPED_SUBRESOURCE *map,uint32_t bandTop,const uint32_t box[4],int bgra) {
+    uint32_t width=box[2]-box[0],height=box[3]-box[1];uint64_t size=(uint64_t)width*height*4u;
+    if(!width || !height || size>67108864u || !windows_roi_admit(s,size+54u))return 0;
+    char path[1024];if(!windows_roi_path(path,directory,name))return 0;FILE *f=fopen(path,"wb");if(!f)return 0;
+    BITMAPFILEHEADER file={0};file.bfType=0x4d42;file.bfOffBits=54;file.bfSize=(DWORD)(54+size);
+    BITMAPINFOHEADER info={0};info.biSize=40;info.biWidth=(LONG)width;info.biHeight=-(LONG)height;
+    info.biPlanes=1;info.biBitCount=32;info.biCompression=BI_RGB;info.biSizeImage=(DWORD)size;
+    int ok=fwrite(&file,1,14,f)==14 && fwrite(&info,1,40,f)==40;
+    for(uint32_t y=box[1];y<box[3] && ok;++y){
+        const uint8_t *row=(const uint8_t*)map->pData+(size_t)(y-bandTop)*map->RowPitch+(size_t)box[0]*4u;
+        if(bgra)ok=fwrite(row,4,width,f)==width;
+        else for(uint32_t x=0;x<width && ok;++x){uint8_t pixel[4]={row[x*4+2],row[x*4+1],row[x*4],row[x*4+3]};ok=fwrite(pixel,1,4,f)==4;}
+    }
+    return fclose(f)==0 && ok;
+}
+static void windows_freeze_selection_rois(CjguiWindowsRendererSession *s,CjguiWindowsScene *scene,
+    const D3D11_MAPPED_SUBRESOURCE *map,uint32_t docWidth,uint32_t bandTop,uint32_t bandBottom,int bgra) {
+    CjguiWindowsFrameEvidence *e=&s->frameEvidence;
+    if(!s->selectionRoiRemaining)return;
+    const char *directory=getenv("PHAROS_WINDOWS_SELECTION_ROI_DIR");if(!directory || !directory[0])return;
+    --s->selectionRoiRemaining;uint32_t ordinal=++s->selectionRoiOrdinal;
+    if(e->selectionDraw.overflow || e->selectionDraw.scene!=scene->version){e->roiStatus=3u;return;}
+    if(!windows_roi_admit(s,4096u+(uint64_t)e->selectionDraw.count*2048u)){e->roiStatus=2u;return;}
+    char name[128];snprintf(name,sizeof(name),"f-%04u.json",ordinal);
+    if(!windows_roi_path(e->roiMetaPath,directory,name)){e->roiStatus=1u;return;}
+    FILE *f=fopen(e->roiMetaPath,"wb");if(!f){e->roiMetaPath[0]=0;e->roiStatus=1u;return;}
+    const CjguiWindowsSelectionDrawFacts *facts=&e->selectionDraw;const CjguiWindowsPreviewPaintBatch *batch=&facts->batch;
+    fprintf(f,"{\"scene\":%llu,\"renderer\":%llu,\"device\":%llu,\"binding\":%llu,\"ownerVersion\":%llu,\"ownerRevision\":%llu,"
+        "\"projection\":%llu,\"publication\":\"%llu\",\"key\":\"%llu\",\"drawnKey\":\"%llu\",\"batchEligible\":%u,"
+        "\"color\":[%.9g,%.9g,%.9g,%.9g],\"freezeClockNs\":%llu,\"rows\":[",
+        (unsigned long long)facts->scene,(unsigned long long)facts->renderer,(unsigned long long)facts->device,
+        (unsigned long long)facts->binding,(unsigned long long)batch->ownerVersion,(unsigned long long)batch->ownerRevision,
+        (unsigned long long)batch->projectionId,(unsigned long long)batch->publicationId,(unsigned long long)batch->key,
+        (unsigned long long)facts->drawnKey,facts->batchEligible,batch->red,batch->green,batch->blue,batch->alpha,
+        (unsigned long long)cjgui_internal_renderer_owner_clock_ns());
+    uint32_t written=0;double scale=(double)(s->dpi?s->dpi:96u)/96.0;
+    for(uint32_t i=0;i<facts->count;++i){
+        const CjguiWindowsSelectionDrawRow *row=&facts->rows[i];CjguiWindowsSceneNode *n=scene_node_by_id(scene,row->nodeId);
+        if(!n){e->roiStatus=3u;continue;}
+        if(!isfinite(scale) || scale<=0 || !isfinite(n->geometry.translateX) || !isfinite(n->geometry.translateY) ||
+           n->node.width<0 || n->node.height<0){e->roiStatus=4u;continue;}
+        if(!n->node.width || !n->node.height)continue;
+        double left=(n->node.x+n->geometry.translateX)*scale,top=(n->node.y+n->geometry.translateY)*scale;
+        uint32_t box[4];int visible=windows_frame_sample_bounds(left-2,top-2,left+n->node.width*scale+2,top+n->node.height*scale+2,
+            docWidth,bandTop,bandBottom,box);
+        if(visible!=1){if(visible<0)e->roiStatus=4u;continue;}
+        char inputName[128],bmpName[128];snprintf(bmpName,sizeof(bmpName),"f-%04u-n%llu.bmp",ordinal,(unsigned long long)row->nodeId);
+        if(!windows_roi_asset(s,n,row,directory,inputName) || !windows_roi_bmp(s,directory,bmpName,map,bandTop,box,bgra)){e->roiStatus=2u;continue;}
+        double clipR=row->clipWidth>0?(row->clipX+row->clipWidth)*scale:(double)s->width;
+        double clipB=row->clipHeight>0?(row->clipY+row->clipHeight)*scale:(double)s->height;
+        fprintf(f,"%s{\"node\":%llu,\"resource\":%lld,\"input\":\"%s\",\"roi\":\"%s\",\"roiOrigin\":[%u,%u],"
+            "\"origin\":[%.17g,%.17g],\"clip\":[%.17g,%.17g,%.17g,%.17g],\"source\":\"%s\",\"ranges\":[",
+            written?",":"",(unsigned long long)row->nodeId,(long long)row->resourceId,inputName,bmpName,box[0],box[1],
+            row->originX*scale,row->originY*scale,row->clipX*scale,row->clipY*scale,clipR,clipB,
+            row->source==1u?"batch":row->source==2u?"style":"none");
+        for(uint32_t r=0;r<row->rangeCount;++r)fprintf(f,"%s[%u,%u,%u]",r?",":"",row->start16[r],row->end16[r],row->painted[r]);
+        fprintf(f,"]}");++written;
+    }
+    fprintf(f,"]");if(fclose(f)!=0)e->roiStatus=1u;
+}
+static void windows_finish_selection_roi(CjguiWindowsFrameEvidence *e,const char *stage,HRESULT result,uint64_t clock) {
+    if(!e->roiMetaPath[0])return;FILE *f=fopen(e->roiMetaPath,"ab");if(!f)return;
+    fprintf(f,",\"frame\":%llu,\"presentResult\":%lu,\"presentNs\":%llu,\"stage\":\"%s\",\"captureStatus\":%u}\n",
+        (unsigned long long)e->frameIndexAtFreeze,(unsigned long)(uint32_t)result,(unsigned long long)clock,stage,e->roiStatus);
+    fclose(f);
+}
+
+static void windows_freeze_frame_evidence(CjguiWindowsRendererSession *s, struct CjguiWindowsScene *scene) {
+    if (s) s->frameEvidence.valid = 0u;
+    if (!windows_receipt_enabled(s)) return;
+    uint64_t freezeAt = cjgui_internal_renderer_owner_clock_ns();
+    ID3D11Texture2D *back = NULL;
+    if (FAILED(IDXGISwapChain_GetBuffer(s->swapChain, 0u, &IID_ID3D11Texture2D, (void **)&back)) || !back)
+        return;
+    D3D11_TEXTURE2D_DESC desc;
+    ID3D11Texture2D_GetDesc(back, &desc);
+    /* The scan assumes one 32-bit texel. Byte order decides which channel is
+       which: this swapchain is B8G8R8A8, so a little-endian uint32 carries blue
+       in the low byte. Reading it as RGBA would swap red and blue and make the
+       blue-dominant selection tint invisible -- the mirror image of the
+       'unsupported_format=87' blind spot this replaces. */
+    int bgra = desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM ||
+        desc.Format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ? 1 : 0;
+    if (!bgra && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB) {
+        s->frameEvidence.valid = 2u;
+        s->frameEvidence.format = (uint32_t)desc.Format;
+        ID3D11Texture2D_Release(back);
+        return;
+    }
+    uint32_t top = desc.Height / 5u, bottom = desc.Height - desc.Height / 5u;
+    if (bottom <= top + 8u || desc.Width < 16u) { ID3D11Texture2D_Release(back); return; }
+    uint32_t bandHeight = bottom - top;
+    /* Cache the staging texture per session; only a size change reallocates. */
+    if (s->receiptStaging && (s->receiptStagingWidth != desc.Width ||
+        s->receiptStagingHeight != bandHeight)) {
+        ID3D11Texture2D_Release(s->receiptStaging);
+        s->receiptStaging = NULL;
+        s->receiptStagingWidth = s->receiptStagingHeight = 0u;
+    }
+    if (!s->receiptStaging) {
+        D3D11_TEXTURE2D_DESC staged = desc;
+        staged.Height = bandHeight; staged.ArraySize = 1u; staged.MipLevels = 1u;
+        staged.SampleDesc.Count = 1u; staged.SampleDesc.Quality = 0u;
+        staged.Usage = D3D11_USAGE_STAGING;
+        staged.BindFlags = 0u; staged.CPUAccessFlags = D3D11_CPU_ACCESS_READ; staged.MiscFlags = 0u;
+        if (FAILED(ID3D11Device_CreateTexture2D(s->device, &staged, NULL, &s->receiptStaging)) ||
+            !s->receiptStaging) {
+            s->receiptStaging = NULL;
+            ID3D11Texture2D_Release(back); return;
+        }
+        s->receiptStagingWidth = desc.Width;
+        s->receiptStagingHeight = bandHeight;
+    }
+    ID3D11Texture2D *staging = s->receiptStaging;
+    D3D11_BOX box;
+    box.left = 0u; box.top = top; box.front = 0u;
+    box.right = desc.Width; box.bottom = bottom; box.back = 1u;
+    D3D11_TEXTURE2D_DESC stagingDesc;ID3D11Texture2D_GetDesc(staging,&stagingDesc);
+    if(stagingDesc.Width!=desc.Width || stagingDesc.Height!=bandHeight || stagingDesc.Format!=desc.Format ||
+       top>=bottom || bottom>desc.Height) {
+        memset(&s->frameEvidence,0,sizeof(s->frameEvidence));s->frameEvidence.valid=3u;
+        s->frameEvidence.width=desc.Width;s->frameEvidence.roiStatus=6u;
+        ID3D11Texture2D_Release(back);return;
+    }
+    ID3D11DeviceContext_CopySubresourceRegion(s->context, (ID3D11Resource *)staging, 0u, 0u, 0u, 0u,
+        (ID3D11Resource *)back, 0u, &box);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (FAILED(ID3D11DeviceContext_Map(s->context, (ID3D11Resource *)staging, 0u,
+        D3D11_MAP_READ, 0u, &mapped))) {
+        ID3D11Texture2D_Release(back); return;
+    }
+    if(!windows_frame_mapped_readable(mapped.pData,(size_t)mapped.RowPitch,(size_t)desc.Width,(size_t)bandHeight)) {
+        CjguiWindowsFrameEvidence *bad=&s->frameEvidence;memset(bad,0,sizeof(*bad));
+        bad->valid=3u;bad->width=desc.Width;bad->mappedRowPitch=mapped.RowPitch;
+        bad->roiStatus=5u;
+        ID3D11DeviceContext_Unmap(s->context,(ID3D11Resource*)staging,0u);
+        ID3D11Texture2D_Release(back);return;
+    }
+    CjguiWindowsFrameEvidence *e = &s->frameEvidence;
+    memset(e, 0, sizeof(*e));
+    e->valid = 1u;
+    e->frameIndexAtFreeze=s->frameIndex;
+    e->selectionDraw=s->selectionDrawFacts;
+    e->format = (uint32_t)desc.Format;
+    e->width = desc.Width;
+    e->bandTop = top;
+    e->bandHeight = bandHeight;
+    e->hash = 1469598103934665603ull;
+    e->docHash = 1469598103934665603ull;
+    e->railHash = 1469598103934665603ull;
+    /* The scroll rail is a fixed, saturated column at the right edge, so a band-wide
+       colour statistic measures the rail instead of the document. Hashing the rail
+       separately lets a reader prove that a change happened in the document region and
+       that a rail-only change is credited as no feedback at all. */
+    uint32_t docWidth = desc.Width > 160u ? desc.Width - 64u : desc.Width;
+    for (size_t y = 0u; y < bandHeight; y += 4u) {
+        const uint8_t *row = (const uint8_t *)mapped.pData + y * mapped.RowPitch;
+        uint32_t rowTint = 0u, rowRuns = 0u;
+        int insideRun = 0;
+        for (size_t x = 0u; x < desc.Width; x += 4u) {
+            uint32_t pixel;memcpy(&pixel,row+x*4u,4u);pixel &= 0x00FFFFFFu;
+            e->hash = windows_fnv1a64(e->hash, &pixel, sizeof(pixel));
+            if (x < docWidth) e->docHash = windows_fnv1a64(e->docHash, &pixel, sizeof(pixel));
+            else e->railHash = windows_fnv1a64(e->railHash, &pixel, sizeof(pixel));
+            int green = (int)((pixel >> 8) & 255u);
+            int red = bgra ? (int)((pixel >> 16) & 255u) : (int)(pixel & 255u);
+            int blue = bgra ? (int)(pixel & 255u) : (int)((pixel >> 16) & 255u);
+            if (x < docWidth) {
+                int luma = (red * 77 + green * 151 + blue * 28) >> 12;
+                e->lum[luma > 15 ? 15 : luma] += 16u;
+            }
+            int maxc = red > green ? (red > blue ? red : blue) : (green > blue ? green : blue);
+            int minc = red < green ? (red < blue ? red : blue) : (green < blue ? green : blue);
+            int isTint = 0;
+            if (maxc - minc > 24) {
+                e->colored += 16u;
+                /* The selection decoration is the only blue-dominant tint the
+                   document band carries; text and paper are neutral. */
+                if (blue > red) { isTint = 1; e->tint += 16u; rowTint += 16u; }
+            }
+            if (isTint) {
+                if (!e->firstX) e->firstX = x;
+                e->lastX = x;
+                if (!insideRun) { insideRun = 1; rowRuns += 1u; }
+            } else insideRun = 0;
+        }
+        /* Vertical coverage is what distinguishes a two-fragment selection from
+           one that lost a row: a missing middle row leaves rows < expected and a
+           gap between runs. */
+        if (rowTint) {
+            e->rows += 1u; e->runs += rowRuns;
+            if (!e->firstY) e->firstY = y + top;
+            e->lastY = y + top;
+        }
+    }
+    /* Per-text-node region hashes over the SAME frozen copy: each accepted text
+       node's rect (logical coords, dpi-scaled like the draw path) intersected
+       with the document region. This is what lets the gate prove the highlight
+       moved in the pointer's node and that a cross-paragraph selection covers
+       both fragments in one frame; the tint column cannot do that because the
+       scroll rail is blue-dominant down the whole band. */
+    {
+        FLOAT nodeScale = (FLOAT)(s->dpi ? s->dpi : 96u) / 96.0f;
+        uint32_t nodeBudget = 0u;
+        for (uint32_t i = 0u; i < scene->count && nodeBudget < 8u; ++i) {
+            CjguiWindowsSceneNode *n = &scene->nodes[i];
+            if (!n->textLayout) continue;
+            double nl = (n->node.x + n->geometry.translateX) * nodeScale;
+            double nt = (n->node.y + n->geometry.translateY) * nodeScale;
+            double nr = nl + n->node.width * nodeScale;
+            double nb = nt + n->node.height * nodeScale;
+            uint32_t bounds[4];uint64_t nh=0u;
+            int rawValid=isfinite(nodeScale) && nodeScale>0 && isfinite(n->geometry.translateX) &&
+                isfinite(n->geometry.translateY) && n->node.width>=0 && n->node.height>=0;
+            int readable=rawValid?windows_frame_sample_node_hash(mapped.pData,(size_t)mapped.RowPitch,docWidth,top,bottom,
+                nl,nt,nr,nb,&nh,bounds):-1;
+            if(readable!=1) {
+                if(readable<0) {
+                    e->roiStatus=4u;
+                    if(s->receiptRejectedRegions<16u) {
+                        ++s->receiptRejectedRegions;
+                        fprintf(stderr,"R7_READBACK_REGION_REJECT scene=%llu node=%llu left=%.17g top=%.17g right=%.17g bottom=%.17g width=%u band=%u:%u pitch=%u status=%d\n",
+                            (unsigned long long)scene->version,(unsigned long long)n->node.nodeId,nl,nt,nr,nb,
+                            docWidth,top,bottom,mapped.RowPitch,readable);
+                    }
+                }
+                continue;
+            }
+            e->nodeId[nodeBudget] = n->node.nodeId;
+            e->nodeHash[nodeBudget] = nh;
+            nodeBudget += 1u;
+        }
+        e->nodeHashCount = nodeBudget;
+    }
+    windows_freeze_selection_rois(s,scene,&mapped,docWidth,top,bottom,bgra);
+    ID3D11DeviceContext_Unmap(s->context, (ID3D11Resource *)staging, 0u);
+    /* Frame identity is frozen with the pixels: whatever the emitter prints was
+       the state this buffer was drawn from, not the state after Present. */
+    e->sceneVersion = scene->version;
+    e->selDesiredKey = s->selectionPaintDesiredKey;
+    e->selPresentedKey = s->selectionPaintPresentedKey;
+    e->selVisible = (uint32_t)s->selectionPaintVisible;
+    e->selPaintPending = (uint32_t)s->multilineViewportPaintPending;
+    e->freezeNs = cjgui_internal_renderer_owner_clock_ns() >= freezeAt
+        ? cjgui_internal_renderer_owner_clock_ns() - freezeAt : 0u;
+    ID3D11Texture2D_Release(back);
+}
+
+static void windows_emit_frame_receipt(CjguiWindowsRendererSession *s, const char *stage, HRESULT presentResult) {
+    if (!s || !s->frameEvidence.valid) return;
+    if (!getenv("PHAROS_WINDOWS_FRAME_RECEIPT") || s->receiptFrames >= 4000u) return;
+    ++s->receiptFrames;
+    CjguiWindowsFrameEvidence *e = &s->frameEvidence;
+    if(e->valid==3u) {
+        fprintf(stderr,"R7_FRAME stage=%s frame=%llu present_hr=0x%08lX readback_unavailable=%s row_pitch=%u required_width=%u\n",
+            stage,(unsigned long long)s->frameIndex,(unsigned long)presentResult,
+            e->roiStatus==6u?"staging_extent_or_format":"mapped_storage",e->mappedRowPitch,e->width);
+        fflush(stderr);return;
+    }
+    if (e->valid == 2u) {
+        fprintf(stderr, "R7_FRAME stage=%s frame=%llu present_hr=0x%08lX unsupported_format=%u\n",
+            stage, (unsigned long long)s->frameIndex, (unsigned long)presentResult, e->format);
+        fflush(stderr);
+        return;
+    }
+    uint64_t presentNs = cjgui_internal_renderer_owner_clock_ns();
+    windows_finish_selection_roi(e,stage,presentResult,presentNs);
+    char lumText[16 * 24];
+    lumText[0] = '\0';
+    for (int i = 0; i < 16; i++) {
+        char item[24];
+        sprintf(item, i + 1 == 16 ? "%llu" : "%llu,", (unsigned long long)e->lum[i]);
+        strncat(lumText, item, sizeof(lumText) - strlen(lumText) - 1);
+    }
+    char nodeText[8 * 40];
+    nodeText[0] = '\0';
+    for (uint32_t i = 0; i < e->nodeHashCount && i < 8u; i++) {
+        char item[48];
+        sprintf(item, "nhash_%llu=%016llx ", (unsigned long long)e->nodeId[i],
+            (unsigned long long)e->nodeHash[i]);
+        strncat(nodeText, item, sizeof(nodeText) - strlen(nodeText) - 1);
+    }
+    fprintf(stderr, "R7_FRAME stage=%s frame=%llu present_ns=%llu present_hr=0x%08lX freeze_ns=%llu "
+        "band_top=%llu band_h=%llu scene=%llu colored=%llu tint=%llu "
+        "tint_first_x=%llu tint_last_x=%llu tint_rows=%llu tint_first_y=%llu tint_last_y=%llu "
+        "tint_runs=%llu hash=%016llx doc_hash=%016llx rail_hash=%016llx lum=%s %s"
+        "sel_desired=%llu sel_presented=%llu sel_visible=%llu sel_paint_pending=%llu "
+        "preview_publication=%llu preview_key=%llu preview_renderer=%llu preview_device=%llu preview_binding=%llu "
+        "preview_owner_version=%llu preview_owner_revision=%llu preview_projection=%llu preview_drawn_key=%llu "
+        "preview_batch_eligible=%u roi_status=%u\n",
+        stage, (unsigned long long)s->frameIndex, (unsigned long long)presentNs,
+        (unsigned long)presentResult, (unsigned long long)e->freezeNs,
+        (unsigned long long)e->bandTop, (unsigned long long)e->bandHeight,
+        (unsigned long long)e->sceneVersion, (unsigned long long)e->colored,
+        (unsigned long long)e->tint, (unsigned long long)e->firstX, (unsigned long long)e->lastX,
+        (unsigned long long)e->rows, (unsigned long long)e->firstY, (unsigned long long)e->lastY,
+        (unsigned long long)e->runs, (unsigned long long)e->hash, (unsigned long long)e->docHash,
+        (unsigned long long)e->railHash, lumText, nodeText,
+        (unsigned long long)e->selDesiredKey,
+        (unsigned long long)e->selPresentedKey,
+        (unsigned long long)e->selVisible,
+        (unsigned long long)e->selPaintPending,
+        (unsigned long long)e->selectionDraw.batch.publicationId,(unsigned long long)e->selectionDraw.batch.key,
+        (unsigned long long)e->selectionDraw.renderer,(unsigned long long)e->selectionDraw.device,
+        (unsigned long long)e->selectionDraw.binding,(unsigned long long)e->selectionDraw.batch.ownerVersion,
+        (unsigned long long)e->selectionDraw.batch.ownerRevision,(unsigned long long)e->selectionDraw.batch.projectionId,
+        (unsigned long long)e->selectionDraw.drawnKey,e->selectionDraw.batchEligible,e->roiStatus);
+    fflush(stderr);
+}
+
 static CjguiInternalRendererStatus refresh_windows_selection_paint(CjguiWindowsRendererSession *s) {
     if (!s || !s->acceptedScene.configured || s->retiring || s->minimized ||
         s->graphicsRecoveryPending || !s->renderTarget) return CJGUI_INTERNAL_RENDERER_OK;
+    (void)windows_revalidate_preview_batch(s);
     update_windows_selection_paint(s,&s->acceptedScene);
-    if (!s->multilineViewportPaintPending && (!s->selectionPaintHasPresentation ||
-        (s->selectionPaintDesiredKey==s->selectionPaintPresentedKey &&
-         s->selectionPaintVisible==s->selectionPaintPresentedVisible))) return CJGUI_INTERNAL_RENDERER_OK;
+    if (!windows_selection_paint_pending(s)) return CJGUI_INTERNAL_RENDERER_OK;
+    /* Bounded service: an obligation no available work can paint gets a few turns,
+       not a Present on every pump turn. A changed decoration resets the count. */
+    if (s->selectionPaintServiceTurns >= CJGUI_WINDOWS_SELECTION_PAINT_SERVICE_TURNS)
+        return CJGUI_INTERNAL_RENDERER_OK;
+    ++s->selectionPaintServiceTurns;
     CjguiInternalRendererStatus st=draw_windows_scene(s,&s->acceptedScene);
-    if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+    if (st!=CJGUI_INTERNAL_RENDERER_OK) {
+        windows_request_selection_paint_service(s);
+        return st;
+    }
+    windows_freeze_frame_evidence(s,&s->acceptedScene);
     HRESULT hr=IDXGISwapChain_Present(s->swapChain,1,0);
+    windows_emit_frame_receipt(s,"selection",hr);
     if (FAILED(hr)) {
         s->lastGraphicsFailure=hr;++s->presentationRejectedCount;
         if (windows_hresult_is_device_lost(hr)) {
-            (void)recover_graphics(s,0);return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+            (void)recover_graphics(s,0);
+            windows_request_selection_paint_service(s);
+            return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
         }
+        windows_request_selection_paint_service(s);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
     ++s->frameIndex;++s->presentationAcceptedCount;
     s->multilineViewportPaintPending=0u;
-    s->selectionPaintPresentedKey=s->selectionPaintDesiredKey;
-    s->selectionPaintPresentedVisible=s->selectionPaintVisible;
+    windows_settle_selection_paint_presentation(s);
+    windows_settle_preview_paint_presentation(s);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 static CjguiInternalRendererStatus pump_windows_messages(
@@ -6255,6 +8061,7 @@ static CjguiInternalRendererStatus pump_windows_messages(
     start_pending_ime_successor(s);
     if (timeoutMs > 16u) timeoutMs = 16u;
     uint64_t started = cjgui_internal_renderer_owner_clock_ns();
+    uint64_t busyStarted = started;
     uint32_t remaining = timeoutMs;
     for (;;) {
         uint32_t message = 0u;
@@ -6274,16 +8081,26 @@ static CjguiInternalRendererStatus pump_windows_messages(
         if (s->graphicsRecoveryPending) (void)recover_graphics(s, 0);
         retry_kept_ime_frozen(s);
         CjguiInternalRendererStatus paint=refresh_windows_selection_paint(s);
-        if (paint!=CJGUI_INTERNAL_RENDERER_OK && paint!=CJGUI_INTERNAL_RENDERER_PRESENT_PENDING) return paint;
+        if (paint!=CJGUI_INTERNAL_RENDERER_OK && paint!=CJGUI_INTERNAL_RENDERER_PRESENT_PENDING) return windows_finish_pump_work(s, busyStarted, paint);
         CjguiInternalRendererStatus popped = pop_event(s, outEvent);
-        if (popped == CJGUI_INTERNAL_RENDERER_OK) return popped;
-        if (remaining == 0u) return CJGUI_INTERNAL_RENDERER_OK;
+        if (popped == CJGUI_INTERNAL_RENDERER_OK) return windows_finish_pump_work(s, busyStarted, popped);
+        if (remaining == 0u) return windows_finish_pump_work(s, busyStarted, CJGUI_INTERNAL_RENDERER_OK);
         HANDLE waitHandles[2] = { s->rawWakeEvent, s->cmdWakeEvent };
+        (void)windows_finish_pump_work(s, busyStarted, CJGUI_INTERNAL_RENDERER_OK);
+        uint64_t waitStarted = s->traceEnabled ? cjgui_internal_renderer_owner_clock_ns() : 0u;
         DWORD waited = MsgWaitForMultipleObjectsEx(2, waitHandles, remaining,
             QS_ALLINPUT, MWMO_INPUTAVAILABLE);
-        if (waited == WAIT_FAILED) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        if (s->traceEnabled) {
+            busyStarted = cjgui_internal_renderer_owner_clock_ns();
+            DWORD self = GetCurrentThreadId();
+            windows_trace(s, "pump_wait", s->traceCurrentCommandId, remaining,
+                busyStarted - waitStarted,
+                waited == WAIT_FAILED ? CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR : CJGUI_INTERNAL_RENDERER_OK,
+                self, self);
+        }
+        if (waited == WAIT_FAILED) return windows_finish_pump_work(s, busyStarted, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
         if (WaitForSingleObject(s->pumpStopEvent, 0) == WAIT_OBJECT_0) {
-            return CJGUI_INTERNAL_RENDERER_OK;
+            return windows_finish_pump_work(s, busyStarted, CJGUI_INTERNAL_RENDERER_OK);
         }
         MSG drained;
         while (PeekMessageW(&drained, NULL, 0, 0, PM_REMOVE)) {
@@ -6291,8 +8108,7 @@ static CjguiInternalRendererStatus pump_windows_messages(
                 raw_ring_push(s, (uint32_t)WM_QUIT, 0u, 0, 0);
                 continue;
             }
-            TranslateMessage(&drained);
-            DispatchMessageW(&drained);
+            windows_dispatch_observed_message(s, &drained);
         }
         drain_dispatcher_commands(s, 1);
         if (outIdleWaitNs) {
@@ -6314,8 +8130,8 @@ static CjguiInternalRendererStatus pump_windows_messages(
             }
             retry_kept_ime_frozen(s);
             popped = pop_event(s, outEvent);
-            if (popped == CJGUI_INTERNAL_RENDERER_OK) return popped;
-            return CJGUI_INTERNAL_RENDERER_OK;
+            if (popped == CJGUI_INTERNAL_RENDERER_OK) return windows_finish_pump_work(s, busyStarted, popped);
+            return windows_finish_pump_work(s, busyStarted, CJGUI_INTERNAL_RENDERER_OK);
         }
         remaining = nextRemaining;
     }
@@ -6816,7 +8632,7 @@ static CjguiInternalRendererStatus text_position_v1_impl(
         if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
         preferredX = currentRect[0];
     }
-    double targetSceneY = (double)node->node.y + node->geometry.translateY + targetY;
+    double targetSceneY = (double)node->node.y + node->geometry.translateY - node->multilineScrollY + targetY;
     return windows_position_from_point(s, node, byteLength, totalUnits,
         preferredX, targetSceneY, meta, rect);
 }
@@ -7139,7 +8955,23 @@ static CjguiInternalRendererStatus measure_composable_text_impl(
 // 环境变量门控的 Windows 测试探针：把 accepted 场景节点的几何换算为屏幕坐标，
 // 供 guest 侧用真实 SendInput 点击（导航与输入同走系统队列）。默认关闭；
 // 产品正常运行不受影响（未设置 PHAROS_WINDOWS_TEST_PROBE_FILE 时零开销）。
-static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
+/* Read the actual accepted source node before measuring its click geometry.
+   A mode action can precede candidate publication; this never publishes it. */
+static void windows_accepted_node_observation(CjguiWindowsRendererSession *s,
+    uint64_t nodeId,FILE *output) {
+    CjguiWindowsSceneNode *node=scene_node_by_id(&s->acceptedScene,nodeId);
+    uint64_t bytes=node&&node->value?strlen(node->value):0u;
+    fprintf(output,"NODE_ACCEPTANCE node=%llu ready=%u accepted_scene=%llu candidate_scene=%llu generation=%llu lease=%llu kind=%u body_bytes=%llu body_hash=%llu source_start=%llu source_end=%llu owner_version=%lld\n",
+        (unsigned long long)nodeId,(unsigned)(node&&node->hasNode&&node->hasGeometry),
+        (unsigned long long)s->acceptedScene.version,(unsigned long long)s->candidateScene.version,
+        (unsigned long long)s->sessionGeneration,(unsigned long long)(node?node->layoutLease:0u),
+        (unsigned)(node?node->node.nodeKind:0u),(unsigned long long)bytes,
+        (unsigned long long)(node&&node->value?windows_fnv1a64(1469598103934665603ull,node->value,(size_t)bytes):0u),
+        (unsigned long long)s->rangeSourceStart,(unsigned long long)s->rangeSourceEnd,
+        (long long)s->rangeAcceptedVersion);
+}
+
+static void windows_test_probe_tick_locked(CjguiWindowsRendererSession *s) {
     const char *path = getenv("PHAROS_WINDOWS_TEST_PROBE_FILE");
     if (!path || !path[0] || !s || !s->hwnd) return;
     FILE *fp = fopen(path, "rb");
@@ -7153,6 +8985,16 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
     {
         FILE *clear = fopen(path, "wb");
         if (clear) fclose(clear);
+    }
+    unsigned int roiCount=0u;
+    if(sscanf(request,"ROI_ARM %u",&roiCount)==1) {
+        const char *directory=getenv("PHAROS_WINDOWS_SELECTION_ROI_DIR");
+        int armed=directory && directory[0] && roiCount>0u && roiCount<=16u &&
+            s->selectionRoiBytes<CJGUI_WINDOWS_ROI_BYTE_LIMIT;
+        if(armed)s->selectionRoiRemaining=roiCount;
+        char outputPath[1024];snprintf(outputPath,sizeof(outputPath),"%s.out",path);
+        FILE *output=fopen(outputPath,"wb");if(output){fprintf(output,"ROI_ARM_RESULT armed=%d count=%u bytes=%llu\n",armed,
+            armed?roiCount:0u,(unsigned long long)s->selectionRoiBytes);fclose(output);}return;
     }
     unsigned long long positionNode = 0ull;
     unsigned int positionUnits = 0u;
@@ -7187,6 +9029,13 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
         }
         return;
     }
+    unsigned long long acceptanceNode=0ull;
+    if (sscanf(request,"ACCEPTED_NODE %llu",&acceptanceNode)==1) {
+        char outputPath[1024];_snprintf(outputPath,sizeof(outputPath),"%s.out",path);
+        FILE *output=fopen(outputPath,"wb");
+        if(output){windows_accepted_node_observation(s,acceptanceNode,output);fclose(output);}
+        return;
+    }
     unsigned long long nodeId = 0ull;
     int matchedRect = sscanf(request, "NODE_RECT %llu", &nodeId);
     unsigned long long clickId = 0ull;
@@ -7202,7 +9051,7 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
         char outputPath[1024];_snprintf(outputPath,sizeof(outputPath),"%s.out",path);
         FILE *output=fopen(outputPath,"wb");
         if(output) {
-            fprintf(output,"INPUT_STATE scene=%llu node=%llu selection=%u:%u gate_pending=%u gate_request=%llu gate_binding=%llu provisional=%u outcome=%u receipt=%llu armed=%d closed=%d nonce=%llu generation=%llu binding=%llu context=%llu mirror=%llu owner=%lld proxy=%llu range_scene=%llu previous=%llu accepted=%llu accepted_version=%lld range_selection=%u:%u head=%u tail=%u\n",
+            fprintf(output,"INPUT_STATE scene=%llu node=%llu selection=%u:%u gate_pending=%u gate_request=%llu gate_binding=%llu provisional=%u outcome=%u receipt=%llu armed=%d closed=%d nonce=%llu generation=%llu binding=%llu context=%llu mirror=%llu owner=%lld proxy=%llu range_scene=%llu previous=%llu accepted=%llu accepted_version=%lld range_selection=%u:%u head=%u tail=%u window=%llu source_start=%llu source_end=%llu resource=%lld\n",
                 (unsigned long long)s->sceneVersion,(unsigned long long)s->focusedNodeId,
                 s->selectionStart16,s->selectionEnd16,s->sourceInstallPending,
                 (unsigned long long)s->sourceInstallRequestId,(unsigned long long)s->sourceInstallBindingEpoch,
@@ -7213,7 +9062,9 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
                 (unsigned long long)s->rangeProxyGeneration,(unsigned long long)s->rangeSceneVersion,
                 (unsigned long long)s->rangePrevSeq,(unsigned long long)s->rangeAcceptedSeq,
                 (long long)s->rangeAcceptedVersion,s->rangeSelectionStart16,s->rangeSelectionEnd16,
-                s->rangeClaimHead,s->rangeClaimTail);
+                s->rangeClaimHead,s->rangeClaimTail,(unsigned long long)s->rangeWindowToken,
+                (unsigned long long)s->rangeSourceStart,(unsigned long long)s->rangeSourceEnd,
+                (long long)s->rangeResourceId);
             fclose(output);
         }
         return;
@@ -7229,18 +9080,41 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
         _snprintf(outputPath, sizeof(outputPath), "%s.out", path);
         FILE *output = fopen(outputPath, "wb");
         if (output) {
-            fprintf(output, "WORKLOAD scene=%llu frame=%llu clock_ns=%llu layouts=%llu raster_count=%llu raster_bytes=%llu raster_us=%llu upload_count=%llu upload_bytes=%llu upload_us=%llu live_bytes=%llu peak_live_bytes=%llu resources=%llu scratch_bytes=%llu device_generation=%llu recovery_count=%llu recovery_pending=%u recovery_attempts=%u last_hr=%08lx controlled_pending=%u\n",
+            int previewPending = s->previewPaintBatch.active &&
+                windows_preview_batch_matches(s, &s->acceptedScene) &&
+                (!s->previewPaintHasPresentation ||
+                 s->previewPaintPresentedKey != s->previewPaintBatch.key ||
+                 s->previewPaintPresentedScene != s->previewPaintBatch.sceneVersion ||
+                 !s->previewPaintPresentedVisible);
+            fprintf(output, "WORKLOAD scene=%llu frame=%llu clock_ns=%llu layouts=%llu layout_reuse=%llu raster_count=%llu raster_bytes=%llu raster_us=%llu upload_count=%llu upload_bytes=%llu upload_us=%llu texture_lease_allocs=%llu texture_lease_releases=%llu live_bytes=%llu peak_live_bytes=%llu resources=%llu scratch_bytes=%llu prep_units=%llu prep_deadline_hits=%llu preview_active=%u preview_key=%llu preview_scene=%llu preview_owner_version=%llu preview_owner_revision=%llu preview_projection=%llu preview_device_generation=%llu preview_drawn_key=%llu preview_drawn_scene=%llu preview_presented_key=%llu preview_presented_scene=%llu preview_pending=%u selection_service_turns=%u device_generation=%llu recovery_count=%llu recovery_pending=%u recovery_attempts=%u last_hr=%08lx controlled_pending=%u\n",
                 (unsigned long long)s->sceneVersion, (unsigned long long)s->frameIndex,
                 (unsigned long long)cjgui_internal_renderer_owner_clock_ns(),
                 (unsigned long long)s->textLayoutPreparationCount,
+                (unsigned long long)s->textLayoutReuseCount,
                 (unsigned long long)s->textRasterCount, (unsigned long long)s->textRasterBytes,
                 (unsigned long long)s->textRasterMicros,
                 (unsigned long long)s->textUploadCount, (unsigned long long)s->textUploadBytes,
                 (unsigned long long)s->textUploadMicros,
+                (unsigned long long)s->textTextureLeaseAllocationCount,
+                (unsigned long long)s->textTextureLeaseReleaseCount,
                 (unsigned long long)s->textTextureBytesInUse,
                 (unsigned long long)s->textTexturePeakBytes,
                 (unsigned long long)s->textTextureResourceCount,
                 (unsigned long long)s->textScratchBytesInUse,
+                (unsigned long long)s->preparationUnitCount,
+                (unsigned long long)s->preparationDeadlineHits,
+                (unsigned)s->previewPaintBatch.active,
+                (unsigned long long)s->previewPaintBatch.key,
+                (unsigned long long)s->previewPaintBatch.sceneVersion,
+                (unsigned long long)s->previewPaintBatch.ownerVersion,
+                (unsigned long long)s->previewPaintBatch.ownerRevision,
+                (unsigned long long)s->previewPaintBatch.projectionId,
+                (unsigned long long)s->previewPaintBatch.deviceGeneration,
+                (unsigned long long)s->previewPaintDrawnKey,
+                (unsigned long long)s->previewPaintDrawnScene,
+                (unsigned long long)s->previewPaintPresentedKey,
+                (unsigned long long)s->previewPaintPresentedScene,
+                (unsigned)previewPending, s->selectionPaintServiceTurns,
                 (unsigned long long)s->deviceGeneration,
                 (unsigned long long)s->deviceRecoveryCount,
                 s->graphicsRecoveryPending, s->graphicsRecoveryAttempts,
@@ -7346,7 +9220,7 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
         if (s->dbgRawCount >= 2u) r2 = (int)s->dbgRawLog[(s->dbgRawCount - 2u) % 8u];
         if (s->dbgRawCount >= 3u) r1 = (int)s->dbgRawLog[(s->dbgRawCount - 3u) % 8u];
         if (s->dbgRawCount >= 4u) r0 = (int)s->dbgRawLog[(s->dbgRawCount - 4u) % 8u];
-        fprintf(diagOut, "MOUSE_DIAG rawDepth=%u eventCount=%u press=%u sel=%u cap=%u focused=%d pushTotal=%u last4=%d,%d,%d,%d upNode=%llu upFlags=%u sceneDown=%llu sceneUp=%llu downMark=%u upMark=%u rawTotal=%u rawLast4=%d,%d,%d,%d upStage=%u upReject=%u upOld=%llu upNew=%llu upFresh=%llu\n",
+        fprintf(diagOut, "MOUSE_DIAG rawDepth=%u eventCount=%u press=%u sel=%u cap=%u focused=%d pushTotal=%u last4=%d,%d,%d,%d upNode=%llu upFlags=%u sceneDown=%llu sceneUp=%llu downMark=%u upMark=%u rawTotal=%u rawLast4=%d,%d,%d,%d upStage=%u upReject=%u upOld=%llu upNew=%llu upFresh=%llu moveStage=%u moveReject=%u moveOld=%llu moveNew=%llu moveUpdates=%u moveContinued=%u moveCancelled=%u\n",
             rawDepth, s->eventCount, s->mousePressActive, s->mouseSelectionActive,
             s->mouseCaptureActive, focused, s->dbgPushCount, pl0, pl1, pl2, pl3,
             (unsigned long long)s->dbgUpNode, s->dbgUpFlags,
@@ -7354,7 +9228,10 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
             s->dbgDownPushMark, s->dbgUpEntryMark, s->dbgRawCount, r0, r1, r2, r3,
             s->dbgUpStage, s->dbgUpReject,
             (unsigned long long)s->dbgUpOld, (unsigned long long)s->dbgUpNew,
-            (unsigned long long)s->dbgUpFreshHit);
+            (unsigned long long)s->dbgUpFreshHit,
+            s->dbgMoveStage, s->dbgMoveReject,
+            (unsigned long long)s->dbgMoveOld, (unsigned long long)s->dbgMoveNew,
+            s->dbgMoveUpdates, s->dbgMoveContinued, s->dbgMoveCancelled);
         fclose(diagOut);
         return;
     }
@@ -7438,6 +9315,19 @@ static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
             node->geometry.translateX, node->geometry.translateY);
     }
     fclose(out);
+}
+
+/* Test-only probe channel. Two threads can reach it -- the owner-driven pump and
+   the window thread message loop -- and the protocol is read-then-clear, so without
+   a claimer the two consumers could interleave and the gate would read a stale or
+   missing reply. One claimer wins; the loser does nothing and the caller next poll
+   retries. Not per-session on purpose: the channel is a single test file. */
+static void windows_test_probe_tick(CjguiWindowsRendererSession *s) {
+    static volatile LONG probeBusy = 0;
+
+    if (InterlockedCompareExchange(&probeBusy, 1l, 0l) != 0l) return;
+    windows_test_probe_tick_locked(s);
+    InterlockedExchange(&probeBusy, 0l);
 }
 
 static void windows_ensure_pump_input_attached(CjguiWindowsRendererSession *s) {
@@ -7614,6 +9504,7 @@ static void destroy_caller_phase_b(CjguiWindowsRendererSession *s) {
         return;
     }
     LeaveCriticalSection(&s->cmdLock);
+    uint64_t phaseStarted=s->traceEnabled?windows_prep_clock_ns():0u;
     cjgui_windows_free_hold(s);
     deferred_clear(s);
     recovery_clear(s);
@@ -7629,21 +9520,12 @@ static void destroy_caller_phase_b(CjguiWindowsRendererSession *s) {
     s->preparationIncoming = NULL;
     s->preparationState = NULL;
     s->preparationFrozenActiveBody = NULL;
-    while (s->preparationRetiringCount > 0u) {
-        uint32_t slot = 0u;
-        release_scene(&s->preparationRetiring[slot].scene);
-        windows_prep_release_scene_nodes(s->preparationRetiring[slot].incoming,
-            s->preparationRetiring[slot].nodeCount);
-        free(s->preparationRetiring[slot].state);
-        memset(&s->preparationRetiring[slot], 0, sizeof(s->preparationRetiring[0]));
-        for (uint32_t i = 1u; i < s->preparationRetiringCount; ++i)
-            s->preparationRetiring[i - 1u] = s->preparationRetiring[i];
-        memset(&s->preparationRetiring[s->preparationRetiringCount - 1u], 0,
-            sizeof(s->preparationRetiring[0]));
-        s->preparationRetiringCount -= 1u;
-    }
-    s->preparationLiveBytes = 0u;
+    /* pump 已 join 且没有 waiter：按原票逐单元完成真实释放与记账。
+       节点/图数量仍受原硬上限约束；不借超时、清零或直接 bulk free 隐藏责任。 */
+    while (s->preparationRetiringCount > 0u)
+        (void)windows_prep_retire_unit(s);
     windows_prep_clear_active_fields(s);
+    windows_prep_log("destroy_complete", s, 0u, 0u);
     for (uint32_t i=0;i<CJGUI_WINDOWS_IMAGE_CACHE_CAPACITY;++i) release_image_resource(&s->images[i]);
     for (uint32_t i = 0; i < s->textRunDeclarationCount; ++i)
         free(s->textRunDeclarations[i].encoded);
@@ -7665,6 +9547,29 @@ static void destroy_caller_phase_b(CjguiWindowsRendererSession *s) {
     if (s->cmdWakeEvent) CloseHandle(s->cmdWakeEvent);
     DeleteCriticalSection(&s->rawLock);
     DeleteCriticalSection(&s->cmdLock);
+    if (s->traceEnabled) {
+        uint64_t end=windows_prep_clock_ns(),index=s->traceCount;
+        DWORD executing=GetCurrentThreadId();
+        windows_trace(s,"prep_phase_b",0u,s->preparationRetiredGraphCount,
+            end-phaseStarted,CJGUI_INTERNAL_RENDERER_OK,executing,s->pumpThreadId);
+        fprintf(stderr,"CJGUI_WINDOWS_PHASE_B pid=%lu session=%llu generation=%llu index=%llu start_ns=%llu end_ns=%llu executing_tid=%lu ui_tid=%lu pump_running=%u waiters=%u active=%u retiring=%u live=%llu accounting_errors=%llu\n",
+            (unsigned long)GetCurrentProcessId(),(unsigned long long)s->token,(unsigned long long)s->sessionGeneration,
+            (unsigned long long)index,(unsigned long long)phaseStarted,(unsigned long long)end,
+            (unsigned long)executing,(unsigned long)s->pumpThreadId,(unsigned)s->pumpThreadRunning,
+            s->cmdWaiters,s->preparationActive,s->preparationRetiringCount,
+            (unsigned long long)s->preparationLiveBytes,
+            (unsigned long long)s->preparationRetireAccountingErrors);
+    }
+    /* The pump has joined and no dispatcher waiter remains. Preserve its last
+       bounded rows, including the completed destroy command, before clearing
+       the slot. Only the existing private diagnostic session requests this. */
+    const char *traceProbe = getenv("PHAROS_WINDOWS_TEST_PROBE_FILE");
+    if (s->traceEnabled && traceProbe && traceProbe[0]) {
+        fprintf(stderr, "CJGUI_WINDOWS_TRACE_FINAL ui_thread=%llu total=%llu\n",
+            (unsigned long long)s->pumpThreadId, (unsigned long long)s->traceCount);
+        windows_trace_dump(s, stderr);
+        fflush(stderr);
+    }
     ensure_session_lock();
     EnterCriticalSection(&g_sessionLock);
     memset(s, 0, sizeof(*s));
@@ -7734,16 +9639,31 @@ static void execute_dispatcher_command(CjguiWindowsRendererSession *hint,
     }
     cmd->started = 1;
     uint64_t executeAt=s->traceEnabled?cjgui_internal_renderer_owner_clock_ns():0;
+    uint64_t previousTraceCommand = 0u;
+    if (s->traceEnabled) {
+        previousTraceCommand = s->traceCurrentCommandId;
+        s->traceCurrentCommandId = cmd->commandId;
+    }
     cmd->status = cmd->proc(s, cmd->ctx);
     if (s->traceEnabled) {
-        const char *traceStage = !strcmp(cmd->apiName,"present") ? "dispatch" :
+        const char *traceStage = !strcmp(cmd->apiName,"pump_event") ? "dispatch_pump" :
+            !strcmp(cmd->apiName,"present") ? "dispatch" :
             !strcmp(cmd->apiName,"claim_range") ? "dispatch_range_claim" :
             !strcmp(cmd->apiName,"copy_bytes") ? "dispatch_range_copy" :
-            !strcmp(cmd->apiName,"ack_range") ? "dispatch_range_ack" : NULL;
+            !strcmp(cmd->apiName,"ack_range") ? "dispatch_range_ack" :
+            !strcmp(cmd->apiName,"begin_prep") ? "dispatch_prep_begin" :
+            !strcmp(cmd->apiName,"prepare_node") ? "dispatch_prep_prepare" :
+            !strcmp(cmd->apiName,"prepare_node_batch") ? "dispatch_prep_prepare" :
+            !strcmp(cmd->apiName,"reuse_node_batch") ? "dispatch_prep_reuse" :
+            !strcmp(cmd->apiName,"advance_prep") ? "dispatch_prep_advance" :
+            !strcmp(cmd->apiName,"promote_prep") ? "dispatch_prep_promote" :
+            !strcmp(cmd->apiName,"cancel_prep") ? "dispatch_prep_cancel" :
+            !strcmp(cmd->apiName,"drain_retirement") ? "dispatch_prep_drain" : "dispatch_other";
         if (traceStage)
             windows_trace(s,traceStage,cmd->commandId,executeAt-cmd->queuedNs,
                 cjgui_internal_renderer_owner_clock_ns()-executeAt,cmd->status,cmd->callerTid,self);
     }
+    if (s->traceEnabled) s->traceCurrentCommandId = previousTraceCommand;
     s->lastExecCallerTid = cmd->callerTid;
     s->lastExecTid = self;
     {
@@ -7788,10 +9708,14 @@ static void drain_dispatcher_commands(CjguiWindowsRendererSession *s, int skipPu
 
 /* 通用同步封送：调用者只给 token；路由快照读锁保护，会话解析与
    代次/退役检查在 UI 线程；堆信封，调用者栈返回后永不被引用。 */
-static CjguiInternalRendererStatus windows_dispatch_sync(uint64_t token,
+/* outCommandId retains the legacy in-flight handoff meaning. completed is
+   the terminal envelope claimed by this waiter, not operation/paint success.
+   Both outputs are synchronous caller-stack values and are never retained. */
+static CjguiInternalRendererStatus windows_dispatch_sync_with_completed(uint64_t token,
     const char *apiName, uint32_t kind, CjguiWindowsUiProc proc, void *ctx,
-    CjguiWindowsCtxFree ctxFree, uint32_t timeoutMs, uint64_t *outCommandId) {
+    CjguiWindowsCtxFree ctxFree, uint32_t timeoutMs, uint64_t *outCommandId, uint64_t *outCompletedCommandId) {
     if (outCommandId) *outCommandId = 0u;
+    if (outCompletedCommandId) *outCompletedCommandId = 0u;
     if (!proc) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     DWORD caller = GetCurrentThreadId();
     CjguiWindowsRendererSession *route = find_session(token);
@@ -7921,6 +9845,7 @@ static CjguiInternalRendererStatus windows_dispatch_sync(uint64_t token,
         }
         if (!wasStarted && !removed) wasCancelled = cmd->cancelled;
         if (wasDone && !wasOrphaned) {
+            if (outCompletedCommandId) *outCompletedCommandId = cmd->commandId;
             release_dispatcher_waiter_locked(route);
             CloseHandle(doneEvent);
             free(cmd);
@@ -7961,12 +9886,20 @@ static CjguiInternalRendererStatus windows_dispatch_sync(uint64_t token,
     EnterCriticalSection(&route->cmdLock);
     CjguiInternalRendererStatus status = cmd->cancelled
         ? CJGUI_INTERNAL_RENDERER_INVALID_SESSION : cmd->status;
+    if (outCompletedCommandId) *outCompletedCommandId = cmd->commandId;
     release_dispatcher_waiter_locked(route);
     CloseHandle(doneEvent);
     /* 成功/取消唤醒：信封由等待方一次释放（此前漏 free，常驻泄漏）；
        ctx 仍归调用者（各 wrapper 的非 TIMEOUT/IN_FLIGHT 分支释放）。 */
     free(cmd);
     return status;
+}
+
+static CjguiInternalRendererStatus windows_dispatch_sync(uint64_t token,
+    const char *apiName, uint32_t kind, CjguiWindowsUiProc proc, void *ctx,
+    CjguiWindowsCtxFree ctxFree, uint32_t timeoutMs, uint64_t *outCommandId) {
+    return windows_dispatch_sync_with_completed(token, apiName, kind, proc, ctx,
+        ctxFree, timeoutMs, outCommandId, NULL);
 }
 
 typedef struct CjguiWindowsPumpCtx {
@@ -8001,8 +9934,14 @@ static CjguiInternalRendererStatus cjgui_windows_pump_proc(
     CjguiWindowsRendererSession *s, void *raw) {
     CjguiWindowsPumpCtx *ctx = (CjguiWindowsPumpCtx *)raw;
     if (!ctx) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint64_t probeStarted = s->traceEnabled ? cjgui_internal_renderer_owner_clock_ns() : 0u;
     windows_ensure_pump_input_attached(s);
     windows_test_probe_tick(s);
+    if (s->traceEnabled) {
+        DWORD self = GetCurrentThreadId();
+        windows_trace(s, "pump_probe", s->traceCurrentCommandId, 0u,
+            cjgui_internal_renderer_owner_clock_ns() - probeStarted, 0u, self, self);
+    }
     uint64_t idleNs = 0u;
     CjguiInternalRendererStatus st = pump_windows_messages(s, ctx->timeoutMs,
         &ctx->outEvent, ctx->hasIdleOut ? &idleNs : NULL);
@@ -8102,6 +10041,13 @@ static CjguiInternalRendererStatus cjgui_windows_destroy_proc(
         ime_frozen_free_slot(s, (int64_t)i);
     }
     if (s->recoveryCount) return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+    /* 仍活跃的私有准备也归这次关闭负责；先在其 UI owner 上退休同一票，
+       pump join 后的 caller phase-B 才完成释放。失败不清图、不发完成。 */
+    if (s->preparationActive) {
+        CjguiInternalRendererStatus cancelled =
+            cancel_composable_preparation_impl(s->token, s->preparationId);
+        if (cancelled != CJGUI_INTERNAL_RENDERER_OK) return cancelled;
+    }
     destroy_ui_phase_a(s);
     release_graphics(s);
     cjgui_windows_fail_queued(s);
@@ -8238,15 +10184,27 @@ static DWORD WINAPI pump_thread_main(LPVOID param) {
     CjguiWindowsRendererSession *s = (CjguiWindowsRendererSession *)param;
     s->pumpThreadId = GetCurrentThreadId();
     /* 窗口与其消息队列归属本线程；D3D 设备同线程创建以保持归属一致。 */
+    uint64_t createStarted = s->traceEnabled ? cjgui_internal_renderer_owner_clock_ns() : 0u;
     CjguiInternalRendererStatus status =
         create_window_and_device(s, s->pendingCreateWidth, s->pendingCreateHeight);
+    if (s->traceEnabled)
+        windows_trace(s, "ui_create", 0u, 0u,
+            cjgui_internal_renderer_owner_clock_ns() - createStarted, status,
+            GetCurrentThreadId(), GetCurrentThreadId());
     s->pumpThreadStatus = status;
     SetEvent(s->pumpReadyEvent);
     if (status != CJGUI_INTERNAL_RENDERER_OK) return 1;
     MSG message;
     HANDLE waitHandles[2] = { s->pumpStopEvent, s->cmdWakeEvent };
+    /* This loop waits INFINITE while idle, so a probe request written when the
+       app is not otherwise turning is never consumed -- the earlier "the loop
+       keeps running while idle" note was wrong and the 252k variant failed on
+       it. When the test channel is armed, poll at a bounded cadence instead. The
+       product path is untouched: without PHAROS_WINDOWS_TEST_PROBE_FILE the
+       timeout stays INFINITE, so an idle app wakes exactly as before. */
+    const DWORD probePollMs = getenv("PHAROS_WINDOWS_TEST_PROBE_FILE") ? 15u : INFINITE;
     for (;;) {
-        DWORD wait = MsgWaitForMultipleObjectsEx(2, waitHandles, INFINITE,
+        DWORD wait = MsgWaitForMultipleObjectsEx(2, waitHandles, probePollMs,
             QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (wait == WAIT_OBJECT_0) break;
         if (wait == WAIT_FAILED) {
@@ -8260,15 +10218,27 @@ static DWORD WINAPI pump_thread_main(LPVOID param) {
                 raw_ring_push(s, (uint32_t)WM_QUIT, 0u, 0, 0);
                 continue;
             }
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
+            windows_dispatch_observed_message(s, &message);
         }
         drain_dispatcher_commands(s, 0);
+        /* 探针服务点：探针原先只在 owner 驱动的 pump 里被读，而 owner 空闲时
+           没有 pump，写下的请求永远不被消费（252k 档因此报仪器缺失）。窗口
+           线程的消息循环即使空闲也持续运行——前提是上面的等待在探针武装时用
+           有限超时轮询，否则它同样阻塞在 INFINITE 上；未设置
+           PHAROS_WINDOWS_TEST_PROBE_FILE 时等待仍是 INFINITE、函数首行即返回，
+           产品路径零开销。两个服务点并发时由 windows_test_probe_tick 的单消费者
+           声明保证不会交错读写同一个请求文件。 */
+        windows_test_probe_tick(s);
     }
     /* 在窗口线程拆窗口；D3D 资源由驱动侧 destroy 在 join 后释放。 */
     if (s->hwnd) {
+        uint64_t destroyStarted = s->traceEnabled ? cjgui_internal_renderer_owner_clock_ns() : 0u;
         DestroyWindow(s->hwnd);
         s->hwnd = NULL;
+        if (s->traceEnabled)
+            windows_trace(s, "ui_window_destroy", 0u, 0u,
+                cjgui_internal_renderer_owner_clock_ns() - destroyStarted, 0u,
+                GetCurrentThreadId(), GetCurrentThreadId());
     }
     return 0;
 }
@@ -9265,6 +11235,9 @@ typedef struct CjguiWindowsRestoreCtx {
     uint32_t selectionEnd;
     uint32_t outSelectionStart;
     uint32_t outSelectionEnd;
+    uint64_t paintRequestId, paintBindingEpoch;
+    uint8_t paintInline;
+    uint64_t paintFacts[10];
 } CjguiWindowsRestoreCtx;
 
 static void cjgui_windows_restore_free(void *raw) {
@@ -9276,18 +11249,35 @@ static void cjgui_windows_restore_free(void *raw) {
 
 static CjguiInternalRendererStatus cjgui_windows_restore_proc(
     CjguiWindowsRendererSession *s, void *raw) {
-    (void)s;
     CjguiWindowsRestoreCtx *c = (CjguiWindowsRestoreCtx *)raw;
-    return restore_composable_selection_impl(c->token, c->nodeId,
+    if (c->paintRequestId && (!s || !c->paintBindingEpoch ||
+        c->paintBindingEpoch != s->ownedTextSessionBindingEpoch))
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    CjguiInternalRendererStatus st = restore_composable_selection_impl(c->token, c->nodeId,
         c->resourceId, c->nodeKind, c->sceneVersion, c->expectedValue,
         c->selectionStart, c->selectionEnd, &c->outSelectionStart,
         &c->outSelectionEnd);
+    if (st == CJGUI_INTERNAL_RENDERER_OK && c->paintRequestId) {
+        const uint64_t facts[10] = {c->paintRequestId, 0u, s->sessionGeneration,
+            s->ownedTextSessionBindingEpoch, s->acceptedScene.version, s->focusedNodeId,
+            (uint64_t)s->focusedResourceId, s->focusedNodeKind,
+            c->outSelectionStart, c->outSelectionEnd};
+        memcpy(c->paintFacts, facts, sizeof(facts));
+        if (c->paintInline) {
+            EnterCriticalSection(&g_sessionLock);
+            c->paintFacts[1] = ++s->cmdNextId;
+            if (!c->paintFacts[1]) c->paintFacts[1] = ++s->cmdNextId;
+            LeaveCriticalSection(&g_sessionLock);
+        }
+    }
+    return st;
 }
 
-CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection(
+static CjguiInternalRendererStatus windows_restore_dispatch(
     uint64_t token, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
     uint64_t sceneVersion, const char *expectedValue, uint32_t selectionStart,
-    uint32_t selectionEnd, uint32_t *outSelectionStart, uint32_t *outSelectionEnd) {
+    uint32_t selectionEnd, uint32_t *outSelectionStart, uint32_t *outSelectionEnd,
+    uint64_t paintBinding, uint64_t paintRequest, uint64_t *outFacts) {
     if (!outSelectionStart || !outSelectionEnd)
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CjguiWindowsRestoreCtx *ctx =
@@ -9305,18 +11295,46 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     }
     ctx->selectionStart = selectionStart;
     ctx->selectionEnd = selectionEnd;
-    uint64_t cmdId = 0u;
-    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "restore_sel",
+    ctx->paintBindingEpoch = paintBinding;
+    ctx->paintRequestId = paintRequest;
+    CjguiWindowsRendererSession *route = find_session(token);
+    ctx->paintInline = paintRequest && route && GetCurrentThreadId() == route->pumpThreadId;
+    uint64_t cmdId = 0u, completedCommandId = 0u;
+    CjguiInternalRendererStatus st = windows_dispatch_sync_with_completed(token, "restore_sel",
         CJGUI_WINDOWS_CMD_GENERIC, cjgui_windows_restore_proc, ctx,
-        cjgui_windows_restore_free, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &cmdId);
+        cjgui_windows_restore_free, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &cmdId,
+        paintRequest ? &completedCommandId : NULL);
     if (st == CJGUI_INTERNAL_RENDERER_OK) {
         *outSelectionStart = ctx->outSelectionStart;
         *outSelectionEnd = ctx->outSelectionEnd;
+        if (outFacts) {
+            if (completedCommandId) ctx->paintFacts[1] = completedCommandId;
+            memcpy(outFacts, ctx->paintFacts, sizeof(ctx->paintFacts));
+        }
     }
     if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
         st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT)
         cjgui_windows_restore_free(ctx);
     return st;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection(
+    uint64_t token, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+    uint64_t sceneVersion, const char *expectedValue, uint32_t selectionStart,
+    uint32_t selectionEnd, uint32_t *outSelectionStart, uint32_t *outSelectionEnd) {
+    return windows_restore_dispatch(token, nodeId, resourceId, nodeKind, sceneVersion,
+        expectedValue, selectionStart, selectionEnd, outSelectionStart, outSelectionEnd, 0u, 0u, NULL);
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection_paint_result(
+    uint64_t token, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+    uint64_t sceneVersion, const char *expectedValue, uint32_t selectionStart,
+    uint32_t selectionEnd, uint64_t bindingEpoch, uint64_t requestId, uint64_t *outFacts) {
+    if (!outFacts || !bindingEpoch || !requestId) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(outFacts, 0, 10u * sizeof(*outFacts));
+    uint32_t start = 0u, end = 0u;
+    return windows_restore_dispatch(token, nodeId, resourceId, nodeKind, sceneVersion,
+        expectedValue, selectionStart, selectionEnd, &start, &end, bindingEpoch, requestId, outFacts);
 }
 
 static CjguiInternalRendererStatus cjgui_windows_read_sel_proc(
@@ -10052,6 +12070,64 @@ int32_t cjgui_internal_renderer_owner_consumed_pointer_coordinate_lifetime(
     return result;
 }
 
+typedef struct CjguiWindowsConsumedFifoCtx {
+    uint64_t token, generation, binding, first, last, previous;
+    uint32_t phase;
+    int result;
+} CjguiWindowsConsumedFifoCtx;
+
+static CjguiInternalRendererStatus cjgui_windows_consumed_fifo_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    CjguiWindowsConsumedFifoCtx *c = (CjguiWindowsConsumedFifoCtx *)raw;
+    if (require_session(s) != CJGUI_INTERNAL_RENDERER_OK ||
+        s->lastPointerFifoGeneration != s->sessionGeneration ||
+        s->lastPointerFifoCoordinate != s->coordinateEpoch ||
+        !s->lastPointerFifoBinding || !s->lastPointerFifoSequence ||
+        (s->lastPointerFifoPhase != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN &&
+         s->lastPointerFifoPhase != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE &&
+         s->lastPointerFifoPhase != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END &&
+         s->lastPointerFifoPhase != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL)) {
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    c->generation = s->lastPointerFifoGeneration;
+    c->binding = s->lastPointerFifoBinding;
+    c->first = c->last = s->lastPointerFifoSequence;
+    c->previous = c->first - 1u;
+    c->phase = s->lastPointerFifoPhase;
+    c->result = 1;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+/* Existing private ABI: the tuple belongs to the event actually consumed,
+   never to the latest raw mouse state. No public event/POD extension. */
+int cjgui_internal_renderer_owner_consumed_pointer_fifo(uint64_t token,
+    uint64_t *generation, uint64_t *binding, uint64_t *first, uint64_t *last,
+    uint64_t *previous, uint32_t *phase) {
+    if (generation) *generation = 0u;
+    if (binding) *binding = 0u;
+    if (first) *first = 0u;
+    if (last) *last = 0u;
+    if (previous) *previous = 0u;
+    if (phase) *phase = 0u;
+    if (!generation || !binding || !first || !last || !previous || !phase) return 0;
+    CjguiWindowsConsumedFifoCtx *ctx = (CjguiWindowsConsumedFifoCtx *)calloc(1u, sizeof(*ctx));
+    if (!ctx) return 0;
+    ctx->token = token;
+    uint64_t cmdId = 0u;
+    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "consumed_fifo",
+        CJGUI_WINDOWS_CMD_GENERIC, cjgui_windows_consumed_fifo_proc, ctx,
+        cjgui_windows_free_ctx, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &cmdId);
+    int result = 0;
+    if (st == CJGUI_INTERNAL_RENDERER_OK && ctx->result) {
+        *generation = ctx->generation; *binding = ctx->binding;
+        *first = ctx->first; *last = ctx->last; *previous = ctx->previous; *phase = ctx->phase;
+        result = 1;
+    }
+    if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
+        st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) free(ctx);
+    return result;
+}
+
 typedef struct CjguiWindowsFormTextCtx {
     uint64_t token;
     const char *leased;
@@ -10248,6 +12324,392 @@ CjguiInternalRendererStatus cjgui_internal_renderer_text_position_v1(
     }
     if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
         st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) free(ctx);
+    return st;
+}
+
+/* Private read-only pairing: a bounded owner expectation and one immutable
+   accepted scene are checked in the existing UI dispatcher execution. */
+typedef struct CjguiWindowsSelectionPositionCtx {
+    uint64_t token, identity[12], meta[21];
+    int64_t byte;
+    uint64_t retainedRevealLease;
+    double rect[10];
+    char body[];
+} CjguiWindowsSelectionPositionCtx;
+
+static CjguiInternalRendererStatus windows_selection_position_readonly_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    CjguiWindowsSelectionPositionCtx *c = (CjguiWindowsSelectionPositionCtx *)raw;
+    CjguiWindowsSceneNode *node = NULL;
+    CjguiInternalRendererStatus st = windows_accepted_text_node(s,
+        c->identity[1], c->identity[0], &node);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) return st;
+    if ((uint64_t)node->node.resourceId != c->identity[2] ||
+        (uint64_t)node->node.nodeKind != c->identity[3] ||
+        node->node.acceptedBindingEpoch != c->identity[4] ||
+        s->resizeVersion != c->identity[5] || !node->layoutLease ||
+        !windows_text_layout_value(node) ||
+        strcmp(windows_text_layout_value(node), c->body) != 0 ||
+        (s->rangeArmed && (s->rangeSourceStart != c->identity[6] ||
+            s->rangeSourceEnd != c->identity[7] || s->rangeContextEpoch != c->identity[8] ||
+            s->rangeMirrorRevision != c->identity[9] ||
+            (uint64_t)s->rangeAcceptedVersion != c->identity[10] || s->rangeWindowToken != c->identity[11])))
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    st = text_position_v1_impl(c->token, c->identity[1], c->identity[0],
+        0u, c->byte, 1u, 0u, 0u, 0u, 0.0, 0.0, c->meta, c->rect);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) return st;
+    if (c->meta[0] != node->layoutLease) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    POINT point;
+    double scale = (double)(s->dpi ? s->dpi : 96u) / 96.0;
+    point.x = (LONG)lround(c->rect[0] * scale);
+    point.y = (LONG)lround((c->rect[1] + c->rect[3] / 2.0) * scale);
+    if (!ClientToScreen(s->hwnd, &point)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    c->rect[4] = (double)point.x; c->rect[5] = (double)point.y;
+    c->meta[8] = s->dpi ? s->dpi : 96u;
+    c->meta[9] = windows_fnv1a64(1469598103934665603ull, c->body, strlen(c->body));
+    c->meta[10] = s->rangeNonce; c->meta[11] = s->rangeGeneration;
+    c->meta[12] = s->rangeBindingEpoch; c->meta[13] = s->rangeContextEpoch;
+    c->meta[14] = s->rangeMirrorRevision; c->meta[15] = s->rangeProxyGeneration;
+    c->meta[16] = s->rangeSourceStart; c->meta[17] = s->rangeSourceEnd;
+    c->meta[18] = (uint64_t)s->rangeAcceptedVersion; c->meta[19] = s->rangeWindowToken;
+    c->meta[20] = (uint64_t)s->rangeResourceId;
+    double scaleForClip=(double)(s->dpi?s->dpi:96u)/96.0;
+    double left=fmax(0.0,node->node.x+node->geometry.translateX);
+    double top=fmax(0.0,node->node.y+node->geometry.translateY);
+    double right=fmin((double)s->width/scaleForClip,node->node.x+node->geometry.translateX+node->node.width);
+    double bottom=fmin((double)s->height/scaleForClip,node->node.y+node->geometry.translateY+node->node.height);
+    uint32_t clipCount=node->node.clipConstraintCount?node->node.clipConstraintCount:1u;
+    for(uint32_t i=0;i<clipCount;i++) {
+        double x,y,w,h,radius;windows_clip_constraint(node,i,&x,&y,&w,&h,&radius);
+        if(w>0.0 && h>0.0){left=fmax(left,x);top=fmax(top,y);right=fmin(right,x+w);bottom=fmin(bottom,y+h);}
+    }
+    c->rect[6]=left;c->rect[7]=top;c->rect[8]=fmax(0.0,right-left);c->rect[9]=fmax(0.0,bottom-top);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_selection_position_readonly(
+    uint64_t token, const uint64_t *identity, const char *body, int64_t byte,
+    uint64_t *meta, double *rect) {
+    if (!identity || !body || !meta || !rect || byte < 0)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    size_t bytes = strlen(body);
+    if (bytes > 65536u || (uint64_t)byte > bytes)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiWindowsSelectionPositionCtx *ctx =
+        (CjguiWindowsSelectionPositionCtx *)calloc(1u, sizeof(*ctx) + bytes + 1u);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ctx->token = token; ctx->byte = byte;
+    memcpy(ctx->identity, identity, sizeof(ctx->identity));
+    memcpy(ctx->body, body, bytes + 1u);
+    uint64_t command = 0u;
+    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "selection_position",
+        CJGUI_WINDOWS_CMD_GENERIC, windows_selection_position_readonly_proc, ctx,
+        cjgui_windows_free_ctx, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &command);
+    if (st == CJGUI_INTERNAL_RENDERER_OK) {
+        memcpy(meta, ctx->meta, sizeof(ctx->meta));
+        memcpy(rect, ctx->rect, 6u * sizeof(double));
+    }
+    if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
+        st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) free(ctx);
+    return st;
+}
+
+
+CjguiInternalRendererStatus cjgui_internal_renderer_selection_position_viewport_readonly(
+    uint64_t token, const uint64_t *identity, const char *body, int64_t byte,
+    uint64_t *meta, double *rect) {
+    if (!identity || !body || !meta || !rect || byte < 0)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    size_t bytes = strlen(body);
+    if (bytes > 65536u || (uint64_t)byte > bytes)
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiWindowsSelectionPositionCtx *ctx =
+        (CjguiWindowsSelectionPositionCtx *)calloc(1u, sizeof(*ctx) + bytes + 1u);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ctx->token = token; ctx->byte = byte;
+    memcpy(ctx->identity, identity, sizeof(ctx->identity));
+    memcpy(ctx->body, body, bytes + 1u);
+    uint64_t command = 0u;
+    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "selection_position",
+        CJGUI_WINDOWS_CMD_GENERIC, windows_selection_position_readonly_proc, ctx,
+        cjgui_windows_free_ctx, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &command);
+    if (st == CJGUI_INTERNAL_RENDERER_OK) {
+        memcpy(meta, ctx->meta, sizeof(ctx->meta));
+        memcpy(rect, ctx->rect, sizeof(ctx->rect));
+    }
+    if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
+        st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) free(ctx);
+    return st;
+}
+
+
+/* Acceptance completion, separate from the read-only query. The caller
+   transports its original directed choice from the accepted candidate. */
+static CjguiInternalRendererStatus windows_selection_reveal_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    CjguiWindowsSelectionPositionCtx *c = (CjguiWindowsSelectionPositionCtx *)raw;
+    CjguiInternalRendererStatus st = windows_selection_position_readonly_proc(s,c);
+    if (st != CJGUI_INTERNAL_RENDERER_OK) return st;
+    CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene,c->identity[1]);
+    if (node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT)
+        return CJGUI_INTERNAL_RENDERER_OK;
+    if (s->minimized || s->graphicsRecoveryPending || !s->renderTarget)
+        return CJGUI_INTERNAL_RENDERER_PRESENT_PENDING;
+    if (c->retainedRevealLease && c->retainedRevealLease == node->layoutLease) {
+        st=refresh_windows_selection_paint(s);
+        c->meta[20]=0u;
+        return st;
+    }
+    double before = node->multilineScrollY;
+    double baseY = node->node.y + node->geometry.translateY;
+    double top = c->rect[1] - baseY + before;
+    double bottom = top + c->rect[3];
+    double visibleTop=c->rect[7]-baseY;
+    double visibleBottom=c->rect[7]+c->rect[9]-baseY;
+    if(c->rect[8]<=0.0 || visibleBottom-visibleTop<c->rect[3]) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+    double offset = before;
+    if (top < offset + visibleTop) offset = top - visibleTop;
+    if (bottom > offset + visibleBottom) offset = bottom - visibleBottom;
+    DWRITE_TEXT_METRICS metrics={0};
+    HRESULT hr=IDWriteTextLayout_GetMetrics(node->textLayout,&metrics);
+    if (FAILED(hr) || !isfinite(metrics.height)) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+    offset=fmin(fmax(0.0,offset),fmax(0.0,(double)metrics.height-node->node.height));
+    uint32_t index=(uint32_t)(node-s->acceptedScene.nodes);
+    st=replace_windows_multiline_viewport(s,index,offset);
+    if (st!=CJGUI_INTERNAL_RENDERER_OK) return st;
+    if (offset!=before) {
+        s->coordinateEpoch=next_positive_counter(&g_nextCoordinateEpoch);
+        s->multilineViewportEpochPending=0u;
+        windows_cancel_mouse_on_coordinate_change(s);
+    }
+    st=refresh_windows_selection_paint(s);
+    if (st!=CJGUI_INTERNAL_RENDERER_OK || s->multilineViewportPaintPending)
+        return st==CJGUI_INTERNAL_RENDERER_OK ? CJGUI_INTERNAL_RENDERER_PRESENT_PENDING : st;
+    windows_trace(s,"selection_reveal",c->identity[1],c->identity[0],c->byte,
+        (uint64_t)lround(before*1000.0),(uint64_t)lround(offset*1000.0),c->meta[0]);
+    c->meta[20]=offset!=before;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+typedef struct CjguiWindowsPreviewDecorationCtx {
+    uint64_t publicationId, rendererGeneration, bindingEpoch;
+    uint64_t ownerVersion, ownerRevision, projectionId, sceneVersion;
+    FLOAT red, green, blue, alpha;
+    char *rows;
+} CjguiWindowsPreviewDecorationCtx;
+
+static void windows_preview_decoration_ctx_free(void *raw) {
+    CjguiWindowsPreviewDecorationCtx *c = raw;
+    if (c) { free(c->rows); free(c); }
+}
+
+static int windows_preview_parse_u64(const char **cursor, char delimiter, uint64_t *out) {
+    const char *p = cursor ? *cursor : NULL;
+    if (!p || !out || *p < '0' || *p > '9') return 0;
+    uint64_t value = 0u;
+    do {
+        uint64_t digit = (uint64_t)(*p - '0');
+        if (value > (UINT64_MAX - digit) / 10u) return 0;
+        value = value * 10u + digit;
+        ++p;
+    } while (*p >= '0' && *p <= '9');
+    if (*p != delimiter) return 0;
+    *cursor = p + 1;
+    *out = value;
+    return 1;
+}
+
+static int windows_preview_parse_rows_v1(CjguiWindowsRendererSession *s,
+    const CjguiWindowsPreviewDecorationCtx *c, CjguiWindowsPreviewPaintBatch *out) {
+    if (!s || !c || !c->rows || !out) return 0;
+    size_t length = strlen(c->rows);
+    if (!length || length > 8192u) return 0;
+    const char *cursor = c->rows;
+    uint32_t count = 0u;
+    while (*cursor) {
+        if (count >= CJGUI_WINDOWS_PREVIEW_PAINT_FRAGMENT_CAPACITY) return 0;
+        uint64_t nodeId = 0u, start64 = 0u, end64 = 0u;
+        if (!windows_preview_parse_u64(&cursor, ':', &nodeId) || !nodeId ||
+            !windows_preview_parse_u64(&cursor, ':', &start64)) return 0;
+        const char *endStart = cursor;
+        while (*cursor >= '0' && *cursor <= '9') ++cursor;
+        if (cursor == endStart || (uint64_t)(cursor - endStart) > 10u ||
+            (start64 > UINT32_MAX)) return 0;
+        char number[11] = {0};
+        memcpy(number, endStart, (size_t)(cursor - endStart));
+        char *parsedEnd = NULL;
+        unsigned long long parsed = strtoull(number, &parsedEnd, 10);
+        if (!parsedEnd || *parsedEnd || parsed > UINT32_MAX) return 0;
+        end64 = (uint64_t)parsed;
+        char separator = *cursor;
+        if ((separator != ';' && separator != '\0') || start64 > end64) return 0;
+        if (separator == ';') {
+            ++cursor;
+            if (!*cursor) return 0;
+        }
+        for (uint32_t i = 0; i < count; ++i)
+            if (out->fragments[i].nodeId == nodeId) return 0;
+        CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, nodeId);
+        if (!node || !node->hasNode || !node->hasGeometry ||
+            node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
+            !node->value || !node->textLayout || node->textDpi != s->dpi ||
+            !node->layoutLease || !node->textLayoutInputKey ||
+            node->node.projectionVersion != s->acceptedScene.version) return 0;
+        uint64_t bodyBytes = 0u;
+        uint32_t bodyUnits = 0u;
+        if (windows_text_layout_units(node->value, &bodyBytes, &bodyUnits) != CJGUI_INTERNAL_RENDERER_OK ||
+            end64 > bodyUnits) return 0;
+        (void)bodyBytes;
+        out->fragments[count].nodeId = nodeId;
+        out->fragments[count].resourceId = node->node.resourceId;
+        out->fragments[count].layoutLease = node->layoutLease;
+        out->fragments[count].textLayoutInputKey = node->textLayoutInputKey;
+        out->fragments[count].geometryKey = windows_preview_node_geometry_key(s, node);
+        if (!out->fragments[count].geometryKey) return 0;
+        out->fragments[count].start16 = (uint32_t)start64;
+        out->fragments[count].end16 = (uint32_t)end64;
+        count += 1u;
+    }
+    out->count = count;
+    return count > 0u;
+}
+
+static CjguiInternalRendererStatus windows_stage_preview_decoration_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    CjguiWindowsPreviewDecorationCtx *c = (CjguiWindowsPreviewDecorationCtx *)raw;
+    if (!s || !c || !s->acceptedScene.configured || c->sceneVersion != s->acceptedScene.version ||
+        c->rendererGeneration != s->sessionGeneration || !c->publicationId || !c->bindingEpoch ||
+        c->bindingEpoch != s->ownedTextSessionBindingEpoch ||
+        !c->ownerVersion || !c->ownerRevision || !c->projectionId ||
+        !isfinite(c->red) || !isfinite(c->green) || !isfinite(c->blue) || !isfinite(c->alpha) ||
+        c->red < 0.0f || c->red > 1.0f || c->green < 0.0f || c->green > 1.0f ||
+        c->blue < 0.0f || c->blue > 1.0f || c->alpha < 0.0f || c->alpha > 1.0f)
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    CjguiWindowsPreviewPaintBatch next = {0};
+    next.publicationId = c->publicationId;
+    next.rendererGeneration = c->rendererGeneration;
+    next.bindingEpoch = c->bindingEpoch;
+    next.ownerVersion = c->ownerVersion;
+    next.ownerRevision = c->ownerRevision;
+    next.projectionId = c->projectionId;
+    next.sceneVersion = c->sceneVersion;
+    next.deviceGeneration = s->deviceGeneration;
+    next.red = c->red; next.green = c->green; next.blue = c->blue; next.alpha = c->alpha;
+    next.active = 1u;
+    if (!windows_preview_parse_rows_v1(s, c, &next)) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    next.key = windows_preview_batch_key(&next);
+    if (!next.key) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    if (!s->previewPaintBatch.active || s->previewPaintBatch.key != next.key) {
+        s->selectionPaintServiceTurns = 0u;
+        s->previewPaintDrawnKey = 0u;
+        s->previewPaintDrawnScene = 0u;
+        s->previewPaintDrawnVisible = 0u;
+    }
+    s->previewPaintBatch = next;
+    windows_request_selection_paint_service(s);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_preview_selection_decoration(
+    uint64_t token, uint64_t publication, uint64_t rendererGeneration, uint64_t bindingEpoch,
+    int64_t ownerVersion, int64_t ownerRevision, int64_t projectionId, uint64_t sceneVersion,
+    double red, double green, double blue, double alpha, const char *rows) {
+    if (!publication || !rendererGeneration || !bindingEpoch || ownerVersion <= 0 ||
+        ownerRevision <= 0 || projectionId <= 0 || !sceneVersion || !rows ||
+        !isfinite(red) || !isfinite(green) || !isfinite(blue) || !isfinite(alpha) ||
+        red < 0.0 || red > 1.0 || green < 0.0 || green > 1.0 || blue < 0.0 ||
+        blue > 1.0 || alpha < 0.0 || alpha > 1.0) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    size_t length = strlen(rows);
+    if (!length || length > 8192u) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiWindowsPreviewDecorationCtx *c = (CjguiWindowsPreviewDecorationCtx *)calloc(1u, sizeof(*c));
+    if (!c) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    c->rows = (char *)malloc(length + 1u);
+    if (!c->rows) { free(c); return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR; }
+    memcpy(c->rows, rows, length + 1u);
+    c->publicationId = publication; c->rendererGeneration = rendererGeneration;
+    c->bindingEpoch = bindingEpoch; c->ownerVersion = (uint64_t)ownerVersion;
+    c->ownerRevision = (uint64_t)ownerRevision; c->projectionId = (uint64_t)projectionId;
+    c->sceneVersion = sceneVersion; c->red = (FLOAT)red; c->green = (FLOAT)green;
+    c->blue = (FLOAT)blue; c->alpha = (FLOAT)alpha;
+    uint64_t command = 0u;
+    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "preview_decoration",
+        CJGUI_WINDOWS_CMD_GENERIC, windows_stage_preview_decoration_proc, c,
+        windows_preview_decoration_ctx_free, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &command);
+    if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT &&
+        st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) windows_preview_decoration_ctx_free(c);
+    return st;
+}
+
+static CjguiInternalRendererStatus windows_clear_preview_decoration_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    (void)raw;
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (windows_revalidate_preview_batch(s)) {
+        // Reuse the same bounded batch/layout leases to erase the overlay.
+        // Only a successfully presented empty draw settles this obligation.
+        for (uint32_t i = 0; i < s->previewPaintBatch.count; ++i)
+            s->previewPaintBatch.fragments[i].start16 = s->previewPaintBatch.fragments[i].end16 = 0u;
+        s->previewPaintBatch.key = windows_preview_batch_key(&s->previewPaintBatch);
+        s->previewPaintDrawnKey = 0u;
+        s->previewPaintHasPresentation = 0u;
+        s->selectionPaintServiceTurns = 0u;
+        windows_request_selection_paint_service(s);
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_clear_preview_selection_decoration(uint64_t token) {
+    uint64_t command = 0u;
+    return windows_dispatch_sync(token, "clear_preview_decoration", CJGUI_WINDOWS_CMD_GENERIC,
+        windows_clear_preview_decoration_proc, NULL, NULL, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &command);
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_selection_reveal_accepted(
+    uint64_t token,const uint64_t *identity,const char *body,int64_t focusByte,uint64_t retainedLease,
+    uint8_t *changed,uint64_t *actualLease) {
+    if (!identity || !body || !changed || !actualLease || focusByte<0) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    *changed=0u;*actualLease=0u;size_t bytes=strlen(body);
+    if (bytes>65536u || (uint64_t)focusByte>bytes) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiWindowsSelectionPositionCtx *ctx=calloc(1u,sizeof(*ctx)+bytes+1u);
+    if (!ctx) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ctx->token=token;ctx->byte=focusByte;ctx->retainedRevealLease=retainedLease;
+    memcpy(ctx->identity,identity,sizeof(ctx->identity));
+    memcpy(ctx->body,body,bytes+1u);uint64_t command=0u;
+    CjguiInternalRendererStatus st=windows_dispatch_sync(token,"selection_reveal",
+        CJGUI_WINDOWS_CMD_GENERIC,windows_selection_reveal_proc,ctx,cjgui_windows_free_ctx,
+        CJGUI_WINDOWS_CMD_TIMEOUT_MS,&command);
+    if (st==CJGUI_INTERNAL_RENDERER_OK) {*changed=(uint8_t)ctx->meta[20];*actualLease=ctx->meta[0];}
+    if (st!=CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT && st!=CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT) free(ctx);
+    return st;
+}
+
+typedef struct CjguiWindowsSelectionGestureCtx {
+    uint32_t mode;uint8_t accepted;uint64_t identity[19];uint64_t meta[19];
+} CjguiWindowsSelectionGestureCtx;
+static CjguiInternalRendererStatus windows_selection_gesture_proc(CjguiWindowsRendererSession *s,void *raw) {
+    CjguiWindowsSelectionGestureCtx *c=raw;
+    if(c->mode==0u){memcpy(c->meta,s->selectionGestureCurrent,sizeof(c->meta));return CJGUI_INTERNAL_RENDERER_OK;}
+    if(c->mode==1u){memcpy(c->meta,s->selectionGesturePopped,sizeof(c->meta));return CJGUI_INTERNAL_RENDERER_OK;}
+    if(c->mode!=2u || c->identity[3]!=3u || c->identity[15]!=2u ||
+       memcmp(c->identity,s->selectionGesturePopped,sizeof(c->identity)) ||
+       memcmp(c->identity,s->selectionGestureCurrent,sizeof(c->identity)))
+        return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    s->selectionGestureCurrent[15]=c->accepted?3u:4u;
+    memcpy(c->meta,s->selectionGestureCurrent,sizeof(c->meta));return CJGUI_INTERNAL_RENDERER_OK;
+}
+/* Private ABI only; public event POD and FIFO remain unchanged. */
+CjguiInternalRendererStatus cjgui_windows_selection_gesture_v1(uint64_t token,uint32_t mode,
+    const uint64_t *identity,uint8_t accepted,uint64_t *meta) {
+    if(!meta || (mode==2u && !identity))return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
+    CjguiWindowsSelectionGestureCtx *ctx=calloc(1u,sizeof(*ctx));
+    if(!ctx)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    ctx->mode=mode;ctx->accepted=accepted;if(identity)memcpy(ctx->identity,identity,sizeof(ctx->identity));
+    uint64_t command=0u;
+    CjguiInternalRendererStatus st=windows_dispatch_sync(token,"selection_gesture",
+        CJGUI_WINDOWS_CMD_GENERIC,windows_selection_gesture_proc,ctx,cjgui_windows_free_ctx,
+        CJGUI_WINDOWS_CMD_TIMEOUT_MS,&command);
+    if(st==CJGUI_INTERNAL_RENDERER_OK)memcpy(meta,ctx->meta,sizeof(ctx->meta));
+    if(st!=CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT && st!=CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT)free(ctx);
     return st;
 }
 
@@ -10519,6 +12981,61 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_image_resource_st
         st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT)
         cjgui_windows_image_state_free(ctx);
     return st;
+}
+
+typedef struct CjguiWindowsObservationCtx {
+    uint64_t token, preparationId, scene, identity[12];
+    int64_t mirrorStart, postStart, editStart, editEnd;
+    char *body, *postBody;
+} CjguiWindowsObservationCtx;
+
+static void windows_observation_ctx_free(void *raw) {
+    CjguiWindowsObservationCtx *c = raw;
+    if (c) { free(c->body); free(c->postBody); free(c); }
+}
+
+static CjguiInternalRendererStatus windows_observation_attach_proc(
+    CjguiWindowsRendererSession *s, void *raw) {
+    CjguiWindowsObservationCtx *c = raw;
+    CjguiWindowsScene *scene = c->preparationId ? &s->preparationScene : &s->candidateScene;
+    if (!scene->configured || scene->version != c->scene ||
+        (c->preparationId && (!s->preparationActive || s->preparationId != c->preparationId)) ||
+        c->identity[1] != s->sessionGeneration || c->identity[0] != s->rangeWindowToken ||
+        c->identity[4] != s->ownedTextSessionBindingEpoch || !c->identity[5] || !c->identity[6] ||
+        !c->identity[9] || !windows_observation_body_matches(c->mirrorStart, c->body,
+            c->postStart, c->postBody, c->editStart, c->editEnd))
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    CjguiWindowsInputObservation o = {0};
+    memcpy(o.identity, c->identity, sizeof(o.identity));
+    o.preparationId = c->preparationId; o.sceneVersion = c->scene;
+    o.mirrorStart = (uint64_t)c->mirrorStart;
+    o.bodyBytes = strlen(c->body);
+    o.bodyHash = windows_fnv1a64(1469598103934665603ull, c->body, (size_t)o.bodyBytes);
+    o.editStart = (uint64_t)c->editStart; o.editEnd = (uint64_t)c->editEnd;
+    o.valid = 1;
+    scene->inputObservation = o;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+void cjgui_internal_renderer_windows_observe_candidate(uint64_t token, uint64_t preparationId,
+    uint64_t projectionVersion, const uint64_t *identity, uint32_t count,
+    int64_t mirrorStart, const char *body, int64_t postStart, const char *postBody,
+    int64_t editStart, int64_t editEnd) {
+    if (!identity || count != 12 || !body || !postBody ||
+        !windows_observation_body_matches(mirrorStart, body, postStart, postBody, editStart, editEnd)) return;
+    CjguiWindowsObservationCtx *c = calloc(1, sizeof(*c));
+    if (!c) return;
+    c->body = cjgui_windows_dup_string(body); c->postBody = cjgui_windows_dup_string(postBody);
+    if (!c->body || !c->postBody) { windows_observation_ctx_free(c); return; }
+    c->token = token; c->preparationId = preparationId; c->scene = projectionVersion;
+    memcpy(c->identity, identity, sizeof(c->identity));
+    c->mirrorStart = mirrorStart; c->postStart = postStart; c->editStart = editStart; c->editEnd = editEnd;
+    uint64_t cmdId = 0;
+    CjguiInternalRendererStatus st = windows_dispatch_sync(token, "observe_candidate",
+        CJGUI_WINDOWS_CMD_GENERIC, windows_observation_attach_proc, c,
+        windows_observation_ctx_free, CJGUI_WINDOWS_CMD_TIMEOUT_MS, &cmdId);
+    if (st != CJGUI_INTERNAL_RENDERER_COMMAND_TIMEOUT && st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT)
+        windows_observation_ctx_free(c);
 }
 
 typedef struct CjguiWindowsPrepCtx {
@@ -11147,6 +13664,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
         st != CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT)
         cjgui_windows_semantic_free(ctx);
     return st;
+}
+
+/* The paired backend already parses and paints explicit selection-only runs.
+ * Platform selection colours (wire tag 2) remain unsupported. */
+uint32_t cjgui_internal_renderer_selection_background_version(void) {
+    return 1u;
 }
 
 typedef struct CjguiWindowsTextRunsCtx {
@@ -13474,12 +15997,34 @@ static int32_t probe_image_texture_impl(uint64_t token, uint64_t nodeId,
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+/* Exact floor(remainder * 1e9 / frequency), without overflowing the
+   intermediate product. Both inputs satisfy remainder < frequency. */
+static uint64_t windows_qpc_fraction_ns(uint64_t remainder, uint64_t frequency) {
+    uint64_t quotient = 0u, carry = 0u;
+    for (int bit = 29; bit >= 0; --bit) {
+        quotient *= 2u;
+        if (carry >= frequency - carry) { carry -= frequency - carry; ++quotient; }
+        else carry += carry;
+        if ((1000000000u >> bit) & 1u) {
+            if (carry >= frequency - remainder) { carry -= frequency - remainder; ++quotient; }
+            else carry += remainder;
+        }
+    }
+    return quotient;
+}
+
 uint64_t cjgui_internal_renderer_owner_clock_ns(void) {
     LARGE_INTEGER frequency, counter;
-    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter) || frequency.QuadPart <= 0)
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter) ||
+        frequency.QuadPart <= 0 || counter.QuadPart < 0)
         return 0;
     uint64_t f = (uint64_t)frequency.QuadPart, c = (uint64_t)counter.QuadPart;
-    return (c / f) * 1000000000ull + ((c % f) * 1000000000ull) / f;
+    uint64_t seconds = c / f;
+    if (seconds > UINT64_MAX / 1000000000ull) return 0u;
+    uint64_t whole = seconds * 1000000000ull;
+    uint64_t fraction = windows_qpc_fraction_ns(c % f, f);
+    if (fraction > UINT64_MAX - whole) return 0u;
+    return whole + fraction;
 }
 
 uint64_t cjgui_internal_renderer_owner_trace_ns(void) {
@@ -13805,6 +16350,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t token) {
     SetEvent(pumpStop);
     if (WaitForSingleObject(pumpThread, 30000u) != WAIT_OBJECT_0) {
         return finish_destroy_admission(token, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
+    }
+    if (route->traceEnabled) {
+        fprintf(stderr,"CJGUI_WINDOWS_PUMP_JOIN pid=%lu session=%llu generation=%llu clock_ns=%llu executing_tid=%lu ui_tid=%lu wait_result=%lu\n",
+            (unsigned long)GetCurrentProcessId(),(unsigned long long)route->token,
+            (unsigned long long)route->sessionGeneration,(unsigned long long)windows_prep_clock_ns(),
+            (unsigned long)GetCurrentThreadId(),(unsigned long)route->pumpThreadId,(unsigned long)WAIT_OBJECT_0);
     }
     CloseHandle(pumpThread);
     CjguiWindowsRendererSession *s = find_session(token);
@@ -14366,7 +16917,9 @@ static int queue_owned_range_replace(CjguiWindowsRendererSession *s,
         node->node.nodeKind != s->ownedTextSessionNodeKind ||
         (node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT &&
          node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT &&
-         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) ||
+         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT &&
+         !(node->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT &&
+           node->node.isInteractive)) ||
         s->focusedNodeId != s->ownedTextSessionNodeId ||
         s->focusedResourceId != s->ownedTextSessionResourceId ||
         s->focusedNodeKind != s->ownedTextSessionNodeKind) {
@@ -15275,6 +17828,18 @@ static CjguiInternalRendererStatus focus_composable_node_impl(
     if (!next) return copyStatus;
     uint32_t length16 = 0u;
     if (!windows_utf16_length((const char *)next, &length16)) { free(next); return CJGUI_INTERNAL_RENDERER_INVALID_UTF8; }
+    /* Registering an already-focused adapter is not a new caret intent.
+       A native pointer has selected its real position before the owner arms
+       and confirms the range. Preserve only this exact node/resource/kind,
+       body and valid range; another owner or changed body starts afresh. */
+    if (s->focusedNodeId == nodeId && s->focusedResourceId == node->node.resourceId &&
+        s->focusedNodeKind == node->node.nodeKind && s->proxyValueUtf8 &&
+        strcmp((const char *)s->proxyValueUtf8, (const char *)next) == 0 &&
+        s->selectionStart16 <= s->selectionEnd16 && s->selectionEnd16 <= length16) {
+        free(next);
+        SetFocus(s->hwnd);
+        return GetFocus() == s->hwnd ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
     free(s->proxyValueUtf8);
     s->proxyValueUtf8 = next;
     s->focusedNodeId = nodeId;

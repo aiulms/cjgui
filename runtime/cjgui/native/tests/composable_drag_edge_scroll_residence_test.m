@@ -336,14 +336,184 @@ static void DragEdgeScrollTerminalCandidateFixture(id<MTLDevice> device) {
     cjgui_internal_renderer_destroy(ctx.rendererSessionToken);
 }
 
+static void DragEdgeReversedOriginalRequestFixture(id<MTLDevice> device) {
+    SourceInstallOverlay *overlay = DragEdgeScrollFixture(device);
+    CHECK(overlay != nil, "drag_edge_reverse_fixture");
+    if (!overlay) return;
+    CJGuiInternalSession *ctx = overlay.session;
+    uint64_t token = ctx.rendererSessionToken;
+    CJGuiInternalComposableSceneNode *text = DragEdgeScrollFindNode(overlay, 401);
+    overlay.testDragEdgeScrollClockActive = YES;
+    [ctx.pendingInteractions removeAllObjects];
+    CHECK([overlay beginPointerCaptureForNode:text atPoint:NSMakePoint(300, 200)],
+        "drag_edge_reverse_original_begin");
+    uint64_t gesture = overlay.pointerCaptureGestureEpoch;
+    NSPoint below = NSMakePoint(300, 520), above = NSMakePoint(300, -20);
+    (void)[overlay updatePointerCaptureAtPoint:below];
+    uint64_t scene = ctx.composableSceneVersion, generation = ctx.sessionGeneration;
+    CHECK(cjgui_internal_renderer_ack_drag_edge_viewport(token, gesture, 900, 2, 71, 19,
+        21, 120, 100, scene, 1) == CJGUI_INTERNAL_RENDERER_OK,
+        "drag_edge_reverse_forward_request_pending");
+    (void)[overlay updatePointerCaptureAtPoint:above];
+    // This native seam test publishes the consumed original UPDATE tuple.
+    // The Cangjie component separately exercises real owner dequeue/admission.
+    cjgui_internal_renderer_publish_owner_consumed_pointer_fifo(token, generation, gesture,
+        3, 3, 2, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE);
+    uint64_t residenceGeneration = overlay.dragEdgeScrollGeneration;
+    uint64_t deadline = overlay.dragEdgeScrollDeadlineMicros;
+    NSUInteger queued = ctx.pendingInteractions.count;
+#define CHECK_REVERSE_REFUSAL(name, g, n, r, b, i, gen, req, acc, sc, pg, seq, x, y) do { \
+    CHECK(cjgui_internal_renderer_retire_reversed_drag_edge_request(token, (g), (n), (r), \
+        (b), (i), (gen), (req), (acc), (sc), (pg), (seq), (x), (y)) == \
+        CJGUI_INTERNAL_RENDERER_SCENE_STALE && overlay.dragEdgeScrollPhase == 2 && \
+        overlay.dragEdgeScrollRequestGeneration == 21 && overlay.dragEdgeScrollExpectedOffset == 120 && \
+        overlay.dragEdgeScrollGeneration == residenceGeneration && overlay.dragEdgeScrollActive && \
+        overlay.pointerCaptureActive && ctx.pendingInteractions.count == queued, (name)); \
+} while (0)
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_gesture", gesture+1,900,2,71,19,21,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_node", gesture,901,2,71,19,21,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_resource", gesture,900,3,71,19,21,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_binding", gesture,900,2,72,19,21,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_viewport", gesture,900,2,71,20,21,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_request", gesture,900,2,71,19,22,120,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_requested", gesture,900,2,71,19,21,121,100,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_base", gesture,900,2,71,19,21,120,101,scene,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_scene", gesture,900,2,71,19,21,120,100,scene+1,generation,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_lifetime", gesture,900,2,71,19,21,120,100,scene,generation+1,3,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_wrong_fifo", gesture,900,2,71,19,21,120,100,scene,generation,2,300,-20);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_same_direction", gesture,900,2,71,19,21,120,100,scene,generation,3,300,520);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_inside", gesture,900,2,71,19,21,120,100,scene,generation,3,300,200);
+    CHECK_REVERSE_REFUSAL("drag_edge_reverse_nonfinite", gesture,900,2,71,19,21,120,100,scene,generation,3,300,NAN);
+    CHECK(cjgui_internal_renderer_retire_reversed_drag_edge_request(token, gesture, 900, 2,
+        71, 19, 21, 120, 100, scene, generation, 3, above.x, above.y) == CJGUI_INTERNAL_RENDERER_OK &&
+        overlay.dragEdgeScrollPhase == 0 && overlay.dragEdgeScrollActive && overlay.pointerCaptureActive &&
+        overlay.dragEdgeScrollGeneration == residenceGeneration && overlay.dragEdgeScrollDeadlineMicros == deadline &&
+        overlay.dragEdgeScrollPointY == above.y && ctx.pendingInteractions.count == queued,
+        "drag_edge_reverse_retires_only_request_preserves_original_residence");
+    [overlay advanceDragEdgeScrollAtMicros:1000000];
+    CHECK(overlay.dragEdgeScrollPhase == 1 && overlay.pointerCaptureActive &&
+        DragEdgeScrollCount(ctx) == 2, "drag_edge_reverse_stationary_original_tick_continues_once");
+    CJGuiInternalQueuedInteraction *reverse = DragEdgeLastScroll(ctx);
+    CHECK(reverse && [reverse.formText containsString:@"|0|"], "drag_edge_reverse_actual_scroll_channel");
+    [overlay endPointerCaptureAtPoint:above cancelled:NO];
+    CHECK(!overlay.dragEdgeScrollActive && !overlay.pointerCaptureActive,
+        "drag_edge_reverse_original_up_stops");
+    CHECK(cjgui_internal_renderer_retire_reversed_drag_edge_request(token, gesture, 900, 2,
+        71, 19, 21, 120, 100, scene, generation, 3, above.x, above.y) == CJGUI_INTERNAL_RENDERER_SCENE_STALE,
+        "drag_edge_reverse_late_ticket_after_up_refused");
+    cjgui_internal_renderer_destroy(token);
+#undef CHECK_REVERSE_REFUSAL
+}
+
+
+static void DragEdgeOriginalDeadlineFixture(id<MTLDevice> device) {
+    SourceInstallOverlay *o=DragEdgeScrollFixture(device);
+    CHECK(o!=nil,"edge_deadline_actual_fixture");if(!o)return;
+    CJGuiInternalSession *ctx=o.session;
+    CJGuiInternalComposableSceneNode *text=DragEdgeScrollFindNode(o,401);
+    o.testDragEdgeScrollClockActive=NO;
+    CHECK([o beginPointerCaptureForNode:text atPoint:NSMakePoint(300,200)],"edge_deadline_actual_gesture");
+    // Exercise the real clock branch without running an unrelated queue callback.
+    o.dragEdgeScrollScheduled=YES;
+    [o armDragEdgeScrollForNode:text atPoint:NSMakePoint(300,510) source:CJGUI_DRAG_EDGE_SOURCE_POINTER_CAPTURE];
+    uint64_t future=CjguiCaretBlinkClockMicros()+CjguiDragEdgeScrollPeriodMicros()/2;
+    o.dragEdgeScrollDeadlineMicros=future;
+    [o armDragEdgeScrollForNode:text atPoint:NSMakePoint(300,510) source:CJGUI_DRAG_EDGE_SOURCE_POINTER_CAPTURE];
+    CHECK(o.dragEdgeScrollDeadlineMicros==future,"edge_rearm_same_gesture_keeps_existing_future_deadline");
+    uint64_t due=CjguiCaretBlinkClockMicros()-1;o.dragEdgeScrollDeadlineMicros=due;
+    [o armDragEdgeScrollForNode:text atPoint:NSMakePoint(300,510) source:CJGUI_DRAG_EDGE_SOURCE_POINTER_CAPTURE];
+    CHECK(o.dragEdgeScrollDeadlineMicros==due,"edge_real_completion_does_not_postpone_already_due_tick");
+    [o cancelPointerCapture];
+    CHECK(!o.dragEdgeScrollActive && !o.dragEdgeScrollDeadlineMicros,"edge_cancel_retires_due_deadline");
+    [o advanceDragEdgeScrollAtMicros:CjguiCaretBlinkClockMicros()+1000000];
+    CHECK(!o.dragEdgeScrollActive,"edge_late_advance_cannot_revive_closed_gesture");
+    CjguiReleaseSession(ctx.rendererSessionToken);
+}
+
+// The clock supplied to the real residence method is elapsed monotonic time,
+// not a count of wake opportunities. Completed-cycle readiness is isolated here;
+// existing ACK/continuation fixtures and normal consumers validate that protocol.
+static double DragEdgeElapsedCadence(id<MTLDevice> device,uint64_t period) {
+    SourceInstallOverlay *o=DragEdgeScrollFixture(device);if(!o)return NAN;
+    o.testDragEdgeScrollClockActive=YES;
+    CJGuiInternalSession *ctx=o.session;
+    CJGuiInternalComposableSceneNode *node=DragEdgeScrollFindNode(o,401);
+    [o beginPointerCaptureForNode:node atPoint:NSMakePoint(300,200)];
+    [ctx.pendingInteractions removeAllObjects];
+    NSPoint point=NSMakePoint(300,499);
+    CGFloat reference=0;[o pointerCaptureEdgeScrollTargetForNode:node atPoint:point outScrollIndex:NULL outDelta:&reference];
+    [o updatePointerCaptureAtPoint:point];
+    for(uint64_t elapsed=period;elapsed<=600000;elapsed+=period) {
+        o.dragEdgeScrollPhase=0;
+        [o advanceDragEdgeScrollAtMicros:elapsed];
+    }
+    double total=0;
+    for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+        if(q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SCROLL)
+            total+=[q.formText componentsSeparatedByString:@"|"][2].doubleValue;
+    double normalized=total/reference;
+    CjguiReleaseSession(ctx.rendererSessionToken);return normalized;
+}
+static void DragEdgeElapsedTimeFixture(id<MTLDevice> device) {
+    double t50=DragEdgeElapsedCadence(device,50000);
+    double t75=DragEdgeElapsedCadence(device,75000);
+    double t100=DragEdgeElapsedCadence(device,100000);
+    fprintf(stderr,"ELAPSED_CADENCE nominal50=%g wake75=%g wake100=%g expected=13\n",t50,t75,t100);
+    CHECK(fabs(t50-13)<1e-9,"edge_elapsed_nominal50_preserves_original_curve");
+    CHECK(fabs(t75-13)<1e-9,"edge_elapsed_wake75_has_same_distance_at600ms");
+    CHECK(fabs(t100-13)<1e-9,"edge_elapsed_wake100_has_same_distance_at600ms");
+}
+
+static void DragEdgeBoundedDemandFixture(id<MTLDevice> device) {
+    CjguiDragEdgeDemand demand={0};
+    CjguiAdvanceDragEdgeDemand(&demand,0,-10,-100);demand.sent=demand.desired;
+    CjguiAdvanceDragEdgeDemand(&demand,200000,-10,-100);
+    CHECK(fabs(demand.desired-demand.sent+40)<1e-9,"edge_inflight_keeps_one_bounded_latest_target");
+    CjguiAdvanceDragEdgeDemand(&demand,200000,10,-100);
+    CHECK(fabs(demand.desired-demand.sent)<1e-9,"edge_reversal_discards_unsent_old_direction");
+    CjguiAdvanceDragEdgeDemand(&demand,250000,10,-100);
+    CHECK(fabs(demand.desired-demand.sent-10)<1e-9,"edge_reversal_integrates_only_new_segment");
+    CjguiAdvanceDragEdgeDemand(&demand,5000000,10,-100);
+    CHECK(fabs(demand.desired-demand.sent-10)<1e-9,"edge_long_pause_rebases_to_one_fresh_step");
+    SourceInstallOverlay *o=DragEdgeScrollFixture(device);if(!o)return;
+    o.testDragEdgeScrollClockActive=YES;
+    CJGuiInternalSession *ctx=o.session;
+    CJGuiInternalComposableSceneNode *node=DragEdgeScrollFindNode(o,401);
+    [o beginPointerCaptureForNode:node atPoint:NSMakePoint(300,200)];
+    [o updatePointerCaptureAtPoint:NSMakePoint(300,499)];
+    NSUInteger pending=DragEdgeScrollCount(ctx);
+    for(uint64_t t=50000;t<=200000;t+=50000)[o advanceDragEdgeScrollAtMicros:t];
+    CHECK(DragEdgeScrollCount(ctx)==pending && fabs(o.dragEdgeDemand.desired-o.dragEdgeDemand.sent)>0,
+        "edge_inflight_integrates_without_enqueuing_a_backlog");
+    o.dragEdgeScrollPhase=0;
+    CHECK(cjgui_internal_renderer_ack_drag_edge_viewport(ctx.rendererSessionToken,o.pointerCaptureGestureEpoch,
+        900,2,71,19,1,10000,10000,ctx.composableSceneVersion,0)==0 && !o.dragEdgeDemand.initialized,
+        "edge_idle_viewport_rebase_retires_old_coordinate_demand");
+    [o advanceDragEdgeScrollAtMicros:250000];
+    CHECK(fabs(o.dragEdgeDemand.sent+10000)<200,
+        "edge_rebased_target_stays_in_new_viewport_coordinates");
+    [o cancelPointerCapture];[ctx.pendingInteractions removeAllObjects];
+    [o advanceDragEdgeScrollAtMicros:9000000];
+    CHECK(!o.dragEdgeDemand.initialized && DragEdgeScrollCount(ctx)==0,
+        "edge_cancel_drops_target_and_late_clock_cannot_catch_up");
+    CjguiReleaseSession(ctx.rendererSessionToken);
+}
+
+#ifndef CJGUI_DRAG_EDGE_COMPLETION_SCHEDULE_FIXTURE
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
     id<MTLDevice> device = MTLCreateSystemDefaultDevice();
     if (!device) return 2;
+    DragEdgeBoundedDemandFixture(device);
+    DragEdgeElapsedTimeFixture(device);
+    DragEdgeOriginalDeadlineFixture(device);
     DragEdgeScrollResidenceFixture(device);
     if (getenv("CJGUI_DRAG_EDGE_PHASE5_REGRESSION"))
         DragEdgeScrollTerminalCandidateFixture(device);
+    if (getenv("CJGUI_DRAG_EDGE_REVERSE_REGRESSION"))
+        DragEdgeReversedOriginalRequestFixture(device);
     fprintf(stderr, "drag_edge_scroll_residence failures=%d\n", failures);
     return failures ? 1 : 0;
 } }
+#endif

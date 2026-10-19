@@ -308,6 +308,55 @@ resource/field 对应关系，不能以不匹配的 projection 静默渲染。�
 已接受文本时，才会接住在 replacement projection 构造期间抵达的本地续写；删除、换资源/种类、禁用/只读或外部
 改值仍调用 `rejectUiEvent()`。这处理连续键入的宿主时序，不是陈旧事件的通用豁免。
 
+### 只读文本溢出（experimental，macOS）
+
+`CjguiComposableUiStyle(textMaxLines: 1, textOverflow: "ellipsis")` 声明单行尾部省略；
+`textMaxLines: 2` 等正数限制最大行数，`textOverflow: "ellipsis"` 仅在末行显示省略号。
+`textOverflow: "clip"` 保留行数限制但不显示省略号。默认 `0/clip` 沿用已有换行；
+`0/ellipsis` 表示单行。行数规范到 0–1024，未知手写 overflow 值规范到 clip。
+
+声明作用于只读 TEXT 及 BUTTON 标签，使用已有测量、TextKit 字形排版和自绘；中文、组合 emoji
+由系统字形／组合字符边界处理。`node.value`、完整业务字段、semantic label 和 AX 文字不截断。
+可编辑输入不消费该声明。行数进入共同布局及缓存身份，变化后不能复用旧的排版／纹理。
+生成界面的 label/action 用 `CjguiGeneratedUiPresentation.readonlyTextStyleProperties()` 注册同名
+`textMaxLines`（INTEGER）与 `textOverflow`（clip|ellipsis STRING），映射到相同样式字段；非法生成值
+具名拒绝。命名样式、交互 paint 和 translation 组合保留声明。当前实际绘制消费仅 macOS；
+Linux/Windows 原生绘制尚未接入，OHOS 冻结副本也未移植，本轮不宣称其他平台支持。
+
+### 可搜索选择面板（experimental，macOS）
+
+`CjguiSearchableSelectionPanel` 组合普通输入、虚拟列表、弹层和主题。应用提供稳定 `key`、
+`title`、`detail`、`shortcut`、`keywords`、可用性与原因；框架处理查询、鼠标确认、上下键、
+Enter、Esc、空结果、禁用项和焦点恢复。默认按名称/说明/关键词做 ASCII 不区分大小写的子串匹配，
+其他文字精确匹配；`open(..., matches: ...)` 可提供应用自己的元数据过滤函数。不会读取条目对应的内容。
+
+```cangjie
+let picker = CjguiSearchableSelectionPanel("delivery-channel")
+picker.open("选择通道", ArrayList<CjguiSearchableSelectionItem>([
+    CjguiSearchableSelectionItem("email", "邮件", keywords: "mail"),
+    CjguiSearchableSelectionItem("sms", "短信", isEnabled: false, disabledReason: "尚未配置")
+]), window.editingFocusReference() ?? CjguiComposableUiNodeReference.manual(13))
+// buildUi: return picker.attachTo(base, theme)
+// uiSceneVersion: include picker.revision()
+// SceneRefreshParticipant.candidateSceneCommands: include picker.commands()
+// applyUiEvent: if (let Some(result) <- picker.applyUiEvent(event)) { return result }
+// After the normal host.pumpOneTurn():
+if (let Some(item) <- picker.takeConfirmed(window)) {
+    applicationChooseChannel(item.key)
+}
+```
+
+每次打开固定一份条目快照，过滤只改变结果映射，已物化行以本次打开生命周期和原条目身份保持稳定。
+列表只构建可见行。取消使用已有弹层 anchor 恢复编辑目标与选择；确认动作须在正常宿主轮之后通过
+`takeConfirmed` 取出，且只取一次——它等关闭场景及原焦点恢复完成后才返回，打开新文档不会再被旧弹层抢焦点。
+`takeConfirmed` 观察原恢复事务的 installed 结果；普通字段原生恢复失败不会再冒充成功，
+也不会在同一关闭轮通过 fallback 重试吞掉错误。终态失败丢弃本次确认，应用在每轮调用
+`takeConfirmationFailure()` 显示原因，允许重新打开；pending 沿用现有恢复，已有 need_prepare_installation
+结果转为本次面板失败，不另建恢复队列。取消也报告恢复失败。已聚焦的非文本触发器只有无需恢复选区时
+才返回 focused。`window.modalReturnPositionState(target)` 是只读实验性观察，不授权输入。
+组字中的 Enter/Esc 留给系统文本服务。普通应用复用见
+[通知阈值的通道选择](examples/notification_threshold_window_app/src/main.cj)。Pharos 的文件目录和命令执行仍属于产品。
+
 ### 重复组件实例与命令生命周期（experimental）
 
 `CjguiComposableUiComponentRegistry` 是每个 controller 持有的有界（64 个 live
@@ -334,7 +383,8 @@ setter、present 或命令校验失败都会丢弃候选，继续保留旧 scene
 快捷键可用于不同 scope，但同一 scope 的冲突会失败。键盘先取当前 focus scope 的声明；没有
 scope 时才可取 global fallback，因此顶层 layer/另一个编辑器不能穿透到 base command。Cmd-A/C/X/V
 和 marked text 仍由原生文本服务优先；无快捷键菜单动作应走自己的 Cangjie 菜单/动作调用，不要填造
-一个快捷键。实例/命令 API 是仓颉公共实验接口；native 可短暂保存已接受的稳定 command id
+一个快捷键。另有 `up/down/enter/escape` 四种无修饰键，声明 `usesCommand: false` 时必须指定非空
+`focusScopeId`；普通字符不能声明成无修饰快捷键。实例/命令 API 是仓颉公共实验接口；native 可短暂保存已接受的稳定 command id
 以回投 FIFO，但不解释业务、不保存 callback 或 action name。
 
 ### 可组合矢量图形（experimental）

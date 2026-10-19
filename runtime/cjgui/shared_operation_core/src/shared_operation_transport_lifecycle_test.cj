@@ -1,6 +1,8 @@
 package cjgui_shared_operation_core
 
 import std.collection.*
+import std.collection.concurrent.*
+import std.env.*
 import std.fs.*
 import std.net.*
 import std.sync.*
@@ -21,10 +23,269 @@ private func lifecycleAuthorization(): CjguiSharedOperationExternalAuthorization
     )
 }
 
+private class WaitingLifecycleGate <: CjguiSharedOperationOwnerWriteGate {
+    var ready: Bool = false
+    var terminal: Bool = false
+    public func admitOwnerWrite(invocation: CjguiSharedOperationActionInvocation,
+        previous: ?CjguiSharedOperationOwnerWriteAdmission): CjguiSharedOperationOwnerWriteAdmission {
+        return CjguiSharedOperationOwnerWriteAdmission(
+            if (terminal) { CjguiSharedOperationOwnerWriteAdmissionKind.TerminalRefusal }
+            else if (ready) { CjguiSharedOperationOwnerWriteAdmissionKind.Ready }
+            else { CjguiSharedOperationOwnerWriteAdmissionKind.WaitOriginal },
+            ownerKey: "owner:901", predecessor: 17u64, binding: 11, reason: "original_predecessor_failed")
+    }
+}
+
+@Test
+func originalWaitingLeaseKeepsChargeAndCancellation(): Unit {
+    let state = CjguiSharedOperationIoState()
+    let request = CjguiSharedOperationPendingClientRequest(lifecycleSetMarkedPayload())
+    let lease = state.tryQueueRequest(request).getOrThrow()
+    @Assert(state.readyBatch(0u32).size, 1)
+    @Assert(request.isWaitingForOwner(), true)
+    @Assert(state.diagnostics().queuedRequestBytes, request.payload.size)
+    @Assert(state.diagnostics().readyRequestCount, 1)
+    @Assert(state.readyBatch(0u32).size, 1)
+    @Assert(request.cancelIfUnclaimed(), true)
+    @Assert(request.claimForOwner(), false)
+    state.releaseReadyCharge(lease)
+    state.releaseReadyCharge(lease)
+    @Assert(state.diagnostics().queuedRequestBytes, 0)
+    @Assert(state.diagnostics().readyRequestCount, 0)
+    state.stop()
+}
+
+@Test
+func originalWaitingPublicWriteLetsReadPassThenExecutesOnce(): Unit {
+    let list = lifecycleList()
+    let gate = WaitingLifecycleGate()
+    let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+    @Assert(connection.enableOwnerWriteAdmission(gate), true)
+    @Assert(connection.start(), true)
+    try {
+        let path = connection.connectionInfo().getOrThrow().socketPath
+        let writer = spawn { => requestLifecyclePayload(path, lifecycleSetMarkedPayload()) }
+        let queued = MonoTime.now()
+        while (connection.transportDiagnostics().getOrThrow().readyRequestCount == 0 &&
+            (MonoTime.now() - queued).toMilliseconds() < 80) { sleep(Duration.millisecond) }
+        @Assert(connection.pump(0u32), false)
+        @Assert(list.snapshot().version, 0)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes > 0, true)
+        let reader = spawn { => requestLifecycleContext(path) }
+        let until = MonoTime.now()
+        while (!connection.pump(0u32) && (MonoTime.now() - until).toMilliseconds() < 80) {
+            sleep(Duration.millisecond)
+        }
+        @Assert(reader.get().contains("KIND SNAPSHOT"), true)
+        @Assert(list.snapshot().version, 0)
+        gate.ready = true
+        @Assert(connection.pump(0u32), true)
+        @Assert(writer.get().contains("APPLIED true"), true)
+        @Assert(list.snapshot().version, 1)
+        @Assert(connection.pump(0u32), false)
+        @Assert(list.snapshot().version, 1)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+        @Assert(connection.transportDiagnostics().getOrThrow().readyRequestCount, 0)
+    } finally { connection.close() }
+}
+
+@Test
+func originalWaitingPublicWriteExpiresWithoutOwnerCallback(): Unit {
+    let list = lifecycleList()
+    let gate = WaitingLifecycleGate()
+    let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+    let _ = connection.enableOwnerWriteAdmission(gate)
+    @Assert(connection.start(), true)
+    try {
+        let path = connection.connectionInfo().getOrThrow().socketPath
+        let writer = spawn { => requestLifecyclePayloadWithTimeout(path, lifecycleSetMarkedPayload(), 600) }
+        let started = MonoTime.now()
+        while ((MonoTime.now() - started).toMilliseconds() < 280) {
+            @Assert(connection.pump(0u32), false)
+            sleep(Duration.millisecond * 4)
+        }
+        gate.ready = true
+        @Assert(connection.pump(0u32), false)
+        @Assert(writer.get().contains("owner_busy"), true)
+        @Assert(list.snapshot().version, 0)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+    } finally { connection.close() }
+}
+
 private func lifecycleList(): CjguiSharedOperationList {
     return CjguiSharedOperationList(
         ArrayList<CjguiSharedOperationRecord>([CjguiSharedOperationRecord(901, "多字节\n标题", false)])
     )
+}
+
+private func awaitLifecycleReadyCount(connection: CjguiSharedOperationExternalConnection, count: Int64): Unit {
+    let started = MonoTime.now()
+    while (connection.transportDiagnostics().getOrThrow().readyRequestCount < count &&
+        (MonoTime.now() - started).toMilliseconds() < 80) { sleep(Duration.millisecond) }
+    @Assert(connection.transportDiagnostics().getOrThrow().readyRequestCount, count)
+}
+
+@Test
+func originalWaitingPublicWriteTerminalAndRevocationNeverExecute(): Unit {
+    for (revoked in [false, true]) {
+        let list = lifecycleList()
+        let gate = WaitingLifecycleGate()
+        let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+        let _ = connection.enableOwnerWriteAdmission(gate)
+        @Assert(connection.start(), true)
+        try {
+            let path = connection.connectionInfo().getOrThrow().socketPath
+            let writer = spawn { => requestLifecyclePayload(path, lifecycleSetMarkedPayload()) }
+            awaitLifecycleReadyCount(connection, 1)
+            @Assert(connection.pump(0u32), false)
+            if (revoked) { let _ = connection.revokeAuthorization() } else { gate.terminal = true }
+            @Assert(connection.pump(0u32), true)
+            let response = writer.get()
+            @Assert(response.contains("APPLIED true"), false)
+            @Assert(response.contains(if (revoked) { "authorization_revoked" } else { "original_predecessor_failed" }), true)
+            @Assert(list.snapshot().version, 0)
+            @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+            @Assert(connection.transportDiagnostics().getOrThrow().readyRequestCount, 0)
+        } finally { connection.close() }
+    }
+}
+
+@Test
+func originalWaitingPublicWriteKeepsExpectedVersionAfterHumanAdvance(): Unit {
+    let list = lifecycleList()
+    let gate = WaitingLifecycleGate()
+    let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+    let _ = connection.enableOwnerWriteAdmission(gate)
+    @Assert(connection.start(), true)
+    try {
+        let path = connection.connectionInfo().getOrThrow().socketPath
+        let writer = spawn { => requestLifecyclePayload(path, lifecycleSetMarkedPayload()) }
+        awaitLifecycleReadyCount(connection, 1)
+        @Assert(connection.pump(0u32), false)
+        let _ = list.setMarkedFromHuman(901, true)
+        @Assert(list.snapshot().version, 1)
+        gate.ready = true
+        @Assert(connection.pump(0u32), true)
+        let response = writer.get()
+        @Assert(response.contains("APPLIED false"), true)
+        @Assert(response.contains("CONFLICT true"), true)
+        @Assert(list.snapshot().version, 1)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+    } finally { connection.close() }
+}
+
+@Test
+func originalWaitingPublicWriteCloseReleasesOriginalLease(): Unit {
+    let list = lifecycleList()
+    let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+    let _ = connection.enableOwnerWriteAdmission(WaitingLifecycleGate())
+    @Assert(connection.start(), true)
+    let path = connection.connectionInfo().getOrThrow().socketPath
+    let writer = spawn { => requestLifecyclePayload(path, lifecycleSetMarkedPayload()) }
+    awaitLifecycleReadyCount(connection, 1)
+    @Assert(connection.pump(0u32), false)
+    connection.close()
+    @Assert(writer.get().contains("APPLIED true"), false)
+    @Assert(connection.pump(0u32), false)
+    @Assert(list.snapshot().version, 0)
+    @Assert(connection.transportDiagnostics().isNone(), true)
+}
+
+@Test
+func acceptedPublicWritePeerCloseCannotReplayOwnerTransaction(): Unit {
+    let list = lifecycleList()
+    let gate = WaitingLifecycleGate()
+    let connection = CjguiSharedOperationExternalConnection(list, lifecycleAuthorization())
+    let _ = connection.enableOwnerWriteAdmission(gate)
+    @Assert(connection.start(), true)
+    try {
+        let path = connection.connectionInfo().getOrThrow().socketPath
+        try (client = UnixSocket(path)) {
+            client.connect()
+            client.write(CjguiSharedOperationFrame.encode(lifecycleSetMarkedPayload()))
+            awaitLifecycleReadyCount(connection, 1)
+            @Assert(connection.pump(0u32), false)
+        }
+        gate.ready = true
+        @Assert(connection.pump(0u32), true)
+        @Assert(list.snapshot().version, 1)
+        @Assert(connection.pump(0u32), false)
+        @Assert(list.snapshot().version, 1)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+    } finally { connection.close() }
+}
+
+private class TwoOwnerLifecycleDomain <: CjguiSharedOperationDomain & CjguiSharedOperationOwnerWriteGate {
+    let first = lifecycleList()
+    let second = CjguiSharedOperationList(ArrayList<CjguiSharedOperationRecord>([
+        CjguiSharedOperationRecord(902, "independent owner", false)]))
+    let executions = ArrayList<Int64>()
+    var ready: Bool = false
+    public func resourceType(): String { return "two_owner_lifecycle" }
+    public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> { return first.actionDescriptors() }
+    public func contextSnapshot(): CjguiSharedOperationContextSnapshot {
+        let resources = ArrayList<CjguiSharedOperationResource>(first.contextSnapshot().resources)
+        for (resource in second.contextSnapshot().resources) { resources.add(resource) }
+        return CjguiSharedOperationContextSnapshot(first.version() + second.version(), "two owners", resourceType(), resources)
+    }
+    public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        return first.executeFromHuman(invocation)
+    }
+    public func executeFromExternal(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
+        let target = invocation.targetResourceIds[0]
+        executions.add(target)
+        return if (target == 901) { first.executeFromExternal(invocation) } else { second.executeFromExternal(invocation) }
+    }
+    public func admitOwnerWrite(invocation: CjguiSharedOperationActionInvocation,
+        previous: ?CjguiSharedOperationOwnerWriteAdmission): CjguiSharedOperationOwnerWriteAdmission {
+        let target = invocation.targetResourceIds[0]
+        return CjguiSharedOperationOwnerWriteAdmission(
+            if (target == 901 && !ready) { CjguiSharedOperationOwnerWriteAdmissionKind.WaitOriginal }
+            else { CjguiSharedOperationOwnerWriteAdmissionKind.Ready },
+            ownerKey: "owner:${target}", predecessor: if (target == 901) { 17u64 } else { 0u64 }, binding: target)
+    }
+}
+
+@Test
+func originalWaitingOwnerWritesKeepFifoWhileOtherOwnerAndReadAdvance(): Unit {
+    let domain = TwoOwnerLifecycleDomain()
+    let authorization = CjguiSharedOperationExternalAuthorization("two owners", "lifecycle-capability",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true),
+            CjguiSharedOperationExternalActionScope("SET_MARKED", ArrayList<Int64>([901,902]), false)]))
+    let connection = CjguiSharedOperationExternalConnection(domain, authorization)
+    let _ = connection.enableOwnerWriteAdmission(domain)
+    @Assert(connection.start(), true)
+    try {
+        let path = connection.connectionInfo().getOrThrow().socketPath
+        let first = spawn { => requestLifecyclePayload(path, lifecycleSetMarkedPayload()) }
+        awaitLifecycleReadyCount(connection, 1)
+        @Assert(connection.pump(0u32), false)
+        let successorPayload = lifecycleSetMarkedPayload().replace("INVOKE 0", "INVOKE 1").replace("BOOLEAN 1", "BOOLEAN 0")
+        let successor = spawn { => requestLifecyclePayload(path, successorPayload) }
+        awaitLifecycleReadyCount(connection, 2)
+        @Assert(connection.pump(0u32), false)
+        let unrelatedPayload = lifecycleSetMarkedPayload().replace("ID 901", "ID 902")
+        let unrelated = spawn { => requestLifecyclePayload(path, unrelatedPayload) }
+        awaitLifecycleReadyCount(connection, 3)
+        @Assert(connection.pump(0u32), true)
+        @Assert(unrelated.get().contains("APPLIED true"), true)
+        @Assert(domain.first.version(), 0)
+        @Assert(domain.second.version(), 1)
+        let read = spawn { => requestLifecycleContext(path) }
+        awaitLifecycleReadyCount(connection, 3)
+        @Assert(connection.pump(0u32), true)
+        @Assert(read.get().contains("KIND SNAPSHOT"), true)
+        domain.ready = true
+        @Assert(connection.pump(0u32), true)
+        @Assert(first.get().contains("VERSION_AFTER 1"), true)
+        @Assert(connection.pump(0u32), true)
+        @Assert(successor.get().contains("VERSION_AFTER 2"), true)
+        @Assert(domain.executions.toArray(), [902,901,901])
+        @Assert(domain.first.version(), 2)
+        @Assert(connection.transportDiagnostics().getOrThrow().queuedRequestBytes, 0)
+        @Assert(connection.transportDiagnostics().getOrThrow().readyRequestCount, 0)
+    } finally { connection.close() }
 }
 
 private func lifecycleContextPayload(): String {
@@ -672,4 +933,397 @@ func genericTransportHonorsWholeWriteBudgetForBriefReceiverSchedulingGap(): Unit
     }
     connection.close()
     @Assert(false, true)
+}
+
+// True transport controls for request-level diagnostics, independent of the
+// original GiB stall. The provider barrier is an explicit test cause.
+private class DiagnosticReadLifecycleDomain <: CjguiSharedOperationDomain & CjguiSharedOperationRangeReadDomain {
+    let list = lifecycleList()
+    let entered = Barrier(2)
+    let released = Barrier(2)
+    var hold: Bool = false
+    private let callLock = Mutex()
+    private var calls: Int64 = 0
+    func callCount(): Int64 { return synchronized(callLock) { calls } }
+    public func resourceType(): String { return list.resourceType() }
+    public func contextSnapshot(): CjguiSharedOperationContextSnapshot { return list.contextSnapshot() }
+    public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> { return list.actionDescriptors() }
+    public func executeFromHuman(i: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return list.executeFromHuman(i) }
+    public func executeFromExternal(i: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return list.executeFromExternal(i) }
+    public func readRangeFromExternal(resourceId: Int64, start: Int64, end: Int64, expectedVersion: Int64): CjguiSharedOperationRangeRead {
+        synchronized(callLock) { calls += 1 }
+        if (hold) { entered.wait(); released.wait() }
+        return CjguiSharedOperationRangeRead(true, false, resourceId, 4, start, end, "X", "available")
+    }
+}
+private func diagnosticReadConnection(d: DiagnosticReadLifecycleDomain): CjguiSharedOperationExternalConnection {
+    let auth = CjguiSharedOperationExternalAuthorization("diagnostic-read", "lifecycle-read-capability",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("READ_RANGE", ArrayList<Int64>([901]), false)]))
+    let c = CjguiSharedOperationExternalConnection(d, auth)
+    let _ = c.enableRangeReads(d)
+    return c
+}
+private func diagnosticReadPayload(): String {
+    return "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH lifecycle-read-capability\nREAD_RANGE 901 0 1 4"
+}
+@Test
+func requestReadUnclaimedNeverCallsProvider(): Unit {
+    let d = DiagnosticReadLifecycleDomain(); let c = diagnosticReadConnection(d)
+    @Assert(c.start(), true)
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let client = spawn { => requestLifecyclePayloadWithTimeout(path, diagnosticReadPayload(), 1000) }
+        awaitLifecycleReadyCount(c, 1)
+        sleep(Duration.millisecond * 280)
+        @Assert(client.get().contains("ERROR owner_busy"), true)
+        @Assert(d.callCount(), 0)
+        @Assert(c.pump(0u32), false)
+        @Assert(d.callCount(), 0)
+    } finally { c.close() }
+}
+@Test
+func requestReadClaimedProviderCrossesDeadlineOnce(): Unit {
+    let d = DiagnosticReadLifecycleDomain(); d.hold = true
+    let c = diagnosticReadConnection(d); @Assert(c.start(), true)
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let client = spawn { => requestLifecyclePayloadWithTimeout(path, diagnosticReadPayload(), 1000) }
+        awaitLifecycleReadyCount(c, 1)
+        let release = spawn { => d.entered.wait(); sleep(Duration.millisecond * 280); d.released.wait() }
+        @Assert(c.pump(0u32), true)
+        release.get()
+        let response = client.get()
+        @Assert(response.contains("KIND RANGE"), true)
+        @Assert(response.contains("ERROR owner_busy"), false)
+        @Assert(d.callCount(), 1)
+        @Assert(c.pump(0u32), false)
+    } finally { c.close() }
+}
+@Test
+func requestReadPredecessorHoldsOwnerWhileNextExpires(): Unit {
+    let d = DiagnosticReadLifecycleDomain(); d.hold = true
+    let c = diagnosticReadConnection(d); @Assert(c.start(), true)
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let first = spawn { => requestLifecyclePayloadWithTimeout(path, diagnosticReadPayload(), 1200) }
+        awaitLifecycleReadyCount(c, 1)
+        let release = spawn { =>
+            d.entered.wait()
+            let second = requestLifecyclePayloadWithTimeout(path, diagnosticReadPayload(), 1000)
+            d.released.wait()
+            second
+        }
+        @Assert(c.pump(0u32), true)
+        @Assert(release.get().contains("ERROR owner_busy"), true)
+        @Assert(first.get().contains("KIND RANGE"), true)
+        @Assert(d.callCount(), 1)
+        @Assert(c.pump(0u32), false)
+        @Assert(d.callCount(), 1)
+    } finally { c.close() }
+}
+
+@Test
+func requestResponseCannotPublishAgainAfterFirstTake(): Unit {
+    let request = CjguiSharedOperationPendingClientRequest(lifecycleContextPayload())
+    @Assert(request.claimForOwner(), true)
+    @Assert(request.complete("first"), true)
+    @Assert(request.waitForResponse().getOrThrow(), "first")
+    @Assert(request.complete("second"), false)
+    @Assert(request.hasPublishedResponse(), true)
+}
+@Test
+func requestResponseCancellationRetainsSingleDecision(): Unit {
+    let before = CjguiSharedOperationPendingClientRequest(lifecycleContextPayload())
+    @Assert(before.claimForOwner(), true); before.cancel()
+    @Assert(before.complete("never"), false)
+    let after = CjguiSharedOperationPendingClientRequest(lifecycleContextPayload())
+    @Assert(after.claimForOwner(), true); @Assert(after.complete("first"), true); after.cancel()
+    @Assert(after.complete("second"), false)
+    @Assert(after.waitForResponse().getOrThrow(), "first")
+}
+
+private class DetachedLifecycleDomain <: CjguiSharedOperationDomain & CjguiSharedOperationRangeReadDomain {
+    let list = lifecycleList()
+    let document: CjguiTextDocument
+    private let callLock = Mutex()
+    private var calls: Int64 = 0
+    var bad: Bool = false
+    init(body: String) { document = CjguiTextDocument(901, "detached", body) }
+    func callCount(): Int64 { return synchronized(callLock) { calls } }
+    public func resourceType(): String { return list.resourceType() }
+    public func contextSnapshot(): CjguiSharedOperationContextSnapshot { return list.contextSnapshot() }
+    public func actionDescriptors(): ArrayList<CjguiSharedOperationActionDescriptor> { return list.actionDescriptors() }
+    public func executeFromHuman(i: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return list.executeFromHuman(i) }
+    public func executeFromExternal(i: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult { return list.executeFromExternal(i) }
+    public func readRangeFromExternal(resource: Int64, start: Int64, end: Int64, version: Int64): CjguiSharedOperationRangeRead {
+        synchronized(callLock) { calls += 1 }
+        if (bad) { return CjguiSharedOperationRangeRead(true, false, resource, -1, start, end, "X", "invalid") }
+        let read = document.readRangeFromExternal(CjguiTextDocumentRange(start, end), version)
+        return CjguiSharedOperationRangeRead(read.isAvailable, read.isVersionConflict, resource, read.version,
+            read.range.start, read.range.end, read.content, read.reason)
+    }
+}
+private func detachedLifecycleConnection(d: DetachedLifecycleDomain): CjguiSharedOperationExternalConnection {
+    let auth = CjguiSharedOperationExternalAuthorization("detached-test", "lifecycle-read-capability",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("READ_RANGE", ArrayList<Int64>([901]), false)]))
+    let c = CjguiSharedOperationExternalConnection(d, auth); let _ = c.enableRangeReads(d); return c
+}
+private func detachedLifecyclePayload(end: Int64, version!: Int64 = 0, resource!: Int64 = 901): String {
+    return "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH lifecycle-read-capability\nREAD_RANGE ${resource} 0 ${end} ${version}"
+}
+private class HeldDetachedEncoding <: CjguiDetachedReadEncodingProbe {
+    let entered = Barrier(2)
+    let released = Barrier(2)
+    private let lock = Mutex()
+    private var used = false
+    public func beforeEncoding(lease: Int64): Unit {
+        let hold = synchronized(lock) { if (used) { false } else { used = true; true } }
+        if (hold) { entered.wait(); released.wait() }
+    }
+}
+private class FailedDetachedEncoding <: CjguiDetachedReadEncodingProbe {
+    private let lock = Mutex()
+    private var used = false
+    public func beforeEncoding(lease: Int64): Unit {
+        let fail = synchronized(lock) { if (used) { false } else { used = true; true } }
+        if (fail) { throw Exception("controlled_encoder_failure") }
+    }
+}
+private func awaitDetachedAccountingZero(c: CjguiSharedOperationExternalConnection): Unit {
+    let started = MonoTime.now()
+    while (c.detachedReadAccounting()[1] != 0 && (MonoTime.now() - started).toMilliseconds() < 250) {
+        sleep(Duration.millisecond)
+    }
+    @Assert(c.detachedReadAccounting()[1], 0)
+}
+
+@Test
+func detachedReadOwnerReturnsBeforeEncodingAndKeepsVersion(): Unit {
+    let text = String.fromUtf8(Array<Byte>(65536, repeat: b'X'))
+    let d = DetachedLifecycleDomain(text); let probe = HeldDetachedEncoding()
+    let c = detachedLifecycleConnection(d)
+    let enabled = getVariable("CJGUI_TEST_DETACHED_READ_DISABLE").isNone()
+    @Assert(c.configureDetachedReadCounter(enabled, Some(probe)), true)
+    @Assert(c.start(), true)
+    let commands = ArrayBlockingQueue<Int64>(8); let answers = ArrayBlockingQueue<Bool>(8)
+    // One established owner dispatches both reads and the real document edit.
+    let owner = spawn { =>
+        var running = true
+        while (running) {
+            if (let Some(command) <- commands.remove(Duration.second * 2)) {
+                if (command == 0) { running = false }
+                else if (command == 1) { let _ = answers.tryAdd(c.pump(0u32)) }
+                else if (command == 2) {
+                    let edit = d.document.replaceRangeFromExternal(CjguiTextDocumentRange(0, 1), "Y", 0)
+                    let _ = answers.tryAdd(edit.applied && edit.versionAfter == 1)
+                }
+            } else { running = false }
+        }
+    }
+    var entered = false; var released = false
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let first = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(65536), 1500) }
+        awaitLifecycleReadyCount(c, 1); let _ = commands.tryAdd(1)
+        probe.entered.wait(); entered = true
+        let returned = answers.remove(Duration.millisecond * 80)
+        // Withdrawal leaves the owner inside the SAME formatter/barrier.
+        @Assert(returned.isSome(), true)
+        @Assert(returned.getOrThrow(), true)
+        @Assert(d.callCount(), 1)
+        @Assert(c.detachedReadAccounting()[1] > 0, true)
+        let _ = commands.tryAdd(2); @Assert(answers.remove(Duration.second).getOrThrow(), true)
+        let second = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(65536, version: 1), 1000) }
+        awaitLifecycleReadyCount(c, 1); let _ = commands.tryAdd(1)
+        @Assert(answers.remove(Duration.second).getOrThrow(), true)
+        let now = second.get()
+        @Assert(now.contains("VERSION 1\n"), true)
+        @Assert(now.contains("CONTENT_UTF8_HEX 65536 59" + CjguiSharedOperationFrame.encodeUtf8Hex(text[1..])), true)
+        probe.released.wait(); released = true
+        let old = first.get()
+        @Assert(old.contains("VERSION 0\n"), true)
+        @Assert(old.contains("CONTENT_UTF8_HEX 65536 " + CjguiSharedOperationFrame.encodeUtf8Hex(text)), true)
+        @Assert(d.callCount(), 2)
+        @Assert(d.document.snapshot().version, 1)
+        awaitDetachedAccountingZero(c)
+    } finally {
+        if (entered && !released) { probe.released.wait() }
+        let _ = commands.tryAdd(0); owner.get(); c.close()
+    }
+}
+
+@Test
+func detachedReadWireEqualsSynchronousKernelAndRejectsBadResults(): Unit {
+    for (body in ["", "Hi中😀", String.fromUtf8(Array<Byte>(65536, repeat: b'X'))]) {
+        let d = DetachedLifecycleDomain(body); let c = detachedLifecycleConnection(d)
+        let payload = detachedLifecyclePayload(body.size)
+        let direct = c.dispatchPayload(payload)
+        @Assert(c.start(), true)
+        try {
+            let path = c.connectionInfo().getOrThrow().socketPath
+            let peer = spawn { => requestLifecyclePayloadWithTimeout(path, payload, 1000) }
+            awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+            @Assert(peer.get(), direct); @Assert(d.callCount(), 2)
+            awaitDetachedAccountingZero(c)
+            let stalePayload = detachedLifecyclePayload(body.size, version: 7)
+            let staleDirect = c.dispatchPayload(stalePayload)
+            let stalePeer = spawn { => requestLifecyclePayloadWithTimeout(path, stalePayload, 1000) }
+            awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+            @Assert(stalePeer.get(), staleDirect); awaitDetachedAccountingZero(c)
+            d.bad = true
+            let invalidDirect = c.dispatchPayload(payload)
+            let invalidPeer = spawn { => requestLifecyclePayloadWithTimeout(path, payload, 1000) }
+            awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+            @Assert(invalidPeer.get(), invalidDirect)
+            @Assert(invalidDirect.contains("ERROR invalid_range"), true); awaitDetachedAccountingZero(c)
+            let calls = d.callCount()
+            @Assert(c.dispatchPayload(detachedLifecyclePayload(body.size, resource: 902)).contains("unauthorized_resource"), true)
+            @Assert(c.dispatchPayload(detachedLifecyclePayload(65537)).contains("invalid_request"), true)
+            @Assert(d.callCount(), calls)
+        } finally { c.close() }
+    }
+}
+
+@Test
+func detachedReadCapacityRefusesBeforeProviderAndEncoderFailureKeepsWorkers(): Unit {
+    let d = DetachedLifecycleDomain("X"); let c = detachedLifecycleConnection(d)
+    @Assert(c.configureDetachedReadCapacity(0), true); @Assert(c.start(), true)
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let peer = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(1), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        @Assert(peer.get().contains("ERROR range_read_capacity"), true); @Assert(d.callCount(), 0)
+    } finally { c.close() }
+    @Assert(c.configureDetachedReadCapacity(8 * 1024 * 1024), true)
+    @Assert(c.configureDetachedReadCounter(true, Some(FailedDetachedEncoding())), true)
+    @Assert(c.start(), true)
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        for (i in 0..2) {
+            let peer = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(1), 1000) }
+            awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+            @Assert(peer.get().contains(if (i == 0) { "ERROR range_encoding_failed" } else { "KIND RANGE" }), true)
+            awaitDetachedAccountingZero(c)
+            @Assert(c.transportDiagnostics().getOrThrow().retainedWorkerCount, 5)
+            @Assert(c.transportDiagnostics().getOrThrow().activeIoWorkerCount, 5)
+        }
+        @Assert(d.callCount(), 2)
+    } finally { c.close() }
+}
+
+@Test
+func detachedReadCloseWhileEncodingRetainsBudgetAcrossRestart(): Unit {
+    let body = String.fromUtf8(Array<Byte>(65536, repeat: b'X'))
+    let d = DetachedLifecycleDomain(body); let probe = HeldDetachedEncoding(); let c = detachedLifecycleConnection(d)
+    @Assert(c.configureDetachedReadCounter(true, Some(probe)), true); @Assert(c.start(), true)
+    var entered = false; var released = false
+    try {
+        let oldInfo = c.connectionInfo().getOrThrow()
+        let old = spawn { => requestLifecyclePayloadWithTimeout(oldInfo.socketPath, detachedLifecyclePayload(65536), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        probe.entered.wait(); entered = true
+        let held = c.detachedReadAccounting()[1]; @Assert(held > 0, true)
+        let start = MonoTime.now(); c.close()
+        @Assert((MonoTime.now() - start).toMilliseconds() < 400, true)
+        @Assert(c.detachedReadAccounting()[1], held)
+        @Assert(c.configureDetachedReadCapacity(0), false)
+        @Assert(c.configureDetachedReadCounter(true, None), true); @Assert(c.start(), true)
+        let newInfo = c.connectionInfo().getOrThrow(); @Assert(newInfo.socketPath != oldInfo.socketPath, true)
+        let fresh = spawn { => requestLifecyclePayloadWithTimeout(newInfo.socketPath, detachedLifecyclePayload(65536), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        @Assert(fresh.get().contains("KIND RANGE"), true)
+        @Assert(c.detachedReadAccounting()[1] >= held, true)
+        probe.released.wait(); released = true
+        @Assert(old.get().contains("KIND RANGE"), false)
+        awaitDetachedAccountingZero(c)
+        @Assert(d.callCount(), 2)
+    } finally {
+        if (entered && !released) { probe.released.wait() }
+        c.close()
+    }
+}
+
+private class QueuedDetachedEncoding <: CjguiDetachedReadEncodingProbe & CjguiDetachedReadBeforeTakeProbe {
+    let entered = Barrier(2)
+    let released = Barrier(2)
+    public func beforeEncoding(lease: Int64): Unit { }
+    public func beforeResponseTake(lease: Int64): Unit { entered.wait(); released.wait() }
+}
+@Test
+func detachedReadCloseQueuedResponseReleasesOnlyWhenWorkerDropsIt(): Unit {
+    let d = DetachedLifecycleDomain("X"); let probe = QueuedDetachedEncoding(); let c = detachedLifecycleConnection(d)
+    @Assert(c.configureDetachedReadCounter(true, Some(probe)), true); @Assert(c.start(), true)
+    var entered = false; var released = false
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let peer = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(1), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        probe.entered.wait(); entered = true
+        let held = c.detachedReadAccounting()[1]; @Assert(held > 0, true)
+        c.close(); @Assert(c.detachedReadAccounting()[1], held)
+        probe.released.wait(); released = true
+        @Assert(peer.get().contains("KIND RANGE"), false)
+        awaitDetachedAccountingZero(c)
+        @Assert(c.detachedReadAccounting()[5], 1)
+    } finally { if (entered && !released) { probe.released.wait() }; c.close() }
+}
+@Test
+func detachedReadCloseWhileProviderStillOwnsReservation(): Unit {
+    let d = DiagnosticReadLifecycleDomain(); d.hold = true; let c = diagnosticReadConnection(d)
+    @Assert(c.start(), true)
+    var entered = false; var released = false
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let peer = spawn { => requestLifecyclePayloadWithTimeout(path, diagnosticReadPayload(), 1000) }
+        awaitLifecycleReadyCount(c, 1)
+        let owner = spawn { => c.pump(0u32) }
+        d.entered.wait(); entered = true
+        let held = c.detachedReadAccounting()[1]; @Assert(held > 0, true)
+        c.close(); @Assert(c.detachedReadAccounting()[1], held)
+        d.released.wait(); released = true; let _ = owner.get()
+        @Assert(peer.get().contains("KIND RANGE"), false)
+        awaitDetachedAccountingZero(c); @Assert(d.callCount(), 1)
+    } finally { if (entered && !released) { d.released.wait() }; c.close() }
+}
+@Test
+func detachedReadPeerDisconnectReturnsBudgetAndPreservesWorkerPool(): Unit {
+    let d = DetachedLifecycleDomain("X"); let probe = HeldDetachedEncoding(); let c = detachedLifecycleConnection(d)
+    @Assert(c.configureDetachedReadCounter(true, Some(probe)), true); @Assert(c.start(), true)
+    let disconnect = Barrier(2)
+    var entered = false; var released = false
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let peer = spawn { =>
+            try (client = UnixSocket(path)) { client.connect(); client.write(CjguiSharedOperationFrame.encode(detachedLifecyclePayload(1))); disconnect.wait() }
+        }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        probe.entered.wait(); entered = true; disconnect.wait(); peer.get()
+        probe.released.wait(); released = true; awaitDetachedAccountingZero(c)
+        @Assert(c.transportDiagnostics().getOrThrow().retainedWorkerCount, 5)
+        let next = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(1), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        @Assert(next.get().contains("KIND RANGE"), true); awaitDetachedAccountingZero(c)
+        @Assert(c.transportDiagnostics().getOrThrow().activeIoWorkerCount, 5)
+        @Assert(d.callCount(), 2)
+    } finally { if (entered && !released) { probe.released.wait() }; c.close() }
+}
+
+@Test
+func detachedReadQueuedEmptyWireRetainsItsInFlightReservation(): Unit {
+    let d = DetachedLifecycleDomain(""); let probe = QueuedDetachedEncoding(); let c = detachedLifecycleConnection(d)
+    @Assert(c.configureDetachedReadCounter(true, Some(probe)), true); @Assert(c.start(), true)
+    var entered = false; var released = false
+    try {
+        let path = c.connectionInfo().getOrThrow().socketPath
+        let peer = spawn { => requestLifecyclePayloadWithTimeout(path, detachedLifecyclePayload(0), 1000) }
+        awaitLifecycleReadyCount(c, 1); @Assert(c.pump(0u32), true)
+        probe.entered.wait(); entered = true
+        @Assert(c.detachedReadAccounting()[1] > 0, true)
+        c.close(); @Assert(c.detachedReadAccounting()[1] > 0, true)
+        probe.released.wait(); released = true
+        @Assert(peer.get().contains("KIND RANGE"), false)
+        awaitDetachedAccountingZero(c)
+    } finally { if (entered && !released) { probe.released.wait() }; c.close() }
 }

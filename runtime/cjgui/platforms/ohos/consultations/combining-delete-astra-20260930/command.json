@@ -1,0 +1,19 @@
+[
+  "/Users/jiangxuanyang/.local/bin/codex",
+  "-a",
+  "never",
+  "exec",
+  "-C",
+  "/Users/jiangxuanyang/Desktop/cangjie",
+  "--skip-git-repo-check",
+  "-s",
+  "read-only",
+  "-m",
+  "gpt-6-astra",
+  "-c",
+  "model_reasoning_effort=\"max\"",
+  "--json",
+  "-o",
+  "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/consultations/combining-delete-astra-20260930/answer.md",
+  "-"
+]

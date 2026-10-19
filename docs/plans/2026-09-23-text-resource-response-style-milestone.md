@@ -1,6 +1,6 @@
 # 文字渲染响应与统一样式消费
 
-建立：2026-09-23。指导复核后的完整接续包，承接[上一阶段](2026-09-23-rendering-window-scale-milestone.md#2026-09-23-指导复核与接续结论)的必要返工，同时推进公共样式的一次接入、手写/生成对等和新应用消费。当前执行对象只见 [ACTIVE](../../runtime/cjgui/ACTIVE_DIRECTION.md)，操作规则见 [AGENTS](../../AGENTS.md)。本页是实施提示词，无需另开执行卡。
+建立：2026-09-23。指导复核后的历史接续包，承接[上一阶段](2026-09-23-rendering-window-scale-milestone.md#2026-09-23-指导复核与接续结论)的必要返工，同时推进公共样式的一次接入、手写/生成对等和新应用消费。当前执行对象只见 [ACTIVE](../../runtime/cjgui/ACTIVE_DIRECTION.md)，操作与咨询规则见 [AGENTS](../../AGENTS.md#independent-model-consultation)。本页保留当时任务与咨询事实，不构成恢复任务或默认调用顾问的授权；接续无需另开执行卡。
 
 ## 交付目标、资产与取舍
 
@@ -12,9 +12,9 @@
 
 ## 执行分工与顺序
 
-- 外部 DeepSeek 4.1 Flash 是唯一主写入者，负责整个 A–E。先保存相关 dirty diff、未跟踪文件与指纹，核查实际写入/构建/桌面竞争；保留并行鸿蒙和历史证据。
-- A/B 涉及候选/在用资源与 native 主线程：先用同一份限域问题包咨询 Codex CLI `gpt-5.6-sol` / xhigh，给出下面已定位的源码、原始日志及预期反例，要求确认资源归属和可区分检查。不要把整个仓库交它重审；咨询只读，DS 落地和运行验证。C 的常规实现由 DS 推进，公共契约有歧义再 high 咨询。
-- 普通问题两次实质修复无进展时咨询；核心问题第一次失败不盲猜第二方案。一次咨询加一次带新证据追问仍无方案，按 AGENTS 向指导升级该点，其他工作继续。旧失败累计不清零，不换回 Terra/K3，不恢复 GPT-6 Sol、Luna 或定时。
+- 当时由外部 DeepSeek 4.1 Flash 主写整个 A–E；当前执行对象以 ACTIVE 和用户最新指令为准。先保存相关 dirty diff、未跟踪文件与指纹，核查实际写入/构建/桌面竞争；保留并行鸿蒙和历史证据。
+- A/B 涉及候选/在用资源与 native 主线程：先核对共同实现、源码、原始日志及预期反例，明确资源归属和可区分检查。原 Codex CLI/Sol 前置咨询安排已撤销，已有答复在前提不变时复用；新的外部咨询仅按 [AGENTS 现行授权](../../AGENTS.md#independent-model-consultation)，不作为普通实施或构建的开工门。
+- 达到 AGENTS 的失败升级条件时交当前指导线程处理该点，其他独立工作继续；不自动调用顾问，不盲猜第二方案。旧失败累计不清零，不恢复旧执行者、委派或定时。
 - 按 A/B 和 C/D 两组范围推进，最终 E 汇合；它们不互相制造开工门槛。同 target 构建串行，同一时间一个桌面操作者。不要逐文件停工，也不要用重复绿测试代替新交付。
 
 ## A. 必要返工：文字资源的失败与释放边界
@@ -47,7 +47,7 @@
 必要返工已从源码确认：`beaconDark().primaryAction` 未设前景色，白字只在 `primaryActionInteraction.normal`；协作按钮/两个模板漏接后成为黑字。知识目录 `titleInteraction.hover/pressed` 和 `rowInteraction.pressed` 又读取该基础前景，正常截图可读不代表交互态可读。新增 Tabs `titleStyle/titleInteraction` 仅手写有入口，generated `nodeFor(TABS)` 仍只传容器 style/titleHeight。
 
 1. 先在现有主题/组件用例建立上述失败，再修正基础与状态的完整定义。不要改全框架默认文字成白色；浅色背景/输入框同样应正确。现有暗/亮主题对普通可用文字给出明确前景与背景；检查 hover/pressed/focused/selected/disabled 的组合，选中页与键盘焦点可区分。数值对比度是辅助，不能只数亮像素当所有状态通过。
-2. 复用 `CjguiComposableUiNamedStyle` 已有的 base + interaction，提供公共的整组消费入口，开发者选择一次样式/角色即可把两者传到组件；允许局部几何，明确定义局部 paint 覆盖顺序。优先少量重载/绑定方法，保留旧显式写法兼容，不为每个示例再造 roleStyle/roleInteraction，也不建立第二样式目录。实验 API 命名由执行者给出清晰签名；存在语义冲突时先咨询。
+2. 复用 `CjguiComposableUiNamedStyle` 已有的 base + interaction，提供公共的整组消费入口，开发者选择一次样式/角色即可把两者传到组件；允许局部几何，明确定义局部 paint 覆盖顺序。优先少量重载/绑定方法，保留旧显式写法兼容，不为每个示例再造 roleStyle/roleInteraction，也不建立第二样式目录。实验 API 命名由执行者给出清晰签名；未能解决的语义冲突带证据向指导升级，外部咨询仅按 [AGENTS 现行授权](../../AGENTS.md#independent-model-consultation)，不自动调用模型。
 3. 同一已注册标题角色能由手写和生成 Tabs 使用，并把允许属性、类型与引用如实公开发现。未知标题角色/不支持属性拒绝整个候选，旧页/草稿/焦点/滚动仍在；标题样式变更随现有 staged/accepted 事务。不要把容器的全部布局属性粗暴继承给标题，也不要只改生成解析器却不接 builder。
 4. 注册组合组件继续消费同一解析后的样式与交互，不复制状态机。至少一套共同样式经应用现有主题动作更新后，手写、内置生成、组合三路画面一致变化，公开 STYLES 能读到同源变更；业务值、结构身份、当前页和合法选区不因此重置。只改 paint 应沿已有 paint 路径，不新增布局/模型调用。
 5. TAB_TITLE 的 label-only 绘制与输入谓词拆分保持；主题/标签变化的缓存失效用上述实际链和局部工作计数覆盖，不为单个标题再造一套 renderer 或独立验收工程。

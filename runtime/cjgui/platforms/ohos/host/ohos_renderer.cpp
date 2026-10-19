@@ -31,6 +31,9 @@
 #include "cjgui_ohos_focus_authority.h"
 #include "cjgui_ohos_font_lease.h"
 #include "cjgui_ohos_edit_ticket.h"
+#include "cjgui_ohos_selection_command.h"
+#include "cjgui_ohos_original_insert.h"
+#include "cjgui_ohos_text_work_trace.h"
 
 #include <hilog/log.h>
 
@@ -38,12 +41,17 @@
 #include <native_drawing/drawing_bitmap.h>
 #include <native_drawing/drawing_canvas.h>
 #include <native_drawing/drawing_font_collection.h>
+#include <native_drawing/drawing_filter.h>
+#include <native_drawing/drawing_image_filter.h>
+#include <native_drawing/drawing_mask_filter.h>
 #include <native_drawing/drawing_gpu_context.h>
 #include <native_drawing/drawing_pen.h>
+#include <native_drawing/drawing_path.h>
 #include <native_drawing/drawing_point.h>
 #include <native_drawing/drawing_rect.h>
 #include <native_drawing/drawing_round_rect.h>
 #include <native_drawing/drawing_sampling_options.h>
+#include <native_drawing/drawing_shader_effect.h>
 #include <native_drawing/drawing_surface.h>
 #include <native_drawing/drawing_text_typography.h>
 #include <native_drawing/drawing_types.h>
@@ -71,6 +79,7 @@
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <map>
+#include <malloc.h>
 #include <memory>
 #include <limits>
 #include <mutex>
@@ -79,6 +88,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <utility>
 #include <vector>
 
@@ -86,6 +96,38 @@
 #define RLOGE(...) OH_LOG_Print(LOG_APP, LOG_ERROR, 0x0000, "CjguiRenderer", __VA_ARGS__)
 #define RLOGW(...) OH_LOG_Print(LOG_APP, LOG_WARN, 0x0000, "CjguiRenderer", __VA_ARGS__)
 #define RLOGI(...) OH_LOG_Print(LOG_APP, LOG_INFO, 0x0000, "CjguiRenderer", __VA_ARGS__)
+
+// Process-start observation policy only. Freeze before the renderer thread
+// exists; absent/invalid values are off. Never controls admission or ownership.
+static const bool g_textDeepDiagnostics = [] {
+    const char *value = std::getenv("CJGUI_OHOS_DEEP_DIAGNOSTICS");
+    return value && std::strcmp(value, "1") == 0;
+}();
+static bool cjguiOhosDeepDiagnosticsEnabled() { return g_textDeepDiagnostics; }
+#define RLOGD(...) do { if (cjguiOhosDeepDiagnosticsEnabled()) RLOGI(__VA_ARGS__); } while (0)
+
+// BEGIN OWNER EVENT READINESS
+// One readiness channel for the existing serialized owner pump, not another
+// event loop. Every Session FIFO push is already under g_sessions.lock; the
+// empty->nonempty notification and the pump predicate therefore cannot lose
+// an admitted native event. Raw host touch ingress still has the same bounded
+// pump deadline; it does not acquire another queue or change event ordering.
+static std::condition_variable g_ownerEventReady;
+template<class Event>
+class CjguiOhosOwnerEventQueue : public std::deque<Event> {
+public:
+    void push_back(const Event &event) {
+        const bool wasEmpty = this->empty();
+        std::deque<Event>::push_back(event);
+        if (wasEmpty) g_ownerEventReady.notify_all();
+    }
+    void push_back(Event &&event) {
+        const bool wasEmpty = this->empty();
+        std::deque<Event>::push_back(std::move(event));
+        if (wasEmpty) g_ownerEventReady.notify_all();
+    }
+};
+// END OWNER EVENT READINESS
 
 #ifdef __cplusplus
 extern "C" {
@@ -325,6 +367,18 @@ constexpr size_t kPresentationLeaseTotalUnitsMax = 262144;  // 全表 UTF-16 单
 // 超界新查询具名拒绝，不排队不等待）。
 constexpr size_t kPresentationQueryQueueMax = 32;
 constexpr double kTextInsetMultiline = 6.0;
+
+// The shared natural-height layout passes textContentWidth(outerWidth) for
+// Text and multiline input: CJGUI_COMPOSABLE_UI_TEXT_HORIZONTAL_INSET is 7
+// on each side. The POD width remains the outer node width. Keep this wrapping
+// constraint separate from the platform's existing paint/hit origin and Y inset.
+static double cjguiOhosTextLayoutWidth(double outerWidth, uint32_t kind)
+{
+    constexpr double horizontalInset = 7.0;
+    if (kind == kKindText || kind == kKindMultiline)
+        return std::max(1.0, outerWidth - 2.0 * horizontalInset);
+    return outerWidth;
+}
 
 // 可编辑文本节点集合，与 macOS 的 `CjguiComposableNodeIsTextInput` 同集：
 // 单行 / 整数 / 多行。多行是连续写作面（真实 Pharos 源码正文）的实际类型；
@@ -1142,6 +1196,22 @@ static bool parseTextStyleRuns(const char *encoded, std::vector<OhosTextStyleRun
     return true;
 }
 
+// Paint-only sidecar geometry (CjguiInternalRendererComposableGeometry).
+// It is written into the candidate slot of the same node, survives a scene
+// present together with that node, and dies with a discarded candidate. The
+// recorded nodeId/projectionVersion are checked again at paint time so a slot
+// reused by another object (or a geometry staged for another projection) can
+// never apply an earlier node's translation.
+struct NodePaintGeometry {
+    bool present = false;
+    uint64_t nodeId = 0;
+    uint64_t projectionVersion = 0;
+    double translateX = 0.0, translateY = 0.0;
+    double clip0X = 0.0, clip0Y = 0.0, clip1X = 0.0, clip1Y = 0.0;
+    double clip2X = 0.0, clip2Y = 0.0, clip3X = 0.0, clip3Y = 0.0;
+    double scaleX = 1.0, scaleY = 1.0;
+};
+
 struct SceneNode {
     CjguiInternalRendererComposableNode pod{};
     std::string label;
@@ -1149,11 +1219,137 @@ struct SceneNode {
     std::string semanticId;
     OhosImageRef image;
     std::vector<OhosTextStyleRun> textStyleRuns;
+    NodePaintGeometry geometry;
     // R2：本候选事务是否**实际写入**过这个槽位。configure 从 accepted 播种时为
     // false（此刻 candidate.value 仍是上一代文本，不能作为 run 准入基准）；
     // set_composable_scene_node 写入后为 true（candidate.value 才是本候选文本）。
     bool stagedThisCandidate = false;
 };
+
+// Resolved paint transform of one node. Returns false for the default identity
+// (absent sidecar, stale node id or stale projection), which must stay exactly
+// the pre-geometry paint path. translate/scale are paint-only: descendants get
+// their own sidecar values and clipped ancestors keep their own origin.
+static bool cjguiOhosNodePaintTransform(const SceneNode &node, double *translateX,
+                                        double *translateY, double *scaleX, double *scaleY)
+{
+    *translateX = 0.0;
+    *translateY = 0.0;
+    *scaleX = 1.0;
+    *scaleY = 1.0;
+    const NodePaintGeometry &g = node.geometry;
+    if (!g.present || g.nodeId != node.pod.nodeId ||
+        g.projectionVersion != node.pod.projectionVersion) {
+        return false;
+    }
+    *translateX = g.translateX;
+    *translateY = g.translateY;
+    *scaleX = g.scaleX;
+    *scaleY = g.scaleY;
+    return *translateX != 0.0 || *translateY != 0.0 || *scaleX != 1.0 || *scaleY != 1.0;
+}
+
+// Visual origin of a node's accepted rect. Input routing uses the same
+// sidecar translation as paint; scale/rotate stay paint-only by contract.
+static void cjguiOhosNodeVisualOrigin(const SceneNode &node, double *originX, double *originY)
+{
+    double translateX = 0.0, translateY = 0.0, scaleX = 1.0, scaleY = 1.0;
+    (void)cjguiOhosNodePaintTransform(node, &translateX, &translateY, &scaleX, &scaleY);
+    *originX = static_cast<double>(node.pod.x) + translateX;
+    *originY = static_cast<double>(node.pod.y) + translateY;
+}
+
+// Tap coordinates relative to the node's accepted layout origin, which is what
+// the retained typography layout expects. The visual point is first mapped
+// through the same translation applied by paint.
+static void cjguiOhosNodeTapCoordinates(const SceneNode &node, double x, double y,
+                                        double *tapX, double *tapY)
+{
+    double originX = 0.0, originY = 0.0;
+    cjguiOhosNodeVisualOrigin(node, &originX, &originY);
+    *tapX = x - originX;
+    *tapY = y - originY;
+}
+
+// CPU raster target used only for frames that actually contain a
+// backdrop-blur node. OH_Drawing exposes no readback of an on-screen canvas,
+// so those frames paint the whole scene into a bitmap-backed canvas of the
+// same device size; a blur node then samples the already-painted prefix of
+// that bitmap. A frame without backdrop blur keeps painting straight to the
+// window surface, so its pixels do not change. Destroyed before the frame
+// returns on every path (including refused frames that never Flush).
+struct BackdropFrame {
+    OH_Drawing_Bitmap *bitmap = nullptr;
+    OH_Drawing_Canvas *canvas = nullptr;
+    uint8_t *pixels = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    float density = 1.0f;
+
+    BackdropFrame() = default;
+    BackdropFrame(const BackdropFrame &) = delete;
+    BackdropFrame &operator=(const BackdropFrame &) = delete;
+    ~BackdropFrame() { destroy(); }
+
+    bool usable() const
+    {
+        return bitmap != nullptr && canvas != nullptr && pixels != nullptr &&
+               width > 0u && height > 0u && density > 0.0f;
+    }
+
+    bool create(int32_t pixelWidth, int32_t pixelHeight, float surfaceScale)
+    {
+        destroy();
+        if (pixelWidth <= 0 || pixelHeight <= 0 || !(surfaceScale > 0.0f)) return false;
+        bitmap = OH_Drawing_BitmapCreate();
+        if (!bitmap) return false;
+        OH_Drawing_BitmapFormat format{COLOR_FORMAT_RGBA_8888, ALPHA_FORMAT_PREMUL};
+        OH_Drawing_BitmapBuild(bitmap, static_cast<uint32_t>(pixelWidth),
+                               static_cast<uint32_t>(pixelHeight), &format);
+        if (OH_Drawing_BitmapGetWidth(bitmap) != static_cast<uint32_t>(pixelWidth) ||
+            OH_Drawing_BitmapGetHeight(bitmap) != static_cast<uint32_t>(pixelHeight)) {
+            destroy();
+            return false;
+        }
+        canvas = OH_Drawing_CanvasCreate();
+        if (!canvas) {
+            destroy();
+            return false;
+        }
+        OH_Drawing_CanvasBind(canvas, bitmap);
+        pixels = static_cast<uint8_t *>(OH_Drawing_BitmapGetPixels(bitmap));
+        width = static_cast<uint32_t>(pixelWidth);
+        height = static_cast<uint32_t>(pixelHeight);
+        density = surfaceScale;
+        if (!pixels) {
+            destroy();
+            return false;
+        }
+        return true;
+    }
+
+    void destroy()
+    {
+        if (canvas) OH_Drawing_CanvasDestroy(canvas);
+        if (bitmap) OH_Drawing_BitmapDestroy(bitmap);
+        canvas = nullptr;
+        bitmap = nullptr;
+        pixels = nullptr;
+        width = 0u;
+        height = 0u;
+        density = 1.0f;
+    }
+};
+
+// Frames with no admitted backdrop blur keep the existing direct paint path.
+static bool cjguiOhosSceneNeedsBackdrop(const std::vector<SceneNode> &nodes)
+{
+    for (const SceneNode &node : nodes) {
+        const uint32_t radius = node.pod.effectBackdropBlurRadiusPoints;
+        if (radius != 0u && radius <= 16u) return true;
+    }
+    return false;
+}
 
 // Pure geometry from the exact Paint/Flush, never a text owner or an input protocol.
 struct PaintedSelectionHandles {
@@ -1166,6 +1362,10 @@ struct PaintedSelectionHandles {
     std::u16string text;
     double startX = 0, startY = 0, startLineY = 0;
     double endX = 0, endY = 0, endLineY = 0;
+    // Paint sidecar translation applied to this text node. Handle coordinates
+    // stay in accepted layout space; input maps its visual point through this
+    // offset before comparing.
+    double translateX = 0, translateY = 0;
 };
 
 
@@ -1199,6 +1399,7 @@ struct QueuedEvent {
     std::string text;
     CjguiOhosEditTickets::Ticket inputTicket;
     CjguiOhosChoiceSources::Receipt choiceObservation;
+    CjguiOhosOriginalInserts::Command originalInsert;
 };
 
 struct RawTouchSample {
@@ -1223,11 +1424,26 @@ struct AcceptedCaretRect {
     uint64_t generation = 0, geometry = 0;
     int64_t resourceId = -1, context = 0;
     uint32_t kind = 0, caret = 0;
+    CjguiOhosCoverage coverage; uint64_t choiceId=0,focus=0,installRequest=0,layoutSerial=0;
+    CjguiOhosProxyKey key;std::string sourceBasis;
     double left = 0, top = 0, right = 0, bottom = 0;
     std::u16string text;
 };
 
+// At most the existing 64 presentation leases plus the one editing layout.
+// Values only: no Typography, copied body, history, or new layout ownership.
+struct AcceptedTextLineBands {
+    bool valid=false,dynamicText=false,activeValid=false;
+    uint64_t nodeId=0,binding=0,projection=0,ticket=0,generation=0,geometry=0;
+    int64_t resourceId=-1;uint32_t kind=0;
+    double nodeX=0,nodeY=0,nodeWidth=0,nodeHeight=0;
+    double firstTop=0,firstBottom=0,lastTop=0,lastBottom=0,activeTop=0,activeBottom=0;
+    CjguiOhosCoverage coverage;
+};
+
 struct Session {
+    CjguiOhosTextWorkTraceRef textWorkTrace; // scalar/weak observation only
+
     bool inUse = false;
     uint64_t token = 0;
     uint64_t appInstance = 0;
@@ -1277,6 +1493,10 @@ struct Session {
         int64_t ownerContentVersion = -1;
         std::string sourceBasis;
         CjguiOhosEditTickets::OwnerReceipt ownerAcceptance;
+        CjguiOhosOriginalInserts::OwnerResult originalOwnerResult;
+        CjguiOhosCoverage coverage;
+        uint64_t commandId=0;
+        std::shared_ptr<const CjguiOhosSelectionCommandOwnerResult> commandOwner;
         uint64_t bindingEpoch = 0;
         // A1 复核：声明自身的**声明代**（窗口 textSessionBindingEpoch）。换绑
         // （epoch 变化）后的查询不得借旧 accepted 声明——helper 必须比较
@@ -1285,12 +1505,21 @@ struct Session {
     };
     CjguiOhosEditTickets inputTickets;
     CjguiOhosChoiceSources choiceSources;
+    CjguiOhosAcceptedSelection acceptedSelection;
+    uint64_t captureDiagChoice=UINT64_MAX,captureDiagTicket=UINT64_MAX,captureDiagFocus=0;
+    int64_t captureDiagContext=-1;
+    CjguiOhosSelectionCapture selectionCapture;
+    CjguiOhosSelectionCommandState selectionCommandState;
+    CjguiOhosOriginalInserts originalInserts;
+    CjguiOhosOriginalInserts::Command lastEventOriginalInsert;
+    CjguiOhosOriginalInserts::OwnerResult pendingOriginalResult,consumedOriginalResult;
     CjguiOhosChoiceSources::Receipt lastEventChoice;
     uint64_t inputOwnerCompleted=0; bool inputOwnerFailed=false;
     CjguiOhosEditTickets::Ticket dirtyInputTicket;
     CjguiOhosChoiceSources::Receipt consumedRestoreChoice;
     uint64_t finishedDirtyTicket=0,finishedDirtyRestore=0;
     CjguiOhosEditTickets::Ticket lastCompletedInputTicket, lastEventInputTicket;
+    uint64_t inputPreserveRefusedPaintTicket=0,inputPreserveRefusedHead=0;
     bool lastEventInputTransferred=false;
     std::string editingInputSourceBasis;
     OwnedMirrorDeclaration ownedMirrorStaged;
@@ -1298,6 +1527,7 @@ struct Session {
     // 当前编辑缓冲播种自的 owner 内容版本（A1 复核：sync 区分纯 resize 与
     // owner 内容推进）。播种/镜像替换时更新。
     int64_t editingMirrorOwnerVersion = -1;
+    std::string editingMirrorBodyBasis; // Body/window represented by this context, independent of input authority.
     bool closeRequested = false;
 
     // 最近一次观察到的 surface 事实（viewport 与 resizeVersion 的来源）
@@ -1323,11 +1553,14 @@ struct Session {
     bool candidateFailed = false;
     uint64_t candidateProjectionVersion = 0;
     std::vector<SceneNode> candidate;
+    // One-shot evidence that the versioned geometry sidecar is consumed by
+    // this window; per-node values stay on the candidate slot only.
+    bool geometryStageLogged = false;
     uint64_t imageCompletionVersion = 0;
     std::map<uint64_t, uint64_t> imageObservedSerial;
 
     // 事件 FIFO 与最近一次 pump 出的事件文本（form_event_text 的生命周期）
-    std::deque<QueuedEvent> events;
+    CjguiOhosOwnerEventQueue<QueuedEvent> events;
     std::string lastEventText;
     // round9-A：最近一次出队事件的冻结来源（per-session，与 lastEventText 同一
     // 生命周期）。进程级槽会让多会话交替 pump 时互相覆盖——pump 是 per-session
@@ -1365,6 +1598,7 @@ struct Session {
             kGestureSelectionDrag = 4,
         };
         bool active = false;
+        uint64_t focusGeneration = 0; // One authority acquisition for this gesture.
         uint32_t phase = kGesturePending;
         float startX = 0.0f, startY = 0.0f;
         float lastX = 0.0f, lastY = 0.0f;
@@ -1503,6 +1737,7 @@ struct Session {
     // 尚待同源选择观测的值不得回推（r27 收缩：10:60→Q 后钳位 10:22 不得回推，
     // 正确 caret11 由后续观测确认）。不得用同步账本伪造该资格。
     bool selectionIntentConfirmed = false;
+    uint64_t semanticSelectionCommand=0; // Current physical command; a new producer retires it.
     // pump owns the clock/phase; input only requests reset. Rendering reads one
     // frozen phase, including pending reset so the first input frame is bright.
     bool caretBlinkVisible = false;
@@ -1521,6 +1756,13 @@ struct Session {
     // H 连续写作包 A：最近一帧**真实编辑 caret** 的场景矩形（vp）。渲染线程在
     // 绘制编辑 caret 时写入；窗口在 accepted 场景后按小矩形做 reveal。
     AcceptedCaretRect activeCaret;
+    std::vector<AcceptedTextLineBands> textLineBands;
+    // Immutable body/layout fact from the last successful Flush; no observer authority.
+    struct PaintedBodyFact {
+        CjguiOhosCoverage coverage;
+        uint64_t ticket=0,serial=0,projection=0,generation=0,geometryRevision=0;
+        int64_t context=0;
+    } paintedBody;
     uint64_t caretPaintProgress=0;
     int32_t caretAffinity = 0;  // native-only visual affinity; UTF16 protocol is unchanged
     // 人类锚（H1-R.a）：人在 native 表面上亲手放置的落点（命中测试/原生全选）。
@@ -1538,6 +1780,7 @@ struct Session {
         uint64_t acceptedBindingEpoch = 0;
         uint32_t start16 = 0;
         uint32_t end16 = 0;
+        CjguiOhosCoverage coverage;uint64_t paintSerial=0,paintTicket=0,focus=0;
         bool consumed = false;     // 窗口已取走：同一锚不得二次采纳
     };
     HumanSelectionAnchor humanAnchor;
@@ -1552,6 +1795,13 @@ struct Session {
     // state 是互斥的进行中相位；terminal 一旦写入就是该请求的终态，
     // 终态不得抹掉已经发生的事实（transportReceived/platformInstalled）。
     struct ProxyRestoreRequest {
+        // 0 explicit selection, 1 accepted projection rebase, 2 refused-owner rollback.
+        uint32_t purpose = 0;
+        uint64_t selectionIntentRevision = 0;
+        uint64_t inputFrontier = 0;
+        CjguiOhosEditTickets::OwnerReceipt sourceOwner;
+        CjguiOhosCoverage sourceCoverage;
+        CjguiOhosOriginalInserts::OwnerResult originalOwnerResult;
         uint64_t requestId = 0;
         uint64_t focusIntentGeneration = 0;
         uint64_t refusedInputId = 0;
@@ -2351,9 +2601,19 @@ enum class JobPhase {
     Cancelled,
 };
 
+static std::atomic<uint64_t> g_observedRenderJobSequence{0};
+
 struct WaitableJob {
     JobKind kind;
-    explicit WaitableJob(JobKind k) : kind(k) {}
+    CjguiOhosTextWorkTraceRef textWorkTrace;
+    const uint64_t observationId;
+    const std::chrono::steady_clock::time_point observationCreated;
+    std::chrono::steady_clock::time_point observationEnqueued{}, observationDequeued{};
+    uint64_t observationRenderEpoch=0;
+    const char *observationReason="unspecified";
+    explicit WaitableJob(JobKind k) : kind(k),
+        observationId(g_observedRenderJobSequence.fetch_add(1)+1),
+        observationCreated(std::chrono::steady_clock::now()) {}
     virtual ~WaitableJob() = default;
     std::mutex mutex;
     std::condition_variable cv;
@@ -2462,6 +2722,33 @@ struct WaitableJob {
 // 引用消失时对象自然回收。终态与回收各有唯一责任方，队列/在途/终态都有界。
 using JobRef = std::shared_ptr<WaitableJob>;
 
+// Render-thread scoped observations. This pointer is cleared before the job
+// owner is released and never grants input, display or installation authority.
+static thread_local const WaitableJob *g_observedTextJob = nullptr;
+static std::atomic<uint64_t> g_textObservationSequence{0};
+static int64_t cjguiOhosTextMonoUs() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+static int64_t cjguiOhosTextThreadCpuUs() {
+    timespec t{};return clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t)==0 ?
+        static_cast<int64_t>(t.tv_sec)*1000000+t.tv_nsec/1000 : -1;
+}
+static void cjguiOhosObserveTextWork(const char *phase,const CjguiOhosTextWorkTraceRef &trace,
+    uint64_t ticket=0,uint64_t resourceSequence=0) {
+    if (!cjguiOhosDeepDiagnosticsEnabled()) return;
+    const auto *job=g_observedTextJob;const auto *t=trace.get();
+    RLOGI("text work phase=%{public}s sequence=%{public}llu resourceSequence=%{public}llu mono_us=%{public}lld cpu_us=%{public}lld pid=%{public}d tid=%{public}ld job=%{public}llu kind=%{public}d reason=%{public}s candidateTicket=%{public}llu sourceSequence=%{public}llu candidateProjection=%{public}llu inputKnown=%{public}d input=%{public}llu node=%{public}llu resource=%{public}lld binding=%{public}llu ownerBefore=%{public}lld ownerAfter=%{public}lld beforeBasis=%{public}s afterBasis=%{public}s",
+        phase,(unsigned long long)++g_textObservationSequence,(unsigned long long)resourceSequence,
+        (long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs(),static_cast<int>(getpid()),syscall(SYS_gettid),
+        (unsigned long long)(job?job->observationId:0),job?static_cast<int>(job->kind):-1,
+        job?job->observationReason:"none",(unsigned long long)ticket,(unsigned long long)(t?t->sequence:0),
+        (unsigned long long)(t?t->projection:0),t&&t->exactOwner?1:0,(unsigned long long)(t?t->input:0),
+        (unsigned long long)(t?t->node:0),(long long)(t?t->resource:-1),(unsigned long long)(t?t->binding:0),
+        (long long)(t?t->ownerBefore:-1),(long long)(t?t->ownerAfter:-1),
+        t?t->beforeBasis.c_str():"",t?t->afterBasis.c_str():"");
+}
+
 struct MeasureJob : WaitableJob {
     MeasureJob() : WaitableJob(JobKind::Measure) {}
     std::string text;
@@ -2469,6 +2756,11 @@ struct MeasureJob : WaitableJob {
     uint32_t fontWeight = 400;
     double constraintWidth = 0.0;
     bool unlimitedWidth = false;
+    // Optimization identity only; no owner/choice authority is issued by Measure.
+    bool keepPrivateLayout = false;
+    uint64_t preparedNode = 0, preparedBinding = 0;
+    int64_t preparedResource = -1;
+    uint32_t preparedKind = 0;
     uint64_t traceSession = 0;
     uint64_t traceProjection = 0;
     int64_t traceContext = 0;
@@ -2492,7 +2784,8 @@ void sourceParagraphRange16(const std::u16string &text, uint32_t caret, uint32_t
 
 struct CaretHitTestJob : WaitableJob {
     CaretHitTestJob() : WaitableJob(JobKind::CaretHitTest) {}
-    std::u16string text;   // 组合缓冲（UTF-16）
+    std::u16string text;   // Actual frozen platform buffer.
+    std::u16string layoutText; CjguiOhosCoverage coverage; bool requiresTransfer=false;
     double fontSize = 13.0;
     uint32_t fontWeight = 400;
     double nodeWidth = 0.0;
@@ -2505,6 +2798,7 @@ struct CaretHitTestJob : WaitableJob {
     uint64_t session = 0, nodeId = 0, bindingEpoch = 0, projectionVersion = 0;
     int64_t resourceId = -1, contextId = 0, nodeX = 0, nodeY = 0;
     uint64_t paintSerial = 0, sourcePaintTicket = 0;
+    uint64_t observationFocus = 0, observationOperation = 0;
     uint32_t mode = 0, wordStart = 0, wordEnd = 0;
     // 可视编辑包：presentation TEXT 节点（如预览片段）的命中——文本事实是
     // accepted 节点值，几何/样式同一份 pod；与绘制共用 layoutTextStyled。
@@ -2528,6 +2822,10 @@ struct PresentJob : WaitableJob {
     bool ownedMirrorValid = false;
     std::u16string ownedMirrorText;
     CjguiOhosEditTickets::OwnerReceipt ownedOwnerAcceptance;
+    CjguiOhosOriginalInserts::OwnerResult ownedOriginalResult;
+    uint64_t ownedCommandId=0;
+    std::shared_ptr<const CjguiOhosSelectionCommandOwnerResult> ownedCommandOwner;
+    CjguiOhosCoverage ownedCoverage;
     int64_t ownedMirrorOwnerVersion = -1;
     uint64_t ownedMirrorBindingEpoch = 0;
     // A1 复核：声明代必须随上面四项一同冻结。漏运时延迟结算晋升旧代，
@@ -2551,10 +2849,53 @@ struct ShutdownJob : WaitableJob {
 
 // 末帧重绘任务：非等待式（fire-and-forget），渲染线程自持有副本。
 struct RedrawJob : WaitableJob {
-    RedrawJob() : WaitableJob(JobKind::Redraw) {}
+    explicit RedrawJob(const char *reason="unspecified") : WaitableJob(JobKind::Redraw) { observationReason=reason; }
+    CjguiOhosCoverage installedCoverage; uint64_t installedSession=0,installedTicket=0;
     bool caretBlinkWake = false;
     uint64_t renderEpoch = 0;
 };
+
+// Observations only: source workload is not the SDK object's allocation size.
+// Fixed storage adds no allocation or admission policy to the rendering path.
+struct CjguiOhosTypographyResourceFacts {
+    struct Entry { OH_Drawing_Typography *handle=nullptr; size_t inputBytes=0; uint64_t layoutId=0,fontId=0; };
+    std::array<Entry,256> entries{};
+    uint64_t created=0,destroyed=0;
+    size_t inputBytesLive=0;
+    bool complete=true;
+    void observeCreate(OH_Drawing_Typography *handle,size_t bytes,uint64_t layoutId,uint64_t fontId) {
+        if (!handle) return;
+        ++created;
+        for (auto &e:entries) if (!e.handle) {e={handle,bytes,layoutId,fontId};inputBytesLive+=bytes;return;}
+        complete=false;
+    }
+    void observeDestroy(OH_Drawing_Typography *handle) {
+        if (!handle) return;
+        ++destroyed;
+        for (auto &e:entries) if (e.handle==handle) {inputBytesLive-=e.inputBytes;e={};return;}
+        complete=false;
+    }
+};
+static CjguiOhosTypographyResourceFacts g_typographyResources;
+static void cjguiOhosDestroyObservedTypography(OH_Drawing_Typography *handle) {
+    if (!handle) return;
+    if (!cjguiOhosDeepDiagnosticsEnabled()) {
+        OH_Drawing_DestroyTypography(handle);
+        g_typographyResources.observeDestroy(handle);
+        return;
+    }
+    CjguiOhosTypographyResourceFacts::Entry entry{};
+    for(const auto &e:g_typographyResources.entries)if(e.handle==handle){entry=e;break;}
+    const auto before=cjguiOhosTextMonoUs(),cpu=cjguiOhosTextThreadCpuUs();
+    RLOGI("text typography phase=destroy-begin layout=%{public}llu font=%{public}llu mono_us=%{public}lld cpu_us=%{public}lld",
+        (unsigned long long)entry.layoutId,(unsigned long long)entry.fontId,(long long)before,(long long)cpu);
+    OH_Drawing_DestroyTypography(handle);
+    RLOGI("text typography phase=destroyed layout=%{public}llu font=%{public}llu mono_us=%{public}lld elapsed_us=%{public}lld cpu_us=%{public}lld cpu_delta_us=%{public}lld",
+        (unsigned long long)entry.layoutId,(unsigned long long)entry.fontId,(long long)cjguiOhosTextMonoUs(),
+        (long long)(cjguiOhosTextMonoUs()-before),(long long)cjguiOhosTextThreadCpuUs(),
+        (long long)(cpu<0?-1:cjguiOhosTextThreadCpuUs()-cpu));
+    g_typographyResources.observeDestroy(handle);
+}
 
 // Render-thread-only ownership of the Typography actually passed to Paint.
 // Jobs and Sessions carry value identities only, never this native object.
@@ -2562,8 +2903,8 @@ using OhosFontPool = CjguiOhosFontPool<OH_Drawing_FontCollection>;
 struct PaintedTextLayout {
     // Declared before Typography: reverse destruction releases Typography before its collection.
     OhosFontPool::Lease fontLease;
-    std::unique_ptr<OH_Drawing_Typography, decltype(&OH_Drawing_DestroyTypography)> typography
-        {nullptr, &OH_Drawing_DestroyTypography};
+    std::unique_ptr<OH_Drawing_Typography, decltype(&cjguiOhosDestroyObservedTypography)> typography
+        {nullptr, &cjguiOhosDestroyObservedTypography};
     CjguiInternalRendererComposableNode node{};
     std::u16string text;
     uint64_t session = 0, renderEpoch = 0, basePresentTicket = 0, projectionVersion = 0, serial = 0;
@@ -2577,10 +2918,55 @@ struct PaintedTextLayout {
     double density = 1.0, relativeOriginX = 0.0, relativeOriginY = 0.0;
     PaintedSelectionHandles handles;
     bool plainTextLayout = false;
+    CjguiOhosCoverage coverage;
     // Borrowed only within the render thread; successful Flush transfers the
     // old unique Typography. A failed candidate never owns or destroys it.
     bool borrowsEditingTypography = false;
+    bool borrowsPresentationTypography = false;
+    // Render-only resources never enter the presentation/query lease table.
+    // Exact SDK input bytes are retained in addition to UTF-16 budget units.
+    std::string renderTextBytes;
+    bool borrowsRenderOnlyTypography = false;
 };
+
+// One unpublished render-thread object, not a version map or accepted source.
+// Reverse destruction releases Typography before its real font collection lease.
+struct PreparedTextMeasurement {
+    OhosFontPool::Lease fontLease;
+    std::unique_ptr<OH_Drawing_Typography, decltype(&cjguiOhosDestroyObservedTypography)> typography
+        {nullptr, &cjguiOhosDestroyObservedTypography};
+    std::string text;
+    size_t units = 0;
+    uint64_t measureJobId = 0; // resource retirement identity, not source authority
+    double fontSize = 0, constraintWidth = 0, density = 0;
+    uint32_t fontWeight = 0, kind = 0;
+    uint64_t session = 0, node = 0, binding = 0, renderEpoch = 0, generation = 0, geometry = 0;
+    int64_t context = 0, resource = -1;
+    void *window = nullptr;
+    int32_t width = 0, height = 0;
+};
+
+static AcceptedTextLineBands cjguiOhosPaintedTextLineBands(const CjguiInternalRendererComposableNode &node,
+    OH_Drawing_Typography *typography,double originY,uint64_t ticket,uint64_t projection,
+    uint64_t generation,uint64_t geometry)
+{
+    AcceptedTextLineBands b;
+    b.nodeId=node.nodeId;b.resourceId=node.resourceId;b.kind=node.nodeKind;b.binding=node.acceptedBindingEpoch;
+    b.ticket=ticket;b.projection=projection;b.generation=generation;b.geometry=geometry;
+    b.nodeX=node.x;b.nodeY=node.y;b.nodeWidth=node.width;b.nodeHeight=node.height;
+    if(!typography || !std::isfinite(originY))return b;
+    const size_t count=OH_Drawing_TypographyGetLineCount(typography);
+    OH_Drawing_LineMetrics first{},last{};
+    if(!count || !OH_Drawing_TypographyGetLineMetricsAt(typography,0,&first))return b;
+    if(count==1)last=first;
+    else if(!OH_Drawing_TypographyGetLineMetricsAt(typography,static_cast<int>(count-1),&last))return b;
+    if(!std::isfinite(first.y) || !std::isfinite(first.height) || first.height<=0 ||
+       !std::isfinite(last.y) || !std::isfinite(last.height) || last.height<=0)return b;
+    b.firstTop=originY+first.y;b.firstBottom=b.firstTop+first.height;
+    b.lastTop=originY+last.y;b.lastBottom=b.lastTop+last.height;
+    b.valid=std::isfinite(b.firstBottom) && std::isfinite(b.lastBottom) && b.firstTop<=b.lastTop;
+    return b;
+}
 static bool cjguiOhosCanReuseEditingTypography(const PaintedTextLayout &last,
     const CjguiInternalRendererComposableNode &node, const std::u16string &text,
     uint64_t session, int64_t context, uint64_t epoch, void *window,
@@ -2602,6 +2988,7 @@ static bool cjguiOhosCanReuseEditingTypography(const PaintedTextLayout &last,
 struct TextPaintFrame {
     uint64_t session = 0, ticket = 0, projectionVersion = 0;
     std::unique_ptr<PaintedTextLayout> candidate;
+    CjguiOhosCoverage ownedCoverage;
     bool ownedMirrorValid = false;
     std::u16string ownedMirrorText;
     int64_t ownedMirrorOwnerVersion = -1;
@@ -2612,6 +2999,7 @@ struct TextPaintFrame {
     // A mandatory source/layout failure rejects the entire frame before Flush.
     const char *textFailureReason = nullptr;
     AcceptedCaretRect activeCaret;
+    std::vector<AcceptedTextLineBands> textLineBands;
     // A2（Astra h-visual-edit-a-lifecycle-astra-20261005）：本帧**实际绘制**的
     // presentation TEXT 节点租约表（typography + pod + 精确绘制原点 + 身份）。
     // 渲染线程持有；Flush 成功随 publishPaintedLayout 晋升，新帧整表替换，
@@ -2619,6 +3007,10 @@ struct TextPaintFrame {
     // （kPresentationLeaseMax / kPresentationLeaseNodeTextMax /
     // kPresentationLeaseTotalUnitsMax），计费含旧 published 表共同峰值。
     std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> presentationLease;
+    // Optional visual reuse only: never a hit-test, caret, or editing source.
+    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> renderOnlyLease;
+    size_t renderOnlyHits = 0, renderOnlyMisses = 0, renderOnlyEvicted = 0;
+    CjguiOhosTextWorkTraceRef textWorkTrace;
     // A2：必需目标（实际编辑排版、活动选择/拖动的已知片段）超出保留预算时置位。
     // 提交层在 Flush **之前**据此整帧拒候选：只销毁本帧 typography 并 return 会让
     // 超限目标静默失去命中，且提交仍能走到 Flush。
@@ -2635,28 +3027,29 @@ struct TextPaintFrame {
     // 归属，不重排绘制顺序、不抬上限。必需目标真实自身超限时才拒候选。
     size_t leaseReservedSlotsLeft = 0;
     size_t leaseReservedUnitsLeft = 0;
+    std::map<uint64_t, std::pair<size_t, size_t>> leaseReservations;
     // A2：本帧的编辑节点 id（实际编辑排版所属节点；0＝无）。与上一帧仍存活的
     // `lastPaintLayout` 一起构成"临时峰值"的计费来源。
     uint64_t leaseEditingNodeId = 0;
     // A2：本帧已发生的临时（不保留）排版工作量，单位 UTF-16 单元。
     size_t leaseTransientUnits = 0;
+    // External live private object, separate from this frame's transient work.
+    // A matching take transfers these units to transient/candidate exactly once.
+    size_t preparedMeasureUnits = 0;
     // A2：上一帧实际编辑排版（`lastPaintLayout`）只在本帧**第一次**准入时入账
     // 一次——它到 publishPaintedLayout 才换代，与本帧候选构成真实共同峰值。
     bool leasePeakCharged = false;
-    // A2：本帧已重绘的节点在旧 published 表里的那一份**即将被这一帧替换掉**
-    // （publish 整表换代），因此它不再占用共同峰值。没有这条让位关系，占满额度
-    // 的稳定表将永远无法重绘（任何一帧都必然越界）——反例见宿主 harness 的
-    // 「稳定满表重绘」腿。只豁免"本帧真的重画了这个 id"，新 id 照常全额计费。
-    size_t leaseReplacedSlots = 0;
-    size_t leaseReplacedUnits = 0;
+    // Borrowed SDK objects are charged by their accepted owner exactly once.
+    // A different new object is charged even when its node id replaces an old one.
 };
 
 // A frozen owned ticket cannot acquire newer Session bytes as a fallback.
 // Composition is the native overlay of the current accepted frame only.
 enum class OwnedFrameTextSource { Native, Frozen, Reject };
 static OwnedFrameTextSource cjguiOhosOwnedFrameTextSource(const Session &s,
-    const CjguiInternalRendererComposableNode &node, const TextPaintFrame &frame)
+    const SceneNode &candidate, const TextPaintFrame &frame)
 {
+    const auto &node=candidate.pod;
     const bool frozenTarget = frame.ownedNodeId == node.nodeId &&
         frame.ownedResourceId == node.resourceId && frame.ownedNodeKind == node.nodeKind;
     const bool currentTarget = s.ownedTextSessionEnabled &&
@@ -2679,8 +3072,45 @@ static OwnedFrameTextSource cjguiOhosOwnedFrameTextSource(const Session &s,
         s.ownedMirrorAccepted.declaredBindingEpoch == frame.ownedMirrorDeclaredBindingEpoch) {
         return OwnedFrameTextSource::Native;
     }
+    if (isEditableTextKind(node.nodeKind)) {
+        const auto &c=frame.ownedCoverage;
+        const CjguiOhosSourceBasis basis(c?c->bodyBasis:"");
+        // Direct editable display, mirror and runs are one frozen candidate.
+        // Presentation fragments retain their separate transformed mapping.
+        if(!c || !c->layout || !basis.valid || c->node!=node.nodeId ||
+           c->resource!=node.resourceId || c->kind!=node.nodeKind ||
+           c->ownerBinding!=frame.ownedMirrorBindingEpoch ||
+           (c->acceptedBinding && c->acceptedBinding!=node.acceptedBindingEpoch) ||
+           c->ownerVersion!=frame.ownedMirrorOwnerVersion ||
+           basis.value[2]!=c->ownerVersion || basis.value[3]!=c->ownerVersion ||
+           basis.value[6]!=c->ownerVersion || basis.value[4]!=c->layoutOrigin ||
+           *c->layout!=frame.ownedMirrorText || utf8ToUtf16(candidate.value)!=frame.ownedMirrorText)
+            return OwnedFrameTextSource::Reject;
+    }
     return OwnedFrameTextSource::Frozen;
 }
+
+static bool cjguiOhosOriginalResultUninstalled(const Session &s,const CjguiOhosCoverage &c) {
+    const auto r=s.pendingOriginalResult;
+    return r && c && !s.originalInserts.feedbackComplete && r->root==s.originalInserts.root &&
+        s.editingContextId==r->root->key.context && c->node==r->root->installedBody->node &&
+        c->ownerBinding==r->root->installedBody->ownerBinding && c->ownerVersion==r->version;
+}
+static bool cjguiOhosCoverageCurrent(const Session &s,const CjguiOhosCoverage &c) {
+    if(cjguiOhosOriginalResultUninstalled(s,c))return false;
+    const auto choice=s.choiceSources.latest();
+    if(c && choice && choice->origin->node==c->node && choice->origin->ownerBinding==c->ownerBinding &&
+       s.focusAuthority.permits(choice->origin->key,choice->origin->focus) &&
+       (!choice->settled || !choice->accepted))return false;
+    return c && !s.markedActive && !s.previewActive && !s.inputOwnerFailed &&
+        (c->qualified?s.focusAuthority.permits(c->key,c->focus):
+         s.focusAuthority.target(c->node,c->resource,c->kind,s.editingAcceptedBindingEpoch,s.editingFieldName)) && s.editingContextLive && !s.editorRetired &&
+        s.editingNodeId==c->node && s.editingResourceId==c->resource && s.editingNodeKind==c->kind &&
+        s.ownedTextSessionBindingEpoch==c->ownerBinding && (!c->acceptedBinding || s.editingAcceptedBindingEpoch==c->acceptedBinding) &&
+        s.editingMirrorOwnerVersion==c->ownerVersion && s.editingText==*c->platform &&
+        s.inputTickets.unresolvedPrefix(c->key,c->focus).empty();
+}
+
 
 struct ImageRealizeJob : WaitableJob {
     explicit ImageRealizeJob(OhosImageRef resource)
@@ -2713,6 +3143,10 @@ struct PendingSettlement {
     bool ownedMirrorValid = false;
     std::u16string ownedMirrorText;
     CjguiOhosEditTickets::OwnerReceipt ownedOwnerAcceptance;
+    CjguiOhosOriginalInserts::OwnerResult ownedOriginalResult;
+    uint64_t ownedCommandId=0;
+    std::shared_ptr<const CjguiOhosSelectionCommandOwnerResult> ownedCommandOwner;
+    CjguiOhosCoverage ownedCoverage;
     std::string ownedMirrorSourceBasis;
     int64_t ownedMirrorOwnerVersion = -1;
     uint64_t ownedMirrorBindingEpoch = 0;
@@ -2840,6 +3274,39 @@ static bool cjguiOhosTextIntersectsClip(const CjguiInternalRendererComposableNod
                std::min(static_cast<double>(n.x) + n.width, static_cast<double>(x) + w) &&
            std::max(static_cast<double>(n.y), static_cast<double>(y)) <
                std::min(static_cast<double>(n.y) + n.height, static_cast<double>(y) + h);
+}
+
+// Culling for text paint/lease planning must follow the paint transform: a
+// translated node can enter or leave its clip without its POD x/y changing.
+// The scaled rect is tested conservatively so a scaled-up node is never
+// culled by its smaller layout rect.
+static bool cjguiOhosTextIntersectsClip(const SceneNode &node)
+{
+    const CjguiInternalRendererComposableNode &n = node.pod;
+    if (n.width <= 0 || n.height <= 0) return false;
+    double translateX = 0, translateY = 0, scaleX = 1, scaleY = 1;
+    (void)cjguiOhosNodePaintTransform(node, &translateX, &translateY, &scaleX, &scaleY);
+    float x = 0, y = 0, w = 0, h = 0;
+    uint32_t count = 0;
+    if (!cjguiOhosAggregateClipRect(n, &x, &y, &w, &h, &count)) return false;
+    auto intersects = [&](double left, double top, double width, double height) {
+        return std::max(left, static_cast<double>(x)) <
+                   std::min(left + width, static_cast<double>(x) + w) &&
+               std::max(top, static_cast<double>(y)) <
+                   std::min(top + height, static_cast<double>(y) + h);
+    };
+    if (intersects(static_cast<double>(n.x) + translateX,
+                   static_cast<double>(n.y) + translateY,
+                   static_cast<double>(n.width), static_cast<double>(n.height))) {
+        return true;
+    }
+    if (!(scaleX > 0.0) || !(scaleY > 0.0) || (scaleX == 1.0 && scaleY == 1.0)) return false;
+    const double centerX = static_cast<double>(n.x) + static_cast<double>(n.width) * 0.5 + translateX;
+    const double centerY = static_cast<double>(n.y) + static_cast<double>(n.height) * 0.5 + translateY;
+    const double scaledWidth = static_cast<double>(n.width) * scaleX;
+    const double scaledHeight = static_cast<double>(n.height) * scaleY;
+    return intersects(centerX - scaledWidth * 0.5, centerY - scaledHeight * 0.5,
+                      scaledWidth, scaledHeight);
 }
 
 // A paint may complete before the Cangjie owner settles the accepted ticket.
@@ -3272,6 +3739,19 @@ constexpr int32_t kSettlementStillCommitting = 3;
 
 // A1：accepted 段的镜像声明（完整绑定身份匹配才返回；缺失/失效 = nullptr，
 // 调用方具名降级，绝不退回 accepted 节点值）。
+static void cjguiOhosClearSelectionCaptureLocked(Session &s)
+{
+    s.acceptedSelection.reset();s.selectionCapture.reset();
+    s.selectionCommandState.clear();
+    // Retiring this carrier also retires reception when its FIFO is empty.
+    // Accepted business results remain available to their frozen paint tickets;
+    // only an already begun owner transaction may settle after this boundary.
+    if(s.originalInserts.root)s.originalInserts.cancel("carrier_structure_retired");
+    if(s.originalInserts.completed==0 || s.originalInserts.feedbackComplete)s.originalInserts.clear();
+    s.lastEventOriginalInsert.reset();
+    s.choiceSources.clearAuxiliary();
+}
+
 static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const Session &s,
     uint64_t nodeId, int64_t resourceId, uint32_t nodeKind)
 {
@@ -3290,6 +3770,55 @@ static const Session::OwnedMirrorDeclaration *ownedMirrorDeclarationLocked(const
     }
     return &s.ownedMirrorAccepted;
 }
+
+// A new observation may use the still accepted, actually painted body. This
+// does not confer current authority on that body's former observation.
+static bool cjguiOhosBodyAvailableForObservationLocked(const Session &s,const CjguiOhosCoverage &body,
+    uint64_t focus,bool fixedPrefix)
+{
+    const auto &p=s.paintedBody;
+    if(cjguiOhosOriginalResultUninstalled(s,body))return false;
+    if(!body || !body->layout || !body->platform || p.coverage!=body || !p.serial ||
+       p.ticket!=s.acceptedPaintTicketId || p.projection!=s.editingProjectionVersion ||
+       p.context!=s.editingContextId || p.generation!=s.surfaceGeneration ||
+       p.geometryRevision!=s.surfaceGeometryRevision || !s.focusAuthority.eligible(focus) ||
+       !s.focusAuthority.mounted.valid() || !s.editingContextLive || s.editorRetired ||
+       s.inputOwnerFailed || s.markedActive || s.previewActive ||
+       !s.focusAuthority.target(body->node,body->resource,body->kind,s.editingAcceptedBindingEpoch,s.editingFieldName) ||
+       body->ownerBinding!=s.ownedTextSessionBindingEpoch || body->ownerVersion!=s.editingMirrorOwnerVersion ||
+       (body->acceptedBinding && body->acceptedBinding!=s.editingAcceptedBindingEpoch) ||
+       (!fixedPrefix && *body->platform!=s.editingText))return false;
+    for(const auto &n:s.accepted)if(n.pod.nodeId==body->node && n.pod.resourceId==body->resource &&
+       n.pod.nodeKind==body->kind && n.pod.projectionVersion==p.projection &&
+       n.pod.acceptedBindingEpoch==s.editingAcceptedBindingEpoch && n.semanticId==s.editingFieldName &&
+       n.pod.isInteractive && !n.pod.isReadOnly) {
+        const auto *d=ownedMirrorDeclarationLocked(s,body->node,body->resource,body->kind);
+        return d && d->coverage==body && d->text==*body->layout && d->sourceBasis==body->bodyBasis;
+    }
+    return false;
+}
+
+
+// Directed display identity is independent from the platform's normalized ACK range.
+static bool cjguiOhosActiveEndCurrent(const Session &s,const AcceptedCaretRect &rect) {
+    if(!rect.coverage)return rect.caret==s.caretUtf16;
+    const auto *d=ownedMirrorDeclarationLocked(s,rect.nodeId,rect.resourceId,rect.kind);
+    if(!d || !s.selectionIntentConfirmed || !s.focusAuthority.permits(rect.key,rect.focus) ||
+       rect.key.context!=s.editingContextId || rect.key.edit!=s.editingContextGeneration ||
+       d->sourceBasis!=rect.sourceBasis || !cjguiOhosCoverageCurrent(s,rect.coverage))return false;
+    const auto choice=s.choiceSources.latest();
+    if(choice && (choice->origin->node!=rect.nodeId || !choice->settled || !choice->accepted ||
+       choice->origin->id!=rect.choiceId || choice->basis!=rect.sourceBasis))return false;
+    const uint64_t installed=s.consumedRestoreChoice?s.consumedRestoreChoice->origin->restoreRequest:0;
+    if(rect.installRequest!=installed)return false;
+    const CjguiOhosSourceBasis basis(rect.sourceBasis);
+    int64_t focus;uint32_t platform;
+    return basis.valid && basis.value[6]==rect.coverage->ownerVersion &&
+        rect.coverage->position(false,rect.caret,focus) && focus==basis.value[9] &&
+        CjguiOhosTextCoverage::local(rect.coverage->platformBytes,basis.value[9]-rect.coverage->platformOrigin,platform) &&
+        platform==rect.caret;
+}
+
 
 struct RenderThread {
     std::thread thread;
@@ -3344,6 +3873,7 @@ struct RenderThread {
     bool caretBlinkRedrawQueued = false;
     uint64_t submittedFrames = 0;
     uint64_t redrawFrames = 0;
+    uint64_t mergedRedrawFrames = 0;
     int64_t rejectedFlushes = 0;
     // 退役屏障：当前正处于「已取得提交许可、Flush 尚未完成」的代际。
     // **只作取证读数**：Sol 复核指出它只盖住闸门之后到 Flush 之前，redraw 的
@@ -3446,6 +3976,8 @@ struct RenderThread {
         // 上一轮已退出的线程必须先 join，避免 std::thread 赋值时 terminate。
         if (thread.joinable()) thread.join();
         cjguiOhosTestGateBeginRendererEpoch();
+        RLOGI("text diagnostics startup deep=%{public}d policy=process-start-v1",
+            cjguiOhosDeepDiagnosticsEnabled()?1:0);
         thread = std::thread([this]() { run(); });
     }
 
@@ -3467,7 +3999,9 @@ struct RenderThread {
                       "query refused (query_queue_over_budget)",
                       queuedCaretQueries.load(), kPresentationQueryQueueMax);
             } else {
-                jobs.push_back(job);
+                job->observationEnqueued=std::chrono::steady_clock::now();
+            job->observationRenderEpoch=renderEpoch;
+            jobs.push_back(job);
                 if (job->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
             }
         }
@@ -3489,7 +4023,9 @@ struct RenderThread {
                 // A2：同 post——查询队列有界，超界具名拒绝。
                 queueFull = true;
             } else {
-                jobs.push_back(job);
+                job->observationEnqueued=std::chrono::steady_clock::now();
+            job->observationRenderEpoch=renderEpoch;
+            jobs.push_back(job);
                 if (job->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
             }
         }
@@ -3526,7 +4062,23 @@ struct RenderThread {
     }
 
     OhosFontPool fontPool{[] { return OH_Drawing_CreateSharedFontCollection(); },
-        [](OH_Drawing_FontCollection *collection) { OH_Drawing_DestroyFontCollection(collection); }};
+        [](OH_Drawing_FontCollection *collection) { OH_Drawing_DestroyFontCollection(collection); },
+        [](const char *phase,uint64_t id,uint64_t configuration,size_t workUnits) {
+            if (!cjguiOhosDeepDiagnosticsEnabled()) {
+                // Rare actual lifetime boundaries retain slow Destroy tails;
+                // no per-job traversal, allocator/proc read or CPU sampling.
+                if (std::strcmp(phase,"created")==0 || std::strcmp(phase,"create-failed")==0 ||
+                    std::strcmp(phase,"destroy-begin")==0 || std::strcmp(phase,"destroyed")==0)
+                    RLOGI("font lifetime phase=%{public}s id=%{public}llu workUnits=%{public}zu mono_us=%{public}lld job=%{public}llu",
+                        phase,(unsigned long long)id,workUnits,(long long)cjguiOhosTextMonoUs(),
+                        (unsigned long long)(g_observedTextJob?g_observedTextJob->observationId:0));
+                return;
+            }
+            RLOGI("text font phase=%{public}s id=%{public}llu configuration=%{public}llu workUnits=%{public}zu mono_us=%{public}lld cpu_us=%{public}lld pid=%{public}d tid=%{public}ld job=%{public}llu",
+                phase,(unsigned long long)id,(unsigned long long)configuration,workUnits,
+                (long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs(),static_cast<int>(getpid()),syscall(SYS_gettid),
+                (unsigned long long)(g_observedTextJob?g_observedTextJob->observationId:0));
+        }};
     // Current production names an explicit family. Theme/global fonts are a separate unsupported private-provider policy.
     uint64_t fontConfigurationGeneration = 1;
     std::unique_ptr<PaintedTextLayout> lastPaintLayout;
@@ -3534,10 +4086,14 @@ struct RenderThread {
     // A2：已发布帧的 presentation 排版租约表（渲染线程持有；查询只在此线程
     // 执行，条目身份 = 票据/paint serial/generation/geometryRevision/绑定）。
     std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> publishedPresentationLease;
+    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> publishedRenderOnlyLease;
+    std::unique_ptr<PreparedTextMeasurement> preparedMeasurement;
     std::thread::id renderThreadId{};
     uint64_t textPaintSerial = 0;
-    uint64_t textLayoutsBuilt = 0, textLayoutInputBytes = 0;
+    uint64_t textLayoutsBuilt = 0, textLayoutInputBytes = 0,observedLayoutSequence=0;
     uint64_t lastFrameTicket = 0;
+    CjguiOhosCoverage lastFrameCoverage;
+    CjguiOhosTextWorkTraceRef lastFrameTextWorkTrace;
     bool lastFrameMirrorValid = false;
     std::u16string lastFrameMirrorText;
     int64_t lastFrameMirrorOwnerVersion = -1;
@@ -3545,6 +4101,82 @@ struct RenderThread {
     uint64_t lastFrameOwnedNodeId = 0;
     int64_t lastFrameOwnedResourceId = -1, lastFrameSourceContextId = 0;
     uint32_t lastFrameOwnedNodeKind = 0;
+
+    static uint64_t observedCoverageInput(const CjguiOhosCoverage &coverage) {
+        if (!cjguiOhosDeepDiagnosticsEnabled()) return 0;
+        const auto receipt=coverage?coverage->acceptance.lock():CjguiOhosEditTickets::OwnerReceipt{};
+        return receipt?receipt->origin->id:0; // Expired proof is reported missing; never borrowed from current input.
+    }
+    static size_t scenePayloadBytes(const std::vector<SceneNode> &nodes) {
+        size_t bytes=0;
+        for (const auto &n:nodes) bytes+=n.label.size()+n.value.size()+n.semanticId.size()+
+            n.textStyleRuns.size()*sizeof(OhosTextStyleRun);
+        return bytes; // Logical owned payload; excludes capacity, allocator overhead and shared image/coverage.
+    }
+    static size_t jobPayloadBytes(const JobRef &job) {
+        if (!job) return 0;
+        if (job->kind==JobKind::Measure) return static_cast<MeasureJob*>(job.get())->text.size();
+        if (job->kind==JobKind::Present) {
+            const auto *p=static_cast<PresentJob*>(job.get());
+            return scenePayloadBytes(p->nodes)+p->ownedMirrorText.size()*sizeof(char16_t);
+        }
+        return 0; // Other task payloads are not included in this byte subtotal.
+    }
+    void observeResources(const char *phase,uint64_t session,uint64_t ticket,uint64_t projection,
+        int64_t owner,uint64_t input=0) {
+        if (!cjguiOhosDeepDiagnosticsEnabled()) return;
+        const auto started=std::chrono::steady_clock::now();
+        const auto resourceSequence=++g_textObservationSequence;
+        size_t queueCount=0,queuePayload=0,activePayload=0,queuedPresents=0;
+        {
+            std::lock_guard<std::mutex> g(lock);
+            queueCount=jobs.size();activePayload=jobPayloadBytes(activeJob);
+            for (const auto &j:jobs) {queuePayload+=jobPayloadBytes(j);if(j->kind==JobKind::Present)++queuedPresents;}
+        }
+        size_t acceptedNodes=0,acceptedPayload=0,candidateNodes=0,candidatePayload=0,pendingNodes=0,pendingPayload=0;
+        uint64_t currentCompleted=0;
+        {
+            std::lock_guard<std::mutex> g(g_sessions.lock);
+            const auto *s=lookupSessionLocked(session);
+            if(s) {acceptedNodes=s->accepted.size();acceptedPayload=scenePayloadBytes(s->accepted);
+                if(s->candidateOpen){candidateNodes=s->candidate.size();candidatePayload=scenePayloadBytes(s->candidate);}
+                currentCompleted=s->inputOwnerCompleted;}
+            const int slot=sessionSlotLocked(session);
+            if(slot>=0 && g_pending[slot].valid) {const auto &p=g_pending[slot];pendingNodes=p.nodes.size();
+                pendingPayload=scenePayloadBytes(p.nodes)+p.ownedMirrorText.size()*sizeof(char16_t);}
+        }
+        using InfoFunction=struct mallinfo2 (*)();
+        static const auto info=reinterpret_cast<InfoFunction>(dlsym(RTLD_DEFAULT,"mallinfo2"));
+        struct mallinfo2 heap{};if(info)heap=info();
+        unsigned long pages=0,resident=0;size_t rss=0;bool rssKnown=false;
+        const int fd=open("/proc/self/statm",O_RDONLY|O_CLOEXEC);
+        if(fd>=0) {char buffer[96]{};const auto n=read(fd,buffer,sizeof(buffer)-1);close(fd);
+            const long pageSize=sysconf(_SC_PAGESIZE);
+            if(n>0 && pageSize>0 && std::sscanf(buffer,"%lu %lu",&pages,&resident)==2) {rss=resident*static_cast<size_t>(pageSize);rssKnown=true;}}
+        const auto *observedJob=g_observedTextJob;
+        cjguiOhosObserveTextWork(phase,observedJob?observedJob->textWorkTrace:CjguiOhosTextWorkTraceRef{},ticket,resourceSequence);
+        RLOGI("text resource identity sequence=%{public}llu mono_us=%{public}lld pid=%{public}d tid=%{public}ld job=%{public}llu kind=%{public}d reason=%{public}s observedTicket=%{public}llu observedProjection=%{public}llu observedOwner=%{public}lld lastAcceptedSession=%{public}llu lastAcceptedTicket=%{public}llu lastAcceptedProjection=%{public}llu lastAcceptedOwner=%{public}lld",
+            (unsigned long long)resourceSequence,(long long)cjguiOhosTextMonoUs(),static_cast<int>(getpid()),syscall(SYS_gettid),
+            (unsigned long long)(observedJob?observedJob->observationId:0),observedJob?static_cast<int>(observedJob->kind):-1,
+            observedJob?observedJob->observationReason:"none",(unsigned long long)ticket,(unsigned long long)projection,(long long)owner,
+            (unsigned long long)lastFrameSession,(unsigned long long)lastFrameTicket,(unsigned long long)lastProjectionVersion,(long long)lastFrameMirrorOwnerVersion);
+        size_t bitmaps=0;for(const auto &entry:imageBitmaps)if(entry.second.bitmap)++bitmaps;
+        const auto observed=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-started).count();
+        RLOGI("text resources phase=%{public}s pid=%{public}d session=%{public}llu ticket=%{public}llu projection=%{public}llu owner=%{public}lld input=%{public}llu currentCompleted=%{public}llu typographyLive=%{public}llu typographyInputBytes=%{public}zu typographyComplete=%{public}d fontLive=%{public}zu fontCreated=%{public}llu fontDestroyed=%{public}llu fontDestroyUs=%{public}llu queue=%{public}zu queuePresents=%{public}zu queuePayloadBytes=%{public}zu activePayloadBytes=%{public}zu acceptedNodes=%{public}zu acceptedPayloadBytes=%{public}zu candidateNodes=%{public}zu candidatePayloadBytes=%{public}zu pendingNodes=%{public}zu pendingPayloadBytes=%{public}zu lastNodesPayloadBytes=%{public}zu bitmapLive=%{public}zu imagePixelBytes=%{public}zu surfaceLive=%{public}d gpuContextLive=%{public}d sdkGpuBytesKnown=0 allocatorKnown=%{public}d allocated=%{public}zu freeHeap=%{public}zu arena=%{public}zu rssKnown=%{public}d rss=%{public}zu observationUs=%{public}lld fontSealed=%{public}zu fontRetirable=%{public}zu fontRetiring=%{public}zu fontOldestRetirableSealUs=%{public}llu fontMaxRetiredSealUs=%{public}llu fontRetired=%{public}llu",
+            phase,static_cast<int>(getpid()),static_cast<unsigned long long>(session),static_cast<unsigned long long>(ticket),
+            static_cast<unsigned long long>(projection),static_cast<long long>(owner),static_cast<unsigned long long>(input),
+            static_cast<unsigned long long>(currentCompleted),static_cast<unsigned long long>(g_typographyResources.created-g_typographyResources.destroyed),
+            g_typographyResources.inputBytesLive,g_typographyResources.complete?1:0,fontPool.liveGenerations(),
+            static_cast<unsigned long long>(fontPool.stats().created),static_cast<unsigned long long>(fontPool.stats().destroyed),
+            static_cast<unsigned long long>(fontPool.stats().destroyMicros),queueCount,queuedPresents,queuePayload,activePayload,
+            acceptedNodes,acceptedPayload,candidateNodes,candidatePayload,pendingNodes,pendingPayload,scenePayloadBytes(lastNodes),
+            bitmaps,g_imageLiveBytes.load(),surface?1:0,gpuContext?1:0,info?1:0,heap.uordblks,heap.fordblks,heap.arena,
+            rssKnown?1:0,rss,static_cast<long long>(observed),fontPool.sealedGenerations(),
+            fontPool.retirableGenerations(),fontPool.retiringGenerations(),
+            static_cast<unsigned long long>(fontPool.oldestRetirableSealAgeMicros()),
+            static_cast<unsigned long long>(fontPool.stats().maxRetiredSealAgeMicros),
+            static_cast<unsigned long long>(fontPool.stats().retired));
+    }
 
     void invalidatePaintedLayout(uint64_t session)
     {
@@ -3554,6 +4186,7 @@ struct RenderThread {
         if (s) {
             s->selectionHandles = PaintedSelectionHandles{};
             s->activeCaret = AcceptedCaretRect{};
+            s->textLineBands.clear();
         }
     }
 
@@ -3588,8 +4221,48 @@ struct RenderThread {
         return units;
     }
 
+    // Unpublished borrowed wrappers have no unique Typography. Their accepted
+    // objects remain in the old table until successful Flush and pay there.
+    static size_t ownedLeaseTableUnits(const std::map<uint64_t,
+                                       std::unique_ptr<PaintedTextLayout>> &table)
+    {
+        size_t units = 0;
+        for (const auto &entry : table)
+            if (entry.second && entry.second->typography) units += entry.second->text.size();
+        return units;
+    }
+
+    static size_t ownedLeaseTableSlots(const std::map<uint64_t,
+                                       std::unique_ptr<PaintedTextLayout>> &table)
+    {
+        return std::count_if(table.begin(), table.end(), [](const auto &entry) {
+            return entry.second && entry.second->typography;
+        });
+    }
+
+    void pruneRenderOnlyLayouts(TextPaintFrame *frame, bool sealedOnly)
+    {
+        for (auto it = publishedRenderOnlyLease.begin(); it != publishedRenderOnlyLease.end();) {
+            const auto &old = it->second;
+            bool borrowed = false;
+            if (frame) {
+                const auto next = frame->renderOnlyLease.find(it->first);
+                borrowed = next != frame->renderOnlyLease.end() && next->second &&
+                    next->second->borrowsRenderOnlyTypography;
+            }
+            if (borrowed || (sealedOnly && old && old->fontLease && !old->fontLease->sealed)) {
+                ++it; continue;
+            }
+            // Only optional, unborrowed resources. Destruction is on this same
+            // render thread; the font pool still owns the collection retirement.
+            it = publishedRenderOnlyLease.erase(it);
+            if (frame) ++frame->renderOnlyEvicted;
+        }
+    }
+
     void publishPaintedLayout(TextPaintFrame &frame)
     {
+        cjguiOhosObserveTextWork("publish-begin",frame.textWorkTrace,frame.ticket);
         // The old object remains queryable until Flush succeeds. Only this
         // publication moves its unique render-thread ownership into the frame.
         if (frame.candidate && frame.candidate->borrowsEditingTypography && lastPaintLayout) {
@@ -3600,25 +4273,65 @@ struct RenderThread {
         // A successful frame with no painted editing node revokes old geometry.
         lastPaintLayout = std::move(frame.candidate);
         // A2：整表替换——新帧的租约表成为唯一可查询表，旧表随之退役。
+        // Only successful Flush transfers borrowed presentation resources. The
+        // new entry's source, origin and selection were rebuilt by this frame;
+        // a failed frame never owns or releases the old queryable Typography.
+        for (auto &entry : frame.presentationLease) {
+            auto &next = entry.second;
+            if (!next || !next->borrowsPresentationTypography) continue;
+            const auto old = publishedPresentationLease.find(entry.first);
+            if (old != publishedPresentationLease.end() && old->second) {
+                next->fontLease = std::move(old->second->fontLease);
+                next->typography = std::move(old->second->typography);
+                next->borrowsPresentationTypography = false;
+            }
+        }
         publishedPresentationLease = std::move(frame.presentationLease);
+        for (auto &entry : frame.renderOnlyLease) {
+            auto &next = entry.second;
+            if (!next || !next->borrowsRenderOnlyTypography) continue;
+            const auto old = publishedRenderOnlyLease.find(entry.first);
+            assert(old != publishedRenderOnlyLease.end() && old->second && old->second->typography);
+            next->fontLease = std::move(old->second->fontLease);
+            next->typography = std::move(old->second->typography);
+            next->borrowsRenderOnlyTypography = false;
+        }
+        publishedRenderOnlyLease = std::move(frame.renderOnlyLease);
+        RLOGD("text render-only phase=published session=%{public}llu ticket=%{public}llu hits=%{public}zu misses=%{public}zu evicted=%{public}zu slots=%{public}zu units=%{public}zu",
+            static_cast<unsigned long long>(frame.session), static_cast<unsigned long long>(frame.ticket),
+            frame.renderOnlyHits, frame.renderOnlyMisses, frame.renderOnlyEvicted,
+            publishedRenderOnlyLease.size(), leaseTableUnits(publishedRenderOnlyLease));
         paintedLayoutUsable = true;
+        cjguiOhosObserveTextWork("old-layout-retired",frame.textWorkTrace,frame.ticket);
         {
             // Pure value geometry is published only after this frame's Flush.
             // The native Typography remains owned by the render thread.
             std::lock_guard<std::mutex> g(g_sessions.lock);
             Session *s = lookupSessionLocked(frame.session);
             if (s) {
+                s->paintedBody = Session::PaintedBodyFact{};
+                if(lastPaintLayout && lastPaintLayout->coverage) {
+                    const auto &p=*lastPaintLayout;
+                    s->paintedBody={p.coverage,p.basePresentTicket,p.serial,p.projectionVersion,
+                        p.generation,p.geometryRevision,p.paintContext};
+                }
                 s->activeCaret = std::move(frame.activeCaret);
+                s->textLineBands = std::move(frame.textLineBands);
                 ++s->caretPaintProgress;
                 size_t liveUnits = lastPaintLayout ? lastPaintLayout->text.size() : 0;
                 for (const auto &entry : publishedPresentationLease) liveUnits += entry.second->text.size();
                 const int64_t paintedOwnerVersion = lastPaintLayout
                     ? cjguiOhosFrozenPaintOwnerVersion(frame.ownedMirrorValid, frame.ownedMirrorText,
                         frame.ownedMirrorOwnerVersion, lastPaintLayout->text) : -1;
+                // The existing feedback frame carries its frozen choice identity.
+                // Screen evidence brackets capture with this tuple; no live owner
+                // or later platform selection is borrowed to label these pixels.
+                const CjguiOhosSourceBasis paintChoice(frame.ownedCoverage ? frame.ownedCoverage->bodyBasis : "");
                 RLOGI("text feedback session=%{public}llu ticket=%{public}llu projection=%{public}llu "
                       "node=%{public}llu binding=%{public}llu context=%{public}lld owner=%{public}lld "
                       "units=%{public}zu layouts=%{public}llu layoutBytes=%{public}llu "
-                      "liveSlots=%{public}zu liveUnits=%{public}zu interactionCurrent=%{public}d layoutSourceCtx=%{public}lld",
+                      "liveSlots=%{public}zu liveUnits=%{public}zu interactionCurrent=%{public}d layoutSourceCtx=%{public}lld "
+                      "paintSeq=%{public}llu choiceNode=%{public}llu choiceBinding=%{public}llu choiceOwner=%{public}lld choiceRevision=%{public}lld choiceAnchor=%{public}lld choiceFocus=%{public}lld choiceBasis=%{public}s choiceTargetBinding=%{public}llu",
                     static_cast<unsigned long long>(frame.session), static_cast<unsigned long long>(frame.ticket),
                     static_cast<unsigned long long>(frame.projectionVersion),
                     static_cast<unsigned long long>(lastPaintLayout ? lastPaintLayout->node.nodeId : 0),
@@ -3635,18 +4348,40 @@ struct RenderThread {
                         s->activeCaret.context == s->editingContextId &&
                         s->activeCaret.text == lastPaintLayout->text &&
                         (s->selStartUtf16 == s->selEndUtf16 || lastPaintLayout->handles.valid) ? 1 : 0,
-                    static_cast<long long>(lastPaintLayout ? lastPaintLayout->layoutSourceContext : 0));
+                    static_cast<long long>(lastPaintLayout ? lastPaintLayout->layoutSourceContext : 0),
+                    static_cast<unsigned long long>(s->caretPaintProgress),
+                    static_cast<unsigned long long>(frame.ownedNodeId),
+                    static_cast<unsigned long long>(frame.ownedMirrorBindingEpoch),
+                    static_cast<long long>(paintChoice.valid ? paintChoice.value[6] : -1),
+                    static_cast<long long>(paintChoice.valid ? paintChoice.value[7] : -1),
+                    static_cast<long long>(paintChoice.valid ? paintChoice.value[8] : -1),
+                    static_cast<long long>(paintChoice.valid ? paintChoice.value[9] : -1),
+                    frame.ownedCoverage?frame.ownedCoverage->bodyBasis.c_str():"",
+                    static_cast<unsigned long long>(s->activeCaret.valid?s->activeCaret.binding:0));
                 s->selectionHandles = PaintedSelectionHandles{};
                 if (lastPaintLayout && lastPaintLayout->handles.valid && s->editing &&
                     s->editingContextLive && !s->editorRetired && !s->previewActive &&
                     s->editingContextId == lastPaintLayout->paintContext &&
-                    composedBuffer(*s) == lastPaintLayout->text &&
-                    std::min(s->selStartUtf16, s->selEndUtf16) == lastPaintLayout->handles.start &&
-                    std::max(s->selStartUtf16, s->selEndUtf16) == lastPaintLayout->handles.end) {
+                    ((!lastPaintLayout->coverage && composedBuffer(*s)==lastPaintLayout->text &&
+                      std::min(s->selStartUtf16,s->selEndUtf16)==lastPaintLayout->handles.start &&
+                      std::max(s->selStartUtf16,s->selEndUtf16)==lastPaintLayout->handles.end) ||
+                     (lastPaintLayout->coverage && cjguiOhosCoverageCurrent(*s,lastPaintLayout->coverage) &&
+                      [&]{uint32_t a,b;return lastPaintLayout->coverage->map(false,std::min(s->selStartUtf16,s->selEndUtf16),a) &&
+                        lastPaintLayout->coverage->map(false,std::max(s->selStartUtf16,s->selEndUtf16),b) &&
+                        a==lastPaintLayout->handles.start && b==lastPaintLayout->handles.end;}()))) {
                     s->selectionHandles = lastPaintLayout->handles;
+                    if(lastPaintLayout->coverage) {
+                        const auto &c=lastPaintLayout->coverage;
+                        if(!c->map(true,s->selectionHandles.start,s->selectionHandles.start) ||
+                           !c->map(true,s->selectionHandles.end,s->selectionHandles.end))s->selectionHandles.valid=false;
+                        s->selectionHandles.text=*c->platform;
+                    }
                 }
             }
         }
+        cjguiOhosObserveTextWork("session-feedback-published",frame.textWorkTrace,frame.ticket);
+        observeResources("accepted-flush",frame.session,frame.ticket,frame.projectionVersion,
+            frame.ownedMirrorOwnerVersion,observedCoverageInput(frame.ownedCoverage));
         if (lastPaintLayout) {
             RLOGI("text layout flushed serial=%{public}llu session=%{public}llu ticket=%{public}llu projection=%{public}llu",
                 static_cast<unsigned long long>(lastPaintLayout->serial),
@@ -3662,10 +4397,12 @@ struct RenderThread {
             std::lock_guard<std::mutex> g(lock);
             if (!running || stopping || expectedEpoch == 0 || expectedEpoch != renderEpoch) return false;
             if (caretBlinkRedrawQueued) return true;  // queued wake renders the latest phase
-            auto job = std::make_shared<RedrawJob>();
+            auto job = std::make_shared<RedrawJob>("redraw-callsite-3898");
             job->caretBlinkWake = true;
             job->renderEpoch = expectedEpoch;
             caretBlinkRedrawQueued = true;
+            job->observationEnqueued=std::chrono::steady_clock::now();
+            job->observationRenderEpoch=renderEpoch;
             jobs.push_back(job);
         }
         cv.notify_all();
@@ -3689,7 +4426,7 @@ struct RenderThread {
                 hit->cancelBeforeCommit();
                 return false;
             }
-            jobs.push_back(std::make_shared<RedrawJob>());
+            jobs.push_back(std::make_shared<RedrawJob>("redraw-callsite-3925"));
             jobs.push_back(hit);
             if (hit->kind == JobKind::CaretHitTest) queuedCaretQueries.fetch_add(1);
         }
@@ -3705,6 +4442,27 @@ struct RenderThread {
                 caretBlinkRedrawQueued = false;
             }
         }
+    }
+
+    // 合并判据（渲染线程持锁）：只有“队首连续纯重放区间”可合并。
+    // executeRedraw 绘制的是**当前**编辑视图（drawNodeText 在渲染线程上读编辑缓冲，
+    // 不是只看上一帧文本），所以紧邻其后的另一次纯重放会按至少同样新的状态重画
+    // 同一编辑视图；区间内没有任何其它任务时，前一次绘制只是被立即覆盖的过渡帧。
+    // 任何非 Redraw 任务（Present、CaretHitTest、Measure、ImageRealize、Teardown、
+    // Shutdown、未知 kind）都是屏障：命中查询读取前驱绘制发布的布局
+    // （postCaretHitAfterRedraw 原子入队 Redraw+hit，pump 等待命中结果），提交/拆除/
+    // 关闭更不能跨越；带 installedCoverage 的冻结值红绘保有自己的绘制语义，同样
+    // 不可跨越。合并只发生在“已经排队、即将连跑”的两张纯重放之间。
+    bool replaySupersededByLaterQueuedReplayLocked() const
+    {
+        if (jobs.size() < 2) return false;
+        if (jobs.front()->kind != JobKind::Redraw) return false;
+        const auto *head = static_cast<const RedrawJob *>(jobs.front().get());
+        if (head->installedCoverage) return false;
+        if (jobs[1]->kind != JobKind::Redraw) return false;   // 任何非 Redraw 都是屏障
+        const auto *next = static_cast<const RedrawJob *>(jobs[1].get());
+        if (next->installedCoverage) return false;            // 冻结值红绘保有自己的绘制
+        return true;
     }
 
     bool cachedFrameMatchesSurface() const
@@ -3755,21 +4513,69 @@ struct RenderThread {
         }
     }
 
+    // Actual immutable job identity is distinct from lastFrameCoverage.
+    // Missing producer input is explicit; no latest-input authority is inferred.
+    void observeJob(const char *phase,const WaitableJob &job)
+    {
+        if (!cjguiOhosDeepDiagnosticsEnabled()) return;
+        uint64_t sourceSession=0,sourceTicket=0,sourceProjection=0;
+        int64_t sourceContext=0;
+        if (job.kind==JobKind::Present) {
+            const auto &p=static_cast<const PresentJob &>(job);
+            sourceSession=p.session;sourceTicket=p.ticketId;
+        } else if (job.kind==JobKind::Measure) {
+            const auto &m=static_cast<const MeasureJob &>(job);
+            sourceSession=m.traceSession;sourceContext=m.traceContext;sourceProjection=m.traceProjection;
+        } else if (job.kind==JobKind::Redraw) {
+            const auto &r=static_cast<const RedrawJob &>(job);
+            sourceSession=r.installedSession;sourceTicket=r.installedTicket;
+        }
+        const auto micros=[](std::chrono::steady_clock::time_point point)->int64_t {
+            return std::chrono::duration_cast<std::chrono::microseconds>(point.time_since_epoch()).count();
+        };
+        cjguiOhosObserveTextWork(phase,job.textWorkTrace,sourceTicket);
+        RLOGI("render job phase=%{public}s id=%{public}llu kind=%{public}d reason=%{public}s epoch=%{public}llu sourceSession=%{public}llu sourceTicket=%{public}llu sourceContext=%{public}lld sourceProjection=%{public}llu triggerInputKnown=0 triggerInput=0 created_us=%{public}lld enqueued_us=%{public}lld dequeued_us=%{public}lld observed_us=%{public}lld lastPublishedSession=%{public}llu lastPublishedTicket=%{public}llu lastPublishedProjection=%{public}llu lastPublishedOwner=%{public}lld",
+            phase,(unsigned long long)job.observationId,static_cast<int>(job.kind),job.observationReason,
+            (unsigned long long)job.observationRenderEpoch,(unsigned long long)sourceSession,
+            (unsigned long long)sourceTicket,(long long)sourceContext,(unsigned long long)sourceProjection,
+            (long long)micros(job.observationCreated),(long long)micros(job.observationEnqueued),
+            (long long)micros(job.observationDequeued),(long long)micros(std::chrono::steady_clock::now()),
+            (unsigned long long)lastFrameSession,(unsigned long long)lastFrameTicket,
+            (unsigned long long)lastProjectionVersion,(long long)lastFrameMirrorOwnerVersion);
+    }
+
     void run()
     {
         renderThreadId = std::this_thread::get_id();
         std::unique_lock<std::mutex> g(lock);
         for (;;) {
-            cv.wait(g, [this]() { return !jobs.empty() || imagePruneRequested; });
+            cv.wait(g, [this]() { return !jobs.empty() || imagePruneRequested || fontPool.hasRetirable(); });
             if (jobs.empty()) {
+                const bool pruneImages = imagePruneRequested;
                 imagePruneRequested = false;
                 g.unlock();
-                pruneImageBitmaps();  // no Surface access, draw, or Flush
+                if (pruneImages) pruneImageBitmaps();  // no Surface access, draw, or Flush
+                g.lock();
+                // Do not start a second maintenance operation behind work
+                // which arrived during image pruning. Destroy itself cannot
+                // be preempted; a later arrival waits in the original FIFO.
+                if (!jobs.empty()) continue;
+                g.unlock();
+                if (fontPool.retireOneUnused() && hasLastFrame) {
+                    observeResources("font-retired-idle",lastFrameSession,lastFrameTicket,lastProjectionVersion,
+                        lastFrameMirrorOwnerVersion,observedCoverageInput(lastFrameCoverage));
+                }
                 g.lock();
                 continue;
             }
             const bool pruneAfterJob = imagePruneRequested;
             imagePruneRequested = false;
+            const bool mergedReplay =
+#ifdef CJGUI_OHOS_NO_REPLAY_MERGE
+                false;
+#else
+                replaySupersededByLaterQueuedReplayLocked();
+#endif
             JobRef job = jobs.front();
             jobs.pop_front();
             if (job->kind == JobKind::CaretHitTest && queuedCaretQueries.load() > 0) {
@@ -3777,7 +4583,10 @@ struct RenderThread {
             }
             consumeCaretBlinkWakeLocked(job);
             activeJob = job;
+            job->observationDequeued=std::chrono::steady_clock::now();
             g.unlock();
+            g_observedTextJob=job.get();
+            observeJob("running",*job);
             // 出队闸门只作用于真实 PresentJob；停机和 teardown 不能再次被
             // 测试闸门阻塞。票号由投递点绑定，便于核对同一票的阶段和终态。
             if (job->kind == JobKind::Present) {
@@ -3811,14 +4620,25 @@ struct RenderThread {
                 running = false;
                 g.unlock();
                 job->finish(CJGUI_INTERNAL_RENDERER_OK);
+                g_observedTextJob=nullptr;
                 g.lock();
                 return;
             }
-            execute(job.get());   // 共享所有权：本函数返回即释放本线程这一份引用
+            if (mergedReplay) {
+                // 纯重放红绘被后方同类重放覆盖：跳过本次绘制，冻结帧内容不变。
+                mergedRedrawFrames += 1;
+                observeJob("merged-superseded",*job);
+            } else {
+                execute(job.get());
+                observeJob("executed",*job);
+            }
+            g_observedTextJob=nullptr;   // 共享所有权：本函数返回即释放本线程这一份引用
             g.lock();
             activeJob.reset();
             g.unlock();
             job.reset();
+            if(hasLastFrame)observeResources("job-retired",lastFrameSession,lastFrameTicket,lastProjectionVersion,
+                lastFrameMirrorOwnerVersion,observedCoverageInput(lastFrameCoverage));
             // finish() can wake the owner before this thread releases its own
             // Present/ImageRealize reference. This is the renderer-side release
             // opportunity; the owner has its separate settlement hook.
@@ -3851,6 +4671,8 @@ struct RenderThread {
                 if (pendingJob->kind == JobKind::Present) cancelJobs.push_back(pendingJob);
             }
             // 不走 post：接单已经关闭，Shutdown 仍须作为本实例唯一终止任务入队。
+            job->observationEnqueued=std::chrono::steady_clock::now();
+            job->observationRenderEpoch=renderEpoch;
             jobs.push_back(job);
         }
         // 票据临界区独立于队列锁：Committing 不可撤销；其余任务有确定取消终态。
@@ -3881,7 +4703,9 @@ struct RenderThread {
             hasLastFrame = false;
             lastNodes.clear();
             lastFrameMirrorValid = false;
+            lastFrameCoverage.reset();
             lastFrameMirrorText.clear();
+            lastFrameTextWorkTrace.reset();
             lastFrameMirrorOwnerVersion = -1;
         }
         lastShutdownStatus.store(static_cast<int32_t>(result));
@@ -3919,6 +4743,7 @@ struct RenderThread {
 
     void execute(WaitableJob *job)
     {
+        retireInvalidPreparedMeasurement();
         // 无 RTTI dynamic_cast：cangjie std-ast 与 libc++ 的 __dynamic_cast
         // 符号冲突曾导致段错误；用枚举标签分发。
         if (job->kind == JobKind::Measure) {
@@ -3928,12 +4753,14 @@ struct RenderThread {
         } else if (job->kind == JobKind::Present) {
             executePresent(static_cast<PresentJob *>(job));
         } else if (job->kind == JobKind::Redraw) {
-            executeRedraw();
+            executeRedraw(static_cast<RedrawJob*>(job));
         } else if (job->kind == JobKind::ImageRealize) {
             executeImageRealize(static_cast<ImageRealizeJob *>(job));
         } else if (job->kind == JobKind::Teardown) {
             executeTeardown(static_cast<TeardownJob *>(job));
         }
+        // A different frame/query is not retirement of a future Measure result.
+        // Take, replacement, actual invalidation, pressure and teardown own it.
     }
 
     void executeImageRealize(ImageRealizeJob *job)
@@ -4050,6 +4877,10 @@ struct RenderThread {
     bool ownedPlainPostImageAwaitingAcceptedFrame()
     {
         if (!lastFrameMirrorValid) return false;
+        // An outstanding keyboard/geometry change must still use the normal
+        // redraw/rebind path. Query ingress before taking the Session lock.
+        if (lastFrameCoverage && !geometryMatches(boundWindow, boundGeneration,
+                surfaceW, surfaceH, permitGeometryRevision)) return false;
         std::lock_guard<std::mutex> g(g_sessions.lock);
         Session *s = lookupSessionLocked(lastFrameSession);
         if (!s || !s->editing || s->editorRetired || !s->editingContextLive ||
@@ -4058,15 +4889,86 @@ struct RenderThread {
             s->acceptedProjectionVersion != lastProjectionVersion) return false;
         const Session::OwnedMirrorDeclaration *mirror = ownedMirrorDeclarationLocked(*s,
             s->editingNodeId, s->editingResourceId, s->editingNodeKind);
-        return mirror && mirror->ownerContentVersion == lastFrameMirrorOwnerVersion &&
-            s->editingMirrorOwnerVersion == lastFrameMirrorOwnerVersion &&
-            mirror->text == lastFrameMirrorText && s->editingText != lastFrameMirrorText;
+        if (!mirror || mirror->ownerContentVersion != lastFrameMirrorOwnerVersion ||
+            s->editingMirrorOwnerVersion != lastFrameMirrorOwnerVersion ||
+            mirror->text != lastFrameMirrorText) return false;
+        if (!lastFrameCoverage) return s->editingText != lastFrameMirrorText;
+
+        // A clipped layout differs legally from its platform text even after
+        // publication. Only a real admitted, changed input starting from this
+        // exact accepted body may defer an otherwise redundant old-body redraw.
+        const auto &frame = lastFrameCoverage;
+        const auto head = s->lastCompletedInputTicket;
+        if (!frame->layout || !frame->platform ||
+            frame->ownerVersion != lastFrameMirrorOwnerVersion ||
+            *frame->layout != lastFrameMirrorText || *frame->platform == s->editingText ||
+            !head || head->after != s->editingText || s->inputOwnerFailed ||
+            s->proxyRestore.armed || s->proxyRestore.awaitingAck ||
+            s->inputTickets.find(head->id) != head) return false;
+        const auto currentOrigin = [&](const CjguiOhosEditTickets::Ticket &t) {
+            return t && s->inputTickets.terminalResult(t->id) >= 0 &&
+                s->focusAuthority.permits(t->key, t->focusGeneration) &&
+                s->focusAuthority.target(t->node, t->resource, t->kind,
+                    t->acceptedBinding, t->field) &&
+                t->node == s->editingNodeId && t->resource == s->editingResourceId &&
+                t->kind == s->editingNodeKind && t->field == s->editingFieldName &&
+                t->acceptedBinding == s->editingAcceptedBindingEpoch &&
+                t->ownerBinding == s->ownedTextSessionBindingEpoch &&
+                t->ownerBinding == mirror->declaredBindingEpoch &&
+                t->key.context == s->editingContextId && t->key.edit == s->editingContextGeneration;
+        };
+        if (!currentOrigin(head)) return false;
+        auto root = head;
+        for (size_t n = 0; root->predecessor && n < CjguiOhosEditTickets::kMaxTickets; ++n) {
+            const auto previous = s->inputTickets.find(root->predecessor);
+            if (!currentOrigin(previous) || previous->id >= root->id ||
+                previous->choice != root->choice || !(previous->key == root->key) ||
+                previous->focusGeneration != root->focusGeneration ||
+                previous->after != root->before) return false;
+            root = previous;
+        }
+        const auto choice = root->choice;
+        if (root->predecessor || !choice || !choice->origin || !choice->settled ||
+            !choice->accepted || choice->origin->sourceKind == 3 ||
+            s->choiceSources.find(choice->origin->id) != choice) return false;
+        const auto &o = *choice->origin;
+        const auto c = choice->resolvedCoverage ? choice->resolvedCoverage : o.coverage;
+        if (!c || !c->qualified || !c->layout || !c->platform ||
+            !(o.key == root->key) || o.focus != root->focusGeneration ||
+            o.node != root->node || o.resource != root->resource || o.kind != root->kind ||
+            o.ownerBinding != root->ownerBinding || o.acceptedBinding != root->acceptedBinding ||
+            !(c->key == root->key) || c->focus != root->focusGeneration ||
+            c->node != root->node || c->resource != root->resource || c->kind != root->kind ||
+            c->ownerBinding != root->ownerBinding || c->acceptedBinding != root->acceptedBinding ||
+            frame->node != root->node || frame->resource != root->resource || frame->kind != root->kind ||
+            frame->ownerBinding != root->ownerBinding ||
+            c->ownerVersion != lastFrameMirrorOwnerVersion || choice->ownerVersion != c->ownerVersion ||
+            c->platformOrigin != choice->postOrigin || c->platformOrigin != frame->platformOrigin ||
+            c->layoutOrigin != frame->layoutOrigin ||
+            (c->body ? c->body : c) != (frame->body ? frame->body : frame) ||
+            *c->layout != lastFrameMirrorText || *c->platform != *frame->platform ||
+            root->before != *frame->platform ||
+            !CjguiOhosSourceBasis(c->bodyBasis).sameBody(CjguiOhosSourceBasis(frame->bodyBasis)) ||
+            !CjguiOhosSourceBasis(choice->basis).sameBody(CjguiOhosSourceBasis(frame->bodyBasis)) ||
+            !CjguiOhosSourceBasis(root->sourceBasis).sameBody(CjguiOhosSourceBasis(choice->basis))) return false;
+        return true;
     }
 
     // 预览态重绘：以末帧节点副本走同一绘制路径（编辑视图读取最新编辑缓冲）。
     // 不 Flush 前不查取消（无票据）；Flush 后不推进任何会话状态。
-    void executeRedraw()
+    void executeRedraw(const RedrawJob *wake=nullptr)
     {
+        if(wake && wake->installedCoverage && wake->installedSession==lastFrameSession &&
+           wake->installedTicket==lastFrameTicket && lastFrameMirrorValid &&
+           wake->installedCoverage->ownerVersion==lastFrameMirrorOwnerVersion &&
+           *wake->installedCoverage->layout==lastFrameMirrorText) {
+            // Same accepted body, proven by the original completed installation.
+            // The wake transports a frozen value; it never reads a latest owner here.
+            std::lock_guard<std::mutex> guard(g_sessions.lock);
+            const Session *s=lookupSessionLocked(wake->installedSession);
+            if(s && s->ownedMirrorAccepted.coverage==wake->installedCoverage &&
+               s->acceptedPaintTicketId==wake->installedTicket)lastFrameCoverage=wake->installedCoverage;
+        }
         pruneImageBitmaps();
         if (!cachedFrameMatchesSurface()) return;
         // 第七次复核 B：无引用档下退役代的重绘同样不得触碰平台资源
@@ -4115,19 +5017,33 @@ struct RenderThread {
         }
         OH_Drawing_Canvas *canvas = OH_Drawing_SurfaceGetCanvas(surface);
         if (!canvas) return;
+        // A translucent clear has no stable backdrop (same contract as the
+        // desktop backends): those frames keep the direct, unblurred path.
+        const bool needsBackdrop = lastClearA >= 1.0 && cjguiOhosSceneNeedsBackdrop(lastNodes);
+        BackdropFrame backdrop;
+        OH_Drawing_Canvas *paintCanvas = canvas;
+        if (needsBackdrop) {
+            if (backdrop.create(surfaceW, surfaceH, static_cast<float>(surfaceDensity))) {
+                paintCanvas = backdrop.canvas;
+            } else {
+                RLOGW("redraw backdrop layer unavailable: painting unblurred");
+            }
+        }
         OH_Drawing_Brush *bg = OH_Drawing_BrushCreate();
         OH_Drawing_BrushSetAntiAlias(bg, true);
         OH_Drawing_BrushSetColor(bg, packColor(lastClearR, lastClearG, lastClearB, lastClearA));
-        OH_Drawing_CanvasDrawBackground(canvas, bg);
+        OH_Drawing_CanvasDrawBackground(paintCanvas, bg);
         OH_Drawing_BrushDestroy(bg);
         // 与 present 同一 canvas、同一换算：vp 几何整帧放大一次 density，并用
         // Save/Restore 配对归还（矩阵跨帧保留，见 present 处说明）。
-        OH_Drawing_CanvasSave(canvas);
+        OH_Drawing_CanvasSave(paintCanvas);
         if (surfaceDensity > 0.0 && surfaceDensity != 1.0) {
-            OH_Drawing_CanvasScale(canvas, static_cast<float>(surfaceDensity),
+            OH_Drawing_CanvasScale(paintCanvas, static_cast<float>(surfaceDensity),
                                    static_cast<float>(surfaceDensity));
         }
         TextPaintFrame paintFrame{lastFrameSession, lastFrameTicket, lastProjectionVersion, nullptr};
+        paintFrame.textWorkTrace = lastFrameTextWorkTrace;
+        paintFrame.ownedCoverage = lastFrameCoverage;
         paintFrame.ownedMirrorValid = lastFrameMirrorValid;
         paintFrame.ownedMirrorText = lastFrameMirrorText;
         paintFrame.ownedMirrorOwnerVersion = lastFrameMirrorOwnerVersion;
@@ -4141,18 +5057,11 @@ struct RenderThread {
         // 仍按原场景序，预算只决定保留与否。
         paintFrame.leaseRequiredNodeId = activePresentationDragTarget(lastFrameSession);
         planPresentationLeaseReservation(lastNodes, paintFrame);
-        for (const SceneNode &n : lastNodes) {
-            if (n.pod.width <= 0 || n.pod.height <= 0) continue;
-            OH_Drawing_CanvasSave(canvas);
-            if (applyClipChain(canvas, n.pod)) {   // 空裁剪：不可见
-                drawFill(canvas, n.pod);
-                drawNodeImage(canvas, n);
-                drawBorder(canvas, n.pod);
-                drawNodeText(canvas, n, paintFrame);
-            }
-            OH_Drawing_CanvasRestore(canvas);
-        }
-        OH_Drawing_CanvasRestore(canvas);
+        stagePreparedMeasurement(lastNodes, paintFrame);
+        drawSceneRange(paintCanvas, lastNodes, 0u, lastNodes.size(), paintFrame,
+                       backdrop.usable() ? &backdrop : nullptr);
+        OH_Drawing_CanvasRestore(paintCanvas);
+        if (paintCanvas != canvas) compositeBackdropFrame(canvas, backdrop);
         if (!leaseValid(boundGeneration) ||
             !geometryMatches(boundWindow, boundGeneration, surfaceW, surfaceH,
                              permitGeometryRevision)) {
@@ -4169,7 +5078,9 @@ struct RenderThread {
             RLOGW("redraw refused: presentation_lease_overflow before flush");
             return;
         }
+        cjguiOhosObserveTextWork("flush-begin",paintFrame.textWorkTrace,paintFrame.ticket);
         const OH_Drawing_ErrorCode flush = OH_Drawing_SurfaceFlush(surface);
+        cjguiOhosObserveTextWork("flush-return",paintFrame.textWorkTrace,paintFrame.ticket);
         if (!leaseValid(generation) || !geometryMatches(boundWindow, generation, surfaceW, surfaceH, revision)) {
             RLOGW("redraw flush lost lease/geometry gen=%{public}llu", static_cast<unsigned long long>(generation));
             teardownSurface(!leaseValid(generation));
@@ -4198,7 +5109,7 @@ struct RenderThread {
         Measured m = layoutText(utf16ToUtf8(prefix), fontSize, fontWeight, constraintWidth, false, 0xFF000000u);
         if (!m.typography) return 0.0;
         double w = m.longestLine;
-        OH_Drawing_DestroyTypography(m.typography);
+        cjguiOhosDestroyObservedTypography(m.typography);
         return w;
     }
 
@@ -4318,6 +5229,11 @@ struct RenderThread {
                 job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);
                 return;
             }
+            if(job->coverage && (job->observationOperation!=s->selectionOperationGeneration ||
+               !cjguiOhosBodyAvailableForObservationLocked(*s,job->coverage,job->observationFocus,false))) {
+                RLOGW("caret hit refused: coverage_platform_or_owner_stale");
+                job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);return;
+            }
             if (s->acceptedPaintTicketId != painted->basePresentTicket) {
                 RLOGW("caret hit refused: paint_pending_acceptance serial=%{public}llu ticket=%{public}llu accepted=%{public}llu",
                     static_cast<unsigned long long>(painted->serial), static_cast<unsigned long long>(painted->basePresentTicket),
@@ -4327,7 +5243,7 @@ struct RenderThread {
             }
         }
         const auto &node = painted->node;
-        if (painted->session != job->session || painted->text != job->text ||
+        if (painted->session != job->session || painted->text != job->layoutText || painted->coverage!=job->coverage ||
             node.nodeId != job->nodeId || node.resourceId != job->resourceId || node.nodeKind != job->nodeKind ||
             node.acceptedBindingEpoch != job->bindingEpoch || painted->projectionVersion != job->projectionVersion ||
             node.x != job->nodeX || node.y != job->nodeY || node.width != job->nodeWidth ||
@@ -4397,6 +5313,23 @@ struct RenderThread {
             RLOGI("paragraph hit painted serial=%{public}llu range=%{public}u:%{public}u",
                   static_cast<unsigned long long>(painted->serial), lo, hi);
         }
+        if(job->coverage) {
+            uint32_t caret=0,start=0,end=0;
+            const bool word=job->mode==1 || job->mode==3;
+            const bool covered=job->coverage->map(true,job->caretUtf16,caret) &&
+                (!word || (job->coverage->map(true,job->wordStart,start) && job->coverage->map(true,job->wordEnd,end)));
+            if(covered){job->caretUtf16=caret;if(word){job->wordStart=start;job->wordEnd=end;}}
+            else {
+                // Keep the actual layout-local result. The owner will adopt its absolute
+                // source choice and use the existing Transfer/restore lifecycle.
+                int64_t source;
+                if(!job->coverage->position(true,job->caretUtf16,source)) {
+                    job->finish(CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED);return;
+                }
+                job->requiresTransfer=true;
+                RLOGI("caret hit source transfer required source=%{public}lld",static_cast<long long>(source));
+            }
+        }
         job->caretAffinity = affinity;
         job->paintSerial = painted->serial;
         job->sourcePaintTicket = painted->basePresentTicket;
@@ -4415,7 +5348,34 @@ struct RenderThread {
 
     void executeMeasure(MeasureJob *job)
     {
+        // Only another eligible body measurement supersedes this slot. Normal
+        // layout also measures unrelated labels (often unlimited-width) before
+        // Present; those have no ownership of the pending body's private result.
+        if (job->consumeCancelIfRequested()) return;
+        retireInvalidPreparedMeasurement();
+        const size_t measuredUnits = utf8ToUtf16(job->text).size();
+        if (canKeepPreparedMeasurement(job, measuredUnits)) preparedMeasurement.reset();
+        const size_t withOptional = leaseTableUnits(publishedPresentationLease) +
+            leaseTableUnits(publishedRenderOnlyLease) + (lastPaintLayout ? lastPaintLayout->text.size() : 0) +
+            (preparedMeasurement ? preparedMeasurement->units : 0);
+        if (measuredUnits > kPresentationLeaseTotalUnitsMax ||
+            withOptional > kPresentationLeaseTotalUnitsMax-measuredUnits)
+            pruneRenderOnlyLayouts(nullptr, false);
+        if (preparedMeasurement) {
+            const size_t held = leaseTableUnits(publishedPresentationLease) + leaseTableUnits(publishedRenderOnlyLease) +
+                (lastPaintLayout ? lastPaintLayout->text.size() : 0);
+            // The unrelated measurement is still real simultaneous work. Drop
+            // this optional cache before Layout if old/private/transient would
+            // exceed the unchanged total, rather than hiding its live units.
+            if (measuredUnits > kPresentationLeaseTotalUnitsMax ||
+                held > kPresentationLeaseTotalUnitsMax-measuredUnits ||
+                preparedMeasurement->units > kPresentationLeaseTotalUnitsMax-measuredUnits-held)
+                preparedMeasurement.reset();
+        }
+        const bool keepPrivate = canKeepPreparedMeasurement(job, measuredUnits);
         const auto traceStarted = std::chrono::steady_clock::now();
+        if(job->text.size()>=4096)observeResources("measure-before",job->traceSession,0,job->traceProjection,-1);
+        const auto layoutStarted=std::chrono::steady_clock::now();
         Measured m = layoutText(job->text, job->fontSize, job->fontWeight,
                                 job->constraintWidth, job->unlimitedWidth, 0xFF000000u);
         const auto traceFinished = std::chrono::steady_clock::now();
@@ -4424,11 +5384,13 @@ struct RenderThread {
             static_cast<unsigned long long>(job->traceProjection), static_cast<long long>(job->traceOwnerBase),
             job->text.size(), static_cast<unsigned long long>(textWorkFingerprint(job->text)), job->constraintWidth,
             static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(traceStarted-job->traceSubmitted).count()),
-            static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(traceFinished-traceStarted).count()));
+            static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(traceFinished-layoutStarted).count()));
         if (!m.typography) {
             job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
             return;
         }
+        std::unique_ptr<OH_Drawing_Typography, decltype(&cjguiOhosDestroyObservedTypography)>
+            measuredOwner(m.typography, &cjguiOhosDestroyObservedTypography);
         double lineHeight = m.lineCount > 0 ? m.height / static_cast<double>(m.lineCount) : 0;
         if (lineHeight < 1.0) lineHeight = job->fontSize * 1.2;
         job->measurement.width = static_cast<uint32_t>(m.longestLine + 0.5);
@@ -4437,11 +5399,32 @@ struct RenderThread {
         double baseline = m.alphabeticBaseline;
         if (baseline <= 0.0) baseline = lineHeight * 0.8;
         job->measurement.baseline = static_cast<uint32_t>(baseline + 0.5);
-        OH_Drawing_DestroyTypography(m.typography);
+        if (keepPrivate) {
+            auto p = std::make_unique<PreparedTextMeasurement>();
+            p->fontLease = m.fontLease;
+            p->measureJobId = job->observationId;
+            p->text = job->text; p->units = measuredUnits;
+            p->fontSize = job->fontSize; p->fontWeight = job->fontWeight; p->constraintWidth = job->constraintWidth;
+            p->session = job->traceSession; p->context = job->traceContext;
+            p->node = job->preparedNode; p->resource = job->preparedResource;
+            p->kind = job->preparedKind; p->binding = job->preparedBinding;
+            p->renderEpoch = renderEpoch; p->window = boundWindow; p->generation = boundGeneration;
+            p->geometry = permitGeometryRevision; p->width = surfaceW; p->height = surfaceH; p->density = surfaceDensity;
+            p->typography = std::move(measuredOwner);
+            preparedMeasurement = std::move(p);
+        } else {
+            measuredOwner.reset();
+        }
         RLOGI("measure ok w=%{public}u h=%{public}u lineH=%{public}u base=%{public}u",
               job->measurement.width, job->measurement.height,
               job->measurement.lineHeight, job->measurement.baseline);
         job->finish(CJGUI_INTERNAL_RENDERER_OK);
+        // finish and timeout cancellation arbitrate under the existing job mutex.
+        // No following render job can see this slot until this check completes.
+        if (keepPrivate && job->phaseSnapshot() != JobPhase::Done && preparedMeasurement &&
+            preparedMeasurement->measureJobId == job->observationId) preparedMeasurement.reset();
+        if(job->text.size()>=4096)observeResources(preparedMeasurement ? "measure-prepared" : "measure-retired",
+            job->traceSession,0,job->traceProjection,-1);
     }
 
     void executePresent(PresentJob *job)
@@ -4490,6 +5473,8 @@ struct RenderThread {
             return;
         }
         TextPaintFrame paintFrame{job->session, job->ticketId, job->projectionVersion, nullptr};
+        paintFrame.textWorkTrace = job->textWorkTrace;
+        paintFrame.ownedCoverage = job->ownedCoverage;
         paintFrame.ownedMirrorValid = job->ownedMirrorValid;
         paintFrame.ownedMirrorText = job->ownedMirrorText;
         paintFrame.ownedMirrorOwnerVersion = job->ownedMirrorOwnerVersion;
@@ -4503,6 +5488,7 @@ struct RenderThread {
         // 仍按原场景序，预算只决定保留与否。
         paintFrame.leaseRequiredNodeId = activePresentationDragTarget(job->session);
         planPresentationLeaseReservation(job->nodes, paintFrame);
+        stagePreparedMeasurement(job->nodes, paintFrame);
         if (surfaceBackend == SurfaceBackend::Stub) {
             // 第九次复核 A1：替身句柄上的绘制由替身分派（身份计数；
             // 身份阻塞制造「绘制窗口内退役」交错）——与 ARM 状态无关。
@@ -4522,18 +5508,34 @@ struct RenderThread {
             job->finish(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR);
             return;
         }
+        // Backdrop sampling needs the already-painted frame, which an
+        // on-screen OH_Drawing canvas cannot be read back from. A frame that
+        // actually declares backdrop blur paints into a bitmap-backed canvas
+        // instead and is blitted to the surface afterwards; every other frame
+        // keeps the direct path and its exact pixels. A translucent clear has
+        // no stable backdrop (desktop contract), so it stays unblurred.
+        const bool needsBackdrop = job->clearA >= 1.0 && cjguiOhosSceneNeedsBackdrop(job->nodes);
+        BackdropFrame backdrop;
+        OH_Drawing_Canvas *paintCanvas = canvas;
+        if (needsBackdrop) {
+            if (backdrop.create(surfaceW, surfaceH, static_cast<float>(surfaceDensity))) {
+                paintCanvas = backdrop.canvas;
+            } else {
+                RLOGW("present backdrop layer unavailable: painting unblurred");
+            }
+        }
         OH_Drawing_Brush *bg = OH_Drawing_BrushCreate();
         OH_Drawing_BrushSetAntiAlias(bg, true);
         OH_Drawing_BrushSetColor(bg, packColor(job->clearR, job->clearG, job->clearB, job->clearA));
-        OH_Drawing_CanvasDrawBackground(canvas, bg);
+        OH_Drawing_CanvasDrawBackground(paintCanvas, bg);
         OH_Drawing_BrushDestroy(bg);
         // 节点几何是布局 vp、surface 缓冲是物理 px，所以整帧放大一次 density。
         // SurfaceGetCanvas 返回的是 surface 自己的 canvas，矩阵跨帧保留：不配对
         // Save/Restore 的话每次 present/redraw 都会再乘一次，两帧后整帧按 density²
         // 绘制（实测 3.5 密度下 18vp 正文行距 257px、超出右边界被裁掉）。
-        OH_Drawing_CanvasSave(canvas);
+        OH_Drawing_CanvasSave(paintCanvas);
         if (surfaceDensity > 0.0 && surfaceDensity != 1.0) {
-            OH_Drawing_CanvasScale(canvas, static_cast<float>(surfaceDensity),
+            OH_Drawing_CanvasScale(paintCanvas, static_cast<float>(surfaceDensity),
                                    static_cast<float>(surfaceDensity));
         }
 #ifdef CJGUI_OHOS_TEST_GATES
@@ -4542,19 +5544,11 @@ struct RenderThread {
         cjguiOhosTestGateHold("draw", g_gateHoldDrawMs, g_gateHoldDrawRemaining);
 #endif
         g_pcCalls.drawEnter.fetch_add(1);
-        for (const SceneNode &n : job->nodes) {
-            if (n.pod.width <= 0 || n.pod.height <= 0) continue;
-            OH_Drawing_CanvasSave(canvas);
-            if (applyClipChain(canvas, n.pod)) {   // 空裁剪：不可见
-                drawFill(canvas, n.pod);
-                drawNodeImage(canvas, n);
-                drawBorder(canvas, n.pod);
-                drawNodeText(canvas, n, paintFrame);
-            }
-            OH_Drawing_CanvasRestore(canvas);
-        }
+        drawSceneRange(paintCanvas, job->nodes, 0u, job->nodes.size(), paintFrame,
+                       backdrop.usable() ? &backdrop : nullptr);
         g_pcCalls.drawExit.fetch_add(1);
-        OH_Drawing_CanvasRestore(canvas);   // 归还本帧的 density 变换（矩阵跨帧保留）
+        OH_Drawing_CanvasRestore(paintCanvas);   // 归还本帧的 density 变换（矩阵跨帧保留）
+        if (paintCanvas != canvas) compositeBackdropFrame(canvas, backdrop);
         }   // 结束真实绘制 else 分支（替身分支已在上方计数返回同一汇合点）
 #ifdef CJGUI_OHOS_TEST_GATES
         // A2 闸门：最终提交准入前按住（反例 4：准入前销毁重建——旧代取消不得 Flush）。
@@ -4635,7 +5629,9 @@ struct RenderThread {
         } else {
         g_pcCalls.flushEnter.fetch_add(1);
         busyGeneration.store(job->generation);
+        cjguiOhosObserveTextWork("flush-begin",paintFrame.textWorkTrace,paintFrame.ticket);
         flush = OH_Drawing_SurfaceFlush(surface);
+        cjguiOhosObserveTextWork("flush-return",paintFrame.textWorkTrace,paintFrame.ticket);
         g_pcCalls.flushExit.fetch_add(1);
         }
         // Flush 后复核：① 租约仍有效 ② 仍是本任务绑定的那一代。
@@ -4664,6 +5660,8 @@ struct RenderThread {
         publishPaintedLayout(paintFrame);
         lastNodes = job->nodes;
         lastFrameTicket = job->ticketId;
+        lastFrameTextWorkTrace = job->textWorkTrace;
+        lastFrameCoverage = job->ownedCoverage;
         lastFrameMirrorValid = job->ownedMirrorValid;
         lastFrameMirrorText = job->ownedMirrorText;
         lastFrameMirrorOwnerVersion = job->ownedMirrorOwnerVersion;
@@ -4725,7 +5723,10 @@ struct RenderThread {
 
     void teardownSurface(bool terminalGeneration = true)
     {
+        const auto observedSession=lastFrameSession;const auto observedTicket=lastFrameTicket;
+        const auto observedProjection=lastProjectionVersion;const auto observedOwner=lastFrameMirrorOwnerVersion;
         invalidatePaintedLayout(lastPaintLayout ? lastPaintLayout->session : lastFrameSession);
+        preparedMeasurement.reset();
         lastPaintLayout.reset();  // including same-generation surface rebuild/resize
         // A2 复核：teardown/shutdown 在渲染线程释放 presentation 租约表（typography
         // 所有权随 unique_ptr 在本线程析构），旧代条目不得跨代存活。
@@ -4735,11 +5736,21 @@ struct RenderThread {
         const size_t releasedLeaseSlots = publishedPresentationLease.size();
         const size_t releasedLeaseUnits = leaseTableUnits(publishedPresentationLease);
         publishedPresentationLease.clear();
+        const size_t releasedRenderOnlySlots = publishedRenderOnlyLease.size();
+        const size_t releasedRenderOnlyUnits = leaseTableUnits(publishedRenderOnlyLease);
+        publishedRenderOnlyLease.clear();
+        RLOGI("text render-only phase=teardown released_slots=%{public}zu released_units=%{public}zu remaining=0",
+            releasedRenderOnlySlots, releasedRenderOnlyUnits);
         fontPool.clear(); // The last Typography references were released above, on this render thread.
-        RLOGI("font generations teardown live=%{public}zu created=%{public}llu destroyed=%{public}llu destroy_us=%{public}llu work_units=%{public}llu refused=%{public}llu",
+        RLOGI("font generations teardown live=%{public}zu created=%{public}llu destroyed=%{public}llu destroy_us=%{public}llu work_units=%{public}llu refused=%{public}llu sealed=%{public}llu retired=%{public}llu max_seal_age_us=%{public}llu typography_live=%{public}llu typography_created=%{public}llu typography_destroyed=%{public}llu typography_complete=%{public}d",
             fontPool.liveGenerations(), static_cast<unsigned long long>(fontPool.stats().created),
             static_cast<unsigned long long>(fontPool.stats().destroyed), static_cast<unsigned long long>(fontPool.stats().destroyMicros),
-            static_cast<unsigned long long>(fontPool.stats().admittedUnits), static_cast<unsigned long long>(fontPool.stats().refused));
+            static_cast<unsigned long long>(fontPool.stats().admittedUnits), static_cast<unsigned long long>(fontPool.stats().refused),
+            static_cast<unsigned long long>(fontPool.stats().sealed), static_cast<unsigned long long>(fontPool.stats().retired),
+            static_cast<unsigned long long>(fontPool.stats().maxRetiredSealAgeMicros),
+            static_cast<unsigned long long>(g_typographyResources.created-g_typographyResources.destroyed),
+            static_cast<unsigned long long>(g_typographyResources.created),
+            static_cast<unsigned long long>(g_typographyResources.destroyed),g_typographyResources.complete?1:0);
         RLOGI("presentation lease cleared on teardown released_slots=%{public}zu "
               "released_units=%{public}zu remaining=0",
               releasedLeaseSlots, releasedLeaseUnits);
@@ -4748,7 +5759,9 @@ struct RenderThread {
             hasLastFrame = false;
             lastNodes.clear();
             lastFrameMirrorValid = false;
+            lastFrameCoverage.reset();
             lastFrameMirrorText.clear();
+            lastFrameTextWorkTrace.reset();
             lastFrameMirrorOwnerVersion = -1;
             lastFrameSession = 0;
             lastFrameGeneration = 0;
@@ -4769,6 +5782,7 @@ struct RenderThread {
         // 再回传拆除确认；宿主收到确认后才归还 NativeWindow 引用。
         // 先归还引用会让「确认到达之前的任何平台访问」失去引用保护。
         releaseSurfacePermit();
+        observeResources("surface-retired",observedSession,observedTicket,observedProjection,observedOwner);
         if (terminalGeneration) notifyTornDown(tornGeneration);
     }
 
@@ -5012,15 +6026,97 @@ struct RenderThread {
         return true;
     }
 
-    // 绘制：返回 false = 该节点有效裁剪为空，跳过绘制。
-    bool applyClipChain(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
+    // Accepted-input counterpart of pointInsideClips: each clip slot is moved
+    // by its own owner's sidecar translation (never by the child's), matching
+    // applyClipChain. A visual hit uses the node's translated paint rect;
+    // scale/rotate remain paint-only and do not change accepted hit geometry.
+    static bool visualPointInsideClips(const SceneNode &node, float x, float y)
     {
+        const CjguiInternalRendererComposableNode &n = node.pod;
+        float xs[4], ys[4], ws[4], hs[4], rs[4];
+        uint32_t count = 0;
+        if (!effectiveClips(n, xs, ys, ws, hs, rs, &count)) return false;
+        const NodePaintGeometry &g = node.geometry;
+        const bool ownClipGeometry = g.present && g.nodeId == n.nodeId &&
+            g.projectionVersion == n.projectionVersion &&
+            n.clipConstraintCount >= 1u && n.clipConstraintCount <= 4u;
+        for (uint32_t i = 0; i < count; ++i) {
+            if (ownClipGeometry) {
+                switch (i) {
+                    case 0: xs[i] += static_cast<float>(g.clip0X); ys[i] += static_cast<float>(g.clip0Y); break;
+                    case 1: xs[i] += static_cast<float>(g.clip1X); ys[i] += static_cast<float>(g.clip1Y); break;
+                    case 2: xs[i] += static_cast<float>(g.clip2X); ys[i] += static_cast<float>(g.clip2Y); break;
+                    default: xs[i] += static_cast<float>(g.clip3X); ys[i] += static_cast<float>(g.clip3Y); break;
+                }
+            }
+            if (x < xs[i] || x >= xs[i] + ws[i] || y < ys[i] || y >= ys[i] + hs[i]) return false;
+            if (rs[i] > 0.0f) {
+                float r = std::min(rs[i], std::min(ws[i], hs[i]) / 2.0f);
+                float cx = std::min(std::max(x, xs[i] + r), xs[i] + ws[i] - r);
+                float cy = std::min(std::max(y, ys[i] + r), ys[i] + hs[i] - r);
+                float dx = x - cx;
+                float dy = y - cy;
+                if (dx * dx + dy * dy > r * r) return false;
+            }
+        }
+        return true;
+    }
+
+    static bool visualPointHitsNode(const SceneNode &node, float x, float y)
+    {
+        const CjguiInternalRendererComposableNode &n = node.pod;
+        if (n.width <= 0.0 || n.height <= 0.0) return false;
+        double originX = 0.0, originY = 0.0;
+        cjguiOhosNodeVisualOrigin(node, &originX, &originY);
+        if (x < originX || x >= originX + n.width || y < originY || y >= originY + n.height) {
+            return false;
+        }
+        if (!visualPointInsideClips(node, x, y)) return false;
+        if (n.cornerRadius > 0.0) {
+            const float r = static_cast<float>(n.cornerRadius);
+            const float left = static_cast<float>(originX);
+            const float top = static_cast<float>(originY);
+            const float right = left + static_cast<float>(n.width);
+            const float bottom = top + static_cast<float>(n.height);
+            const float cx = x < left + r ? left + r : (x > right - r ? right - r : x);
+            const float cy = y < top + r ? top + r : (y > bottom - r ? bottom - r : y);
+            const float dx = x - cx;
+            const float dy = y - cy;
+            if (dx * dx + dy * dy > r * r) return false;
+        }
+        return true;
+    }
+
+    // 绘制：返回 false = 该节点有效裁剪为空，跳过绘制。
+    // Clip slots follow their original clip owner: the sidecar carries that
+    // owner's own cumulative translation, which a translated child must not
+    // inherit. An absent identity sidecar adds exactly 0 and keeps the POD
+    // clip rectangle byte-identical.
+    bool applyClipChain(OH_Drawing_Canvas *canvas, const SceneNode &node)
+    {
+        const CjguiInternalRendererComposableNode &n = node.pod;
         float xs[4], ys[4], ws[4], hs[4], rs[4];
         uint32_t count = 0;
         if (!effectiveClips(n, xs, ys, ws, hs, rs, &count)) {
             return false;
         }
+        const NodePaintGeometry &geometry = node.geometry;
+        const bool clipTranslated = geometry.present && geometry.nodeId == n.nodeId &&
+                                    geometry.projectionVersion == n.projectionVersion &&
+                                    n.clipConstraintCount >= 1u && n.clipConstraintCount <= 4u;
         for (uint32_t i = 0; i < count; ++i) {
+            if (clipTranslated) {
+                switch (i) {
+                    case 0: xs[i] += static_cast<float>(geometry.clip0X);
+                            ys[i] += static_cast<float>(geometry.clip0Y); break;
+                    case 1: xs[i] += static_cast<float>(geometry.clip1X);
+                            ys[i] += static_cast<float>(geometry.clip1Y); break;
+                    case 2: xs[i] += static_cast<float>(geometry.clip2X);
+                            ys[i] += static_cast<float>(geometry.clip2Y); break;
+                    default: xs[i] += static_cast<float>(geometry.clip3X);
+                             ys[i] += static_cast<float>(geometry.clip3Y); break;
+                }
+            }
             if (rs[i] > 0.0f) {
                 float r = std::min(rs[i], std::min(ws[i], hs[i]) / 2.0f);
                 OH_Drawing_Rect *rect = OH_Drawing_RectCreate(xs[i], ys[i], xs[i] + ws[i], ys[i] + hs[i]);
@@ -5037,27 +6133,327 @@ struct RenderThread {
         return true;
     }
 
+    // Backdrop blur (effectBackdropBlurRadiusPoints in 1..16). Only a frame
+    // painted into a BackdropFrame can see the already-painted backdrop; the
+    // snapshot below is the exact prefix under the node rectangle plus the
+    // 3*sigma halo the kernel needs, and it is composited before the node's
+    // own paint. Every failure leaves the unblurred fallback untouched, which
+    // is the ABI's admitted fallback.
+    void drawBackdropBlur(OH_Drawing_Canvas *canvas, const SceneNode &node,
+                          const BackdropFrame &backdrop)
+    {
+        const uint32_t requested = node.pod.effectBackdropBlurRadiusPoints;
+        if (requested == 0u || requested > 16u || !backdrop.usable()) return;
+        if (node.pod.width <= 0.0 || node.pod.height <= 0.0) return;
+        double translateX = 0, translateY = 0, scaleX = 1, scaleY = 1;
+        (void)cjguiOhosNodePaintTransform(node, &translateX, &translateY, &scaleX, &scaleY);
+        if (!(scaleX > 0.0)) scaleX = 1.0;
+        if (!(scaleY > 0.0)) scaleY = 1.0;
+        const double density = static_cast<double>(backdrop.density);
+        const double centerX = node.pod.x + node.pod.width * 0.5 + translateX;
+        const double centerY = node.pod.y + node.pod.height * 0.5 + translateY;
+        double halfWidth = node.pod.width * scaleX * 0.5;
+        double halfHeight = node.pod.height * scaleY * 0.5;
+        if (std::isfinite(node.pod.rotateDegrees) && node.pod.rotateDegrees != 0.0) {
+            // The blurred region is the axis-aligned hull of the painted node.
+            const double radians = node.pod.rotateDegrees * 3.14159265358979323846 / 180.0;
+            const double cosine = std::fabs(std::cos(radians));
+            const double sine = std::fabs(std::sin(radians));
+            const double hullWidth = cosine * halfWidth + sine * halfHeight;
+            const double hullHeight = sine * halfWidth + cosine * halfHeight;
+            halfWidth = hullWidth;
+            halfHeight = hullHeight;
+        }
+        const double left = centerX - halfWidth;
+        const double top = centerY - halfHeight;
+        const double right = centerX + halfWidth;
+        const double bottom = centerY + halfHeight;
+        // Same blur contract as the desktop backends: sigma = radius / 2 and
+        // halo = ceil(3 * sigma), converted to device pixels.
+        const double sigmaPixels = static_cast<double>(requested) * 0.5 * density;
+        const double haloValue = std::ceil(3.0 * sigmaPixels);
+        if (!(haloValue >= 1.0) || haloValue > 128.0) return;
+        const int32_t halo = static_cast<int32_t>(haloValue);
+        int32_t x0 = static_cast<int32_t>(std::floor(left * density)) - halo;
+        int32_t y0 = static_cast<int32_t>(std::floor(top * density)) - halo;
+        int32_t x1 = static_cast<int32_t>(std::ceil(right * density)) + halo;
+        int32_t y1 = static_cast<int32_t>(std::ceil(bottom * density)) + halo;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > static_cast<int32_t>(backdrop.width)) x1 = static_cast<int32_t>(backdrop.width);
+        if (y1 > static_cast<int32_t>(backdrop.height)) y1 = static_cast<int32_t>(backdrop.height);
+        if (x1 <= x0 || y1 <= y0) return;
+        const int32_t roiWidth = x1 - x0;
+        const int32_t roiHeight = y1 - y0;
+        OH_Drawing_Bitmap *snapshot = OH_Drawing_BitmapCreate();
+        if (!snapshot) return;
+        OH_Drawing_BitmapFormat format{COLOR_FORMAT_RGBA_8888, ALPHA_FORMAT_PREMUL};
+        OH_Drawing_BitmapBuild(snapshot, static_cast<uint32_t>(roiWidth),
+                               static_cast<uint32_t>(roiHeight), &format);
+        void *snapshotPixels = OH_Drawing_BitmapGetPixels(snapshot);
+        OH_Drawing_Image_Info info{roiWidth, roiHeight, COLOR_FORMAT_RGBA_8888,
+                                   ALPHA_FORMAT_PREMUL};
+        if (!snapshotPixels ||
+            !OH_Drawing_BitmapReadPixels(backdrop.bitmap, &info, snapshotPixels,
+                                         static_cast<size_t>(roiWidth) * 4u, x0, y0)) {
+            OH_Drawing_BitmapDestroy(snapshot);
+            return;
+        }
+        OH_Drawing_ImageFilter *blur = OH_Drawing_ImageFilterCreateBlur(
+            static_cast<float>(sigmaPixels), static_cast<float>(sigmaPixels),
+            static_cast<OH_Drawing_TileMode>(CLAMP), nullptr);
+        OH_Drawing_Filter *filter = OH_Drawing_FilterCreate();
+        OH_Drawing_Brush *layer = OH_Drawing_BrushCreate();
+        if (!blur || !filter || !layer) {
+            if (layer) OH_Drawing_BrushDestroy(layer);
+            if (filter) OH_Drawing_FilterDestroy(filter);
+            if (blur) OH_Drawing_ImageFilterDestroy(blur);
+            OH_Drawing_BitmapDestroy(snapshot);
+            return;
+        }
+        OH_Drawing_FilterSetImageFilter(filter, blur);
+        OH_Drawing_BrushSetAntiAlias(layer, true);
+        OH_Drawing_BrushSetFilter(layer, filter);
+        // Switch to device pixels before creating the layer so the image
+        // filter sigma is unambiguous device-space blur, not remapped by the
+        // frame's density transform. The existing clip region stays in force.
+        OH_Drawing_CanvasSave(canvas);
+        if (density != 1.0) {
+            OH_Drawing_CanvasScale(canvas, static_cast<float>(1.0 / density),
+                                   static_cast<float>(1.0 / density));
+        }
+        OH_Drawing_Rect *layerRect = OH_Drawing_RectCreate(
+            static_cast<float>(left * density), static_cast<float>(top * density),
+            static_cast<float>(right * density), static_cast<float>(bottom * density));
+        OH_Drawing_CanvasSaveLayer(canvas, layerRect, layer);
+        OH_Drawing_Rect *destination = OH_Drawing_RectCreate(
+            static_cast<float>(x0), static_cast<float>(y0),
+            static_cast<float>(x1), static_cast<float>(y1));
+        OH_Drawing_SamplingOptions *sampling = OH_Drawing_SamplingOptionsCreate(
+            FILTER_MODE_NEAREST, MIPMAP_MODE_NONE);
+        OH_Drawing_CanvasDrawBitmapRect(canvas, snapshot, nullptr, destination, sampling);
+        OH_Drawing_CanvasRestore(canvas);   // layer
+        OH_Drawing_CanvasRestore(canvas);   // device-pixel transform
+        if (sampling) OH_Drawing_SamplingOptionsDestroy(sampling);
+        OH_Drawing_RectDestroy(destination);
+        OH_Drawing_RectDestroy(layerRect);
+        OH_Drawing_BrushDestroy(layer);
+        OH_Drawing_FilterDestroy(filter);
+        OH_Drawing_ImageFilterDestroy(blur);
+        OH_Drawing_BitmapDestroy(snapshot);
+    }
+
+    // One node's paint without group dispatch; the caller owns Save/Restore.
+    void drawNodeContent(OH_Drawing_Canvas *canvas, const SceneNode &n, TextPaintFrame &paintFrame,
+                         BackdropFrame *backdrop)
+    {
+        if (applyClipChain(canvas, n)) {   // 空裁剪：不可见
+            // Backdrop sample stays in scene space: it is the painted prefix
+            // under the node rectangle, before this node's own transform.
+            if (backdrop != nullptr) drawBackdropBlur(canvas, n, *backdrop);
+            double translateX = 0, translateY = 0, scaleX = 1, scaleY = 1;
+            const bool transformed = cjguiOhosNodePaintTransform(n, &translateX, &translateY,
+                                                                 &scaleX, &scaleY);
+            // 旋转/平移/缩放都是纯绘制修饰：裁剪链与命中都留在未变换矩形里，
+            // 只有本节点自身的绘制（阴影/填充/图片/边框/文字）绕中心变换；
+            // 子节点各自绘制，不继承这个变换。
+            const bool rotated = std::isfinite(n.pod.rotateDegrees) && n.pod.rotateDegrees != 0.0;
+            if (transformed || rotated) {
+                const float centerX = static_cast<float>(n.pod.x + n.pod.width / 2.0);
+                const float centerY = static_cast<float>(n.pod.y + n.pod.height / 2.0);
+                OH_Drawing_CanvasSave(canvas);
+                if (translateX != 0.0 || translateY != 0.0) {
+                    OH_Drawing_CanvasTranslate(canvas, static_cast<float>(translateX),
+                                               static_cast<float>(translateY));
+                }
+                if (scaleX != 1.0 || scaleY != 1.0) {
+                    OH_Drawing_CanvasTranslate(canvas, centerX, centerY);
+                    OH_Drawing_CanvasScale(canvas, static_cast<float>(scaleX),
+                                           static_cast<float>(scaleY));
+                    OH_Drawing_CanvasTranslate(canvas, -centerX, -centerY);
+                }
+                if (rotated) {
+                    OH_Drawing_CanvasRotate(canvas, static_cast<float>(n.pod.rotateDegrees),
+                                            centerX, centerY);
+                }
+            }
+            drawShadow(canvas, n.pod);
+            drawFill(canvas, n.pod);
+            drawNodeImage(canvas, n);
+            drawBorder(canvas, n.pod);
+            drawNodeText(canvas, n, paintFrame);
+            if (transformed || rotated) OH_Drawing_CanvasRestore(canvas);
+        }
+    }
+
+    // effectGroup draws its whole contiguous subtree into one layer so child
+    // overlaps blend once at the group opacity, matching macOS. The interval
+    // comes from the shared layout and is never re-sorted here.
+    void drawSceneRange(OH_Drawing_Canvas *canvas, const std::vector<SceneNode> &nodes,
+                        size_t begin, size_t end, TextPaintFrame &paintFrame,
+                        BackdropFrame *backdrop = nullptr)
+    {
+        size_t index = begin;
+        while (index < end) {
+            const SceneNode &n = nodes[index];
+            if (n.pod.width <= 0 || n.pod.height <= 0) { index += 1u; continue; }
+            if (n.pod.effectGroupPresent == 0u || n.pod.effectGroupSubtreeCount == 0u) {
+                OH_Drawing_CanvasSave(canvas);
+                drawNodeContent(canvas, n, paintFrame, backdrop);
+                OH_Drawing_CanvasRestore(canvas);
+                index += 1u;
+                continue;
+            }
+            // ABI: effectGroupSubtreeCount includes the group node itself.
+            size_t last = index + static_cast<size_t>(n.pod.effectGroupSubtreeCount);
+            if (last > end) last = end;
+            double opacity = n.pod.effectGroupOpacity;
+            if (!(opacity > 0.0)) opacity = 0.0;
+            if (opacity > 1.0) opacity = 1.0;
+            OH_Drawing_CanvasSave(canvas);
+            OH_Drawing_Brush *layer = OH_Drawing_BrushCreate();
+            if (layer != nullptr) {
+                OH_Drawing_BrushSetAntiAlias(layer, true);
+                OH_Drawing_BrushSetAlpha(layer, static_cast<uint8_t>(opacity * 255.0 + 0.5));
+                if (n.pod.effectGroupBlendMode == 1u) {
+                    OH_Drawing_BrushSetBlendMode(layer, BLEND_MODE_MULTIPLY);
+                }
+            }
+            OH_Drawing_CanvasSaveLayer(canvas, nullptr, layer);
+            OH_Drawing_CanvasSave(canvas);
+            drawNodeContent(canvas, n, paintFrame, backdrop);
+            OH_Drawing_CanvasRestore(canvas);
+            drawSceneRange(canvas, nodes, index + 1u, last, paintFrame, backdrop);
+            OH_Drawing_CanvasRestore(canvas);   // layer
+            if (layer != nullptr) OH_Drawing_BrushDestroy(layer);
+            OH_Drawing_CanvasRestore(canvas);
+            index = last;
+        }
+    }
+
+    // Blit the offscreen frame onto the window surface at device pixels. The
+    // surface canvas is back at identity here (the frame's density transform
+    // was just restored), so no extra scaling is applied.
+    void compositeBackdropFrame(OH_Drawing_Canvas *canvas, const BackdropFrame &frame)
+    {
+        if (!canvas || !frame.usable()) return;
+        OH_Drawing_Rect *destination = OH_Drawing_RectCreate(
+            0.0f, 0.0f, static_cast<float>(frame.width), static_cast<float>(frame.height));
+        OH_Drawing_SamplingOptions *sampling = OH_Drawing_SamplingOptionsCreate(
+            FILTER_MODE_NEAREST, MIPMAP_MODE_NONE);
+        OH_Drawing_CanvasDrawBitmapRect(canvas, frame.bitmap, nullptr, destination, sampling);
+        if (sampling) OH_Drawing_SamplingOptionsDestroy(sampling);
+        OH_Drawing_RectDestroy(destination);
+    }
+
+    // 外阴影：形状 = 节点 box 外扩 spread，整体偏移 offset，模糊 sigma = blur/2。
+    // 只画在填充之前 —— 页面上的卡片由自己的填充盖住内侧，阴影只留外缘。
+    // 没有阴影的节点（shadowPresent=0）直接返回，绘制路径与加入此能力前完全一致。
+    void drawShadow(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
+    {
+        if (n.shadowPresent == 0 || n.shadowAlpha <= 0.0) return;
+        const float spread = static_cast<float>(n.shadowSpread);
+        const float x = static_cast<float>(n.x) + static_cast<float>(n.shadowOffsetX) - spread;
+        const float y = static_cast<float>(n.y) + static_cast<float>(n.shadowOffsetY) - spread;
+        const float w = static_cast<float>(n.width) + spread * 2.0f;
+        const float h = static_cast<float>(n.height) + spread * 2.0f;
+        if (w <= 0.0f || h <= 0.0f) return;
+
+        OH_Drawing_Brush *brush = OH_Drawing_BrushCreate();
+        OH_Drawing_BrushSetAntiAlias(brush, true);
+        OH_Drawing_BrushSetColor(brush, packColor(n.shadowRed, n.shadowGreen, n.shadowBlue, n.shadowAlpha));
+
+        OH_Drawing_MaskFilter *mask = nullptr;
+        OH_Drawing_Filter *filter = nullptr;
+        if (n.shadowBlurRadius > 0.0) {
+            // sigma 与 blur 半径的关系由 ABI 注释固定为 blur/2，避免两份口径漂移。
+            const float sigma = static_cast<float>(n.shadowBlurRadius) * 0.5f;
+            mask = OH_Drawing_MaskFilterCreateBlur(static_cast<OH_Drawing_BlurType>(NORMAL), sigma, true);
+            if (mask != nullptr) {
+                filter = OH_Drawing_FilterCreate();
+                if (filter != nullptr) {
+                    OH_Drawing_FilterSetMaskFilter(filter, mask);
+                    OH_Drawing_BrushSetFilter(brush, filter);
+                }
+            }
+        }
+
+        OH_Drawing_CanvasAttachBrush(canvas, brush);
+        const float radius = static_cast<float>(n.cornerRadius) + spread;
+        if (radius > 0.0f) {
+            drawRoundRect(canvas, x, y, w, h, radius);
+        } else {
+            OH_Drawing_Rect *rect = OH_Drawing_RectCreate(x, y, x + w, y + h);
+            OH_Drawing_CanvasDrawRect(canvas, rect);
+            OH_Drawing_RectDestroy(rect);
+        }
+        OH_Drawing_CanvasDetachBrush(canvas);
+
+        if (filter != nullptr) OH_Drawing_FilterDestroy(filter);
+        if (mask != nullptr) OH_Drawing_MaskFilterDestroy(mask);
+        OH_Drawing_BrushDestroy(brush);
+    }
+
+    // 纯色填充与线性渐变共用同一套形状与圆角逻辑，只换画笔：填充方式不影响几何，
+    // 因此边框、裁剪、命中的结果在两种填充下完全一致。
     void drawFill(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
     {
         float x = static_cast<float>(n.x);
         float y = static_cast<float>(n.y);
         float w = static_cast<float>(n.width);
         float h = static_cast<float>(n.height);
-        if (n.fillAlpha > 0.0) {
-            OH_Drawing_Brush *brush = OH_Drawing_BrushCreate();
-            OH_Drawing_BrushSetAntiAlias(brush, true);
-            OH_Drawing_BrushSetColor(brush, packColor(n.fillRed, n.fillGreen, n.fillBlue, n.fillAlpha));
-            OH_Drawing_CanvasAttachBrush(canvas, brush);
-            if (n.cornerRadius > 0.0) {
-                drawRoundRect(canvas, x, y, w, h, static_cast<float>(n.cornerRadius));
-            } else {
-                OH_Drawing_Rect *rect = OH_Drawing_RectCreate(x, y, x + w, y + h);
-                OH_Drawing_CanvasDrawRect(canvas, rect);
-                OH_Drawing_RectDestroy(rect);
+        const bool hasGradient = n.gradientPresent != 0 && n.gradientStopCount >= 2 && w > 0.0f && h > 0.0f;
+        if (!hasGradient && n.fillAlpha <= 0.0) return;
+
+        OH_Drawing_ShaderEffect *shader = nullptr;
+        if (hasGradient) {
+            const uint32_t count = n.gradientStopCount > 4 ? 4 : n.gradientStopCount;
+            OH_Drawing_Point *start = OH_Drawing_PointCreate(
+                x + static_cast<float>(n.gradientStartX) * w,
+                y + static_cast<float>(n.gradientStartY) * h);
+            OH_Drawing_Point *end = OH_Drawing_PointCreate(
+                x + static_cast<float>(n.gradientEndX) * w,
+                y + static_cast<float>(n.gradientEndY) * h);
+            if (start != nullptr && end != nullptr) {
+                uint32_t colors[4] = {0, 0, 0, 0};
+                float positions[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+                colors[0] = packColor(n.gradientStop0Red, n.gradientStop0Green, n.gradientStop0Blue,
+                                      n.gradientStop0Alpha);
+                positions[0] = static_cast<float>(n.gradientStop0Position);
+                colors[1] = packColor(n.gradientStop1Red, n.gradientStop1Green, n.gradientStop1Blue,
+                                      n.gradientStop1Alpha);
+                positions[1] = static_cast<float>(n.gradientStop1Position);
+                if (count > 2) {
+                    colors[2] = packColor(n.gradientStop2Red, n.gradientStop2Green, n.gradientStop2Blue,
+                                          n.gradientStop2Alpha);
+                    positions[2] = static_cast<float>(n.gradientStop2Position);
+                }
+                if (count > 3) {
+                    colors[3] = packColor(n.gradientStop3Red, n.gradientStop3Green, n.gradientStop3Blue,
+                                          n.gradientStop3Alpha);
+                    positions[3] = static_cast<float>(n.gradientStop3Position);
+                }
+                shader = OH_Drawing_ShaderEffectCreateLinearGradient(start, end, colors, positions, count,
+                    static_cast<OH_Drawing_TileMode>(CLAMP));
             }
-            OH_Drawing_CanvasDetachBrush(canvas);
-            OH_Drawing_BrushDestroy(brush);
+            if (start != nullptr) OH_Drawing_PointDestroy(start);
+            if (end != nullptr) OH_Drawing_PointDestroy(end);
+            // 着色器建不出来时退回纯色，至少保证这块区域不是空的。
+            if (shader == nullptr && n.fillAlpha <= 0.0) return;
         }
+
+        OH_Drawing_Brush *brush = OH_Drawing_BrushCreate();
+        OH_Drawing_BrushSetAntiAlias(brush, true);
+        if (shader != nullptr) {
+            OH_Drawing_BrushSetShaderEffect(brush, shader);
+        } else {
+            OH_Drawing_BrushSetColor(brush, packColor(n.fillRed, n.fillGreen, n.fillBlue, n.fillAlpha));
+        }
+        OH_Drawing_CanvasAttachBrush(canvas, brush);
+        drawNodeShape(canvas, n, x, y, w, h, 0.0f);
+        OH_Drawing_CanvasDetachBrush(canvas);
+        OH_Drawing_BrushDestroy(brush);
+        if (shader != nullptr) OH_Drawing_ShaderEffectDestroy(shader);
     }
 
     void drawBorder(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n)
@@ -5074,13 +6470,8 @@ struct RenderThread {
             OH_Drawing_CanvasAttachPen(canvas, pen);
             float inset = static_cast<float>(n.borderWidth) * 0.5f;
             OH_Drawing_Rect *rect = OH_Drawing_RectCreate(x + inset, y + inset, x + w - inset, y + h - inset);
-            if (n.cornerRadius > 0.0) {
-                // 简化：带圆角描边用 round rect 路径（阶段1视觉对齐可接受）
-                drawRoundRect(canvas, x + inset, y + inset, w - 2 * inset, h - 2 * inset,
-                              static_cast<float>(n.cornerRadius) - inset);
-            } else {
-                OH_Drawing_CanvasDrawRect(canvas, rect);
-            }
+            // 描边同样支持四角：inset 后的四角半径各自收一点，避免线宽把角"撑胖"。
+            drawNodeShape(canvas, n, x, y, w, h, inset);
             OH_Drawing_RectDestroy(rect);
             OH_Drawing_CanvasDetachPen(canvas);
             OH_Drawing_PenDestroy(pen);
@@ -5108,6 +6499,19 @@ struct RenderThread {
             OH_Drawing_CanvasClipRect(canvas, bounds, INTERSECT, true);
         }
         auto found = imageBitmaps.find(node.image->id);
+        // Monochrome tint: alpha carries presence (0 = untouched). MODULATE
+        // multiplies sampled RGB by the tint colour and sampled alpha by the
+        // tint alpha, matching the authoritative ABI. This keeps non-white
+        // glyphs and semi-transparent edges as products instead of replacing
+        // every source channel with a flat SRC_IN colour. Only the bitmap draw
+        // is layered; the placeholder path below stays exactly as it was.
+        const bool tintImage = node.pod.iconTintAlpha > 0.0 &&
+                               found != imageBitmaps.end() && found->second.bitmap && found->second.backing;
+        OH_Drawing_Brush *tintLayerBrush = nullptr;
+        if (tintImage) {
+            tintLayerBrush = OH_Drawing_BrushCreate();
+            OH_Drawing_CanvasSaveLayer(canvas, nullptr, tintLayerBrush);
+        }
         if (found != imageBitmaps.end() && found->second.bitmap && found->second.backing) {
 #ifdef CJGUI_OHOS_TEST_GATES
             RLOGI("image-draw entry=%{public}llu version=%{public}llu state=ready",
@@ -5138,6 +6542,18 @@ struct RenderThread {
                 if (sampling) OH_Drawing_SamplingOptionsDestroy(sampling);
                 OH_Drawing_RectDestroy(source);
                 OH_Drawing_RectDestroy(destination);
+                if (tintImage) {
+                    OH_Drawing_Brush *tintPaint = OH_Drawing_BrushCreate();
+                    if (tintPaint != nullptr) {
+                        OH_Drawing_BrushSetColor(tintPaint, packColor(node.pod.iconTintRed,
+                            node.pod.iconTintGreen, node.pod.iconTintBlue, node.pod.iconTintAlpha));
+                        OH_Drawing_BrushSetBlendMode(tintPaint, BLEND_MODE_MODULATE);
+                        OH_Drawing_CanvasAttachBrush(canvas, tintPaint);
+                        OH_Drawing_CanvasDrawRect(canvas, bounds);
+                        OH_Drawing_CanvasDetachBrush(canvas);
+                        OH_Drawing_BrushDestroy(tintPaint);
+                    }
+                }
             }
         } else if (node.pod.fillAlpha <= 0.0) {
 #ifdef CJGUI_OHOS_TEST_GATES
@@ -5153,8 +6569,73 @@ struct RenderThread {
             OH_Drawing_CanvasDetachBrush(canvas);
             OH_Drawing_BrushDestroy(placeholder);
         }
+        if (tintImage) {
+            OH_Drawing_CanvasRestore(canvas);   // tint layer
+            if (tintLayerBrush != nullptr) OH_Drawing_BrushDestroy(tintLayerBrush);
+        }
         OH_Drawing_RectDestroy(bounds);
         OH_Drawing_CanvasRestore(canvas);
+    }
+
+    // 四角独立圆角路径：用三次贝塞尔逼近四分之一圆（k≈0.5523 是标准逼近常数），
+    // 视觉上与 OH_Drawing_RoundRect 的弧线没有差别，但四个角可以各取半径。
+    // 半径上限压到短边一半，否则相邻角会互相穿透、路径自交。
+    OH_Drawing_Path *createCornerPath(float x, float y, float w, float h,
+                                      float tl, float tr, float br, float bl)
+    {
+        const float k = 0.5522847498f;
+        const float limit = std::min(w, h) * 0.5f;
+        tl = std::min(std::max(tl, 0.0f), limit);
+        tr = std::min(std::max(tr, 0.0f), limit);
+        br = std::min(std::max(br, 0.0f), limit);
+        bl = std::min(std::max(bl, 0.0f), limit);
+
+        OH_Drawing_Path *path = OH_Drawing_PathCreate();
+        if (path == nullptr) return nullptr;
+        OH_Drawing_PathMoveTo(path, x + tl, y);
+        OH_Drawing_PathLineTo(path, x + w - tr, y);
+        if (tr > 0.0f) {
+            OH_Drawing_PathCubicTo(path, x + w - tr + tr * k, y, x + w, y + tr - tr * k, x + w, y + tr);
+        }
+        OH_Drawing_PathLineTo(path, x + w, y + h - br);
+        if (br > 0.0f) {
+            OH_Drawing_PathCubicTo(path, x + w, y + h - br + br * k, x + w - br + br * k, y + h, x + w - br, y + h);
+        }
+        OH_Drawing_PathLineTo(path, x + bl, y + h);
+        if (bl > 0.0f) {
+            OH_Drawing_PathCubicTo(path, x + bl - bl * k, y + h, x, y + h - bl + bl * k, x, y + h - bl);
+        }
+        OH_Drawing_PathLineTo(path, x, y + tl);
+        if (tl > 0.0f) {
+            OH_Drawing_PathCubicTo(path, x, y + tl - tl * k, x + tl - tl * k, y, x + tl, y);
+        }
+        OH_Drawing_PathClose(path);
+        return path;
+    }
+
+    // 填充/描边共用：有独立四角时走路径，否则保持原来的 RoundRect 快路径。
+    void drawNodeShape(OH_Drawing_Canvas *canvas, const CjguiInternalRendererComposableNode &n,
+                       float x, float y, float w, float h, float inset)
+    {
+        if (n.cornerRadiiPresent != 0) {
+            const float shrink = std::max(0.0f, inset);
+            OH_Drawing_Path *path = createCornerPath(
+                x + shrink, y + shrink, w - shrink * 2.0f, h - shrink * 2.0f,
+                static_cast<float>(n.cornerTopLeft) - shrink, static_cast<float>(n.cornerTopRight) - shrink,
+                static_cast<float>(n.cornerBottomRight) - shrink, static_cast<float>(n.cornerBottomLeft) - shrink);
+            if (path != nullptr) {
+                OH_Drawing_CanvasDrawPath(canvas, path);
+                OH_Drawing_PathDestroy(path);
+                return;
+            }
+        }
+        if (n.cornerRadius > 0.0) {
+            drawRoundRect(canvas, x, y, w, h, static_cast<float>(n.cornerRadius) - inset);
+        } else {
+            OH_Drawing_Rect *rect = OH_Drawing_RectCreate(x, y, x + w, y + h);
+            OH_Drawing_CanvasDrawRect(canvas, rect);
+            OH_Drawing_RectDestroy(rect);
+        }
     }
 
     void drawRoundRect(OH_Drawing_Canvas *canvas, float x, float y, float w, float h, float radius)
@@ -5168,17 +6649,22 @@ struct RenderThread {
         OH_Drawing_RectDestroy(rect);
     }
 
-    // A2（round5 后指导 C）：**绘制前**为必需保留集合预留额度。必需集合＝实际编辑
-    // 节点 ∪ 活动选择/拖动目标。这里算的是"尚未轮到绘制的那部分预留"，只用于限制
-    // 可选目标，不重排绘制顺序、不抬上限。编辑节点的精确缓冲长度要轮到它才知，
-    // 因此取保守下界（上一帧同节点的实际编辑排版 ∪ 本帧显示值）；真实长度超过
-    // 下界时在该节点自己的准入处按"必需超限"具名拒帧（仍在 Flush 前）。
+    // Reserve required declarations before optional admission, without reordering
+    // the scene. Editing text uses this frame's frozen owner or the same native
+    // buffer that draw will consume. Only actual SDK sharing needs no new units;
+    // a changed same-id declaration still coexists with its accepted predecessor.
     void planPresentationLeaseReservation(const std::vector<SceneNode> &nodes,
                                           TextPaintFrame &frame)
     {
+        // No candidate has borrowed anything yet. Optional cached glyphs must
+        // not pin sealed font generations across an unbounded series of frames.
+        pruneRenderOnlyLayouts(&frame, true);
         frame.leaseReservedSlotsLeft = 0;
         frame.leaseReservedUnitsLeft = 0;
+        frame.leaseReservations.clear();
         frame.leaseEditingNodeId = 0;
+        std::u16string editingText;
+        int64_t editingContext = 0;
         {
             std::lock_guard<std::mutex> g(g_sessions.lock);
             for (size_t i = 0; i < kMaxSessions; ++i) {
@@ -5186,6 +6672,10 @@ struct RenderThread {
                 if (sess.inUse && sess.token == frame.session && sess.editing &&
                     !sess.editorRetired) {
                     frame.leaseEditingNodeId = sess.editingNodeId;
+                    editingText = frame.ownedMirrorValid && frame.ownedNodeId == sess.editingNodeId
+                        ? frame.ownedMirrorText : composedBuffer(sess);
+                    editingContext = frame.ownedMirrorValid && frame.ownedNodeId == sess.editingNodeId
+                        ? frame.sourceContextId : sess.editingContextId;
                     break;
                 }
             }
@@ -5198,20 +6688,30 @@ struct RenderThread {
                                    n.pod.nodeId == frame.leaseEditingNodeId) ||
                                   (frame.leaseRequiredNodeId != 0 &&
                                    n.pod.nodeId == frame.leaseRequiredNodeId);
-            if (!required || !cjguiOhosTextIntersectsClip(n.pod)) continue;
-            std::u16string units = utf8ToUtf16(displayTextForNode(n));
-            if (lastPaintLayout && lastPaintLayout->node.nodeId == n.pod.nodeId &&
-                lastPaintLayout->text.size() > units.size()) {
-                units = lastPaintLayout->text;
-            }
-            // The existing accepted entry already pays for this same required
-            // target. Reserve only the additional candidate footprint; otherwise
-            // a full stable table rejects even the chrome before that target.
+            if (!required || !cjguiOhosTextIntersectsClip(n)) continue;
+            const bool editing = frame.leaseEditingNodeId == n.pod.nodeId;
+            const std::u16string units = editing ? editingText : utf8ToUtf16(displayTextForNode(n));
             const auto prior = publishedPresentationLease.find(n.pod.nodeId);
-            const bool alreadyHeld = prior != publishedPresentationLease.end() && prior->second;
-            frame.leaseReservedSlotsLeft += alreadyHeld ? 0 : 1;
-            const size_t heldUnits = alreadyHeld ? prior->second->text.size() : 0;
-            frame.leaseReservedUnitsLeft += units.size() > heldUnits ? units.size() - heldUnits : 0;
+            const PaintedTextLayout *old = editing ? lastPaintLayout.get() :
+                (prior != publishedPresentationLease.end() ? prior->second.get() : nullptr);
+            const bool borrowed = old && old->fontLease &&
+                old->fontLease->fontConfiguration == fontConfigurationGeneration &&
+                std::none_of(n.textStyleRuns.begin(), n.textStyleRuns.end(),
+                    [](const OhosTextStyleRun &run) { return !run.selectionBackgroundOnly; }) &&
+                cjguiOhosCanReuseEditingTypography(*old, n.pod, units, frame.session,
+                    editing ? editingContext : 0, renderEpoch, boundWindow, boundGeneration,
+                    permitGeometryRevision, surfaceW, surfaceH, surfaceDensity,
+                    editing ? frame.ownedMirrorBindingEpoch : 0,
+                    editing ? frame.ownedMirrorDeclaredBindingEpoch : 0);
+            const size_t slots = !editing && !borrowed ? 1 : 0;
+            const bool prepared = editing && preparedMeasurementMatches(frame, n,
+                utf16ToUtf8(units), editingContext);
+            // This private object is already charged by stage; reserving a
+            // second new object would count the same future Typography twice.
+            const size_t work = borrowed || prepared ? 0 : units.size();
+            frame.leaseReservedSlotsLeft += slots;
+            frame.leaseReservedUnitsLeft += work;
+            frame.leaseReservations[n.pod.nodeId] = {slots, work};
         }
     }
 
@@ -5222,7 +6722,7 @@ struct RenderThread {
         bool hasText = kind == kKindText || kind == kKindButton || kind == kKindTextInput ||
             kind == kKindIntegerInput || kind == kKindBooleanInput || kind == kKindMultiline;
         if (!hasText) return;
-        if (!cjguiOhosTextIntersectsClip(node.pod)) return;
+        if (!cjguiOhosTextIntersectsClip(node)) return;
         uint32_t textColor = packColor(node.pod.textRed, node.pod.textGreen, node.pod.textBlue,
                                        node.pod.textAlpha);
         std::string text = displayTextForNode(node);
@@ -5242,6 +6742,12 @@ struct RenderThread {
         // r18 接缝 3：presentation 锚点的已采纳选择可见反馈。沿用同一 accepted
         // 持留排版与已采纳位置画 caret/非空高亮（无句柄、无 candidate，不建第二份
         // 布局所有权）；逐帧按实时采纳绘制，剪裁与退役跟随该身份，无残留。
+        const auto declaredCoverage=frame.ownedCoverage;
+        const CjguiOhosSourceBasis declaredBasis(declaredCoverage?declaredCoverage->bodyBasis:"");
+        const bool declaredOwnedChoice=declaredCoverage && declaredCoverage->node==node.pod.nodeId &&
+            declaredCoverage->resource==node.pod.resourceId && declaredCoverage->kind==node.pod.nodeKind &&
+            *declaredCoverage->layout==utf8ToUtf16(node.value) && declaredBasis.valid &&
+            declaredBasis.value[6]==declaredCoverage->ownerVersion;
         bool presentFeedback = false;
         bool showCaretPres = false;
         int64_t caretContext = 0;
@@ -5249,13 +6755,14 @@ struct RenderThread {
         const bool foreground = !g_ingress.foregroundLevel || g_ingress.foregroundLevel() == 1;
         std::u16string editComposed;
         std::u16string presentUnits;
+        AcceptedCaretRect caretIdentity;
         uint32_t selStartUtf16 = 0;
         uint32_t selEndUtf16 = 0;
         uint32_t caretUtf16 = 0;
         {
             std::lock_guard<std::mutex> g(g_sessions.lock);
             if (Session *source = lookupSessionLocked(frameSession)) {
-                if (cjguiOhosOwnedFrameTextSource(*source, node.pod, frame) == OwnedFrameTextSource::Reject) {
+                if (cjguiOhosOwnedFrameTextSource(*source, node, frame) == OwnedFrameTextSource::Reject) {
                     frame.textFailureReason = "owned_frame_source_mismatch";
                     return;
                 }
@@ -5284,6 +6791,14 @@ struct RenderThread {
                             frame.textFailureReason = "owned_frame_binding_mismatch";
                         break;
                     }
+                    if(declaredCoverage) {
+                        caretIdentity.sourceBasis=declaredCoverage->bodyBasis;
+                        caretIdentity.key=sess.focusAuthority.mounted;caretIdentity.focus=sess.focusAuthority.generation;
+                        caretIdentity.installRequest=sess.consumedRestoreChoice?sess.consumedRestoreChoice->origin->restoreRequest:0;
+                        const auto choice=sess.choiceSources.latest();
+                        if(choice && choice->settled && choice->accepted && choice->basis==caretIdentity.sourceBasis)
+                            caretIdentity.choiceId=choice->origin->id;
+                    }
                     // 逻辑编辑已结束（retired）时本地缓冲只用来补核心「本地文字延续」
                     // 窗口内的空投影（约定由原生编辑器绘制该节点）。一旦 accepted 已经
                     // 给出这个节点的值，那就是 owner 的裁决——包括本地编辑被拒、owner
@@ -5299,11 +6814,19 @@ struct RenderThread {
                     if (ownedMirrorDeclarationLocked(sess, node.pod.nodeId, node.pod.resourceId,
                             node.pod.nodeKind) != nullptr &&
                         !isEditableTextKind(node.pod.nodeKind)) {
+                        // The candidate owns its display choice, even when empty.
+                        // Platform installation may still be deferred by capture.
+                        const auto body=frame.ownedCoverage;
+                        presentUnits=utf8ToUtf16(text);
+                        if(!body || *body->layout!=presentUnits)break;
+                        const CjguiOhosSourceBasis basis(body->bodyBasis);
+                        if(!basis.valid || basis.value[6]!=body->ownerVersion ||
+                           !CjguiOhosTextCoverage::local(body->layoutBytes,basis.value[9]-body->layoutOrigin,caretUtf16))break;
+                        const int64_t low=std::max(body->layoutOrigin,std::min(basis.value[8],basis.value[9]));
+                        const int64_t high=std::min(body->layoutOrigin+body->layoutBytes.back(),std::max(basis.value[8],basis.value[9]));
+                        if(high<low || !CjguiOhosTextCoverage::local(body->layoutBytes,low-body->layoutOrigin,selStartUtf16) ||
+                           !CjguiOhosTextCoverage::local(body->layoutBytes,high-body->layoutOrigin,selEndUtf16))break;
                         presentFeedback = true;
-                        presentUnits = utf8ToUtf16(text);
-                        selStartUtf16 = std::min(sess.selStartUtf16, sess.selEndUtf16);
-                        selEndUtf16 = std::max(sess.selStartUtf16, sess.selEndUtf16);
-                        caretUtf16 = std::min(sess.caretUtf16, static_cast<uint32_t>(presentUnits.size()));
                         caretAffinity = sess.caretAffinity;
                         caretContext = sess.editingContextId;
                         showCaretPres = foreground && !sess.editorRetired && sess.editingContextLive &&
@@ -5312,7 +6835,7 @@ struct RenderThread {
                         break;
                     }
                     isEditingNode = true;
-                    const auto source = cjguiOhosOwnedFrameTextSource(sess, node.pod, frame);
+                    const auto source = cjguiOhosOwnedFrameTextSource(sess, node, frame);
                     if (source == OwnedFrameTextSource::Reject) {
                         frame.textFailureReason = "owned_frame_source_mismatch";
                         return;
@@ -5322,8 +6845,10 @@ struct RenderThread {
                     nativeSelectionPaintCurrent = source != OwnedFrameTextSource::Frozen ||
                         (!sess.previewActive && !sess.markedActive && sess.editingContextLive &&
                          !sess.editorRetired && sess.selectionIntentConfirmed &&
-                         sess.editingText == frame.ownedMirrorText &&
-                         sess.editingMirrorOwnerVersion == frame.ownedMirrorOwnerVersion);
+                         ((frame.ownedCoverage && cjguiOhosCoverageCurrent(sess,frame.ownedCoverage) &&
+                           *frame.ownedCoverage->layout==frame.ownedMirrorText) ||
+                          (!frame.ownedCoverage && sess.editingText==frame.ownedMirrorText &&
+                           sess.editingMirrorOwnerVersion==frame.ownedMirrorOwnerVersion)));
                     if (source == OwnedFrameTextSource::Native) layoutSourceContext = sess.editingContextId;
                     text = utf16ToUtf8(editComposed);
                     if (text.empty()) text = " ";  // 空缓冲也绘制光标
@@ -5331,7 +6856,22 @@ struct RenderThread {
                     // 否则框与字符来自两个不同的 y 基线。
                     selStartUtf16 = std::min(sess.selStartUtf16, sess.selEndUtf16);
                     selEndUtf16 = std::max(sess.selStartUtf16, sess.selEndUtf16);
-                    caretUtf16 = std::min(sess.caretUtf16, static_cast<uint32_t>(editComposed.size()));
+                    caretUtf16 = sess.caretUtf16;
+                    if (source==OwnedFrameTextSource::Frozen && frame.ownedCoverage) {
+                        nativeSelectionPaintCurrent = nativeSelectionPaintCurrent &&
+                            frame.ownedCoverage->map(false,selStartUtf16,selStartUtf16) &&
+                            frame.ownedCoverage->map(false,selEndUtf16,selEndUtf16) &&
+                            frame.ownedCoverage->map(false,caretUtf16,caretUtf16);
+                        if(declaredOwnedChoice) {
+                            const int64_t lo=std::max(declaredCoverage->layoutOrigin,std::min(declaredBasis.value[8],declaredBasis.value[9]));
+                            const int64_t hi=std::min(declaredCoverage->layoutOrigin+declaredCoverage->layoutBytes.back(),std::max(declaredBasis.value[8],declaredBasis.value[9]));
+                            nativeSelectionPaintCurrent=nativeSelectionPaintCurrent && hi>=lo &&
+                                CjguiOhosTextCoverage::local(declaredCoverage->layoutBytes,lo-declaredCoverage->layoutOrigin,selStartUtf16) &&
+                                CjguiOhosTextCoverage::local(declaredCoverage->layoutBytes,hi-declaredCoverage->layoutOrigin,selEndUtf16) &&
+                                CjguiOhosTextCoverage::local(declaredCoverage->layoutBytes,declaredBasis.value[9]-declaredCoverage->layoutOrigin,caretUtf16);
+                            showCaret=showCaret && declaredBasis.value[8]==declaredBasis.value[9];
+                        }
+                    } else if(caretUtf16>editComposed.size()) nativeSelectionPaintCurrent=false;
                     caretAffinity = sess.caretAffinity;
                     caretContext = sess.editingContextId;
                     showCaret = foreground && !sess.editorRetired && sess.editingContextLive &&
@@ -5354,122 +6894,195 @@ struct RenderThread {
         const bool retainHere = leaseEligible && !isEditingNode;
         const bool requiredHere = isEditingNode ||
             (frame.leaseRequiredNodeId != 0 && frame.leaseRequiredNodeId == node.pod.nodeId);
+        const bool renderOnlyEligible = !isEditingNode && !leaseEligible && !presentFeedback &&
+            (kind == kKindText || kind == kKindButton) && node.pod.nodeId != 0 &&
+            node.pod.nodeId != frame.ownedNodeId && !requiredHere && node.textStyleRuns.empty();
         if (!frame.leasePeakCharged) {
             frame.leasePeakCharged = true;
             if (lastPaintLayout) frame.leaseTransientUnits += lastPaintLayout->text.size();
         }
         if (frame.presentationLeaseOverflow) return;
-        // 本帧已在某个必需目标上判定"Flush 前拒候选"：后面每个节点的排版都不会被
-        // 提交，继续排版只是白做（并让具名拒绝计数失真）。旧表按拒绝语义原样保留。
-        const std::u16string chargeText = isEditingNode ? editComposed : utf8ToUtf16(node.value);
-        // 共同峰值 = 旧 published 表中**本帧不会重画**的部分 + 本帧已保留 + 本帧临时
-        // （含上一帧仍存活的实际编辑排版与本节点本次排版）。同一 id 的旧条目即将被
-        // 本帧换代，不重复占用额度；新 id 全额计费。
+        // Presentation identity still uses its declaration (including the empty
+        // interactive placeholder). Ordinary text charges its actual effective
+        // display bytes, notably the button label/value combination.
+        const std::u16string chargeText = isEditingNode ? editComposed :
+            utf8ToUtf16(leaseEligible ? node.value : text);
+        const bool usePreparedMeasurement = isEditingNode && frame.preparedMeasureUnits != 0 &&
+            preparedMeasurementMatches(frame, node, text, layoutSourceContext);
         const auto superseded = publishedPresentationLease.find(node.pod.nodeId);
         const bool hasSuperseded = superseded != publishedPresentationLease.end() && superseded->second;
-        const size_t ownSlots = hasSuperseded ? 1 : 0;
-        const size_t ownUnits = hasSuperseded ? superseded->second->text.size() : 0;
-        const size_t heldSlots = publishedPresentationLease.size() - frame.leaseReplacedSlots - ownSlots +
-            frame.presentationLease.size() + (retainHere ? 1 : 0);
-        const size_t heldUnits = leaseTableUnits(publishedPresentationLease) - frame.leaseReplacedUnits -
-            ownUnits + leaseTableUnits(frame.presentationLease) + frame.leaseTransientUnits;
-        // 可选目标不得侵占"必需集合还没轮到绘制"的那部分预留：同负载仅把必需
-        // 目标从绘制序列首位挪到末位，结论不得从"保留成功"变成"Flush 前拒帧"。
-        const size_t reserveSlots = requiredHere ? 0 : frame.leaseReservedSlotsLeft;
-        const size_t reserveUnits = requiredHere ? 0 : frame.leaseReservedUnitsLeft;
-        const char *overReason = nullptr;
-        if (heldSlots + reserveSlots > kPresentationLeaseMax) {
-            overReason = "entry_count_over_budget";
-        } else if (chargeText.size() > kPresentationLeaseNodeTextMax) {
-            overReason = "node_text_over_budget";
-        } else if (node.textStyleRuns.size() > kPresentationLeaseNodeRunsMax) {
-            overReason = "node_runs_over_budget";
-        } else if (heldUnits + chargeText.size() + reserveUnits >
-                   kPresentationLeaseTotalUnitsMax) {
-            overReason = "total_workload_over_budget";
-        }
-        if (overReason != nullptr) {
-            if (requiredHere) {
-                // 必需目标（实际编辑排版 / 活动选择或拖动目标）自身放不下 ⇒ 在 Flush
-                // 之前整帧拒候选：旧 accepted 与合法命中保持，下一合法帧恢复。
-                frame.presentationLeaseOverflow = true;
-                RLOGW("presentation lease layout_budget_exceeded node=%{public}llu "
-                      "reason=%{public}s required: reject candidate before flush "
-                      "slots=%{public}zu+%{public}zu reserved=%{public}zu "
-                      "units=%{public}zu+%{public}zu reserved=%{public}zu",
-                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
-                      publishedPresentationLease.size(), frame.presentationLease.size(),
-                      reserveSlots, heldUnits, chargeText.size(), reserveUnits);
-            } else if (retainHere) {
-                // 可选租约目标超限：具名不保留（不现场重排兜底、不拒整帧；命中查询
-                // 按 layout_not_retained 具名拒绝）。排版一次都不做。
-                frame.leaseSkippedNodeIds.push_back(node.pod.nodeId);
-                RLOGW("presentation lease layout_not_retained node=%{public}llu "
-                      "reason=%{public}s slots=%{public}zu+%{public}zu reserved=%{public}zu "
-                      "units=%{public}zu+%{public}zu reserved=%{public}zu",
-                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
-                      publishedPresentationLease.size(), frame.presentationLease.size(),
-                      reserveSlots, heldUnits, chargeText.size(), reserveUnits);
-            } else {
-                // 临时（不保留）排版越界：同样在准备前拒绝，并把结论传播到提交层，
-                // 让"旧+新+临时"共同计费成为真约束而不是仅表内计数。
-                frame.presentationLeaseOverflow = true;
-                RLOGW("presentation lease transient_peak_over_budget node=%{public}llu "
-                      "reason=%{public}s units=%{public}zu+%{public}zu",
-                      static_cast<unsigned long long>(node.pod.nodeId), overReason,
-                      heldUnits, chargeText.size());
-            }
-            return;
-        }
-        if (requiredHere) {
-            // 预留只在"尚未轮到该必需目标"时占额度；一旦本节点自己入账，预留即释放。
-            frame.leaseReservedSlotsLeft = frame.leaseReservedSlotsLeft > 0
-                ? frame.leaseReservedSlotsLeft - 1 : 0;
-            frame.leaseReservedUnitsLeft = chargeText.size() < frame.leaseReservedUnitsLeft
-                ? frame.leaseReservedUnitsLeft - chargeText.size() : 0;
-        }
-        if (!retainHere) {
-            // 编辑节点既是"必需"又是"不保留"：只在可选分支入账会把它自己的实际编辑
-            // 排版漏出共同峰值（旧实现正是 `!isEditingNode` 里才计费）。
-            frame.leaseTransientUnits += chargeText.size();
-        }
-        if (hasSuperseded) {
-            // 本帧重画了这个 id ⇒ 它的旧条目到 publish 即换代，之后不再占共同峰值。
-            frame.leaseReplacedSlots += ownSlots;
-            frame.leaseReplacedUnits += ownUnits;
-        }
-        const bool reuseEditing = isEditingNode && node.textStyleRuns.empty() && lastPaintLayout && lastPaintLayout->fontLease &&
-            lastPaintLayout->fontLease->id == fontPool.currentId() &&
+        // Workload rollover changes admission, not the actual collection held
+        // by an unchanged accepted Typography. Determine sharing before billing.
+        const bool reuseEditing = isEditingNode && !usePreparedMeasurement && std::none_of(node.textStyleRuns.begin(),node.textStyleRuns.end(),[](const OhosTextStyleRun&r){return !r.selectionBackgroundOnly;}) && lastPaintLayout && lastPaintLayout->fontLease &&
             lastPaintLayout->fontLease->fontConfiguration == fontConfigurationGeneration &&
             cjguiOhosCanReuseEditingTypography(*lastPaintLayout, node.pod, editComposed,
                 frame.session, layoutSourceContext, renderEpoch, boundWindow, boundGeneration,
                 permitGeometryRevision, surfaceW, surfaceH, surfaceDensity,
                 frame.ownedMirrorBindingEpoch, frame.ownedMirrorDeclaredBindingEpoch);
+        // The existing accepted table is bounded by A2 admission above. Reuse
+        // only complete plain-text declarations (including baked text color),
+        // not hashes or a different font configuration. Selection backgrounds
+        // are painted separately and remain current-frame facts.
+        const bool reusePresentation = retainHere && hasSuperseded &&
+            std::none_of(node.textStyleRuns.begin(), node.textStyleRuns.end(),
+                [](const OhosTextStyleRun &r) { return !r.selectionBackgroundOnly; }) &&
+            superseded->second->fontLease &&
+            superseded->second->fontLease->fontConfiguration == fontConfigurationGeneration &&
+            cjguiOhosCanReuseEditingTypography(*superseded->second, node.pod, chargeText,
+                frame.session, 0, renderEpoch, boundWindow, boundGeneration,
+                permitGeometryRevision, surfaceW, surfaceH, surfaceDensity, 0, 0);
+        const auto findRenderOnlyReuse = [&]() -> const PaintedTextLayout * {
+            if (!renderOnlyEligible) return nullptr;
+            const auto old = publishedRenderOnlyLease.find(node.pod.nodeId);
+            if (old == publishedRenderOnlyLease.end() || !old->second) return nullptr;
+            const auto &layout = *old->second;
+            // No hash grants reuse. Full bytes plus every effective plain-layout
+            // input/environment must agree; color is baked into OHOS Typography.
+            return layout.renderTextBytes == text && layout.fontLease &&
+                layout.fontLease->fontConfiguration == fontConfigurationGeneration &&
+                cjguiOhosCanReuseEditingTypography(layout, node.pod, chargeText,
+                    frame.session, 0, renderEpoch, boundWindow, boundGeneration,
+                    permitGeometryRevision, surfaceW, surfaceH, surfaceDensity, 0, 0)
+                ? &layout : nullptr;
+        };
+        const PaintedTextLayout *renderOnlyReuse = findRenderOnlyReuse();
+        bool retainRenderOnly = renderOnlyEligible;
+        bool reuseRenderOnly = renderOnlyReuse != nullptr;
+        const size_t reserveSlots = requiredHere ? 0 : frame.leaseReservedSlotsLeft;
+        const size_t reserveUnits = requiredHere ? 0 : frame.leaseReservedUnitsLeft;
+        const auto heldUnits = [&]() {
+            return leaseTableUnits(publishedPresentationLease) + leaseTableUnits(publishedRenderOnlyLease) +
+                ownedLeaseTableUnits(frame.presentationLease) + ownedLeaseTableUnits(frame.renderOnlyLease) +
+                frame.leaseTransientUnits + frame.preparedMeasureUnits;
+        };
+        const auto heldSlots = [&]() {
+            return publishedPresentationLease.size() + publishedRenderOnlyLease.size() +
+                ownedLeaseTableSlots(frame.presentationLease) + ownedLeaseTableSlots(frame.renderOnlyLease);
+        };
+        const auto newUnits = [&]() -> size_t {
+            return reuseEditing || reusePresentation || reuseRenderOnly || usePreparedMeasurement ? 0 : chargeText.size();
+        };
+        const auto newSlots = [&]() -> size_t {
+            return (retainHere || retainRenderOnly) && !reusePresentation && !reuseRenderOnly ? 1 : 0;
+        };
+        // Optional accepted cache may yield to a required/new object, but an
+        // object borrowed by this actual candidate may not be reclaimed.
+        if (heldUnits() + newUnits() + reserveUnits > kPresentationLeaseTotalUnitsMax ||
+            heldSlots() + newSlots() + reserveSlots > kPresentationLeaseMax) {
+            pruneRenderOnlyLayouts(&frame, false);
+            renderOnlyReuse = findRenderOnlyReuse();
+            reuseRenderOnly = renderOnlyReuse != nullptr;
+        }
+        if (!usePreparedMeasurement && frame.preparedMeasureUnits &&
+            heldUnits() + newUnits() + reserveUnits > kPresentationLeaseTotalUnitsMax) {
+            // The private calculation is optional, unlike required painting.
+            // Retire the actual object first, then recompute from real holders;
+            // never subtract from a saturated/sentinel full-frame upper bound.
+            RLOGI("private measure retired reason=paint_peak_pressure job=%{public}llu units=%{public}zu",
+                static_cast<unsigned long long>(preparedMeasurement->measureJobId), frame.preparedMeasureUnits);
+            preparedMeasurement.reset();
+            frame.preparedMeasureUnits = 0;
+        }
+        if (retainRenderOnly && heldSlots() + newSlots() + reserveSlots > kPresentationLeaseMax) {
+            // Lack of optional retained slots is not permission to omit glyphs.
+            retainRenderOnly = false;
+            reuseRenderOnly = false;
+            renderOnlyReuse = nullptr;
+        }
+        const char *overReason = nullptr;
+        if (heldSlots() + newSlots() + reserveSlots > kPresentationLeaseMax)
+            overReason = "entry_count_over_budget";
+        else if (chargeText.size() > kPresentationLeaseNodeTextMax)
+            overReason = "node_text_over_budget";
+        else if (node.textStyleRuns.size() > kPresentationLeaseNodeRunsMax)
+            overReason = "node_runs_over_budget";
+        else if (heldUnits() + newUnits() + reserveUnits > kPresentationLeaseTotalUnitsMax)
+            overReason = "total_workload_over_budget";
+        if (overReason) {
+            if (retainHere && !requiredHere) {
+                frame.leaseSkippedNodeIds.push_back(node.pod.nodeId);
+                RLOGW("presentation lease layout_not_retained node=%{public}llu reason=%{public}s",
+                    static_cast<unsigned long long>(node.pod.nodeId), overReason);
+            } else {
+                frame.presentationLeaseOverflow = true;
+                if (requiredHere)
+                    RLOGW("presentation lease layout_budget_exceeded node=%{public}llu reason=%{public}s required: reject candidate before flush units=%{public}zu+%{public}zu reserved=%{public}zu",
+                        static_cast<unsigned long long>(node.pod.nodeId), overReason,
+                        heldUnits(), newUnits(), reserveUnits);
+                else
+                    RLOGW("presentation lease transient_peak_over_budget node=%{public}llu reason=%{public}s units=%{public}zu+%{public}zu reserved=%{public}zu",
+                        static_cast<unsigned long long>(node.pod.nodeId), overReason,
+                        heldUnits(), newUnits(), reserveUnits);
+            }
+            return;
+        }
+        if (requiredHere) {
+            const auto reservation = frame.leaseReservations.find(node.pod.nodeId);
+            if (reservation != frame.leaseReservations.end()) {
+                assert(frame.leaseReservedSlotsLeft >= reservation->second.first &&
+                       frame.leaseReservedUnitsLeft >= reservation->second.second);
+                frame.leaseReservedSlotsLeft -= reservation->second.first;
+                frame.leaseReservedUnitsLeft -= reservation->second.second;
+                frame.leaseReservations.erase(reservation);
+            }
+        }
+        if (!retainHere && !retainRenderOnly) frame.leaseTransientUnits += newUnits();
+        const PaintedTextLayout *reusedLayout = reuseEditing ? lastPaintLayout.get() :
+            (reusePresentation ? superseded->second.get() : renderOnlyReuse);
         Measured m;
-        if (reuseEditing) {
-            m.fontLease = lastPaintLayout->fontLease;
-            m.typography = lastPaintLayout->typography.get();
+        if (reusedLayout) {
+            m.fontLease = reusedLayout->fontLease;
+            m.typography = reusedLayout->typography.get();
             m.height = OH_Drawing_TypographyGetHeight(m.typography);
             m.longestLine = OH_Drawing_TypographyGetLongestLine(m.typography);
             m.maxWidth = OH_Drawing_TypographyGetMaxWidth(m.typography);
             m.lineCount = OH_Drawing_TypographyGetLineCount(m.typography);
             m.alphabeticBaseline = OH_Drawing_TypographyGetAlphabeticBaseline(m.typography);
-        } else {
+        } else if (usePreparedMeasurement) {
             const auto traceStarted = std::chrono::steady_clock::now();
-            m = layoutTextStyled(text, node.pod.fontSize, node.pod.fontWeight,
-                static_cast<double>(node.pod.width), false, textColor,
-                node.textStyleRuns.data(), node.textStyleRuns.size());
-            const auto traceFinished = std::chrono::steady_clock::now();
-            if (text.size() >= 4096) RLOGI("text work phase=paint session=%{public}llu ticket=%{public}llu ctx=%{public}lld projection=%{public}llu owner=%{public}lld node=%{public}llu bytes=%{public}zu textHash=%{public}llu width=%{public}llu layout_us=%{public}lld",
+            // No SDK call or cancellation boundary between these two accounts:
+            // the same exclusive object moves private -> in-flight candidate.
+            frame.leaseTransientUnits += frame.preparedMeasureUnits;
+            frame.preparedMeasureUnits = 0;
+            m = takePreparedMeasurement(textColor);
+            if (text.size() >= 4096) RLOGI("text work phase=paint session=%{public}llu ticket=%{public}llu ctx=%{public}lld projection=%{public}llu owner=%{public}lld node=%{public}llu bytes=%{public}zu textHash=%{public}llu width=%{public}llu layout_us=%{public}lld reusedMeasure=1 job=%{public}llu jobQueue_us=%{public}lld",
                 static_cast<unsigned long long>(frame.session), static_cast<unsigned long long>(frame.ticket),
                 static_cast<long long>(caretContext), static_cast<unsigned long long>(node.pod.projectionVersion),
                 static_cast<long long>(frame.ownedMirrorOwnerVersion), static_cast<unsigned long long>(node.pod.nodeId),
-                text.size(), static_cast<unsigned long long>(textWorkFingerprint(text)), static_cast<unsigned long long>(node.pod.width),
-                static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(traceFinished-traceStarted).count()));
+                text.size(), static_cast<unsigned long long>(textWorkFingerprint(text)),
+                static_cast<unsigned long long>(cjguiOhosTextLayoutWidth(static_cast<double>(node.pod.width), kind)),
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-traceStarted).count()),
+                static_cast<unsigned long long>(g_observedTextJob?g_observedTextJob->observationId:0),
+                static_cast<long long>(g_observedTextJob?std::chrono::duration_cast<std::chrono::microseconds>(
+                    g_observedTextJob->observationDequeued-g_observedTextJob->observationEnqueued).count():0));
+        } else {
+            const auto traceStarted = std::chrono::steady_clock::now();
+            const double layoutWidth = cjguiOhosTextLayoutWidth(static_cast<double>(node.pod.width), kind);
+            TextLayoutExtras extras;
+            extras.letterSpacing = node.pod.letterSpacing;
+            extras.lineHeight = node.pod.lineHeightPoints;
+            extras.maxLines = node.pod.maxLines;
+            extras.ellipsis = node.pod.ellipsisEnabled != 0;
+            m = layoutTextStyled(text, node.pod.fontSize, node.pod.fontWeight,
+                layoutWidth, false, textColor,
+                node.textStyleRuns.data(), node.textStyleRuns.size(),node.pod.nodeId,&frame,extras);
+            const auto traceFinished = std::chrono::steady_clock::now();
+            if (text.size() >= 4096) RLOGI("text work phase=paint session=%{public}llu ticket=%{public}llu ctx=%{public}lld projection=%{public}llu owner=%{public}lld node=%{public}llu bytes=%{public}zu textHash=%{public}llu width=%{public}llu layout_us=%{public}lld job=%{public}llu jobQueue_us=%{public}lld",
+                static_cast<unsigned long long>(frame.session), static_cast<unsigned long long>(frame.ticket),
+                static_cast<long long>(caretContext), static_cast<unsigned long long>(node.pod.projectionVersion),
+                static_cast<long long>(frame.ownedMirrorOwnerVersion), static_cast<unsigned long long>(node.pod.nodeId),
+                text.size(), static_cast<unsigned long long>(textWorkFingerprint(text)), static_cast<unsigned long long>(layoutWidth),
+                static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(traceFinished-traceStarted).count()),
+                static_cast<unsigned long long>(g_observedTextJob?g_observedTextJob->observationId:0),
+                static_cast<long long>(g_observedTextJob?std::chrono::duration_cast<std::chrono::microseconds>(
+                    g_observedTextJob->observationDequeued-g_observedTextJob->observationEnqueued).count():0));
         }
+        if(text.size()>=4096)observeResources("paint-candidate",frame.session,frame.ticket,frame.projectionVersion,
+            frame.ownedMirrorOwnerVersion,observedCoverageInput(frame.ownedCoverage));
         if (!m.typography) {
             // Empty mandatory typography must not erase the last accepted resource.
             if (requiredHere) frame.textFailureReason = "required_text_layout_failed";
+            else if (renderOnlyEligible) frame.textFailureReason = "render_only_text_layout_failed";
             return;
         }
         TextGeometry geom = computeTextGeometry(static_cast<double>(node.pod.x),
@@ -5477,7 +7090,7 @@ struct RenderThread {
                                                 static_cast<double>(node.pod.height), kind, m,
                                                 node.pod.fontSize);
         // 选区高亮先画（字形压在上面），矩形与字形出自同一排版对象。
-        if (((isEditingNode && nativeSelectionPaintCurrent) || presentFeedback) && selEndUtf16 > selStartUtf16) {
+        if (isEditingNode && nativeSelectionPaintCurrent && !declaredOwnedChoice && selEndUtf16 > selStartUtf16) {
             drawSelectionBoxes(canvas, m.typography, selStartUtf16, selEndUtf16, geom);
         }
         for (const OhosTextStyleRun &run : node.textStyleRuns) {
@@ -5487,14 +7100,34 @@ struct RenderThread {
             }
         }
         OH_Drawing_TypographyPaint(m.typography, canvas, geom.originX, geom.originY);
+        if (renderOnlyEligible) {
+            if (reuseRenderOnly) ++frame.renderOnlyHits;
+            else ++frame.renderOnlyMisses;
+        }
+        if(isEditingNode || retainHere) {
+            auto bands=cjguiOhosPaintedTextLineBands(node.pod,m.typography,geom.originY,
+                frame.ticket,frame.projectionVersion,boundGeneration,permitGeometryRevision);
+            bands.dynamicText=isEditingNode;
+            if(declaredOwnedChoice && (!isEditingNode || editComposed==*declaredCoverage->layout)) {
+                bands.coverage=declaredCoverage;
+                uint32_t active=0;double x=0,top=0,bottom=0;
+                bands.activeValid=CjguiOhosTextCoverage::local(declaredCoverage->layoutBytes,
+                    declaredBasis.value[9]-declaredCoverage->layoutOrigin,active) &&
+                    caretRectFor(m.typography,active,*declaredCoverage->layout,caretAffinity,x,top,bottom);
+                bands.activeTop=geom.originY+top;bands.activeBottom=geom.originY+bottom;
+            }
+            if(frame.textLineBands.size()<kPresentationLeaseMax+1)frame.textLineBands.push_back(std::move(bands));
+            else frame.presentationLeaseOverflow=true;
+        }
         if (isEditingNode) {
             auto painted = std::make_unique<PaintedTextLayout>();
             painted->fontLease = m.fontLease;
-            painted->plainTextLayout = node.textStyleRuns.empty();
+            painted->plainTextLayout = std::none_of(node.textStyleRuns.begin(),node.textStyleRuns.end(),[](const OhosTextStyleRun&r){return !r.selectionBackgroundOnly;});
             painted->borrowsEditingTypography = reuseEditing;
             if (!reuseEditing) painted->typography.reset(m.typography);
             painted->node = node.pod;
             painted->text = editComposed;
+            painted->coverage = frame.ownedCoverage;
             painted->session = frame.session;
             painted->basePresentTicket = frame.ticket;
             painted->projectionVersion = frame.projectionVersion;
@@ -5527,8 +7160,16 @@ struct RenderThread {
                     h.endX = geom.originX + ex; h.endY = geom.originY + eb + 8;
                     h.startLineY = geom.originY + (st + sb) / 2;
                     h.endLineY = geom.originY + (et + eb) / 2;
-                    h.startVisible = pointInsideClips(node.pod, h.startX, h.startY);
-                    h.endVisible = pointInsideClips(node.pod, h.endX, h.endY);
+                    double visualOriginX = 0, visualOriginY = 0;
+                    cjguiOhosNodeVisualOrigin(node, &visualOriginX, &visualOriginY);
+                    h.translateX = visualOriginX - static_cast<double>(node.pod.x);
+                    h.translateY = visualOriginY - static_cast<double>(node.pod.y);
+                    h.startVisible = visualPointInsideClips(node,
+                        static_cast<float>(h.startX + h.translateX),
+                        static_cast<float>(h.startY + h.translateY));
+                    h.endVisible = visualPointInsideClips(node,
+                        static_cast<float>(h.endX + h.translateX),
+                        static_cast<float>(h.endY + h.translateY));
                     h.valid = h.startVisible || h.endVisible;
                     if (showHandles) {
                     OH_Drawing_Brush *brush = OH_Drawing_BrushCreate();
@@ -5571,7 +7212,7 @@ struct RenderThread {
                               caretX, caretTop, caretBottom)) {
                 // 拒答不能变成首行 longestLine 的假落点；正文仍照常绘制。
                 RLOGW("caret geometry unavailable caret=%{public}u units=%{public}zu", caret, caretText.size());
-                if (!isEditingNode) OH_Drawing_DestroyTypography(m.typography);
+                if (!isEditingNode && !reusePresentation && !reuseRenderOnly) cjguiOhosDestroyObservedTypography(m.typography);
                 return;
             }
             RLOGI("caret geometry session=%{public}llu ctx=%{public}lld caret=%{public}u affinity=%{public}d "
@@ -5581,6 +7222,7 @@ struct RenderThread {
             // H 连续写作包 A：记录**真实编辑 caret**的场景矩形（vp），供窗口按
             // 小矩形做 reveal；presentation 反馈支路不写（编辑真值只属编辑节点）。
             AcceptedCaretRect &rect = frame.activeCaret;
+            rect=std::move(caretIdentity);rect.layoutSerial=isEditingNode?frame.candidate->serial:textPaintSerial+1;
             rect.valid = true;
             rect.nodeId = node.pod.nodeId;
             rect.resourceId = node.pod.resourceId;
@@ -5591,7 +7233,8 @@ struct RenderThread {
             rect.context = caretContext;
             rect.generation = boundGeneration;
             rect.geometry = permitGeometryRevision;
-            rect.caret = caret;
+            rect.caret = caret;rect.coverage=frame.ownedCoverage;
+            if(rect.coverage && !rect.coverage->map(true,caret,rect.caret))rect.valid=false;
             rect.text = caretText;
             rect.left = geom.originX + caretX - 1.0;
             rect.right = geom.originX + caretX + 1.0;
@@ -5615,13 +7258,19 @@ struct RenderThread {
         if (!isEditingNode) {
             // A2：pointerInteractive 且非只读的 presentation TEXT 节点——把**实际
             // 绘制**的排版与其精确原点/身份保留进本帧租约表（三界同生效），命中
-            // 查询消费同一条目；其余照旧销毁。绘制顺序不因预算改变：超限只决定
+            // 查询消费同一条目。普通 plain 文字另入 render-only 表，绝不增加命中
+            // 资格；未保留项正常单次绘制后销毁。绘制顺序不因缓存改变：
             // 「保留与否」，不重排、不重绘。
             // 准入判定已在排版**之前**完成（见上），这里只做登记，不重复判据。
-            if (retainHere) {
+            if (retainHere || retainRenderOnly) {
                 auto retained = std::make_unique<PaintedTextLayout>();
                 retained->fontLease = m.fontLease;
-                retained->typography.reset(m.typography);
+                retained->plainTextLayout = std::none_of(node.textStyleRuns.begin(), node.textStyleRuns.end(),
+                    [](const OhosTextStyleRun &r) { return !r.selectionBackgroundOnly; });
+                retained->borrowsPresentationTypography = reusePresentation;
+                retained->borrowsRenderOnlyTypography = reuseRenderOnly;
+                if (retainRenderOnly) retained->renderTextBytes = text;
+                if (!reusePresentation && !reuseRenderOnly) retained->typography.reset(m.typography);
                 retained->node = node.pod;
                 retained->text = chargeText;
                 retained->session = frame.session;
@@ -5637,10 +7286,11 @@ struct RenderThread {
                 retained->density = surfaceDensity;
                 retained->relativeOriginX = geom.originX - static_cast<double>(node.pod.x);
                 retained->relativeOriginY = geom.originY - static_cast<double>(node.pod.y);
-                frame.presentationLease[node.pod.nodeId] = std::move(retained);
+                if (retainHere) frame.presentationLease[node.pod.nodeId] = std::move(retained);
+                else frame.renderOnlyLease[node.pod.nodeId] = std::move(retained);
                 return;
             }
-            OH_Drawing_DestroyTypography(m.typography);
+            cjguiOhosDestroyObservedTypography(m.typography);
         }
     }
 
@@ -5654,6 +7304,97 @@ struct RenderThread {
         double alphabeticBaseline = 0;
     };
 
+    bool canKeepPreparedMeasurement(MeasureJob *job, size_t units)
+    {
+        const size_t held = leaseTableUnits(publishedPresentationLease) + leaseTableUnits(publishedRenderOnlyLease) +
+            (lastPaintLayout ? lastPaintLayout->text.size() : 0);
+        return job->keepPrivateLayout && !job->unlimitedWidth && job->traceSession && job->traceContext > 0 &&
+            job->preparedNode && job->preparedKind == kKindMultiline && boundWindow && boundGeneration &&
+            std::isfinite(job->constraintWidth) && job->constraintWidth > 0 &&
+            units > 0 && units <= kPresentationLeaseNodeTextMax && held <= kPresentationLeaseTotalUnitsMax-units;
+    }
+
+    bool preparedMeasurementMatches(const TextPaintFrame &frame, const SceneNode &node,
+                                    const std::string &text, int64_t context)
+    {
+        if (!preparedMeasurement) return false;
+        const auto &p = *preparedMeasurement;
+        return p.typography && p.fontLease && p.fontLease->fontConfiguration == fontConfigurationGeneration &&
+            p.text == text && p.fontSize == node.pod.fontSize && p.fontWeight == node.pod.fontWeight &&
+            p.constraintWidth == cjguiOhosTextLayoutWidth(static_cast<double>(node.pod.width), node.pod.nodeKind) &&
+            node.textStyleRuns.empty() && p.session == frame.session && p.context == context &&
+            p.node == node.pod.nodeId && p.resource == node.pod.resourceId && p.kind == node.pod.nodeKind &&
+            p.binding == node.pod.acceptedBindingEpoch && p.renderEpoch == renderEpoch &&
+            p.window == boundWindow && p.generation == boundGeneration && p.geometry == permitGeometryRevision &&
+            p.width == surfaceW && p.height == surfaceH && p.density == surfaceDensity;
+    }
+
+    void retireInvalidPreparedMeasurement()
+    {
+        if (!preparedMeasurement) return;
+        const auto &p = *preparedMeasurement;
+        if (p.renderEpoch != renderEpoch || p.window != boundWindow ||
+            p.generation != boundGeneration || p.geometry != permitGeometryRevision ||
+            p.width != surfaceW || p.height != surfaceH || p.density != surfaceDensity ||
+            !p.fontLease || p.fontLease->fontConfiguration != fontConfigurationGeneration ||
+            !leaseValid(p.generation) || !geometryMatches(p.window, p.generation, p.width, p.height, p.geometry)) {
+            preparedMeasurement.reset(); return;
+        }
+        // Validate against the actual live binding, never an unrelated/older
+        // frame's session/context/projection. This grants no input authority.
+        bool retired = false;
+        {
+            std::lock_guard<std::mutex> guard(g_sessions.lock);
+            const Session *s = lookupSessionLocked(p.session);
+            retired = !s || !s->editingContextLive || s->editorRetired || s->editingContextId != p.context ||
+                s->editingNodeId != p.node || s->editingResourceId != p.resource ||
+                s->editingNodeKind != p.kind || s->editingAcceptedBindingEpoch != p.binding;
+        }
+        // SDK destruction may be expensive. Never hold the session admission
+        // mutex across it; this resource itself is render-thread exclusive.
+        if (retired) preparedMeasurement.reset();
+    }
+
+    void stagePreparedMeasurement(const std::vector<SceneNode> &, TextPaintFrame &frame)
+    {
+        retireInvalidPreparedMeasurement();
+        // Every frame charges the live external object, whether or not this
+        // frame may take it. Per-node A2 admission retires optional private work
+        // only on a real simultaneous peak, not a guessed full-scene sum.
+        frame.preparedMeasureUnits = preparedMeasurement ? preparedMeasurement->units : 0;
+    }
+
+    Measured takePreparedMeasurement(uint32_t color)
+    {
+        Measured m;
+        auto &p = *preparedMeasurement;
+        m.fontLease = std::move(p.fontLease);
+        m.typography = p.typography.release();
+        preparedMeasurement.reset();
+        // This object has never been published or borrowed by a query. Same
+        // text/style/width was checked; updating plain color performs no Layout.
+        OH_Drawing_TypographyUpdateFontColor(m.typography, color);
+        m.height = OH_Drawing_TypographyGetHeight(m.typography);
+        m.longestLine = OH_Drawing_TypographyGetLongestLine(m.typography);
+        m.maxWidth = OH_Drawing_TypographyGetMaxWidth(m.typography);
+        m.lineCount = OH_Drawing_TypographyGetLineCount(m.typography);
+        m.alphabeticBaseline = OH_Drawing_TypographyGetAlphabeticBaseline(m.typography);
+        return m;
+    }
+
+    // 文字排版的附加参数：字间距、行高、最大行数与省略号。
+    // 默认全零/关闭 —— 没有声明这些属性的节点走的是和加入该能力之前完全相同的路径。
+    struct TextLayoutExtras {
+        double letterSpacing;   // 逻辑点，可负
+        double lineHeight;      // 逻辑点；<=0 表示不干预
+        uint32_t maxLines;      // 0 = 不限
+        bool ellipsis;          // 仅当 maxLines > 0 生效（尾部省略）
+        // 用显式构造函数而不是默认成员初始化器：嵌套结构在类内的默认参数位置
+        // 引用默认成员初始化器时，标准不允许（CWG 认为此时外层类尚未完整）。
+        TextLayoutExtras(double spacing = 0.0, double height = 0.0, uint32_t lines = 0, bool tail = false)
+            : letterSpacing(spacing), lineHeight(height), maxLines(lines), ellipsis(tail) {}
+    };
+
     Measured layoutText(const std::string &text, double fontSize, uint32_t fontWeight,
                         double constraintWidth, bool unlimitedWidth, uint32_t textColor)
     {
@@ -5663,18 +7404,95 @@ struct RenderThread {
 
     Measured layoutTextStyled(const std::string &text, double fontSize, uint32_t fontWeight,
                               double constraintWidth, bool unlimitedWidth, uint32_t textColor,
-                              const OhosTextStyleRun *runs, size_t runCount)
+                              const OhosTextStyleRun *runs, size_t runCount, uint64_t observedNode=0,
+                              TextPaintFrame *frame = nullptr,
+                              const TextLayoutExtras &extras = TextLayoutExtras{})
     {
         Measured result;
-        const auto collectionStarted = std::chrono::steady_clock::now();
-        result.fontLease = fontPool.acquire(utf8ToUtf16(text).size(), fontConfigurationGeneration);
+        const bool deepDiagnostics=cjguiOhosDeepDiagnosticsEnabled();
+        const bool traceApi=deepDiagnostics && text.size()>=4096;
+        const uint64_t traceHash=textWorkFingerprint(text);
+        const uint64_t layoutId=++observedLayoutSequence;
+        const auto utf16=utf8ToUtf16(text);
+        uint64_t key=0;
+        if (deepDiagnostics) {
+            key=traceHash;
+            const auto mix=[&](const auto &value) {
+                const auto *bytes=reinterpret_cast<const unsigned char*>(&value);
+                for(size_t i=0;i<sizeof(value);++i){key^=bytes[i];key*=1099511628211ULL;}
+            };
+            mix(fontSize);mix(fontWeight);mix(constraintWidth);mix(unlimitedWidth);mix(textColor);
+            mix(fontConfigurationGeneration);mix(runCount);
+            for(size_t i=0;i<runCount;++i){const auto &r=runs[i];
+                mix(r.start);mix(r.end);mix(r.fontSize);mix(r.fontWeight);mix(r.fontFamily);
+                mix(r.red);mix(r.green);mix(r.blue);mix(r.alpha);mix(r.hasBackground);
+                mix(r.bgRed);mix(r.bgGreen);mix(r.bgBlue);mix(r.bgAlpha);mix(r.selectionBackgroundOnly);
+            }
+        }
+        const auto *job=g_observedTextJob;
+        const auto &source=job?job->textWorkTrace:CjguiOhosTextWorkTraceRef{};
+        const bool sourceMatched=source && source->matches(utf16) &&
+            (observedNode?source->node==observedNode:job && job->kind==JobKind::Measure);
+        cjguiOhosObserveTextWork("layout-begin",sourceMatched?source:CjguiOhosTextWorkTraceRef{});
+        if (deepDiagnostics) {
+        RLOGI("text layout phase=begin layout=%{public}llu job=%{public}llu kind=%{public}d key=%{public}llu keySchema=fnv-field-values-v1 family=HarmonyOS-Sans textHash=%{public}llu utf8=%{public}zu utf16=%{public}zu width=%{public}.9f unlimited=%{public}d fontSize=%{public}.9f fontWeight=%{public}u textColor=%{public}u runs=%{public}zu configuration=%{public}llu targetNodeKnown=%{public}d targetNode=%{public}llu sourceMatched=%{public}d mono_us=%{public}lld cpu_us=%{public}lld",
+            (unsigned long long)layoutId,(unsigned long long)(job?job->observationId:0),job?static_cast<int>(job->kind):-1,
+            (unsigned long long)key,(unsigned long long)traceHash,text.size(),utf16.size(),constraintWidth,unlimitedWidth?1:0,
+            fontSize,fontWeight,textColor,runCount,(unsigned long long)fontConfigurationGeneration,observedNode?1:0,
+            (unsigned long long)observedNode,sourceMatched?1:0,(long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs());
+        } else {
+            // One bounded actual-SDK-call fact, not per-phase deep sampling.
+            // Retain independent body/Layout counting without turning tracing on.
+            RLOGI("text layout phase=begin layout=%{public}llu job=%{public}llu kind=%{public}d textHash=%{public}llu utf8=%{public}zu utf16=%{public}zu width=%{public}.1f fontSize=%{public}.1f runs=%{public}zu sourceMatched=%{public}d",
+                (unsigned long long)layoutId,(unsigned long long)(job?job->observationId:0),job?static_cast<int>(job->kind):-1,
+                (unsigned long long)traceHash,text.size(),utf16.size(),constraintWidth,fontSize,runCount,sourceMatched?1:0);
+        }
+        auto phaseStarted=deepDiagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        auto phaseCpuStarted=deepDiagnostics ? cjguiOhosTextThreadCpuUs() : -1;
+        const auto phase=[&](const char *name) {
+            if (!deepDiagnostics) return;
+            const auto now=std::chrono::steady_clock::now();
+            if (traceApi) {
+                uint64_t jobId=0;
+                { std::lock_guard<std::mutex> queueGuard(lock); if(activeJob)jobId=activeJob->observationId; }
+                RLOGI("layout api phase=%{public}s job=%{public}llu textHash=%{public}llu bytes=%{public}zu width=%{public}.3f runs=%{public}zu elapsed_us=%{public}lld",
+                    name,(unsigned long long)jobId,(unsigned long long)traceHash,text.size(),constraintWidth,runCount,
+                    (long long)std::chrono::duration_cast<std::chrono::microseconds>(now-phaseStarted).count());
+                RLOGI("text layout phase=%{public}s layout=%{public}llu mono_us=%{public}lld cpu_us=%{public}lld cpu_delta_us=%{public}lld",
+                    name,(unsigned long long)layoutId,(long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs(),
+                    (long long)(phaseCpuStarted<0?-1:cjguiOhosTextThreadCpuUs()-phaseCpuStarted));
+                observeResources(name,lastFrameSession,lastFrameTicket,lastProjectionVersion,
+                    lastFrameMirrorOwnerVersion,observedCoverageInput(lastFrameCoverage));
+            }
+            phaseStarted=std::chrono::steady_clock::now();
+            phaseCpuStarted=cjguiOhosTextThreadCpuUs();
+        };
+        const auto collectionStarted = deepDiagnostics ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        // Measure/query jobs have no in-flight paint candidate; a draw passes
+        // its frame so pressure never releases an actually borrowed resource.
+        if (fontPool.liveGenerations() >= OhosFontPool::kMaxGenerations)
+            pruneRenderOnlyLayouts(frame, true);
+        result.fontLease = fontPool.acquire(utf16.size(), fontConfigurationGeneration);
         if (!result.fontLease) {
             RLOGW("text layout refused font_generation_budget live=%{public}zu", fontPool.liveGenerations());
             return result;
         }
-        const auto collectionMicros = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - collectionStarted).count();
+        const auto collectionMicros = deepDiagnostics ? std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - collectionStarted).count() : 0;
+        phase("collection-acquire");
         OH_Drawing_TypographyStyle *style = OH_Drawing_CreateTypographyStyle();
+        // 最大行数与省略号是"整段文字"的属性，挂在 TypographyStyle 上，
+        // 必须在创建 handler 之后、销毁之前设好。
+        if (extras.maxLines > 0) {
+            OH_Drawing_SetTypographyTextMaxLines(style, static_cast<int>(extras.maxLines));
+            if (extras.ellipsis) {
+                // 两个 API 缺一不可：Modal 决定"省略号出现在哪"，
+                // Ellipsis 决定"省略号长什么样"。只设 Modal 不出省略号。
+                OH_Drawing_SetTypographyTextEllipsisModal(
+                    style, static_cast<int>(ELLIPSIS_MODAL_TAIL));
+                OH_Drawing_SetTypographyTextEllipsis(style, "\u2026");
+            }
+        }
         OH_Drawing_TypographyCreate *handler =
             OH_Drawing_CreateTypographyHandler(style, result.fontLease->collection);
         OH_Drawing_DestroyTypographyStyle(style);
@@ -5687,6 +7505,13 @@ struct RenderThread {
             // 共同定义的前景色由节点携带，后端不重新指定颜色。
             OH_Drawing_SetTextStyleColor(st, textColor);
             OH_Drawing_SetTextStyleFontFamilies(st, 1, &family);
+            // 字间距直接是逻辑点；行高是"倍数"，由 行高/字号 得出。
+            if (extras.letterSpacing != 0.0) {
+                OH_Drawing_SetTextStyleLetterSpacing(st, extras.letterSpacing);
+            }
+            if (extras.lineHeight > 0.0 && fontSize > 0.0) {
+                OH_Drawing_SetTextStyleFontHeight(st, extras.lineHeight / fontSize);
+            }
             OH_Drawing_TypographyHandlerPushTextStyle(handler, st);
             return st;
         };
@@ -5745,14 +7570,27 @@ struct RenderThread {
                 OH_Drawing_DestroyTextStyle(st);
             }
         }
+        phase("handler-style-text");
         result.typography = OH_Drawing_CreateTypography(handler);
+        RLOGD("text typography phase=created layout=%{public}llu font=%{public}llu success=%{public}d mono_us=%{public}lld cpu_us=%{public}lld",
+            (unsigned long long)layoutId,(unsigned long long)result.fontLease->id,result.typography?1:0,
+            (long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs());
+        phase("create-typography");
+        g_typographyResources.observeCreate(result.typography,text.size(),layoutId,result.fontLease->id);
         OH_Drawing_DestroyTypographyHandler(handler);
+        phase("destroy-handler");
         if (!result.typography) return result;
         double layoutWidth = unlimitedWidth ? 1000000.0 : constraintWidth;
         if (layoutWidth < 1.0) layoutWidth = 1.0;
         OH_Drawing_TypographyLayout(result.typography, layoutWidth);
+        phase("typography-layout");
         textLayoutsBuilt += 1;
-        if (text.size() >= 4096) RLOGI("font layout lease id=%{public}llu configuration=%{public}llu live_generations=%{public}zu refs=%{public}ld generation_work_units=%{public}zu collection_us=%{public}lld destroy_us_total=%{public}llu",
+        // Actual completed SDK call, kept with the existing low-cost counters.
+        // A begin/absence-of-log is not used as proof of zero or one Layout.
+        RLOGI("text layout count layout=%{public}llu font=%{public}llu built=%{public}llu",
+            (unsigned long long)layoutId,(unsigned long long)result.fontLease->id,
+            (unsigned long long)textLayoutsBuilt);
+        if (text.size() >= 4096) RLOGD("font layout lease id=%{public}llu configuration=%{public}llu live_generations=%{public}zu refs=%{public}ld generation_work_units=%{public}zu collection_us=%{public}lld destroy_us_total=%{public}llu",
             static_cast<unsigned long long>(result.fontLease->id), static_cast<unsigned long long>(result.fontLease->fontConfiguration),
             fontPool.liveGenerations(), result.fontLease.use_count(), result.fontLease->workUnits,
             static_cast<long long>(collectionMicros), static_cast<unsigned long long>(fontPool.stats().destroyMicros));
@@ -5762,6 +7600,10 @@ struct RenderThread {
         result.maxWidth = OH_Drawing_TypographyGetMaxWidth(result.typography);
         result.lineCount = OH_Drawing_TypographyGetLineCount(result.typography);
         result.alphabeticBaseline = OH_Drawing_TypographyGetAlphabeticBaseline(result.typography);
+        phase("metrics");
+        RLOGD("text layout phase=end layout=%{public}llu font=%{public}llu generationWork=%{public}zu mono_us=%{public}lld cpu_us=%{public}lld",
+            (unsigned long long)layoutId,(unsigned long long)result.fontLease->id,result.fontLease->workUnits,
+            (long long)cjguiOhosTextMonoUs(),(long long)cjguiOhosTextThreadCpuUs());
         return result;
     }
 
@@ -6035,7 +7877,7 @@ void cjguiOhosNotifyImageCompletion(const OhosImageRef &entry)
                 if (holdsEntry && reconcileAcceptedImagesLocked(&session)) acceptedChanged = true;
             }
         }
-        if (acceptedChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+        if (acceptedChanged) g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-6427"));
     } catch (...) {
         RLOGE("image completion notification allocation failed entry=%{public}llu",
               static_cast<unsigned long long>(entry->id));
@@ -6087,27 +7929,13 @@ bool hitTestAccepted(Session &s, float x, float y, size_t *outIndex)
     // 点不可命中——命中几何与绘制几何一致（第六次复核第 4 项：圆角命中
     // 按已声明契约断言，D4 圆角外点必须不推进 owner）。
     for (size_t i = s.accepted.size(); i-- > 0;) {
-        const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
-        if (x >= static_cast<float>(n.x) && x < static_cast<float>(n.x + n.width) &&
-            y >= static_cast<float>(n.y) && y < static_cast<float>(n.y + n.height)) {
-            if (n.isInteractive == 0) continue;
-            if (!RenderThread::pointInsideClips(n, x, y)) continue;
-            if (n.cornerRadius > 0.0) {
-                const float r = static_cast<float>(n.cornerRadius);
-                const float right = static_cast<float>(n.x) + static_cast<float>(n.width);
-                const float bottom = static_cast<float>(n.y) + static_cast<float>(n.height);
-                // 就近角心：只有落在四个角方框内时才需要圆弧判别。
-                const float cx = x < static_cast<float>(n.x) + r ? static_cast<float>(n.x) + r
-                                                                 : (x > right - r ? right - r : x);
-                const float cy = y < static_cast<float>(n.y) + r ? static_cast<float>(n.y) + r
-                                                                 : (y > bottom - r ? bottom - r : y);
-                const float dx = x - cx;
-                const float dy = y - cy;
-                if (dx * dx + dy * dy > r * r) continue;  // 圆弧外：不命中
-            }
-            *outIndex = i;
-            return true;
-        }
+        const SceneNode &node = s.accepted[i];
+        if (node.pod.isInteractive == 0) continue;
+        // Paint and input share the accepted rect + sidecar translation. The
+        // un-translated layout position must not hit after the node moved.
+        if (!RenderThread::visualPointHitsNode(node, x, y)) continue;
+        *outIndex = i;
+        return true;
     }
     return false;
 }
@@ -6118,14 +7946,13 @@ bool hitTestAccepted(Session &s, float x, float y, size_t *outIndex)
 bool scrollAreaIndexContainingPoint(Session &s, float x, float y, size_t *outIndex)
 {
     for (size_t i = s.accepted.size(); i-- > 0;) {
-        const CjguiInternalRendererComposableNode &n = s.accepted[i].pod;
+        const SceneNode &node = s.accepted[i];
+        const CjguiInternalRendererComposableNode &n = node.pod;
         if (n.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA) continue;
         RLOGI("scroll hit test: touch=(%{public}.0f,%{public}.0f) viewport=(%{public}lld,%{public}lld,%{public}lld,%{public}lld) density=%{public}.2f",
               x, y, static_cast<long long>(n.x), static_cast<long long>(n.y),
               static_cast<long long>(n.width), static_cast<long long>(n.height), s.surfaceDensity);
-        if (x < static_cast<float>(n.x) || x >= static_cast<float>(n.x + n.width) ||
-            y < static_cast<float>(n.y) || y >= static_cast<float>(n.y + n.height)) continue;
-        if (!RenderThread::pointInsideClips(n, x, y)) continue;
+        if (!RenderThread::visualPointHitsNode(node, x, y)) continue;
         *outIndex = i;
         return true;
     }
@@ -6312,9 +8139,11 @@ static void recordHumanSelectionAnchorLocked(Session &s, const char *origin)
               origin, static_cast<unsigned long long>(s.editingNodeId));
         return;
     }
+    cjguiOhosClearSelectionCaptureLocked(s);
     s.humanAnchorSeq += 1;
     s.humanAnchor = Session::HumanSelectionAnchor{};
     s.humanAnchor.seq = s.humanAnchorSeq;
+    s.humanAnchor.focus = s.focusAuthority.generation;
     s.humanAnchor.nodeId = acceptedNode->pod.nodeId;
     s.humanAnchor.resourceId = acceptedNode->pod.resourceId;
     s.humanAnchor.nodeKind = acceptedNode->pod.nodeKind;
@@ -6385,6 +8214,8 @@ void enqueueEndEditingForTapLocked(Session &s)
 // 编辑缓冲从已接受场景值起步；每次激活分配新编辑上下文编号，旧上下文的
 // 延迟回调从此失效。调用方负责 FOCUS 事件是否回发（核心发起的焦点不回发，
 // 避免事件环；触摸点击回发，由核心按 accepted 场景判决并驱动 reveal）。
+static int64_t proxyRestoreNowMs();
+static constexpr int64_t kProxyRestoreDeadlineMs = 2500;
 static void freezeOwnedInputTransferLocked(Session &s);
 void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
 {
@@ -6418,6 +8249,7 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
         // 显式重聚焦（窗口 reassert / 可视 caret 提交后的宿主通道）：编辑上下文
         // 幂等不变，但 ArkTS 隐藏代理可能已失焦（可视面点击画布不清编辑上下文
         // 却会移走组件焦点）。重发焦点通知，宿主 requestProxyFocus 重新挂键盘。
+        s.focusAuthority.preparePendingMount(s.appInstance, s.token, s.editingContextId, s.editingContextGeneration);
         s.focusNotifyPending = true;
         return;
     }
@@ -6501,6 +8333,7 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
                 clampToCodePointBoundary(mirror->text, s.selStartUtf16) == s.selStartUtf16;
             s.editingText = mirror->text;
             s.editingMirrorOwnerVersion = mirror->ownerContentVersion;
+            s.editingMirrorBodyBasis=mirror->sourceBasis;
             s.editingInputSourceBasis = mirror->sourceBasis;
             RLOGI("ime edit buffer seeded from session mirror node=%{public}llu units=%{public}zu owner_v=%{public}lld",
                   static_cast<unsigned long long>(node.pod.nodeId), mirror->text.size(),
@@ -6575,6 +8408,8 @@ void beginEditingOnNodeLocked(Session &s, const SceneNode &node)
         s.previewText.clear();
         s.focusNotifyPending = true;   // ArkTS TextInput 代理路径
     }
+    if (s.editingContextLive)
+        s.focusAuthority.preparePendingMount(s.appInstance, s.token, s.editingContextId, s.editingContextGeneration);
 }
 
 // Private visual gesture state. No document owner or editing protocol is added.
@@ -6619,9 +8454,11 @@ bool beginSelectionHandleDragLocked(Session &s, float x, float y)
     size_t index = 0;
     if (!sceneIndexByIdentityLocked(s, h.nodeId, h.resource, h.kind, &index) ||
         h.binding == 0 || s.accepted[index].pod.acceptedBindingEpoch != h.binding ||
-        !RenderThread::pointInsideClips(s.accepted[index].pod, x, y)) return false;
-    const double sd = std::hypot(x - h.startX, y - h.startY);
-    const double ed = std::hypot(x - h.endX, y - h.endY);
+        !RenderThread::visualPointInsideClips(s.accepted[index], x, y)) return false;
+    const double layoutX = x - h.translateX;
+    const double layoutY = y - h.translateY;
+    const double sd = std::hypot(layoutX - h.startX, layoutY - h.startY);
+    const double ed = std::hypot(layoutX - h.endX, layoutY - h.endY);
     const bool start = h.startVisible && sd <= 14 && (!h.endVisible || ed > 14 || sd < ed);
     if (!start && !(h.endVisible && ed <= 14)) return false;
     const SceneNode &node = s.accepted[index];
@@ -6629,10 +8466,11 @@ bool beginSelectionHandleDragLocked(Session &s, float x, float y)
     auto &d = s.selectionDrag;
     d.anchorReady = true; d.anchor = start ? h.end : h.start;
     // Finger stays on the grip; the paragraph hit query follows its line centre.
-    d.offsetX = (start ? h.startX : h.endX) - x;
-    d.offsetY = (start ? h.startLineY : h.endLineY) - y;
+    d.offsetX = (start ? h.startX : h.endX) - layoutX;
+    d.offsetY = (start ? h.startLineY : h.endLineY) - layoutY;
     s.editingTapPending = false;
     s.gesture.phase = Session::TouchGesture::kGestureSelectionDrag;
+    s.gesture.focusGeneration = s.focusAuthority.generation;
     s.gesture.hasTarget = s.gesture.targetEditableText = true;
     s.gesture.targetNodeId = node.pod.nodeId; s.gesture.targetResourceId = node.pod.resourceId;
     s.gesture.targetNodeKind = node.pod.nodeKind; s.gesture.targetBindingEpoch = node.pod.acceptedBindingEpoch;
@@ -6647,12 +8485,44 @@ bool queueSelectionExtentLocked(Session &s, float x, float y, bool terminal)
     if (!selectionDragMatchesLocked(s, s.selectionDrag)) return false;
     size_t index = 0;
     if (!sceneIndexByIdentityLocked(s, s.editingNodeId, s.editingResourceId, s.editingNodeKind, &index)) return false;
-    const auto &node = s.accepted[index].pod;
-    s.editingTapX = x + s.selectionDrag.offsetX - node.x;
-    s.editingTapY = y + s.selectionDrag.offsetY - node.y;
+    const SceneNode &node = s.accepted[index];
+    cjguiOhosNodeTapCoordinates(node, x + s.selectionDrag.offsetX,
+                                y + s.selectionDrag.offsetY,
+                                &s.editingTapX, &s.editingTapY);
     s.editingHitMode = 2; s.editingTapPending = true;
     s.selectionDrag.moved = true; s.selectionDrag.terminal = terminal;
     s.selectionDrag.lastX = x; s.selectionDrag.lastY = y;
+    return true;
+}
+
+// A decided editing gesture acquires once, before its first hit freezes facts.
+// An undecided other-field touch never enters this function.
+static bool acquireEditingGestureFocusLocked(Session &s, const SceneNode &node)
+{
+    auto &g=s.gesture;
+    if(!g.active || !g.hasTarget || g.targetNodeId!=node.pod.nodeId ||
+       g.targetResourceId!=node.pod.resourceId || g.targetNodeKind!=node.pod.nodeKind ||
+       g.targetBindingEpoch!=node.pod.acceptedBindingEpoch || g.targetSemanticId!=node.semanticId)return false;
+    if(g.focusGeneration) return s.focusAuthority.eligible(g.focusGeneration) &&
+        s.focusAuthority.target(node.pod.nodeId,node.pod.resourceId,node.pod.nodeKind,
+            node.pod.acceptedBindingEpoch,node.semanticId);
+    const auto oldKey=s.focusAuthority.mounted;
+    const auto oldFocus=s.focusAuthority.generation;
+    const auto prefix=s.inputTickets.unpublishedPrefix(oldKey,oldFocus,s.editingMirrorOwnerVersion);
+    auto next=s.focusAuthority;
+    auto &tr=next.transfer;
+    if(tr.retainedByFocus && !tr.operation) {
+        for(size_t i=tr.inputPrefix.size();i>0;--i)if(!s.inputTickets.retainsPublication(tr.inputPrefix[i-1],s.editingMirrorOwnerVersion)) {
+            tr.inputPrefix.erase(tr.inputPrefix.begin()+i-1);
+            if(i<=tr.inputGenerations.size())tr.inputGenerations.erase(tr.inputGenerations.begin()+i-1);
+        }
+        if(tr.inputPrefix.empty())tr={};
+    }
+    const auto generation=next.issue(node.pod.nodeId,node.pod.resourceId,node.pod.nodeKind,
+        node.pod.acceptedBindingEpoch,node.semanticId);
+    if(!generation || !next.retainAdmittedInput(oldKey,oldFocus,prefix,
+        s.ownedTextSessionBindingEpoch,proxyRestoreNowMs()+kProxyRestoreDeadlineMs))return false;
+    s.focusAuthority=std::move(next);g.focusGeneration=generation;
     return true;
 }
 
@@ -6668,8 +8538,7 @@ bool requestLongPressWordLocked(Session &s, int64_t nowMs)
     const SceneNode &node = s.accepted[index];
     const bool focused = s.editing && s.editingContextLive && !s.editorRetired &&
         s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId;
-    s.focusAuthority.issue(node.pod.nodeId, node.pod.resourceId, node.pod.nodeKind,
-        node.pod.acceptedBindingEpoch, node.semanticId);
+    if(!acquireEditingGestureFocusLocked(s,node))return false;
     beginEditingOnNodeLocked(s, node);
     s.textTapChain.armed = false;
     s.gesture.longPressRecognized = true;
@@ -6685,15 +8554,15 @@ bool requestLongPressWordLocked(Session &s, int64_t nowMs)
             focus.acceptedBindingEpoch = node.pod.acceptedBindingEpoch;
             stampTouchEvent(s, focus); s.events.push_back(focus);
         }
-        g_render.post(std::make_shared<RedrawJob>());
+        g_render.post(std::make_shared<RedrawJob>("redraw-callsite-7115"));
         return true;
     }
     initializeSelectionDragLocked(s, node);
     s.selectionDrag.wordHold = true;
     s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
     s.gesture.pressBeginMs = s.textPressBeginMs = 0; // trigger once
-    s.editingTapX = s.gesture.startX - node.pod.x;
-    s.editingTapY = s.gesture.startY - node.pod.y;
+    cjguiOhosNodeTapCoordinates(node, s.gesture.startX, s.gesture.startY,
+                                &s.editingTapX, &s.editingTapY);
     s.editingHitMode = 1; s.editingTapPending = true; // replaces BEGIN's caret job
     if (!focused) {
         QueuedEvent focus;
@@ -6755,7 +8624,7 @@ bool applySelectionHitLocked(Session &s, uint64_t operation, uint32_t mode, uint
     }
     // 显式 native 命中/导航取得回推资格（与整值回调的待确认落点区分）。
     s.selectionIntentConfirmed = true;
-    g_render.post(std::make_shared<RedrawJob>());
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-7185"));
     return true;
 }
 
@@ -6918,13 +8787,22 @@ bool tapHitsLiveEditingBindingLocked(const Session &s, const SceneNode &node)
 void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
 {
     if (!s.gesture.hasTarget) {
+        RLOGI("tap dispatch phase=end reason=no_begin_target epoch=%{public}llu x=%{public}.2f y=%{public}.2f",
+              static_cast<unsigned long long>(s.gesture.gestureEpoch), x, y);
         // 空白点击：语义与「点到其他控件」一致，结束当前编辑（否则系统
         // 键盘不会收起）。未命中不产生指针事件：没有可上报的目标节点。
         enqueueEndEditingForTapLocked(s);
         return;
     }
     size_t liftIndex = 0;
-    if (!hitTestAccepted(s, x, y, &liftIndex) ||
+    const bool liftHit = hitTestAccepted(s, x, y, &liftIndex);
+    RLOGI("tap dispatch phase=end epoch=%{public}llu hit=%{public}d target=%{public}llu binding=%{public}llu actual=%{public}llu kind=%{public}u interactive=%{public}u readonly=%{public}u clips=%{public}u",
+          static_cast<unsigned long long>(s.gesture.gestureEpoch),liftHit?1:0,
+          static_cast<unsigned long long>(s.gesture.targetNodeId),static_cast<unsigned long long>(s.gesture.targetBindingEpoch),
+          liftHit?static_cast<unsigned long long>(s.accepted[liftIndex].pod.nodeId):0,
+          liftHit?s.accepted[liftIndex].pod.nodeKind:0,liftHit?s.accepted[liftIndex].pod.isInteractive:0,
+          liftHit?s.accepted[liftIndex].pod.isReadOnly:0,liftHit?s.accepted[liftIndex].pod.clipConstraintCount:0);
+    if (!liftHit ||
         s.accepted[liftIndex].pod.nodeId != s.gesture.targetNodeId ||
         s.accepted[liftIndex].pod.resourceId != s.gesture.targetResourceId ||
         s.accepted[liftIndex].pod.nodeKind != s.gesture.targetNodeKind) {
@@ -6935,6 +8813,9 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
     // （结束/启动编辑上下文）发生前拒绝；同绑定换帧以当前 accepted 事实交付。
     if (s.gesture.targetBindingEpoch == 0 ||
         s.accepted[liftIndex].pod.acceptedBindingEpoch != s.gesture.targetBindingEpoch) {
+        RLOGI("tap dispatch reject=binding expected=%{public}llu actual=%{public}llu",
+              static_cast<unsigned long long>(s.gesture.targetBindingEpoch),
+              static_cast<unsigned long long>(s.accepted[liftIndex].pod.acceptedBindingEpoch));
         return;
     }
     const SceneNode &node = s.accepted[liftIndex];
@@ -6989,11 +8870,10 @@ void executePendingTapLocked(Session &s, float x, float y, int64_t nowMs)
         // 既有语义：旧缓冲随新焦点初始化被替换，不经失焦结算）。
         const bool wasActive = s.editingContextLive && !s.editorRetired &&
             s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId;
-        s.focusAuthority.issue(node.pod.nodeId, node.pod.resourceId, node.pod.nodeKind,
-            node.pod.acceptedBindingEpoch, node.semanticId);
+        if(!acquireEditingGestureFocusLocked(s,node))return;
         beginEditingOnNodeLocked(s, node);
-        s.editingTapX = x - static_cast<double>(node.pod.x);   // 节点内相对坐标
-        s.editingTapY = y - static_cast<double>(node.pod.y);
+        // 节点内相对坐标：先按 sidecar 平移映射回 accepted 布局原点。
+        cjguiOhosNodeTapCoordinates(node, x, y, &s.editingTapX, &s.editingTapY);
         s.editingTapPending = true;
         s.editingHitMode = 0;
         if (s.gesture.tapCount >= 2) {
@@ -7221,9 +9101,17 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         if (tapCount == 1 && beginSelectionHandleDragLocked(s, x, y)) return;
         size_t index = 0;
         if (!hitTestAccepted(s, x, y, &index)) {
+            RLOGI("tap dispatch phase=begin reason=no_hit epoch=%{public}llu x=%{public}.2f y=%{public}.2f",
+                  static_cast<unsigned long long>(s.gesture.gestureEpoch),x,y);
             return;  // 空白/非交互内容：无点击目标；滚动仍由包含视口接管。
         }
         const SceneNode &node = s.accepted[index];
+        RLOGI("tap dispatch phase=begin epoch=%{public}llu node=%{public}llu kind=%{public}u interactive=%{public}u readonly=%{public}u binding=%{public}llu projection=%{public}llu rect=%{public}lld,%{public}lld,%{public}lld,%{public}lld clips=%{public}u inside=1 x=%{public}.2f y=%{public}.2f",
+              static_cast<unsigned long long>(s.gesture.gestureEpoch),static_cast<unsigned long long>(node.pod.nodeId),
+              node.pod.nodeKind,node.pod.isInteractive,node.pod.isReadOnly,
+              static_cast<unsigned long long>(node.pod.acceptedBindingEpoch),static_cast<unsigned long long>(node.pod.projectionVersion),
+              static_cast<long long>(node.pod.x),static_cast<long long>(node.pod.y),
+              static_cast<long long>(node.pod.width),static_cast<long long>(node.pod.height),node.pod.clipConstraintCount,x,y);
         if (node.pod.isReadOnly != 0) return;  // 只读内容可滚动，不可激活
         const uint32_t kind = node.pod.nodeKind;
         const bool isEditableText = isEditableTextKind(kind);
@@ -7248,13 +9136,13 @@ void synthesizeEventsFromRawTouch(Session &s, const RawTouchSample &sample)
         if (isEditableText) s.gesture.pressBeginMs = nowMs;
         if (isEditableText && s.editing && !s.editorRetired &&
             s.editingNodeId == node.pod.nodeId && s.editingResourceId == node.pod.resourceId) {
-            // Handle BEGIN was tested first. Ordinary touch places the caret;
-            // a fast drag can still be taken by the existing viewport.
+            // Focus precedes the real editing hit; UP and hold reuse this operation.
+            if(!acquireEditingGestureFocusLocked(s,node))return;
+            beginEditingOnNodeLocked(s,node);
             s.gesture.phase = Session::TouchGesture::kGestureEditorHold;
             s.gesture.pressBeginMs = nowMs;
             s.textPressBeginMs = nowMs;
-            s.editingTapX = x - static_cast<double>(node.pod.x);
-            s.editingTapY = y - static_cast<double>(node.pod.y);
+            cjguiOhosNodeTapCoordinates(node, x, y, &s.editingTapX, &s.editingTapY);
             s.editingTapPending = true;
             s.editingHitMode = 0;
         }
@@ -7733,6 +9621,218 @@ static void rememberForwardedSelectionLocked(Session &s, uint32_t start, uint32_
 // the Cangjie window can update its focused-selection ledger. Stamp the event
 // with the exact accepted editor binding; a callback that races a rebind must
 // not be able to update a new node that happens to reuse its semantic identity.
+static int64_t proxyRestoreNowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+static CjguiOhosCoverage cjguiOhosQualifyObservationLocked(const Session &s,const CjguiOhosCoverage &body,bool fixedPrefix) {
+    if(!body || !body->layout || !body->platform || s.inputOwnerFailed || s.markedActive || s.previewActive ||
+       !s.editingContextLive || s.editorRetired || !s.focusAuthority.mounted.valid() ||
+       !s.focusAuthority.target(s.editingNodeId,s.editingResourceId,s.editingNodeKind,s.editingAcceptedBindingEpoch,s.editingFieldName) ||
+       body->node!=s.editingNodeId || body->resource!=s.editingResourceId || body->kind!=s.editingNodeKind ||
+       body->ownerBinding!=s.ownedTextSessionBindingEpoch || body->ownerVersion!=s.editingMirrorOwnerVersion ||
+       (body->acceptedBinding && body->acceptedBinding!=s.editingAcceptedBindingEpoch) ||
+       (body->qualified && !s.focusAuthority.permits(body->key,body->focus)) ||
+       (!fixedPrefix && *body->platform!=s.editingText))return {};
+    CjguiOhosTextCoverage value=*body;
+    value.body=body->body?body->body:body;value.qualified=true;
+    value.key=s.focusAuthority.mounted;value.focus=s.focusAuthority.generation;
+    value.acceptedBinding=s.editingAcceptedBindingEpoch;
+    return std::make_shared<const CjguiOhosTextCoverage>(std::move(value));
+}
+
+// Freeze current and previously admitted generations of this exact mount.
+// The transfer stores completion permission only for the original registry IDs.
+static bool cjguiOhosPublicationDependenciesForObservationLocked(Session &s,
+    const CjguiOhosProxyKey &key,uint64_t focus,int64_t version,
+    std::vector<std::shared_ptr<const CjguiOhosPublicationDependency>> &out)
+{
+    if(!s.inputTickets.publicationDependencies(key,focus,version,out))return false;
+    const auto &tr=s.focusAuthority.transfer;
+    if(!tr.retainedByFocus || !(tr.old==key) || tr.generation!=focus)return true;
+    std::vector<uint64_t> generations;
+    for(auto generation:tr.inputGenerations)if(generation!=focus &&
+       std::find(generations.begin(),generations.end(),generation)==generations.end())generations.push_back(generation);
+    for(auto generation:generations) {
+        std::vector<std::shared_ptr<const CjguiOhosPublicationDependency>> original;
+        if(!s.inputTickets.publicationDependencies(key,generation,version,original))return false;
+        for(const auto &d:original) {
+            if(!s.focusAuthority.permitsTransferredInput(d->key,d->focusGeneration,d->id,d->ownerBinding,proxyRestoreNowMs()))return false;
+            if(std::none_of(out.begin(),out.end(),[&](const auto &held){return held->id==d->id;}))out.push_back(d);
+        }
+    }
+    std::sort(out.begin(),out.end(),[](const auto&a,const auto&b){return a->id<b->id;});
+    return out.size()<=CjguiOhosEditTickets::kMaxTickets;
+}
+
+// Producer-time authorization after freezing the actual publication prefix.
+static CjguiOhosCoverage cjguiOhosObservePaintedBodyLocked(const Session &s,const CjguiOhosCoverage &body,
+    uint64_t focus,bool fixedPrefix)
+{
+    if(!cjguiOhosBodyAvailableForObservationLocked(s,body,focus,fixedPrefix))return {};
+    CjguiOhosTextCoverage observation;
+    observation.ownerVersion=body->ownerVersion;
+    observation.layoutOrigin=body->layoutOrigin;observation.platformOrigin=body->platformOrigin;
+    observation.node=body->node;observation.resource=body->resource;observation.kind=body->kind;
+    observation.ownerBinding=body->ownerBinding;observation.bodyBasis=body->bodyBasis;
+    observation.layout=body->layout;observation.platform=body->platform;observation.acceptance=body->acceptance;
+    observation.body=body->body?body->body:body;
+    observation.key=s.focusAuthority.mounted;observation.focus=focus;
+    observation.acceptedBinding=s.editingAcceptedBindingEpoch;observation.qualified=true;
+    return CjguiOhosTextCoverage::prove(std::move(observation));
+}
+
+// Permission to consume the original semantic command, not to input on its
+// retired source mount. The exact structural target may still be unmounted.
+static bool cjguiOhosCapturedCommandSourceCurrentLocked(const Session &s,const CjguiOhosChoiceSources::Receipt &r)
+{
+    const auto &command=s.selectionCommandState;const auto capture=command.capture;
+    if(!r || r!=command.choice || !capture || !r->origin->capturedCommand || command.terminal ||
+       (!command.installed && !command.firstInputConsumed && proxyRestoreNowMs()>=capture->notAfter) || !s.editingContextLive || s.editorRetired ||
+       s.closeRequested || s.inputOwnerFailed || s.markedActive || s.previewActive)return false;
+    const auto &o=*r->origin;const auto &t=s.focusAuthority.transfer;
+    if(o.sourceKind!=4 || !o.coverage || !s.focusAuthority.eligible(o.focus) ||
+       !s.focusAuthority.target(o.node,o.resource,o.kind,o.acceptedBinding,capture->field) ||
+       o.ownerBinding!=s.ownedTextSessionBindingEpoch || !(o.key==capture->source->coverage->key) ||
+       o.focus!=capture->source->coverage->focus || o.deadline!=capture->notAfter ||
+       t.generation!=o.focus)return false;
+    if(command.target) {
+        const auto target=command.target;
+        if(target->owner!=command.owner || t.operation!=target->operation || !(t.old==target->predecessor) ||
+           t.targetContext!=target->context || t.targetEdit!=target->edit ||
+           s.editingContextId!=target->context || s.editingContextGeneration!=target->edit)return false;
+    } else if(t.operation!=capture->operation || !(t.old==o.key) || t.targetContext!=capture->targetContext ||
+       t.targetEdit!=capture->targetEdit || s.editingContextId!=capture->targetContext ||
+       s.editingContextGeneration!=capture->targetEdit)return false;
+    const auto *d=ownedMirrorDeclarationLocked(s,o.node,o.resource,o.kind);
+    const CjguiOhosSourceBasis original(o.bodyBasis),current(d?d->sourceBasis:"");
+    return d && original.valid && current.valid && d->ownerContentVersion==o.coverage->ownerVersion &&
+        current.value[0]==original.value[0] && current.value[2]==original.value[2] &&
+        current.value[3]==original.value[3] && current.value[5]==original.value[5];
+}
+
+static void cjguiOhosExpireSelectionCommandLocked(Session &s)
+{
+    auto &command=s.selectionCommandState;const bool terminal=command.terminal;
+    command.expire(proxyRestoreNowMs());
+    auto &original=s.originalInserts;
+    if(original.active() && proxyRestoreNowMs()>=original.root->notAfter)
+        original.cancel("original_deadline"); // Reap even without another SDK callback/ACK.
+    if(!terminal && command.terminal) {
+        if(command.choice && !command.owner) {
+            command.choice->reason=command.reason;s.choiceSources.settle(command.choice,false,"");
+        }
+        RLOGI("physical selection command phase=terminal choice=%{public}llu ownerExecuted=%{public}d platformInstalled=%{public}d reason=%{public}s",
+            (unsigned long long)(command.choice?command.choice->origin->id:0),command.owner?1:0,
+            command.choice && command.choice->platformInstalled?1:0,command.reason.c_str());
+    }
+}
+
+static int cjguiOhosDescribeChoiceLocked(const Session &s,const CjguiOhosChoiceSources::Receipt &r,CjguiOhosCoverage &proof,bool &rebase,const char *&reason) {
+    if(!r)return -1;
+    if(r->settled){proof=r->resolvedCoverage?r->resolvedCoverage:r->origin->coverage;rebase=r->requiresRebase;return r->accepted && proof?1:-1;}
+    const auto &o=*r->origin;
+    const auto refuse=[&](const char*why){reason=why;return -1;};
+    if(cjguiOhosCapturedCommandSourceCurrentLocked(s,r)) {
+        int64_t begin,end;const auto c=o.coverage;const CjguiOhosSourceBasis basis(o.bodyBasis);
+        if(!c || !c->qualified || !basis.valid || !o.prefix.empty() || *c->platform!=o.text ||
+           o.start!=0 || o.end!=o.text.size() || o.sourceAnchor!=0 || o.sourceFocus!=basis.value[5] ||
+           !c->position(false,0,begin) || !c->position(false,o.end,end) ||
+           begin!=c->platformOrigin || end>o.sourceFocus)return refuse("captured_command_source_span");
+        proof=c;return 1; // semantic full source; coverage.source() geometry remains unchanged
+    }
+    if(!s.focusAuthority.permits(o.key,o.focus) || o.ownerBinding!=s.ownedTextSessionBindingEpoch ||
+       (o.deadline && proxyRestoreNowMs()>=o.deadline))return refuse("choice_authority_or_deadline");
+    if(!o.coverage || !o.coverage->qualified)return refuse("choice_original_source_missing");
+    if(r->resolvedCoverage){proof=r->resolvedCoverage;rebase=r->requiresRebase;return 1;}
+    for(auto id:o.prefix) {
+        const int result=s.inputTickets.terminalResult(id);
+        if(result<0)return refuse("choice_prefix_refused");
+        if(result==0)return 0;
+    }
+    const auto *d=ownedMirrorDeclarationLocked(s,o.node,o.resource,o.kind);
+    if(!d || !d->coverage)return o.prefix.empty()?refuse("choice_body_missing"):0;
+    const auto &c=d->coverage;
+    if(c->ownerBinding!=o.ownerBinding || c->node!=o.node || c->resource!=o.resource || c->kind!=o.kind)return refuse("choice_coverage_identity");
+    if(o.prefix.empty()) {
+        if(!o.coverage || c->ownerVersion!=o.coverage->ownerVersion ||
+           !CjguiOhosSourceBasis(c->bodyBasis).sameBody(CjguiOhosSourceBasis(o.bodyBasis)))return refuse("choice_owner_version_moved");
+        int64_t a,b;
+        uint32_t layoutAnchor,layoutFocus;
+        if(o.sourceKind==3 ? (*o.coverage->layout!=o.text || !CjguiOhosTextCoverage::local(o.coverage->layoutBytes,o.sourceAnchor-o.coverage->layoutOrigin,layoutAnchor) ||
+           !CjguiOhosTextCoverage::local(o.coverage->layoutBytes,o.sourceFocus-o.coverage->layoutOrigin,layoutFocus)) :
+           (*o.coverage->platform!=o.text || !o.coverage->source(false,o.start,a) || !o.coverage->source(false,o.end,b)))return refuse("choice_coordinates_invalid");
+        proof=o.coverage;return 1;
+    }
+    // Fixed original publication dependencies, including completed-but-unpublished input.
+    if(o.prefixOrigins.size()!=o.prefix.size())return refuse("choice_prefix_receipt_missing");
+    int64_t version=o.coverage->ownerVersion,origin=o.coverage->platformOrigin;
+    int64_t coordinateVersion=version,coordinateOrigin=origin;std::string coordinateBasis=o.coverage->bodyBasis;
+    const std::u16string *chain=o.coverage->platform.get();bool coordinateFound=o.coordinateAfter==0;
+    for(size_t i=0;i<o.prefixOrigins.size();++i) {
+        const auto &t=*o.prefixOrigins[i];std::string resultBasis;int64_t nextVersion,nextOrigin;
+        if(t.id!=o.prefix[i] || !(t.key==o.key) || (t.focusGeneration!=o.focus &&
+           !s.focusAuthority.permitsTransferredInput(t.key,t.focusGeneration,t.id,t.ownerBinding,proxyRestoreNowMs())) || t.ownerBinding!=o.ownerBinding ||
+           t.node!=o.node || t.resource!=o.resource || t.kind!=o.kind || t.acceptedBinding!=o.acceptedBinding ||
+           t.field!=s.editingFieldName || t.before!=*chain ||
+           !s.inputTickets.dependencyResult(t,nextVersion,nextOrigin,resultBasis) || nextVersion!=version+1 ||
+           (!CjguiOhosSourceBasis(resultBasis).valid || CjguiOhosSourceBasis(resultBasis).value[6]!=nextVersion))
+            return refuse("choice_prefix_chain_invalid");
+        version=nextVersion;origin=nextOrigin;chain=&t.after;
+        if(o.coordinateAfter==t.id) {
+            coordinateFound=true;coordinateVersion=version;coordinateOrigin=origin;coordinateBasis=resultBasis;
+            if(o.text!=t.after)return refuse("choice_coordinate_member_invalid");
+        }
+    }
+    if(!coordinateFound || (!o.coordinateAfter && o.text!=*o.coverage->platform))return refuse("choice_coordinate_member_missing");
+    // An intermediate original member may publish while the final receipt still awaits Present.
+    if(c->ownerVersion<version)return 0;
+    const auto acceptance=c->acceptance.lock();
+    if(c->ownerVersion!=version || c->platformOrigin!=origin || !acceptance || acceptance->origin->id!=o.prefix.back() ||
+       acceptance->ownerVersion!=version || acceptance->postOrigin!=origin || *chain!=*c->platform ||
+       !CjguiOhosSourceBasis(acceptance->resultBasis).sameBody(CjguiOhosSourceBasis(c->bodyBasis)))
+        return refuse("choice_prefix_postimage_invalid");
+    int64_t a,b;
+    if(o.coordinateAfter) {
+        // The original typed postimage owns these coordinates, not an invented display mirror.
+        std::vector<int32_t> bytes;
+        const CjguiOhosSourceBasis coordinateSource(coordinateBasis);
+        if(!coordinateSource.valid || coordinateSource.value[6]!=coordinateVersion ||
+           !CjguiOhosTextCoverage::index(o.text,bytes) || o.start>=bytes.size() || o.end>=bytes.size() ||
+           bytes[o.start]<0 || bytes[o.end]<0 || coordinateOrigin>coordinateSource.value[5]-bytes.back())
+            return refuse("choice_coordinates_invalid");
+        a=coordinateOrigin+bytes[o.start];b=coordinateOrigin+bytes[o.end];
+    } else if(!o.coverage->source(false,o.start,a) || !o.coverage->source(false,o.end,b))return refuse("choice_coordinates_invalid");
+    rebase=coordinateVersion!=version;proof=cjguiOhosQualifyObservationLocked(s,c,true);
+    if(!proof)return refuse("choice_published_qualification");
+    // Owner ChangeMap sees only versions after the actual coordinate member. Freeze once on readiness.
+    r->coordinateVersion=coordinateVersion;r->coordinateOrigin=coordinateOrigin;r->coordinateAnchor=a;r->coordinateFocus=b;
+    return 1;
+}
+static int cjguiOhosChoiceReadyLocked(Session &s,const CjguiOhosChoiceSources::Receipt &r) {
+    CjguiOhosCoverage proof;bool rebase=false;const char *reason="choice_invalid";
+    const int ready=cjguiOhosDescribeChoiceLocked(s,r,proof,rebase,reason);
+    if(ready<0){if(r && !r->settled){
+        const auto &o=*r->origin;const auto c=o.coverage;
+        const auto first=o.prefixOrigins.empty()?std::shared_ptr<const CjguiOhosPublicationDependency>{}:o.prefixOrigins.front();
+        RLOGW("choice first refusal id=%{public}llu reason=%{public}s sourceKind=%{public}u coordinateAfter=%{public}llu platformUnits=%{public}zu firstBeforeUnits=%{public}zu ownerVersion=%{public}lld execution=%{public}llu context=%{public}lld edit=%{public}llu mount=%{public}llu focus=%{public}llu ownerBinding=%{public}llu acceptedBinding=%{public}llu firstInput=%{public}llu coverageBasis=%{public}s",
+            (unsigned long long)o.id,reason,o.sourceKind,(unsigned long long)o.coordinateAfter,
+            c&&c->platform?c->platform->size():0,first?first->before.size():0,
+            (long long)(c?c->ownerVersion:-1),(unsigned long long)(first&&first->sourceLeaf?first->sourceLeaf->execution:0),
+            (long long)o.key.context,(unsigned long long)o.key.edit,(unsigned long long)o.key.mount,(unsigned long long)o.focus,
+            (unsigned long long)o.ownerBinding,(unsigned long long)o.acceptedBinding,(unsigned long long)(first?first->id:0),
+            c?c->bodyBasis.c_str():"");
+        r->reason=reason;s.choiceSources.settle(r,false,"");}return -1;}
+    if(ready==1 && r && !r->settled && !s.choiceSources.resolveCoverage(r,proof,rebase)) {
+        r->reason="choice_coverage_budget";s.choiceSources.settle(r,false,"");return -1;
+    }
+    return ready;
+}
+
+
+
 bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
 {
     const SceneNode *acceptedNode = nullptr;
@@ -7756,8 +9856,10 @@ bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
     ev.nodeKind = acceptedNode->pod.nodeKind;
     ev.projectionVersion = acceptedNode->pod.projectionVersion;
     ev.acceptedBindingEpoch = acceptedNode->pod.acceptedBindingEpoch;
-    ev.selectionStart = start;
-    ev.selectionEnd = end;
+    // The event transports a platform range; direction is retained separately
+    // in the immutable choice's start/end and its owner anchor/focus receipt.
+    ev.selectionStart = std::min(start,end);
+    ev.selectionEnd = std::max(start,end);
     ev.editingContextId = s.editingContextId;
     ev.editingContextGeneration = s.editingContextGeneration;
     // Freeze the coordinate system of this actual observation, rather than
@@ -7771,6 +9873,51 @@ bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
         origin.node=ev.nodeId;origin.resource=ev.resourceId;origin.kind=ev.nodeKind;
         origin.acceptedBinding=ev.acceptedBindingEpoch;origin.ownerBinding=s.ownedTextSessionBindingEpoch;
         origin.start=start;origin.end=end;origin.text=composedBuffer(s);origin.bodyBasis=decl->sourceBasis;
+        origin.humanAnchor=s.humanAnchor.seq;
+        const auto body=decl->coverage;
+        if(!body || !cjguiOhosPublicationDependenciesForObservationLocked(s,origin.key,origin.focus,body->ownerVersion,origin.prefixOrigins))return false;
+        for(const auto&d:origin.prefixOrigins)origin.prefix.push_back(d->id);
+        if(s.lastCompletedInputTicket && s.lastCompletedInputTicket->key==origin.key &&
+           (s.lastCompletedInputTicket->focusGeneration==origin.focus || s.focusAuthority.permitsTransferredInput(
+               s.lastCompletedInputTicket->key,s.lastCompletedInputTicket->focusGeneration,s.lastCompletedInputTicket->id,
+               s.lastCompletedInputTicket->ownerBinding,proxyRestoreNowMs())) && s.lastCompletedInputTicket->after==origin.text)
+            for(const auto&d:origin.prefixOrigins)if(d->id==s.lastCompletedInputTicket->id)origin.coordinateAfter=d->id;
+        if(!origin.coordinateAfter && *body->platform!=origin.text)return false;
+        origin.coverage=cjguiOhosQualifyObservationLocked(s,body,!origin.prefix.empty());
+        if(!origin.coverage)origin.coverage=cjguiOhosObservePaintedBodyLocked(s,body,origin.focus,!origin.prefix.empty());
+        if(!origin.prefixOrigins.empty() && origin.prefixOrigins.front()->sourceLeaf) {
+            // Freeze this observation's actual starting platform source. The
+            // accepted D may still carry A's larger input buffer; neither the
+            // pending after nor a later owner publication supplies this origin.
+            const auto &first=*origin.prefixOrigins.front();const auto leaf=first.sourceLeaf;
+            const auto c=leaf->coverage,accepted=leaf->acceptedBody;
+            const CjguiOhosSourceBasis basis(c?c->bodyBasis:"");
+            if(first.predecessor || !leaf->command || !leaf->execution || !leaf->publication || !leaf->attach || !leaf->install ||
+               !(leaf->key==origin.key) || leaf->focus!=origin.focus || !c || !accepted || !c->qualified ||
+               !(c->key==origin.key) || c->focus!=origin.focus || c->node!=origin.node || c->resource!=origin.resource ||
+               c->kind!=origin.kind || c->ownerBinding!=origin.ownerBinding || c->acceptedBinding!=origin.acceptedBinding ||
+               !c->platform || first.before!=*c->platform || first.start!=leaf->start || first.end!=leaf->end ||
+               !basis.valid || c->ownerVersion!=leaf->ownerVersion || body->ownerVersion!=leaf->ownerVersion ||
+               leaf->selectionRevision!=basis.value[7] || leaf->anchor!=0 || leaf->active!=basis.value[5] ||
+               !CjguiOhosSourceBasis(accepted->bodyBasis).sameBody(CjguiOhosSourceBasis(body->bodyBasis)) ||
+               !basis.sameBody(CjguiOhosSourceBasis(body->bodyBasis)) || !accepted->layout || !body->layout ||
+               *accepted->layout!=*body->layout || *c->layout!=*body->layout ||
+               (!leaf->installed && (leaf->firstObservation<0 || leaf->admittedAt<leaf->firstObservation ||
+                 leaf->admittedAt>=leaf->notAfter)))return false;
+            origin.coverage=c;origin.bodyBasis=c->bodyBasis;
+        }
+        if(!s.humanAnchor.consumed && s.humanAnchor.seq && s.humanAnchor.start16==start && s.humanAnchor.end16==end) {
+            const auto hit=s.humanAnchor.coverage;
+            if(!hit || !body || s.humanAnchor.focus!=origin.focus || s.humanAnchor.paintTicket!=s.acceptedPaintTicketId ||
+               hit->ownerVersion!=body->ownerVersion || *hit->layout!=*body->layout ||
+               !CjguiOhosSourceBasis(hit->bodyBasis).sameBody(CjguiOhosSourceBasis(body->bodyBasis)))origin.coverage.reset();
+            else {
+                origin.coverage=cjguiOhosObservePaintedBodyLocked(s,hit,origin.focus,!origin.prefix.empty());
+                origin.layoutSerial=s.humanAnchor.paintSerial;
+                if(origin.layoutSerial!=s.paintedBody.serial)origin.coverage.reset();
+            }
+        }
+        origin.deadline=proxyRestoreNowMs()+kProxyRestoreDeadlineMs;
         if(s.lastCompletedInputTicket && s.lastCompletedInputTicket->key==origin.key &&
            s.lastCompletedInputTicket->focusGeneration==origin.focus && s.lastCompletedInputTicket->after==origin.text)
             origin.predecessor=s.lastCompletedInputTicket->id;
@@ -7783,9 +9930,13 @@ bool editorEnqueueSelectionChanged(Session &s, uint32_t start, uint32_t end)
 
 static bool queuedSelectionContextIsCurrent(const Session &s, const QueuedEvent &ev)
 {
+    if(ev.choiceObservation && ev.choiceObservation->origin->capturedCommand)
+        return cjguiOhosCapturedCommandSourceCurrentLocked(s,ev.choiceObservation);
     return ev.editingContextId != 0 && s.editingContextLive && !s.editorRetired &&
         ev.editingContextId == s.editingContextId &&
-        ev.editingContextGeneration == s.editingContextGeneration;
+        ev.editingContextGeneration == s.editingContextGeneration &&
+        (!ev.choiceObservation || ev.choiceObservation->origin->sourceKind!=4 ||
+         s.focusAuthority.permits(ev.choiceObservation->origin->key,ev.choiceObservation->origin->focus));
 }
 
 // 失焦结算（框架主动结束编辑，恰好一次）：把当前未提交的组合预览折进编辑
@@ -8118,6 +10269,11 @@ void imeDetach()
 // ABI：生命周期与诊断
 // ---------------------------------------------------------------------------
 
+uint32_t cjgui_internal_renderer_abi_version(void)
+{
+    return CJGUI_INTERNAL_RENDERER_ABI_VERSION;
+}
+
 uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *config,
                                         CjguiInternalRendererStatus *outStatus)
 {
@@ -8178,6 +10334,7 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
             PendingSettlement &p = g_pending[i];
             p.job = nullptr;
             p.nodes.clear();
+            p.ownedCoverage.reset();p.ownedOwnerAcceptance.reset();p.ownedOriginalResult.reset();p.ownedCommandId=0;p.ownedCommandOwner.reset();
             p.projectionVersion = 0;
             p.valid = false;
             p.ticketId = 0;
@@ -8225,9 +10382,74 @@ int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t session
 
 // H1-C：窗口声明它拥有某个正文节点的范围会话。声明生效后，该节点的提交以
 // **精确 UTF-16 范围增量**（kind 51）交付并带上绑定的代次；整值事件被抑制。
+static bool editorEnqueueLayoutChoiceLocked(Session &s,const CaretHitTestJob &job,uint64_t operation) {
+    const auto &c=job.coverage;
+    if(!job.requiresTransfer || !c || operation!=s.selectionOperationGeneration ||
+       job.observationOperation!=operation || !cjguiOhosBodyAvailableForObservationLocked(s,c,job.observationFocus,false) ||
+       s.acceptedPaintTicketId!=job.sourcePaintTicket || !job.paintSerial)return false;
+    int64_t anchor,focus;
+    if(!c->position(true,job.caretUtf16,focus))return false;
+    anchor=focus;
+    if(job.mode==1 || job.mode==3) {
+        if(!c->position(true,job.wordStart,anchor) || !c->position(true,job.wordEnd,focus))return false;
+    } else if(job.mode==2 && !c->position(false,s.selectionDrag.anchor,anchor))return false;
+    CjguiOhosChoiceOrigin o;o.sourceKind=3;o.key=c->key;o.focus=c->focus;o.node=c->node;o.resource=c->resource;o.kind=c->kind;
+    o.acceptedBinding=c->acceptedBinding;o.ownerBinding=c->ownerBinding;o.coverage=cjguiOhosObservePaintedBodyLocked(s,c,job.observationFocus,false);o.layoutSerial=job.paintSerial;
+    if(!o.coverage)return false;o.key=o.coverage->key;o.focus=o.coverage->focus;o.acceptedBinding=o.coverage->acceptedBinding;
+    o.bodyBasis=c->bodyBasis;o.text=*c->layout;o.start=o.end=job.caretUtf16;o.sourceAnchor=anchor;o.sourceFocus=focus;
+    o.deadline=proxyRestoreNowMs()+kProxyRestoreDeadlineMs;o.prefix=s.inputTickets.unresolvedPrefix(o.key,o.focus);
+    if(!o.prefix.empty())return false; // Layout-origin choices require the already-current installed body.
+    QueuedEvent ev;ev.kind=kEvSelectionChanged;ev.nodeId=o.node;ev.resourceId=o.resource;ev.nodeKind=o.kind;
+    ev.projectionVersion=s.editingProjectionVersion;ev.acceptedBindingEpoch=o.acceptedBinding;
+    ev.editingContextId=s.editingContextId;ev.editingContextGeneration=s.editingContextGeneration;
+    ev.selectionStart=ev.selectionEnd=job.caretUtf16;ev.text=utf16ToUtf8(o.text);
+    ev.choiceObservation=s.choiceSources.observe(std::move(o));if(!ev.choiceObservation)return false;
+    s.events.push_back(ev);return true;
+}
+
 // 未声明的节点永不产生 kind 51——消费方不会在没有绑定的表面上 fail-closed。
 // `bindingEpoch` 原样回传，供窗口拒绝换绑前入队的旧增量；`enabled` 为 false
 // 时撤回声明（代次仍然记录：撤回本身也是一次绑定变化）。
+static CjguiOhosCoverage cjguiOhosFreezeCoverageLocked(const Session &s,
+    const Session::OwnedMirrorDeclaration &d,uint64_t node,int64_t resource,uint32_t kind,bool installed=false) {
+    const CjguiOhosSourceBasis basis(d.sourceBasis);
+    if(!d.valid || !basis.valid || basis.value[2]!=d.ownerContentVersion || basis.value[3]!=d.ownerContentVersion ||
+       basis.value[6]!=d.ownerContentVersion || basis.value[8]>basis.value[5] || basis.value[9]>basis.value[5] ||
+       d.bindingEpoch!=s.ownedTextSessionBindingEpoch)return {};
+    CjguiOhosTextCoverage c;c.ownerVersion=d.ownerContentVersion;c.layoutOrigin=basis.value[4];
+    c.bodyBasis=d.sourceBasis;c.layout=std::make_shared<const std::u16string>(d.text);
+    c.node=node;c.resource=resource;c.kind=kind;c.ownerBinding=d.bindingEpoch;
+    // Body identity is independent of the mount which will observe it.
+    if(installed){if(!s.focusAuthority.mounted.valid())return {};c.key=s.focusAuthority.mounted;c.focus=s.focusAuthority.generation;c.acceptedBinding=s.editingAcceptedBindingEpoch;c.qualified=true;}
+    if(const auto &r=d.ownerAcceptance; r && !installed) {
+        const auto &t=*r->origin;
+        if(!r->accepted || r->ownerVersion!=d.ownerContentVersion || r->postOrigin<0 ||
+           t.node!=node || t.resource!=resource || t.kind!=kind || t.ownerBinding!=d.bindingEpoch ||
+            !CjguiOhosSourceBasis(r->resultBasis).sameBody(basis))return {};
+        c.acceptance=r;c.key=t.key;c.focus=t.focusGeneration;c.acceptedBinding=t.acceptedBinding;c.platformOrigin=r->postOrigin;
+        c.platform=d.text==t.after?c.layout:std::make_shared<const std::u16string>(t.after);
+    } else {
+        // Initial/installed exact mirror is a different fact from a completed Change.
+        if(installed && (s.editingMirrorOwnerVersion!=d.ownerContentVersion || s.editingText!=d.text))return {};
+        c.platform=c.layout;c.platformOrigin=c.layoutOrigin;
+    }
+    auto proof=CjguiOhosTextCoverage::prove(std::move(c));if(!proof)return {};
+    if(proof->layoutOrigin+proof->layoutBytes.back()>basis.value[5] ||
+       proof->platformOrigin+proof->platformBytes.back()>basis.value[5])return {};
+    const auto boundary=[](const std::u16string &text,uint32_t at){
+        if(at==0 || at==text.size())return true;
+        uint32_t a=0,b=0;return cjguiOhosGraphemeRange16(text,at,a,b) && a==at;
+    };
+    uint32_t la,lb,pa,pb;
+    if(!CjguiOhosTextCoverage::local(proof->layoutBytes,proof->begin-proof->layoutOrigin,la) ||
+       !CjguiOhosTextCoverage::local(proof->layoutBytes,proof->end-proof->layoutOrigin,lb) ||
+       !CjguiOhosTextCoverage::local(proof->platformBytes,proof->begin-proof->platformOrigin,pa) ||
+       !CjguiOhosTextCoverage::local(proof->platformBytes,proof->end-proof->platformOrigin,pb) ||
+       !boundary(*proof->layout,la) || !boundary(*proof->layout,lb) ||
+       !boundary(*proof->platform,pa) || !boundary(*proof->platform,pb))return {};
+    return proof;
+}
+
 extern "C" CjguiInternalRendererStatus cjgui_ohos_declare_owned_text_source(
     uint64_t session, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
     uint64_t bindingEpoch, uint32_t enabled, const char *mirrorText, int64_t mirrorVersion, const char *basis)
@@ -8251,9 +10473,11 @@ extern "C" CjguiInternalRendererStatus cjgui_ohos_declare_owned_text_source(
         s->ownedMirrorStaged.text = utf8ToUtf16(std::string(mirrorText));
         s->ownedMirrorStaged.ownerContentVersion = mirrorVersion;
         s->ownedMirrorStaged.sourceBasis = basis ? basis : "";
+        s->ownedMirrorStaged.originalOwnerResult.reset();
         s->ownedMirrorStaged.ownerAcceptance = s->inputTickets.acceptedForBody(bindingEpoch,mirrorVersion,s->ownedMirrorStaged.sourceBasis);
         s->ownedMirrorStaged.bindingEpoch = bindingEpoch;
         s->ownedMirrorStaged.declaredBindingEpoch = bindingEpoch;
+        s->ownedMirrorStaged.coverage=cjguiOhosFreezeCoverageLocked(*s,s->ownedMirrorStaged,nodeId,resourceId,nodeKind);
     }
     RLOGI("owned text session enabled=%{public}d node=%{public}llu epoch=%{public}llu "
           "mirror=%{public}d mirror_units=%{public}zu mirror_owner_v=%{public}lld",
@@ -8273,10 +10497,45 @@ extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_ow
         enabled,mirrorText,mirrorVersion,"");
 }
 
+// Optional private cause on the already staged declaration. It is frozen and
+// published with that declaration by the existing Present transaction.
+extern "C" int32_t ohos_renderer_declare_selection_command(uint64_t session,uint64_t id)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s)return 1;
+    auto &d=s->ownedMirrorStaged;d.commandId=0;d.commandOwner.reset();
+    const auto &command=s->selectionCommandState;
+    if(!id || !d.valid || !command.choice || command.choice->origin->id!=id || !command.owner || command.terminal)return 0;
+    if(command.choice->origin->sourceKind!=4 || !command.choice->origin->capturedCommand)return 1;
+    const CjguiOhosSourceBasis current(d.sourceBasis),result(command.owner->basis);
+    const auto &o=*command.choice->origin;
+    if(!current.valid || !result.valid || d.declaredBindingEpoch!=o.ownerBinding || d.bindingEpoch!=o.ownerBinding ||
+       d.ownerContentVersion!=command.owner->version || current.value[0]!=result.value[0] ||
+       current.value[2]!=result.value[2] || current.value[3]!=result.value[3] || current.value[5]!=result.value[5] ||
+       current.value[6]!=result.value[6] || current.value[7]!=result.value[7] ||
+       current.value[8]!=result.value[8] || current.value[9]!=result.value[9])return 0;
+    d.commandId=id;d.commandOwner=command.owner;return 0;
+}
+
+extern "C" int32_t ohos_renderer_declare_original_owner_result(uint64_t session,uint64_t resultId)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return 1;
+    auto &d=s->ownedMirrorStaged;d.originalOwnerResult.reset();if(!resultId)return 0;
+    const auto r=s->originalInserts.result;
+    if(!r || r->id!=resultId || !r->accepted || !r->root || !d.valid || !d.coverage ||
+       d.ownerContentVersion!=r->version || d.sourceBasis!=r->basis ||
+       d.bindingEpoch!=r->root->installedBody->ownerBinding || d.declaredBindingEpoch!=d.bindingEpoch ||
+       d.coverage->node!=r->root->installedBody->node || d.coverage->resource!=r->root->installedBody->resource ||
+       d.coverage->kind!=r->root->installedBody->kind || !d.coverage->layout || *d.coverage->layout!=d.text)return 1;
+    if(!s->originalInserts.holdCoverage(d.coverage,s->inputTickets.retainedUnits()+s->choiceSources.retainedUnits()))return 1;
+    d.originalOwnerResult=r;return 0;
+}
+
 // OHOS_GRAPHEME_SERVICE_BEGIN
-// System ICU is the platform boundary oracle. Each call owns its library handle,
-// immutable UTF-16 buffer and iterator; destruction closes the iterator before
-// releasing the buffer/library. Missing symbols/rule data is a named refusal.
+// System ICU is the platform boundary oracle. Successful immutable symbols are
+// shared; each query pins their provider and owns its UTF-16 buffer/iterator.
+// Iterator destruction precedes buffer/provider release. Failed loads are not
+// cached; missing symbols/rule data remains a named refusal.
 // UTF-8/UTF-16 mapping below maps scalars only, never implements UAX#29.
 #ifndef CJGUI_OHOS_ICU_LIBRARY
 #define CJGUI_OHOS_ICU_LIBRARY "libicu.so"
@@ -8305,6 +10564,42 @@ struct CjguiOhosIcuApi {
     CjguiOhosIcuApi& operator=(const CjguiOhosIcuApi&) = delete;
 };
 
+struct CjguiOhosSystemIcuService {
+    std::mutex mutex;
+    std::shared_ptr<const CjguiOhosIcuApi> accepted;
+
+    std::shared_ptr<const CjguiOhosIcuApi> acquire()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (accepted) return accepted;
+        auto candidate = std::make_shared<const CjguiOhosIcuApi>();
+        if (candidate->ready()) accepted = candidate;
+        return candidate;
+    }
+
+    void release()
+    {
+        std::shared_ptr<const CjguiOhosIcuApi> retired;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            retired.swap(accepted);
+        }
+        // dlclose is outside the service lock. Original in-flight queries keep
+        // their provider alive until their own iterator has closed.
+    }
+};
+
+static CjguiOhosSystemIcuService& cjguiOhosSystemIcu()
+{
+    static CjguiOhosSystemIcuService service;
+    return service;
+}
+
+static void cjguiOhosReleaseSystemIcu()
+{
+    cjguiOhosSystemIcu().release();
+}
+
 extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_grapheme_cluster_range(
     const char *utf8, uint64_t declaredLength, uint64_t offsetByte,
     uint64_t *outStartByte, uint64_t *outEndByte)
@@ -8321,9 +10616,10 @@ extern "C" CjguiInternalRendererStatus cjgui_internal_renderer_grapheme_cluster_
         return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
     }
     if (offsetByte >= declaredLength) return CJGUI_INTERNAL_RENDERER_GRAPHEME_BOUNDARY_INVALID;
-    CjguiOhosIcuApi api;
-    if (!api.ready()) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
     try {
+        const auto provider = cjguiOhosSystemIcu().acquire();
+        const auto& api = *provider;
+        if (!api.ready()) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
         UErrorCode error = U_ZERO_ERROR;
         int32_t units = 0;
         api.fromUtf8(nullptr, 0, &units, utf8, static_cast<int32_t>(declaredLength), &error);
@@ -8388,6 +10684,7 @@ int32_t ohos_renderer_shutdown_render_thread()
     CjguiInternalRendererStatus result = g_render.shutdownAndJoin();
     cjguiOhosLogImageSnapshot("stop");
     if (result == CJGUI_INTERNAL_RENDERER_OK) {
+        cjguiOhosReleaseSystemIcu();
         g_rendererShutdownDone.store(true);
         RLOGI("render thread shutdown confirmed (frames=%{public}llu rejected=%{public}lld)",
               static_cast<unsigned long long>(g_render.submittedFrames),
@@ -8466,7 +10763,7 @@ extern "C" int32_t cjgui_ohos_test_image_forget(uint64_t resourceVersion)
             } else ++it;
         }
     }
-    if (!retired.empty()) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    if (!retired.empty()) g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-9176"));
     return retired.empty() ? 0 : 1;
 #else
     (void)resourceVersion;
@@ -8637,7 +10934,7 @@ extern "C" int32_t cjgui_ohos_test_trigger_redraw(void)
 {
 #ifdef CJGUI_OHOS_TEST_GATES
     if (!g_render.running) return -1;
-    g_render.post(std::make_shared<RedrawJob>());
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-9347"));
     return 0;
 #else
     return -1;
@@ -8890,11 +11187,17 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t session)
     const size_t choiceOriginsBeforeDestroy = s->choiceSources.liveCount();
     const size_t pendingInputsBeforeDestroy = s->inputTickets.pendingCount();
     s->focusAuthority.transfer={};
-    s->ownedMirrorStaged.ownerAcceptance.reset();
-    s->ownedMirrorAccepted.ownerAcceptance.reset();
+    s->ownedMirrorStaged = Session::OwnedMirrorDeclaration{};
+    s->ownedMirrorAccepted = Session::OwnedMirrorDeclaration{};
+    s->pendingOriginalResult.reset();s->consumedOriginalResult.reset();
+    s->proxyRestore = Session::ProxyRestoreRequest{};
+    s->activeCaret.coverage.reset();s->humanAnchor.coverage.reset();
+    s->textLineBands.clear();
     s->lastCompletedInputTicket.reset();
     s->lastEventInputTicket.reset();
     s->lastEventChoice.reset();
+    cjguiOhosClearSelectionCaptureLocked(*s);
+    s->originalInserts.clear();
     s->inputTickets.clear(true);
     s->choiceSources.clear();
     s->inputOwnerCompleted = 0;
@@ -9050,6 +11353,35 @@ CjguiInternalRendererStatus cjgui_internal_renderer_request_close(uint64_t sessi
 // ABI：文字测量（经渲染线程事务）
 // ---------------------------------------------------------------------------
 
+static std::atomic<uint64_t> g_textWorkTraceSequence{0};
+extern "C" void ohos_renderer_observe_managed_text_boundary(uint64_t session,int64_t input,uint64_t request,
+    int64_t version,const char *phase,const char *basis,int64_t allocated,int64_t physical,
+    int64_t gcCount,int64_t gcFreed,int64_t gcTime) {
+    if (!cjguiOhosDeepDiagnosticsEnabled()) return;
+    // Caller supplies the boundary's original receipt, or input=0 explicitly.
+    // No Session/currentCompleted lookup and no collection/threshold mutation.
+    RLOGI("text managed phase=%{public}s sequence=%{public}llu mono_us=%{public}lld pid=%{public}d tid=%{public}ld session=%{public}llu input=%{public}lld request=%{public}llu owner=%{public}lld basis=%{public}s allocated=%{public}lld physical=%{public}lld gcCount=%{public}lld gcFreed_raw=%{public}lld gcTime_raw=%{public}lld",
+        phase?phase:"unknown",(unsigned long long)++g_textObservationSequence,(long long)cjguiOhosTextMonoUs(),
+        static_cast<int>(getpid()),syscall(SYS_gettid),(unsigned long long)session,(long long)input,
+        (unsigned long long)request,(long long)version,basis?basis:"",(long long)allocated,(long long)physical,
+        (long long)gcCount,(long long)gcFreed,(long long)gcTime);
+}
+extern "C" void ohos_renderer_observe_candidate_text_source(uint64_t session,uint64_t projection,
+    uint64_t input,uint64_t node,int64_t resource,uint32_t kind,uint64_t binding,
+    int64_t version,const char *basis,const char *text) {
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s)return;
+    const std::string b=basis?basis:"";
+    const auto receipt=s->inputTickets.acceptedForBody(binding,version,b);
+    s->textWorkTrace=CjguiOhosTextWorkTrace::freeze(++g_textWorkTraceSequence,projection,input,node,resource,kind,binding,
+        version,b,utf8ToUtf16(text?text:""),receipt);
+    const auto &t=*s->textWorkTrace;
+    RLOGD("text operation source sequence=%{public}llu candidateProjection=%{public}llu inputKnown=%{public}d input=%{public}llu node=%{public}llu resource=%{public}lld binding=%{public}llu ownerBefore=%{public}lld ownerAfter=%{public}lld beforeBasis=%{public}s afterBasis=%{public}s",
+        (unsigned long long)t.sequence,(unsigned long long)t.projection,t.exactOwner,(unsigned long long)t.input,
+        (unsigned long long)t.node,(long long)t.resource,(unsigned long long)t.binding,(long long)t.ownerBefore,
+        (long long)t.ownerAfter,t.beforeBasis.c_str(),t.afterBasis.c_str());
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(uint64_t session, const char *text,
                                                         double fontSize, uint32_t fontWeight,
                                                         uint32_t fontFamily, uint32_t maximumWidth,
@@ -9070,6 +11402,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(uint
             job->traceContext = source->editingContextId;
             job->traceProjection = source->editingProjectionVersion;
             job->traceOwnerBase = source->editingContextBaseVersion;
+            const auto t=source->textWorkTrace;
+            if(t && t->matches(utf8ToUtf16(text)))job->textWorkTrace=t;
         }
     }
     job->text = text;
@@ -9112,6 +11446,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline
             job->traceContext = source->editingContextId;
             job->traceProjection = source->editingProjectionVersion;
             job->traceOwnerBase = source->editingContextBaseVersion;
+            job->keepPrivateLayout = source->editingContextLive && !source->editorRetired &&
+                source->editingNodeKind == kKindMultiline;
+            job->preparedNode = source->editingNodeId;
+            job->preparedResource = source->editingResourceId;
+            job->preparedKind = source->editingNodeKind;
+            job->preparedBinding = source->editingAcceptedBindingEpoch;
+            const auto t=source->textWorkTrace;
+            if(t && t->matches(utf8ToUtf16(text)))job->textWorkTrace=t;
         }
     }
     job->text = text;
@@ -9338,8 +11680,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(uin
             job->nodeHeight = presentation->pod.height;
             job->nodeX = presentation->pod.x;
             job->nodeY = presentation->pod.y;
-            job->tapX = x - presentation->pod.x;
-            job->tapY = y - presentation->pod.y;
+            cjguiOhosNodeTapCoordinates(*presentation, x, y, &job->tapX, &job->tapY);
             job->text = utf8ToUtf16(presentation->value);
             job->runs = presentation->textStyleRuns;
             job->sourcePaintTicket = s->acceptedPaintTicketId;
@@ -9353,6 +11694,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(uin
             if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
             job->session = session;
             job->contextId = s->editingContextId;
+            job->observationFocus=s->focusAuthority.generation;
+            job->observationOperation=s->selectionOperationGeneration;
             job->nodeId = nodeId;
             job->resourceId = node->pod.resourceId;
             job->bindingEpoch = node->pod.acceptedBindingEpoch;
@@ -9364,9 +11707,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(uin
             job->nodeHeight = node->pod.height;
             job->nodeX = node->pod.x;
             job->nodeY = node->pod.y;
-            job->tapX = x - node->pod.x;
-            job->tapY = y - node->pod.y;
+            cjguiOhosNodeTapCoordinates(*node, x, y, &job->tapX, &job->tapY);
             job->text = composedBuffer(*s);
+            const auto *decl=ownedMirrorDeclarationLocked(*s,nodeId,s->editingResourceId,s->editingNodeKind);
+            if(decl){job->coverage=decl->coverage;job->layoutText=decl->text;}
+            else job->layoutText=job->text;
         }
     }
     // 锁外执行：presentation 命中在渲染线程调用方上**内联**（指针派发运行在
@@ -9403,13 +11748,17 @@ CjguiInternalRendererStatus cjgui_internal_renderer_accepted_scene_version(uint6
 //
 // 单调截止覆盖"排队→发送→平台安装→窗口裁决"：终结不依赖下一次重绘，也不依赖
 // 新的输入到达（pump 自带限时等待，到期即检查）。
-static constexpr int64_t kProxyRestoreDeadlineMs = 2500;
-
-static int64_t proxyRestoreNowMs()
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-}
+// OHOS-private restoration purpose and causal proof. Public restore PODs stay unchanged.
+enum class CjguiOhosRestorePurpose : uint32_t { ExplicitSelection=0, AutomaticRebase=1, RefusedRollback=2 };
+enum class CjguiOhosInputContinuity { Invalid, Adopted, PendingProtected };
+struct CjguiOhosInputContinuityProof {
+    CjguiOhosInputContinuity state;
+    const char *reason;
+};
+static constexpr CjguiInternalRendererStatus kRestoreSupersededByAdmittedInput =
+    static_cast<CjguiInternalRendererStatus>(39);
+static CjguiOhosInputContinuityProof cjguiOhosOwnedInputContinuityLocked(const Session &,
+    const SceneNode &, const Session::OwnedMirrorDeclaration &);
 
 static void armProxyRestoreRequestLocked(Session &s, const SceneNode &accepted,
     uint32_t selStart, uint32_t selEnd)
@@ -9439,7 +11788,14 @@ static void armProxyRestoreRequestLocked(Session &s, const SceneNode &accepted,
     req.sourceBasis = armMirror ? armMirror->sourceBasis : "";
     req.selStart = selStart;
     req.selEnd = selEnd;
-    req.deadlineMonoMs = proxyRestoreNowMs() + kProxyRestoreDeadlineMs;
+    auto &transfer=s.focusAuthority.transfer;
+    const bool originalHandoff=transfer.operation && transfer.generation==req.focusIntentGeneration &&
+        transfer.targetContext==req.contextId && transfer.targetEdit==req.contextGeneration && !transfer.restoreRequest;
+    req.deadlineMonoMs = originalHandoff && transfer.deadline>0 ? transfer.deadline : proxyRestoreNowMs()+kProxyRestoreDeadlineMs;
+    if(originalHandoff) {
+        transfer.restoreRequest=req.requestId;
+        if (!transfer.deadline) transfer.deadline=req.deadlineMonoMs;
+    }
     // units 是 UTF-16 码元数，不是正文 UTF-8 字节数（Astra 复核：日志不得混用单位）。
     RLOGI("proxy restore armed request=%{public}llu ctx=%{public}lld node=%{public}llu "
           "v=%{public}llu sel=%{public}u:%{public}u units=%{public}zu deadline=%{public}lld",
@@ -9476,9 +11832,71 @@ static void fillProxyRestoreTicketLocked(const Session &s, uint64_t requestId,
 //
 // 旧实现分两次调用（先回滚正文、再恢复选区），第一段成功已签发票据而窗口尚未登记、
 // 第二段失败时留下窗口不知道的孤儿请求。合并成一次之后不存在该交错。
+// Only a real completed continuation can supersede an automatic rebase. The
+// shared proof cannot advance projection or promote pending text to accepted D.
+static bool cjguiOhosAutomaticRestoreSupersededLocked(const Session &s, const SceneNode &node,
+    const Session::OwnedMirrorDeclaration &mirror, uint64_t frontier)
+{
+    const auto r=mirror.ownerAcceptance;
+    const auto head=s.lastCompletedInputTicket;
+    if(!r || !r->origin || !head || head==r->origin || head->id<=frontier)return false;
+    const auto selected=s.acceptedSelection;
+    if(selected && selected->receipt && selected->receipt->settled && selected->receipt->accepted &&
+       selected->coverage && selected->receipt!=head->choice && head->choice &&
+       selected->receipt->origin->id>head->choice->origin->id &&
+       (selected->receipt->origin->sourceKind==0 || selected->receipt->origin->sourceKind==1) &&
+       selected->coverage->key==head->key && selected->coverage->focus==head->focusGeneration &&
+       selected->coverage->ownerBinding==mirror.declaredBindingEpoch &&
+       selected->coverage->node==node.pod.nodeId && selected->coverage->resource==node.pod.resourceId &&
+       selected->coverage->kind==node.pod.nodeKind &&
+       CjguiOhosSourceBasis(selected->basis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis))) {
+        return false; // A later actually adopted human choice owns its own selection intent.
+    }
+    return cjguiOhosOwnedInputContinuityLocked(s,node,mirror).state!=CjguiOhosInputContinuity::Invalid;
+}
+
+// A request is frozen to its original published prefix. Reading a live snapshot
+// is also the platform's pre-body/pre-setter check; never exchange its owner for
+// a more recent receipt when deciding whether the original payload may execute.
+static bool cjguiOhosRestoreWaitsForInputLocked(const Session &s)
+{
+    const auto &req=s.proxyRestore;
+    return req.purpose==static_cast<uint32_t>(CjguiOhosRestorePurpose::AutomaticRebase) &&
+        (req.armed || req.awaitingAck || req.platformInstalled) && req.sourceOwner &&
+        req.contextId==s.editingContextId && req.contextGeneration==s.editingContextGeneration &&
+        req.focusIntentGeneration==s.focusAuthority.generation &&
+        s.inputTickets.hasUnpairedAfter(req.sourceOwner->origin->id,s.focusAuthority.mounted,
+            req.focusIntentGeneration,req.nodeId,req.resourceId,req.nodeKind,s.ownedTextSessionBindingEpoch);
+}
+
+static bool cjguiOhosRetireSupersededRestoreLocked(Session &s)
+{
+    const auto &req=s.proxyRestore;
+    const auto newer=s.originalInserts.result;
+    if(req.originalOwnerResult && newer && newer!=req.originalOwnerResult &&
+       newer->root==req.originalOwnerResult->root && newer->prefix>req.originalOwnerResult->prefix &&
+       (req.armed || req.awaitingAck || req.platformInstalled)) {
+        terminateProxyRestoreRequestLocked(s,"superseded_by_original_owner_result");return true;
+    }
+    if(req.purpose!=static_cast<uint32_t>(CjguiOhosRestorePurpose::AutomaticRebase) ||
+       !(req.armed || req.awaitingAck || req.platformInstalled) || !req.sourceOwner || !req.sourceCoverage)return false;
+    const auto *node=acceptedEditingNodeLocked(s,req.nodeId,req.resourceId,req.nodeKind);
+    if(!node || req.contextId!=s.editingContextId || req.contextGeneration!=s.editingContextGeneration ||
+       req.focusIntentGeneration!=s.focusAuthority.generation || req.acceptedBindingEpoch!=node->pod.acceptedBindingEpoch)return false;
+    const auto *live=ownedMirrorDeclarationLocked(s,req.nodeId,req.resourceId,req.nodeKind);
+    if(!live)return false;
+    auto original=*live;
+    original.ownerAcceptance=req.sourceOwner;original.coverage=req.sourceCoverage;
+    original.ownerContentVersion=req.sourceOwner->ownerVersion;original.sourceBasis=req.sourceBasis;original.text=req.text;
+    if(!cjguiOhosAutomaticRestoreSupersededLocked(s,*node,original,req.inputFrontier))return false;
+    terminateProxyRestoreRequestLocked(s,"superseded_by_admitted_input");
+    return true;
+}
+
 static CjguiInternalRendererStatus recoverTextProxyTicketLocked(Session &s, uint64_t nodeId, int64_t resourceId,
     uint32_t nodeKind, uint64_t sceneVersion, const char *expectedValue,
-    uint32_t selectionStart, uint32_t selectionEnd, CjguiInternalRendererProxyRestoreTicket *outTicket)
+    uint32_t selectionStart, uint32_t selectionEnd, CjguiInternalRendererProxyRestoreTicket *outTicket,
+    CjguiOhosRestorePurpose purpose = CjguiOhosRestorePurpose::ExplicitSelection, uint64_t selectionIntentRevision = 0)
 {
     if (!expectedValue || !outTicket) {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -9540,10 +11958,28 @@ static CjguiInternalRendererStatus recoverTextProxyTicketLocked(Session &s, uint
         RLOGW("proxy restore ticket rejected: non_scalar_boundary range=%{public}u:%{public}u", start, end);
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     }
+    if(s.dirtyInputTicket)purpose=CjguiOhosRestorePurpose::RefusedRollback;
+    if(purpose==CjguiOhosRestorePurpose::AutomaticRebase && recoverMirror &&
+       cjguiOhosAutomaticRestoreSupersededLocked(s,*accepted,*recoverMirror,0)) {
+        RLOGI("automatic restore superseded_by_admitted_input owner=%{public}lld head=%{public}llu intent=%{public}llu",
+            static_cast<long long>(recoverMirror->ownerContentVersion),
+            static_cast<unsigned long long>(s.lastCompletedInputTicket->id),
+            static_cast<unsigned long long>(selectionIntentRevision));
+        return kRestoreSupersededByAdmittedInput; // Before any termination, buffer write or arming.
+    }
+    if(purpose==CjguiOhosRestorePurpose::AutomaticRebase && recoverMirror &&
+       s.inputTickets.hasUnpairedAfter(recoverMirror->ownerAcceptance?recoverMirror->ownerAcceptance->origin->id:0,
+           s.focusAuthority.mounted,s.focusAuthority.generation,nodeId,resourceId,nodeKind,
+           recoverMirror->declaredBindingEpoch))return CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING;
     const Session::ProxyRestoreRequest &active = s.proxyRestore;
     if ((active.armed || active.awaitingAck || active.platformInstalled) && active.requestId != 0 &&
         active.nodeId == nodeId && active.resourceId == resourceId && active.nodeKind == nodeKind &&
-        active.acceptedProjectionVersion == sceneVersion && active.selStart == start &&
+        active.purpose==static_cast<uint32_t>(purpose) && active.selectionIntentRevision==selectionIntentRevision &&
+        active.originalOwnerResult==(recoverMirror?recoverMirror->originalOwnerResult:CjguiOhosOriginalInserts::OwnerResult{}) &&
+        active.contextId==s.editingContextId && active.contextGeneration==s.editingContextGeneration &&
+        active.focusIntentGeneration==s.focusAuthority.generation && active.acceptedBindingEpoch==accepted->pod.acceptedBindingEpoch &&
+        (active.acceptedProjectionVersion==sceneVersion || (recoverMirror &&
+         active.sourceBasis==recoverMirror->sourceBasis)) && active.selStart == start &&
         active.selEnd == end && active.text == text &&
         active.refusedInputId == (s.dirtyInputTicket ? s.dirtyInputTicket->id : 0) &&
         proxyRestoreNowMs() < active.deadlineMonoMs) {
@@ -9567,9 +12003,23 @@ static CjguiInternalRendererStatus recoverTextProxyTicketLocked(Session &s, uint
     // 窗口签发的恢复是已验证身份的显式意图：落点取得回推资格。
     s.selectionIntentConfirmed = true;
     armProxyRestoreRequestLocked(s, *accepted, start, end);
+    s.proxyRestore.purpose=static_cast<uint32_t>(purpose);
+    s.proxyRestore.selectionIntentRevision=selectionIntentRevision;
+    s.proxyRestore.inputFrontier=s.lastCompletedInputTicket?s.lastCompletedInputTicket->id:0;
+    if(purpose==CjguiOhosRestorePurpose::AutomaticRebase && recoverMirror) {
+        s.proxyRestore.sourceOwner=recoverMirror->ownerAcceptance;
+        s.proxyRestore.sourceCoverage=recoverMirror->coverage;
+        s.proxyRestore.originalOwnerResult=recoverMirror->originalOwnerResult;
+        if(s.proxyRestore.originalOwnerResult) {
+            // Native pending target only; explicit uninstalled-result gates
+            // continue to deny ordinary SDK/choice authority until adoption.
+            s.editingMirrorOwnerVersion=s.proxyRestore.originalOwnerResult->version;
+            s.editingMirrorBodyBasis=s.proxyRestore.sourceBasis;
+        }
+    }
     fillProxyRestoreTicketLocked(s, s.proxyRestore.requestId, outTicket);
     // 可见正文以编辑缓冲为准：回滚后必须重绘，否则画面仍是被拒草稿。
-    g_render.post(std::make_shared<RedrawJob>());
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-10287"));
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -9650,6 +12100,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_recover_text_proxy_ticket(ui
         selectionStart, selectionEnd, outTicket);
 }
 
+// Platform-private automatic-rebase entry. Refused recovery and explicit human
+// selection keep the original entry; only this caller grants prefix supersession.
+extern "C" CjguiInternalRendererStatus cjgui_ohos_recover_accepted_text_proxy_ticket(uint64_t session,
+    uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion, const char *acceptedValue,
+    uint32_t selectionStart, uint32_t selectionEnd, uint64_t selectionIntentRevision,
+    CjguiInternalRendererProxyRestoreTicket *outTicket)
+{
+    if(!outTicket)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    std::memset(outTicket,0,sizeof(*outTicket));
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s=lookupSessionLocked(session);
+    if(!s)return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    const auto &ha=s->humanAnchor;
+    if(ha.seq && !ha.consumed && ha.nodeId==nodeId && ha.resourceId==resourceId && ha.nodeKind==nodeKind &&
+       ha.projectionVersion==sceneVersion && (ha.start16!=selectionStart || ha.end16!=selectionEnd))
+        return CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING;
+    return recoverTextProxyTicketLocked(*s,nodeId,resourceId,nodeKind,sceneVersion,acceptedValue,
+        selectionStart,selectionEnd,outTicket,CjguiOhosRestorePurpose::AutomaticRebase,selectionIntentRevision);
+}
+
 // 按票据号查询终态：窗口自己的截止检查用它，事件丢失时也能终结待办。
 // 未知/已滚出的请求返回 NONE（窗口据此清账并按有界重试重新签发）。
 CjguiInternalRendererStatus cjgui_internal_renderer_query_proxy_restore_ticket(uint64_t session, uint64_t requestId,
@@ -9660,7 +12130,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_query_proxy_restore_ticket(u
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    cjguiOhosRetireSupersededRestoreLocked(*s);
     fillProxyRestoreTicketLocked(*s, requestId, outTicket);
+    if(s->proxyRestore.requestId==requestId && cjguiOhosRestoreWaitsForInputLocked(*s))
+        return CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING;
+    for(const auto &t:s->proxyRestoreTerminals)if(t.requestId==requestId &&
+        t.reason=="superseded_by_admitted_input")return kRestoreSupersededByAdmittedInput;
+    for(const auto &t:s->proxyRestoreTerminals)if(t.requestId==requestId &&
+        t.reason=="superseded_by_original_owner_result")return static_cast<CjguiInternalRendererStatus>(40);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -9674,13 +12151,16 @@ static void queueOwnedInteractionFeedbackIfCurrentLocked(Session *s)
         s->proxyRestore.awaitingAck || s->proxyRestore.platformInstalled) return;
     const auto *mirror = ownedMirrorDeclarationLocked(*s,
         s->editingNodeId, s->editingResourceId, s->editingNodeKind);
-    if (!mirror || mirror->text != s->editingText ||
-        mirror->ownerContentVersion != s->editingMirrorOwnerVersion) return;
+    if (!mirror || mirror->ownerContentVersion != s->editingMirrorOwnerVersion ||
+        (mirror->coverage ? !cjguiOhosCoverageCurrent(*s,mirror->coverage) : mirror->text!=s->editingText))return;
     if (s->activeCaret.valid && s->activeCaret.ticket == s->acceptedPaintTicketId &&
         s->activeCaret.projection == s->acceptedProjectionVersion &&
         s->activeCaret.context == s->editingContextId &&
-        s->activeCaret.caret == s->caretUtf16 && s->activeCaret.text == mirror->text) return;
-    g_render.postIfRunning(std::make_shared<RedrawJob>());
+        cjguiOhosActiveEndCurrent(*s,s->activeCaret) && s->activeCaret.text == mirror->text &&
+        s->activeCaret.coverage==mirror->coverage) return;
+    auto wake=std::make_shared<RedrawJob>("redraw-callsite-10399");wake->installedCoverage=mirror->coverage;
+    wake->installedSession=s->token;wake->installedTicket=s->acceptedPaintTicketId;
+    g_render.postIfRunning(wake);
 }
 
 // 窗口采纳的唯一消费点（唯一胜者）：只有"平台已安装且尚未被消费"的票据能翻成
@@ -9694,6 +12174,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_consume_proxy_restore_ticket
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = lookupSessionLocked(session);
     if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if(cjguiOhosRestoreWaitsForInputLocked(*s))return CJGUI_INTERNAL_RENDERER_OK;
+    cjguiOhosRetireSupersededRestoreLocked(*s);
     Session::ProxyRestoreRequest &req = s->proxyRestore;
     const auto previously=s->consumedRestoreChoice;
     if(previously && previously->origin->restoreRequest==requestId &&
@@ -9724,6 +12206,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_consume_proxy_restore_ticket
         if(!receipt)return CJGUI_INTERNAL_RENDERER_OK;
         s->lastEventChoice=receipt;
         s->consumedRestoreChoice=receipt;
+        s->consumedOriginalResult=req.originalOwnerResult;
     }
     Session::ProxyRestoreTerminal terminal;
     terminal.requestId = requestId;
@@ -9741,7 +12224,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_consume_proxy_restore_ticket
     s->proxyRestore = Session::ProxyRestoreRequest{};
     // Unique adoption unlocks complete feedback. The pre-install redraw alone
     // cannot stand in for the installed, owner-consumed selection.
-    g_render.postIfRunning(std::make_shared<RedrawJob>());
+    g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-10462"));
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -9911,6 +12394,9 @@ static void cjguiOhosLogAcceptedSummary(const std::vector<SceneNode> &accepted,
 // clip, value) 计算：任何模式切换、换绑、resize、换行、改值都必然改变它。
 static void cjguiOhosLogAcceptedFrame(const std::vector<SceneNode> &accepted)
 {
+    // Typed accepted geometry/readback is maintained independently. Only this
+    // optional full-value dump/fingerprint/escaping is disabled in normal mode.
+    if (!cjguiOhosDeepDiagnosticsEnabled()) return;
     // 内容指纹：只有 (id, semantic, kind, rect, clip, value) 变化才重发全量转储。
     // 不按投影版本门控——版本每次按键都 +1，那等于没收敛。
     uint64_t fingerprint = 1469598103934665603ull;
@@ -10025,6 +12511,16 @@ CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(u
         for (size_t i = 0; i < nodeCount && i < s->accepted.size(); ++i) {
             s->candidate[i] = s->accepted[i];
             s->candidate[i].pod.projectionVersion = projectionVersion;
+            // Accepted paint geometry belongs to this same node object and
+            // follows it into the candidate, exactly like the POD. A slot that
+            // is later re-staged under another node id clears it (see
+            // set_composable_scene_node), so it can never bind to a stranger.
+            if (s->candidate[i].geometry.present &&
+                s->candidate[i].geometry.nodeId == s->candidate[i].pod.nodeId) {
+                s->candidate[i].geometry.projectionVersion = projectionVersion;
+            } else {
+                s->candidate[i].geometry = NodePaintGeometry{};
+            }
             // 播种只是复制上一代状态；run 准入不能把它当本候选文本（R2）。
             s->candidate[i].stagedThisCandidate = false;
         }
@@ -10033,6 +12529,85 @@ CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(u
         s->buildingRunTable = s->acceptedRunTable;
     }
     cjguiOhosPruneReleasedImages();  // a replaced rejected candidate may have been the last owner
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// Versioned, value-only geometry sidecar for the currently open candidate.
+// It is admitted only against the exact projection and the node already
+// staged into that slot; present publishes it with the rest of the candidate
+// and a discarded candidate drops it wholesale. Values are paint-only:
+// translateX/Y move this node's own paint and scaleX/Y scale it around its
+// own centre. The clip slots follow their original clip owner.
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_geometry(
+    uint64_t session, uint64_t projectionVersion, uint32_t nodeIndex,
+    const CjguiInternalRendererComposableGeometry *geometry)
+{
+    if (!geometry) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s = lookupSessionLocked(session);
+    if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!s->candidateOpen) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
+    if (projectionVersion != s->candidateProjectionVersion) {
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    }
+    if (nodeIndex >= s->candidate.size()) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    SceneNode &slot = s->candidate[nodeIndex];
+    if (geometry->nodeId != slot.pod.nodeId) {
+        // The slot is not this node: applying the values would bind another
+        // object's transform. Reject the whole candidate instead.
+        RLOGW("scene geometry refused: slot rebound slotNode=%{public}llu geometryNode=%{public}llu index=%{public}u",
+              static_cast<unsigned long long>(slot.pod.nodeId),
+              static_cast<unsigned long long>(geometry->nodeId), nodeIndex);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    // Same contract as the desktop sidecars: reserved stays zero and the
+    // sidecar clip count mirrors the POD count exactly. Clip slots are only
+    // read when the POD carries explicit clip constraints; for the single
+    // clipX/Y fallback they are unused (the shared layer leaves them zero).
+    if (geometry->reserved != 0u || geometry->clipCount > 4u ||
+        geometry->clipCount != slot.pod.clipConstraintCount) {
+        RLOGW("scene geometry refused: clipCount=%{public}u podCount=%{public}u reserved=%{public}u index=%{public}u",
+              geometry->clipCount, slot.pod.clipConstraintCount, geometry->reserved, nodeIndex);
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    const double values[] = {geometry->translateX, geometry->translateY,
+                             geometry->clip0X, geometry->clip0Y,
+                             geometry->clip1X, geometry->clip1Y,
+                             geometry->clip2X, geometry->clip2Y,
+                             geometry->clip3X, geometry->clip3Y};
+    for (double value : values) {
+        if (!std::isfinite(value) || value < -1000000.0 || value > 1000000.0) {
+            return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        }
+    }
+    // Non-finite/non-positive scale normalizes to the identity (ABI comment);
+    // it never turns into an inverted or unbounded paint.
+    double scaleX = geometry->scaleX;
+    double scaleY = geometry->scaleY;
+    if (!std::isfinite(scaleX) || scaleX <= 0.0) scaleX = 1.0;
+    if (!std::isfinite(scaleY) || scaleY <= 0.0) scaleY = 1.0;
+    NodePaintGeometry &dst = slot.geometry;
+    dst.present = true;
+    dst.nodeId = geometry->nodeId;
+    dst.projectionVersion = projectionVersion;
+    dst.translateX = geometry->translateX;
+    dst.translateY = geometry->translateY;
+    dst.clip0X = geometry->clip0X;
+    dst.clip0Y = geometry->clip0Y;
+    dst.clip1X = geometry->clip1X;
+    dst.clip1Y = geometry->clip1Y;
+    dst.clip2X = geometry->clip2X;
+    dst.clip2Y = geometry->clip2Y;
+    dst.clip3X = geometry->clip3X;
+    dst.clip3Y = geometry->clip3Y;
+    dst.scaleX = scaleX;
+    dst.scaleY = scaleY;
+    if (!s->geometryStageLogged) {
+        s->geometryStageLogged = true;
+        RLOGI("scene geometry staged first index=%{public}u node=%{public}llu clipCount=%{public}u translateX=%{public}f translateY=%{public}f scaleX=%{public}f scaleY=%{public}f",
+              nodeIndex, static_cast<unsigned long long>(geometry->nodeId), geometry->clipCount,
+              geometry->translateX, geometry->translateY, scaleX, scaleY);
+    }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -10118,6 +12693,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node(ui
         }
     }
     dst.pod = *node;
+    if (dst.geometry.present && dst.geometry.nodeId != node->nodeId) {
+        // Same slot, different object: never carry the previous occupant's
+        // paint transform. The geometry sidecar for this staging follows the
+        // node writes in the same transaction.
+        dst.geometry = NodePaintGeometry{};
+    }
     dst.label = label ? label : "";
     dst.value = nextValue;
     dst.semanticId = "";
@@ -10164,47 +12745,433 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
 namespace {
 static void freezeOwnedInputTransferLocked(Session &s)
 {
-    const auto r=s.ownedMirrorAccepted.ownerAcceptance;
     const auto &tr=s.focusAuthority.transfer;
-    if(!r || !r->accepted || !r->origin || r->postOrigin<0 || s.inputOwnerFailed ||
-       r->ownerVersion!=s.ownedMirrorAccepted.ownerContentVersion ||
-       !CjguiOhosSourceBasis(r->resultBasis).sameBody(CjguiOhosSourceBasis(s.ownedMirrorAccepted.sourceBasis)))return;
-    const auto &t=*r->origin;
-    if(!s.focusAuthority.eligible(t.focusGeneration) || !(tr.old==t.key) ||
-       t.ownerBinding!=s.ownedTextSessionBindingEpoch || t.field!=s.editingFieldName ||
-       t.resource!=s.editingResourceId)return;
-    const auto prefix=s.inputTickets.unresolvedPrefix(t.key,t.focusGeneration);
-    s.focusAuthority.freezeInputPrefix(r,prefix,t.ownerBinding,
-        tr.deadline>0 ? tr.deadline : proxyRestoreNowMs()+kProxyRestoreDeadlineMs);
+    if(!s.focusAuthority.eligible(tr.generation) || !tr.operation || !tr.old.valid() ||
+       tr.old.context!=s.editingContextId || tr.old.edit!=s.editingContextGeneration ||
+       s.inputOwnerFailed || !s.ownedTextSessionEnabled)return;
+    // The accepted scene already contains B here; the context still represents
+    // A. Only A's real admitted origins can grant completion across this handoff.
+    auto prefix=s.inputTickets.unpublishedPrefix(tr.old,tr.generation,s.editingMirrorOwnerVersion);
+    for(auto id:tr.inputPrefix)if(s.inputTickets.retainsPublication(id,s.editingMirrorOwnerVersion) &&
+        std::find(prefix.begin(),prefix.end(),id)==prefix.end())prefix.push_back(id);
+    std::sort(prefix.begin(),prefix.end());
+    std::vector<uint64_t> generations;
+    for(auto id:prefix) {
+        const auto t=s.inputTickets.find(id);
+        if(!t || !(t->key==tr.old) || t->ownerBinding!=s.ownedTextSessionBindingEpoch ||
+           t->node!=s.editingNodeId || t->resource!=s.editingResourceId || t->kind!=s.editingNodeKind ||
+           t->acceptedBinding!=s.editingAcceptedBindingEpoch || t->field!=s.editingFieldName ||
+           (t->focusGeneration!=tr.generation && !s.focusAuthority.permitsTransferredInput(
+                t->key,t->focusGeneration,id,t->ownerBinding,proxyRestoreNowMs())))return;
+        generations.push_back(t->focusGeneration);
+    }
+    const auto r=s.inputTickets.acceptedForBody(s.ownedTextSessionBindingEpoch,
+        s.editingMirrorOwnerVersion,s.editingMirrorBodyBasis);
+    s.focusAuthority.freezeInputPrefix(r,prefix,s.ownedTextSessionBindingEpoch,
+        tr.inputDeadline>0 ? tr.inputDeadline : proxyRestoreNowMs()+kProxyRestoreDeadlineMs,generations);
 }
 
 } // namespace
+
+// The first installed body has an independent SDK/window proof; it need not
+// manufacture a preceding input-owner receipt merely to retain an admitted root.
+static bool cjguiOhosKeepCommandExecutionInputLocked(Session &s,const SceneNode &node,
+    const Session::OwnedMirrorDeclaration &mirror)
+{
+    const auto head=s.lastCompletedInputTicket;const auto &command=s.selectionCommandState;
+    const auto e=head?head->commandExecution:std::shared_ptr<const CjguiOhosSelectionCommandExecution>{};
+    if(!e || command.execution!=e || !head->sourceLeaf || !command.firstInputConsumed || command.terminal ||
+       command.choice!=head->choice || !command.owner || e->target->owner!=command.owner ||
+       !head->choice->accepted || head->sourceLeaf->execution!=e->sequence || head->sourceLeaf->command!=e->command ||
+       (!head->sourceLeaf->installed && (head->sourceLeaf->firstObservation<0 ||
+         head->sourceLeaf->admittedAt>=head->sourceLeaf->notAfter)) ||
+       !s.focusAuthority.permits(e->key,e->focus) || !(head->key==e->key) || head->focusGeneration!=e->focus ||
+       !s.editingContextLive || s.editorRetired || s.inputOwnerFailed || s.markedActive || s.previewActive ||
+       s.editingContextId!=e->key.context || s.editingContextGeneration!=e->key.edit || s.editingText!=head->after ||
+       mirror.commandId!=e->command || mirror.commandOwner!=command.owner || !mirror.coverage ||
+       mirror.ownerContentVersion!=command.owner->version || mirror.ownerContentVersion!=s.editingMirrorOwnerVersion ||
+       mirror.bindingEpoch!=head->ownerBinding || mirror.declaredBindingEpoch!=head->ownerBinding ||
+       head->ownerBinding!=s.ownedTextSessionBindingEpoch || head->acceptedBinding!=node.pod.acceptedBindingEpoch ||
+       head->node!=node.pod.nodeId || head->resource!=node.pod.resourceId || head->kind!=node.pod.nodeKind ||
+       head->field!=node.semanticId || !node.pod.isInteractive || node.pod.isReadOnly ||
+       mirror.text!=*e->installedBody->layout || *mirror.coverage->layout!=mirror.text ||
+       !CjguiOhosSourceBasis(mirror.sourceBasis).sameBody(CjguiOhosSourceBasis(e->installedBody->bodyBasis)) ||
+       !CjguiOhosSourceBasis(mirror.coverage->bodyBasis).sameBody(CjguiOhosSourceBasis(e->installedBody->bodyBasis)))return false;
+    auto root=head;
+    for(size_t count=0;root->predecessor;++count) {
+        if(count>=CjguiOhosEditTickets::kMaxTickets)return false;
+        const auto previous=s.inputTickets.find(root->predecessor);
+        if(!previous || previous->id>=root->id || previous->commandExecution!=e || previous->choice!=head->choice ||
+           !(previous->key==head->key) || previous->focusGeneration!=head->focusGeneration ||
+           previous->ownerBinding!=head->ownerBinding || previous->acceptedBinding!=head->acceptedBinding ||
+           previous->node!=head->node || previous->resource!=head->resource || previous->kind!=head->kind ||
+           previous->field!=head->field || previous->after!=root->before ||
+           !s.inputTickets.hasPairedChange(previous->id) || s.inputTickets.terminalResult(previous->id)<0)return false;
+        root=previous;
+    }
+    if(root->before!=*e->installedBody->platform || root->start!=e->start || root->end!=e->end ||
+       root->choice!=command.choice || !s.inputTickets.hasPairedChange(root->id) ||
+       !s.inputTickets.hasPairedChange(head->id) || s.inputTickets.terminalResult(root->id)<0)return false;
+    s.editingContextBaseVersion=node.pod.projectionVersion;s.editingProjectionVersion=node.pod.projectionVersion;
+    s.editingMirrorBodyBasis=mirror.sourceBasis;
+    return true; // Original D only; the pending after remains a platform buffer.
+}
+
+static bool cjguiOhosKeepInstalledBodyInputLocked(Session &s,const SceneNode &node,
+    const Session::OwnedMirrorDeclaration &mirror)
+{
+    const auto head=s.lastCompletedInputTicket;
+    const auto installed=s.consumedRestoreChoice;
+    const auto choice=head?head->choice:CjguiOhosChoiceSources::Receipt{};
+    if (!s.ownedTextSessionEnabled || mirror.ownerAcceptance || !mirror.coverage || !head || !installed || !choice ||
+        !s.editingContextLive || s.editorRetired || s.inputOwnerFailed || s.previewActive || s.markedActive ||
+        !installed->settled || !installed->accepted || installed->origin->sourceKind!=2 ||
+        !installed->origin->restoreRequest || !choice->settled || !choice->accepted ||
+        choice->origin->sourceKind==3 || s.editingText!=head->after) return false;
+    const auto &o=*choice->origin;const auto &i=*installed->origin;
+    const auto c=choice->resolvedCoverage?choice->resolvedCoverage:o.coverage;
+    const auto ic=installed->resolvedCoverage?installed->resolvedCoverage:i.coverage;
+    const bool admitted=s.focusAuthority.permits(head->key,head->focusGeneration) ||
+        (s.focusAuthority.mounted==head->key && s.focusAuthority.permitsTransferredInput(head->key,
+            head->focusGeneration,head->id,head->ownerBinding,proxyRestoreNowMs()));
+    if (!admitted || !s.focusAuthority.target(head->node,head->resource,head->kind,head->acceptedBinding,head->field) ||
+        !c || !ic || !c->qualified || !ic->qualified ||
+        !(o.key==head->key) || o.focus!=head->focusGeneration || !(i.key==head->key) || i.focus!=head->focusGeneration ||
+        !(c->key==o.key) || c->focus!=o.focus || !(ic->key==i.key) || ic->focus!=i.focus ||
+        head->key.context!=s.editingContextId || head->key.edit!=s.editingContextGeneration ||
+        head->node!=node.pod.nodeId || head->resource!=node.pod.resourceId || head->kind!=node.pod.nodeKind ||
+        head->acceptedBinding!=node.pod.acceptedBindingEpoch || head->field!=node.semanticId ||
+        !node.pod.isInteractive || node.pod.isReadOnly || head->ownerBinding!=s.ownedTextSessionBindingEpoch ||
+        head->ownerBinding!=mirror.declaredBindingEpoch || o.node!=head->node || o.resource!=head->resource ||
+        o.kind!=head->kind || o.acceptedBinding!=head->acceptedBinding || o.ownerBinding!=head->ownerBinding ||
+        i.node!=o.node || i.resource!=o.resource || i.kind!=o.kind || i.acceptedBinding!=o.acceptedBinding ||
+        i.ownerBinding!=o.ownerBinding || choice->ownerVersion!=mirror.ownerContentVersion ||
+        installed->ownerVersion!=mirror.ownerContentVersion || mirror.ownerContentVersion!=s.editingMirrorOwnerVersion ||
+        c->ownerVersion!=mirror.ownerContentVersion || ic->ownerVersion!=mirror.ownerContentVersion ||
+        c->node!=o.node || c->resource!=o.resource || c->kind!=o.kind || c->ownerBinding!=o.ownerBinding ||
+        c->acceptedBinding!=o.acceptedBinding || ic->node!=i.node || ic->resource!=i.resource ||
+        ic->kind!=i.kind || ic->ownerBinding!=i.ownerBinding || ic->acceptedBinding!=i.acceptedBinding ||
+        mirror.coverage->node!=o.node || mirror.coverage->resource!=o.resource || mirror.coverage->kind!=o.kind ||
+        mirror.coverage->ownerBinding!=o.ownerBinding || mirror.coverage->ownerVersion!=mirror.ownerContentVersion ||
+        (mirror.coverage->acceptedBinding && mirror.coverage->acceptedBinding!=o.acceptedBinding) ||
+        !c->platform || !c->layout || !ic->platform || !mirror.coverage->layout ||
+        *c->platform!=o.text || *c->layout!=mirror.text || *mirror.coverage->layout!=mirror.text ||
+        *ic->platform!=o.text || !CjguiOhosSourceBasis(choice->basis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)) ||
+        !CjguiOhosSourceBasis(installed->basis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)) ||
+        !CjguiOhosSourceBasis(c->bodyBasis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)) ||
+        !CjguiOhosSourceBasis(ic->bodyBasis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)) ||
+        (o.sourceKind==4 && !choice->platformInstalled)) return false;
+    auto root=head;
+    for (size_t count=0;root->predecessor;++count) {
+        if (count>=CjguiOhosEditTickets::kMaxTickets) return false;
+        const auto before=s.inputTickets.find(root->predecessor);
+        if (!before || before->id>=root->id || before->choice!=choice || !(before->key==head->key) ||
+            before->focusGeneration!=head->focusGeneration || before->node!=head->node ||
+            before->resource!=head->resource || before->kind!=head->kind || before->field!=head->field ||
+            before->acceptedBinding!=head->acceptedBinding || before->ownerBinding!=head->ownerBinding ||
+            before->after!=root->before || s.inputTickets.terminalResult(before->id)<0) return false;
+        root=before;
+    }
+    if (root->before!=o.text || root->choice!=choice || s.inputTickets.terminalResult(root->id)<0) return false;
+    s.editingContextBaseVersion=node.pod.projectionVersion;s.editingProjectionVersion=node.pod.projectionVersion;
+    s.editingMirrorBodyBasis=mirror.sourceBasis;
+    RLOGI("input first installed body keep request=%{public}llu choice=%{public}llu root=%{public}llu head=%{public}llu ctx=%{public}lld owner=%{public}lld",
+        (unsigned long long)i.restoreRequest,(unsigned long long)o.id,(unsigned long long)root->id,
+        (unsigned long long)head->id,(long long)head->key.context,(long long)mirror.ownerContentVersion);
+    return true; // Only retain the context/buffer; the candidate still draws its frozen D.
+}
+
+static CjguiOhosInputContinuityProof cjguiOhosOwnedInputContinuityLocked(const Session &s,
+    const SceneNode &node, const Session::OwnedMirrorDeclaration &mirror)
+{
+    const auto r=mirror.ownerAcceptance;
+    const auto head=s.lastCompletedInputTicket;
+    const auto invalid=[](const char *reason) {
+        return CjguiOhosInputContinuityProof{CjguiOhosInputContinuity::Invalid,reason};
+    };
+    if(!mirror.coverage || !r || mirror.coverage->acceptance.lock()!=r || !r->accepted || r->postOrigin<0 || !r->origin || !head ||
+       !s.inputTickets.hasPairedChange(head->id) || s.inputTickets.terminalResult(head->id)<0 ||
+       !s.editingContextLive || s.previewActive || s.markedActive || s.editorRetired || s.inputOwnerFailed ||
+       r->ownerVersion!=mirror.ownerContentVersion || r->ownerVersion<s.editingMirrorOwnerVersion ||
+       !CjguiOhosSourceBasis(r->resultBasis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)))return invalid("owner_or_platform_state");
+    const auto &t=*r->origin;
+    if((!s.focusAuthority.permits(t.key,t.focusGeneration) &&
+        !s.focusAuthority.permitsTransferredInput(t.key,t.focusGeneration,t.id,t.ownerBinding,proxyRestoreNowMs())) ||
+       !s.focusAuthority.target(t.node,t.resource,t.kind,t.acceptedBinding,t.field) ||
+       !(head->key==t.key) || (head->focusGeneration!=t.focusGeneration &&
+        (!head->choice || head->choice==t.choice || head->choice->origin->focus!=head->focusGeneration ||
+         !s.focusAuthority.permits(head->key,head->focusGeneration) ||
+         std::none_of(head->choice->origin->prefixOrigins.begin(),head->choice->origin->prefixOrigins.end(),
+             [&](const auto &d){return d->id==t.id && d->focusGeneration==t.focusGeneration;}))) ||
+       !t.choice || !head->choice || head->id<t.id ||
+       t.ownerBinding!=s.ownedTextSessionBindingEpoch || t.ownerBinding!=mirror.declaredBindingEpoch ||
+       t.node!=node.pod.nodeId || t.resource!=node.pod.resourceId || t.kind!=node.pod.nodeKind ||
+       t.acceptedBinding!=node.pod.acceptedBindingEpoch || t.field!=node.semanticId ||
+       s.editingContextId!=t.key.context || s.editingContextGeneration!=t.key.edit ||
+       s.editingText!=head->after)return invalid("origin_or_change_identity");
+    if(head->node!=t.node || head->resource!=t.resource || head->kind!=t.kind ||
+       head->field!=t.field || head->acceptedBinding!=t.acceptedBinding || head->ownerBinding!=t.ownerBinding)
+        return invalid("head_target_identity");
+    CjguiOhosInputContinuity continuity=CjguiOhosInputContinuity::Adopted;
+    if(head->choice!=t.choice) {
+        const auto &choice=head->choice;const auto &o=*choice->origin;
+        const auto c=choice->resolvedCoverage?choice->resolvedCoverage:o.coverage;
+        if(!choice->settled) {
+            if(o.sourceKind==3 || (o.deadline && proxyRestoreNowMs()>=o.deadline) ||
+               !(o.key==t.key) || o.focus!=head->focusGeneration || o.node!=t.node || o.resource!=t.resource || o.kind!=t.kind ||
+               o.ownerBinding!=t.ownerBinding || o.acceptedBinding!=t.acceptedBinding || !o.coverage || !o.coverage->qualified ||
+               !(o.coverage->key==o.key) || o.coverage->focus!=o.focus || o.prefixOrigins.size()!=o.prefix.size())
+                return invalid("pending_choice_authority");
+            const std::u16string *chain=o.coverage->platform.get();int64_t version=o.coverage->ownerVersion;
+            bool member=false;
+            for(size_t i=0;i<o.prefixOrigins.size();++i) {
+                const auto &d=*o.prefixOrigins[i];int64_t v,p;std::string basis;
+                if(d.id!=o.prefix[i] || !(d.key==o.key) || (d.focusGeneration!=o.focus &&
+                   !s.focusAuthority.permitsTransferredInput(d.key,d.focusGeneration,d.id,d.ownerBinding,proxyRestoreNowMs())) || d.node!=o.node || d.resource!=o.resource ||
+                   d.kind!=o.kind || d.field!=t.field || d.acceptedBinding!=o.acceptedBinding || d.ownerBinding!=o.ownerBinding ||
+                   d.before!=*chain || !s.inputTickets.dependencyResult(d,v,p,basis) || v!=version+1)
+                    return invalid("pending_choice_prefix");
+                version=v;chain=&d.after;
+                if(d.id==t.id) {
+                    member=v==r->ownerVersion && p==r->postOrigin && d.before==t.before && d.after==t.after &&
+                        d.start==t.start && d.end==t.end && d.afterStart==t.afterStart && d.afterEnd==t.afterEnd &&
+                        basis==r->resultBasis && mirror.coverage->platformOrigin==p && *mirror.coverage->platform==d.after &&
+                        CjguiOhosSourceBasis(mirror.coverage->bodyBasis).sameBody(CjguiOhosSourceBasis(basis));
+                    break; // Later fixed members may still await owner; this body is only the published prefix.
+                }
+            }
+            if(!member)return invalid("pending_choice_body_member");
+            auto root=head;
+            for(size_t n=0;root->predecessor && n<CjguiOhosEditTickets::kMaxTickets;++n) {
+                auto previous=s.inputTickets.find(root->predecessor);
+                if(!previous || previous->id>=root->id || previous->choice!=choice || !(previous->key==root->key) ||
+                   previous->focusGeneration!=root->focusGeneration || previous->after!=root->before)
+                    return invalid("pending_choice_successor_chain");
+                root=previous;
+            }
+            if(root->predecessor || (root->before!=o.text && (o.prefixOrigins.empty() || root->before!=o.prefixOrigins.back()->after)))return invalid("pending_choice_root");
+            continuity=CjguiOhosInputContinuity::PendingProtected;
+        } else {
+        int64_t a=-1,b=-1;
+        if(!choice->settled || !choice->accepted || o.sourceKind==3 ||
+           !(o.key==t.key) || o.focus!=head->focusGeneration || o.node!=t.node ||
+           o.resource!=t.resource || o.kind!=t.kind || o.ownerBinding!=t.ownerBinding ||
+           o.acceptedBinding!=t.acceptedBinding || !c || !c->qualified ||
+           c->acceptance.lock()!=r || !(c->key==o.key) || c->focus!=o.focus ||
+           c->node!=t.node || c->resource!=t.resource || c->kind!=t.kind ||
+           c->ownerBinding!=t.ownerBinding || c->acceptedBinding!=t.acceptedBinding ||
+           c->ownerVersion!=r->ownerVersion || c->platformOrigin!=r->postOrigin ||
+           !c->layout || !c->platform || *c->layout!=mirror.text || (!choice->requiresRebase && *c->platform!=o.text) ||
+           choice->ownerVersion!=r->ownerVersion || choice->postOrigin!=r->postOrigin ||
+           !CjguiOhosSourceBasis(c->bodyBasis).sameBody(CjguiOhosSourceBasis(r->resultBasis)) ||
+           !CjguiOhosSourceBasis(choice->basis).sameBody(CjguiOhosSourceBasis(r->resultBasis)) ||
+           (!head->predecessor && head->before!=*c->platform) ||
+           (!choice->requiresRebase && (o.sourceKind==4 ?
+             (!choice->platformInstalled || o.start!=0 || o.end!=o.text.size() || choice->anchorByte!=0 ||
+              choice->focusByte!=CjguiOhosSourceBasis(c->bodyBasis).value[5]) :
+             (!c->source(false,o.start,a) || !c->source(false,o.end,b) || a!=choice->anchorByte || b!=choice->focusByte))))return invalid("new_choice_body_link");
+        }
+    }
+    return {continuity,""};
+}
 
 static bool cjguiOhosPreserveOwnedInputSurfaceLocked(Session &s, const SceneNode &node,
     const Session::OwnedMirrorDeclaration &mirror)
 {
     const auto r=mirror.ownerAcceptance;
+    if(cjguiOhosKeepCommandExecutionInputLocked(s,node,mirror))return true;
+    if (!r && cjguiOhosKeepInstalledBodyInputLocked(s,node,mirror)) return true;
     const auto head=s.lastCompletedInputTicket;
-    if(!r || !r->accepted || r->postOrigin<0 || !r->origin || !head ||
-       !s.editingContextLive || s.previewActive || s.editorRetired || s.inputOwnerFailed ||
-       r->ownerVersion!=mirror.ownerContentVersion || r->ownerVersion<s.editingMirrorOwnerVersion ||
-       !CjguiOhosSourceBasis(r->resultBasis).sameBody(CjguiOhosSourceBasis(mirror.sourceBasis)))return false;
+    const auto refuse=[&](const char *reason) {
+        const uint64_t headId=head?head->id:0;
+        if(s.inputPreserveRefusedPaintTicket!=s.acceptedPaintTicketId || s.inputPreserveRefusedHead!=headId) {
+            s.inputPreserveRefusedPaintTicket=s.acceptedPaintTicketId;s.inputPreserveRefusedHead=headId;
+            const auto origin=r?r->origin:CjguiOhosEditTickets::Ticket{};
+            const auto choice=head?head->choice:CjguiOhosChoiceSources::Receipt{};
+            const auto c=choice?(choice->resolvedCoverage?choice->resolvedCoverage:choice->origin->coverage):CjguiOhosCoverage{};
+            const auto linked=c?c->acceptance.lock():CjguiOhosEditTickets::OwnerReceipt{};
+            RLOGW("input preserve first refusal reason=%{public}s paint=%{public}llu ctx=%{public}lld edit=%{public}llu owner=%{public}lld/%{public}lld receipt=%{public}llu head=%{public}llu predecessor=%{public}llu choice=%{public}llu/%{public}llu adopted=%{public}d linked=%{public}llu proof_v=%{public}lld origin=%{public}lld flags=%{public}d%{public}d%{public}d%{public}d buffer=%{public}zu head_after=%{public}zu",
+                reason,(unsigned long long)s.acceptedPaintTicketId,(long long)s.editingContextId,
+                (unsigned long long)s.editingContextGeneration,(long long)mirror.ownerContentVersion,(long long)s.editingMirrorOwnerVersion,
+                (unsigned long long)(origin?origin->id:0),(unsigned long long)headId,(unsigned long long)(head?head->predecessor:0),
+                (unsigned long long)(origin && origin->choice?origin->choice->origin->id:0),
+                (unsigned long long)(choice?choice->origin->id:0),choice && choice->settled && choice->accepted?1:0,
+                (unsigned long long)(linked?linked->origin->id:0),(long long)(c?c->ownerVersion:-1),(long long)(c?c->platformOrigin:-1),
+                s.editingContextLive?1:0,s.editorRetired?1:0,s.inputOwnerFailed?1:0,s.markedActive||s.previewActive?1:0,
+                s.editingText.size(),head?head->after.size():0);
+        }
+        return false;
+    };
+    const auto proof=cjguiOhosOwnedInputContinuityLocked(s,node,mirror);
+    if(proof.state==CjguiOhosInputContinuity::Invalid)return refuse(proof.reason);
     const auto &t=*r->origin;
-    if(!s.focusAuthority.permits(t.key,t.focusGeneration) ||
-       !(head->key==t.key) || head->focusGeneration!=t.focusGeneration ||
-       !t.choice || head->choice!=t.choice || head->id<t.id ||
-       t.ownerBinding!=s.ownedTextSessionBindingEpoch || t.ownerBinding!=mirror.declaredBindingEpoch ||
-       t.node!=node.pod.nodeId || t.resource!=node.pod.resourceId || t.kind!=node.pod.nodeKind ||
-       t.acceptedBinding!=node.pod.acceptedBindingEpoch || t.field!=node.semanticId ||
-       s.editingContextId!=t.key.context || s.editingContextGeneration!=t.key.edit ||
-       s.editingText!=head->after)return false;
     s.editingContextBaseVersion=node.pod.projectionVersion;
     s.editingProjectionVersion=node.pod.projectionVersion;
     s.editingMirrorOwnerVersion=r->ownerVersion;
-    RLOGI("input self publication keep ticket=%{public}llu head=%{public}llu ctx=%{public}lld owner_v=%{public}lld",
+    s.editingMirrorBodyBasis=mirror.sourceBasis;
+    RLOGI("input self publication keep state=%{public}s ticket=%{public}llu head=%{public}llu ctx=%{public}lld owner_v=%{public}lld",
+        proof.state==CjguiOhosInputContinuity::PendingProtected?"pending_protected":"adopted",
         static_cast<unsigned long long>(t.id),static_cast<unsigned long long>(head->id),
         static_cast<long long>(t.key.context),static_cast<long long>(r->ownerVersion));
     return true;
+}
+
+// Called before prepareTransfer overwrites the original mounted context.
+// The new Flush may already have advanced projection; its identity is checked
+// independently from the accepted observation which authorized the old source.
+static CjguiOhosSelectionCapture cjguiOhosPrepareSelectionCaptureLocked(Session &s,const SceneNode &node)
+{
+    const auto source=s.acceptedSelection;
+    int dependencyDecision=-1;size_t unresolvedDependencyCount=0;int64_t frozenCaptureDeadline=0;
+    auto record=[&](const char *reason){
+        const auto c=source?source->coverage:CjguiOhosCoverage{};
+        const auto receipt=source?source->receipt:CjguiOhosChoiceSources::Receipt{};
+        const auto id=receipt?receipt->origin->id:0;
+        const auto &p=s.paintedBody;
+        if(s.captureDiagChoice==id && s.captureDiagTicket==p.ticket && s.captureDiagContext==s.editingContextId && s.captureDiagFocus==s.focusAuthority.generation)return;
+        s.captureDiagChoice=id;s.captureDiagTicket=p.ticket;s.captureDiagContext=s.editingContextId;s.captureDiagFocus=s.focusAuthority.generation;
+        const auto *d=ownedMirrorDeclarationLocked(s,node.pod.nodeId,node.pod.resourceId,node.pod.nodeKind);
+        const auto da=d?d->ownerAcceptance:CjguiOhosEditTickets::OwnerReceipt{};
+        const auto sa=source?source->acceptance:CjguiOhosEditTickets::OwnerReceipt{};
+        const auto ca=d && d->coverage?d->coverage->acceptance.lock():CjguiOhosEditTickets::OwnerReceipt{};
+        RLOGI("selection capture factory reason=%{public}s observation=%{public}llu kind=%{public}d accepted=%{public}d sourceCtx=%{public}lld sourceEdit=%{public}llu sourceMount=%{public}llu sourceFocus=%{public}llu ctx=%{public}lld edit=%{public}llu mountedCtx=%{public}lld mountedMount=%{public}llu focus=%{public}llu ownerBinding=%{public}llu acceptedBinding=%{public}llu platformMatch=%{public}d dOwner=%{public}lld sourceOwner=%{public}lld paint=%{public}llu/%{public}llu/%{public}llu/%{public}lld/%{public}llu/%{public}llu acceptedPaint=%{public}llu surface=%{public}llu geometry=%{public}llu samePaintCoverage=%{public}d layoutUnits=%{public}zu/%{public}zu platformUnits=%{public}zu/%{public}zu origin=%{public}lld/%{public}lld acceptance=%{public}llu/%{public}llu/%{public}llu sameAcceptance=%{public}d%{public}d restore=%{public}llu/%{public}d%{public}d%{public}d/%{public}lld now=%{public}lld deadline=%{public}lld dependencies=%{public}d/%{public}zu notAfter=%{public}lld dBasis=%{public}s sourceBasis=%{public}s",
+          reason,(unsigned long long)id,receipt?receipt->origin->sourceKind:0,receipt && receipt->accepted,
+          (long long)(c?c->key.context:0),(unsigned long long)(c?c->key.edit:0),(unsigned long long)(c?c->key.mount:0),(unsigned long long)(c?c->focus:0),
+          (long long)s.editingContextId,(unsigned long long)s.editingContextGeneration,(long long)s.focusAuthority.mounted.context,(unsigned long long)s.focusAuthority.mounted.mount,(unsigned long long)s.focusAuthority.generation,
+          (unsigned long long)s.ownedTextSessionBindingEpoch,(unsigned long long)s.editingAcceptedBindingEpoch,c && c->platform && *c->platform==s.editingText,
+          (long long)(d?d->ownerContentVersion:-1),(long long)(source?source->ownerVersion:-1),(unsigned long long)p.ticket,(unsigned long long)p.serial,(unsigned long long)p.projection,(long long)p.context,(unsigned long long)p.generation,(unsigned long long)p.geometryRevision,
+          (unsigned long long)s.acceptedPaintTicketId,(unsigned long long)s.surfaceGeneration,(unsigned long long)s.surfaceGeometryRevision,d && p.coverage==d->coverage,
+          d?d->text.size():0,c && c->layout?c->layout->size():0,d && d->coverage && d->coverage->platform?d->coverage->platform->size():0,c && c->platform?c->platform->size():0,
+          (long long)(d && d->coverage?d->coverage->platformOrigin:-1),(long long)(c?c->platformOrigin:-1),
+          (unsigned long long)(sa?sa->origin->id:0),(unsigned long long)(da?da->origin->id:0),(unsigned long long)(ca?ca->origin->id:0),sa==da,sa==ca,
+          (unsigned long long)s.proxyRestore.requestId,s.proxyRestore.armed,s.proxyRestore.awaitingAck,s.proxyRestore.platformInstalled,(long long)s.proxyRestore.deadlineMonoMs,(long long)proxyRestoreNowMs(),(long long)(receipt?receipt->origin->deadline:0),
+          dependencyDecision,unresolvedDependencyCount,(long long)frozenCaptureDeadline,d?d->sourceBasis.c_str():"",source?source->basis.c_str():"");
+    };
+    auto refuse=[&](const char *reason)->CjguiOhosSelectionCapture{record(reason);return {};};
+
+    if(!source || !source->coverage || !source->receipt || !source->receipt->accepted ||
+       !s.editingContextLive || s.editorRetired || s.inputOwnerFailed || s.markedActive ||
+       s.previewActive || s.selectionDrag.active || s.closeRequested)return refuse("source_or_carrier_state");
+    const auto c=source->coverage;const auto &o=*source->receipt->origin;
+    if(!s.focusAuthority.permits(c->key,c->focus) || c->key.context!=s.editingContextId ||
+       c->key.edit!=s.editingContextGeneration || c->ownerBinding!=s.ownedTextSessionBindingEpoch ||
+       c->acceptedBinding!=s.editingAcceptedBindingEpoch || *c->platform!=s.editingText ||
+       !s.focusAuthority.target(c->node,c->resource,c->kind,c->acceptedBinding,s.editingFieldName) ||
+       node.pod.nodeId!=c->node || node.pod.resourceId!=c->resource || node.pod.nodeKind!=c->kind ||
+       node.pod.acceptedBindingEpoch!=c->acceptedBinding || node.semanticId!=s.editingFieldName ||
+       !node.pod.isInteractive || node.pod.isReadOnly)return refuse("source_key_focus_binding_platform_target");
+    const auto *d=ownedMirrorDeclarationLocked(s,c->node,c->resource,c->kind);
+    const auto &p=s.paintedBody;
+    if(!d || !d->coverage || p.coverage!=d->coverage || !p.serial ||
+       p.ticket!=s.acceptedPaintTicketId || p.projection!=node.pod.projectionVersion ||
+       p.context!=c->key.context || p.generation!=s.surfaceGeneration ||
+       p.geometryRevision!=s.surfaceGeometryRevision || d->ownerContentVersion!=source->ownerVersion ||
+       d->coverage->ownerVersion!=c->ownerVersion || d->coverage->node!=c->node ||
+       d->coverage->resource!=c->resource || d->coverage->kind!=c->kind ||
+       d->coverage->ownerBinding!=c->ownerBinding ||
+       (d->coverage->acceptedBinding && d->coverage->acceptedBinding!=c->acceptedBinding) ||
+       d->text!=*d->coverage->layout || d->text!=*c->layout ||
+       d->coverage->platformOrigin!=c->platformOrigin || *d->coverage->platform!=*c->platform ||
+       !CjguiOhosSourceBasis(d->sourceBasis).sameBody(CjguiOhosSourceBasis(source->basis)) ||
+       !CjguiOhosSourceBasis(d->sourceBasis).sameBody(CjguiOhosSourceBasis(d->coverage->bodyBasis)))return refuse("declaration_paint_body");
+    // Pointer equality is the typed owner result identity, not merely equal
+    // strings/versions. Initial exact mirrors keep their independent proof.
+    if(source->acceptance ? (d->ownerAcceptance!=source->acceptance ||
+       d->coverage->acceptance.lock()!=source->acceptance) :
+       (d->ownerAcceptance || !d->coverage->acceptance.expired()))return refuse("typed_acceptance_identity");
+    std::vector<std::shared_ptr<const CjguiOhosPublicationDependency>> pending;
+    const bool dependenciesReady=cjguiOhosPublicationDependenciesForObservationLocked(s,c->key,c->focus,c->ownerVersion,pending);
+    dependencyDecision=dependenciesReady?1:0;unresolvedDependencyCount=pending.size();
+    if(!dependenciesReady || !pending.empty())return refuse("publication_dependency");
+    const int64_t now=proxyRestoreNowMs();
+    CjguiOhosSelectionCaptureFact f;f.source=source;f.acceptedBody=d->coverage;f.field=s.editingFieldName;
+    f.paintTicket=p.ticket;f.paintSerial=p.serial;f.paintProjection=p.projection;
+    f.surface=p.generation;f.geometry=p.geometryRevision;f.notAfter=now+kProxyRestoreDeadlineMs;
+    if(o.deadline>0)f.notAfter=std::min(f.notAfter,o.deadline);
+    if(s.proxyRestore.deadlineMonoMs>0)f.notAfter=std::min(f.notAfter,s.proxyRestore.deadlineMonoMs);
+    frozenCaptureDeadline=f.notAfter;
+    if(f.notAfter<=now)return refuse("original_deadline");
+    record("accepted");
+    return std::make_shared<const CjguiOhosSelectionCaptureFact>(std::move(f));
+}
+
+// Accepted provenance is the frozen result on THIS declaration, not r's
+// latest mutable result. Keeping a carrier does not install an SDK body.
+static bool cjguiOhosOriginalResultCarrierMatchesLocked(const Session &s,const SceneNode &node,
+    const Session::OwnedMirrorDeclaration &d)
+{
+    const auto r=d.originalOwnerResult;const auto root=s.originalInserts.root;
+    return r && r->accepted && r->root==root && root && s.originalInserts.installed &&
+        !s.originalInserts.terminal && proxyRestoreNowMs()<root->notAfter &&
+        s.focusAuthority.permits(root->key,root->focus) && s.editingContextLive && !s.editorRetired &&
+        !s.closeRequested && !s.inputOwnerFailed &&
+        s.editingContextId==root->key.context && s.editingContextGeneration==root->key.edit &&
+        !s.markedActive && !s.previewActive && d.valid && d.coverage && d.coverage->layout &&
+        d.ownerContentVersion==r->version && d.sourceBasis==r->basis && *d.coverage->layout==d.text &&
+        node.pod.nodeId==root->installedBody->node && node.pod.resourceId==root->installedBody->resource &&
+        node.pod.nodeKind==root->installedBody->kind && node.pod.acceptedBindingEpoch==root->installedBody->acceptedBinding &&
+        d.bindingEpoch==root->installedBody->ownerBinding && d.declaredBindingEpoch==s.ownedTextSessionBindingEpoch &&
+        s.focusAuthority.target(node.pod.nodeId,node.pod.resourceId,node.pod.nodeKind,node.pod.acceptedBindingEpoch,node.semanticId);
+}
+static bool cjguiOhosPreserveOriginalResultCarrierLocked(Session &s,const SceneNode &node,
+    const Session::OwnedMirrorDeclaration &d)
+{
+    if(!cjguiOhosOriginalResultCarrierMatchesLocked(s,node,d))return false;
+    s.pendingOriginalResult=d.originalOwnerResult;
+    s.editingProjectionVersion=s.editingContextBaseVersion=node.pod.projectionVersion;
+    RLOGI("original insertion phase=result-published id=%{public}llu owner=%{public}lld ctx=%{public}lld ticket=%{public}llu installed=0",
+        (unsigned long long)d.originalOwnerResult->id,(long long)d.ownerContentVersion,(long long)s.editingContextId,
+        (unsigned long long)s.acceptedPaintTicketId);
+    return true;
+}
+
+// Only a Present carrying this exact executed owner selection can retarget Q.
+// Neither a newer context nor equal text is a causal publication credential.
+static void cjguiOhosPublishSelectionCommandTargetLocked(Session &s)
+{
+    auto &command=s.selectionCommandState;
+    if(!command.choice || !command.owner || command.terminal ||
+       command.choice->origin->sourceKind!=4 || !command.choice->origin->capturedCommand)return;
+    const auto &o=*command.choice->origin;const auto &d=s.ownedMirrorAccepted;
+    const auto r=d.ownerAcceptance;
+    for(const auto &node:s.accepted)if(node.pod.nodeId==o.node &&
+        cjguiOhosOriginalResultCarrierMatchesLocked(s,node,d))return;
+    if(command.firstInputConsumed && r && r->accepted && r->origin->commandExecution==command.execution &&
+       r->origin->choice==command.choice && d.coverage && d.coverage->acceptance.lock()==r &&
+       r->ownerVersion==d.ownerContentVersion &&
+       CjguiOhosSourceBasis(r->resultBasis).sameBody(CjguiOhosSourceBasis(d.sourceBasis))) {
+        // The accepted owner body now proves continuation. Retire the capture
+        // graph; live input origins retain/charge only their immutable Q/proof.
+        RLOGI("physical selection command phase=input-owner-published-release choice=%{public}llu execution=%{public}llu",
+            (unsigned long long)o.id,(unsigned long long)command.execution->sequence);
+        s.acceptedSelection.reset();s.selectionCapture.reset();command.clear();
+        s.choiceSources.clearAuxiliary();s.semanticSelectionCommand=0;return;
+    }
+    if(d.commandId!=o.id || d.commandOwner!=command.owner || !s.editingContextLive || s.editorRetired ||
+       !s.focusAuthority.eligible(o.focus) || !s.focusAuthority.target(o.node,o.resource,o.kind,o.acceptedBinding,command.capture->field)) {
+        command.terminal=true;command.reason="command_projection_unattributed";return;
+    }
+    const auto &t=s.focusAuthority.transfer;
+    if(!t.operation || t.generation!=o.focus || t.targetContext!=s.editingContextId ||
+       t.targetEdit!=s.editingContextGeneration) {
+        command.terminal=true;command.reason="command_target_unregistered";return;
+    }
+    const auto previous=command.target;
+    if(previous && previous->operation==t.operation && previous->context==t.targetContext && previous->edit==t.targetEdit)return;
+    if(command.firstInputConsumed){command.terminal=true;command.reason="command_input_already_consumed";return;}
+    const auto original=command.capture->source->coverage->key;
+    const bool originalPredecessor=t.old==original;
+    const bool actualTargetPredecessor=previous && t.old.valid() && t.old.app==original.app &&
+        t.old.session==original.session && t.old.context==previous->context && t.old.edit==previous->edit;
+    if(!originalPredecessor && !actualTargetPredecessor) {
+        command.terminal=true;command.reason="command_target_predecessor";return;
+    }
+    CjguiOhosSelectionCommandTarget target{++command.targetSequence,t.operation,t.targetEdit,t.targetContext,t.old,command.owner};
+    command.retireExecution();s.choiceSources.holdExecutionCoverage({});
+    command.target=std::make_shared<const CjguiOhosSelectionCommandTarget>(std::move(target));
+    RLOGI("physical selection command phase=target-published choice=%{public}llu targetSeq=%{public}llu operation=%{public}llu target=%{public}lld predecessor=%{public}lld deadline=%{public}lld",
+        (unsigned long long)o.id,(unsigned long long)command.target->sequence,(unsigned long long)t.operation,
+        (long long)t.targetContext,(long long)t.old.context,(long long)command.capture->notAfter);
 }
 
 static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
@@ -10270,6 +13237,59 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
         bool mirrorAnchorKeepBuffer = false;
         if (const Session::OwnedMirrorDeclaration *syncMirror = ownedMirrorDeclarationLocked(*s,
             n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
+            if(cjguiOhosPreserveOriginalResultCarrierLocked(*s,n,*syncMirror))break;
+            const CjguiOhosSourceBasis previousBody(s->editingMirrorBodyBasis),nextBody(syncMirror->sourceBasis);
+            const bool sameWindow=previousBody.sameBody(nextBody);
+            const bool sourceWindowChanged=previousBody.valid && nextBody.valid &&
+                syncMirror->ownerContentVersion==s->editingMirrorOwnerVersion &&
+                previousBody.value[0]==nextBody.value[0] && // Same bound source context.
+                previousBody.value[2]==nextBody.value[2] && previousBody.value[3]==nextBody.value[3] &&
+                nextBody.value[1]>=previousBody.value[1] && // A new mirror can advance its immutable revision.
+                previousBody.value[5]==nextBody.value[5] && previousBody.value[4]!=nextBody.value[4];
+            if(sourceWindowChanged && s->editingContextLive && !s->previewActive && !s->markedActive) {
+                const auto captureCandidate=cjguiOhosPrepareSelectionCaptureLocked(*s,n);
+                const auto old=s->editingContextId;
+                const auto next=g_nextEditingContextId.fetch_add(1);
+                const bool held=s->gesture.active && (s->gesture.pointerStreamOpen || s->selectionDrag.active);
+                s->focusAuthority.prepareTransfer(next,s->editingContextGeneration,0,
+                    held ? 0 : proxyRestoreNowMs()+kProxyRestoreDeadlineMs);
+                auto selectionCapture=CjguiOhosSelectionCaptureFact::bind(captureCandidate,s->focusAuthority);
+                const bool captureBound=selectionCapture!=nullptr;
+                const bool captureRetained=!captureBound || s->choiceSources.holdAuxiliary(
+                    selectionCapture->source->retainedUnits()+selectionCapture->retainedUnits(),selectionCapture->acceptedBody);
+                if(!captureRetained)selectionCapture.reset();
+                const auto &captureTransfer=s->focusAuthority.transfer;
+                RLOGI("selection capture transfer candidate=%{public}d bound=%{public}d retained=%{public}d operation=%{public}llu sourceCtx=%{public}lld sourceEdit=%{public}llu sourceMount=%{public}llu focus=%{public}llu targetCtx=%{public}lld targetEdit=%{public}llu deadline=%{public}lld",
+                    captureCandidate!=nullptr,captureBound,captureRetained,(unsigned long long)captureTransfer.operation,
+                    (long long)captureTransfer.old.context,(unsigned long long)captureTransfer.old.edit,(unsigned long long)captureTransfer.old.mount,
+                    (unsigned long long)captureTransfer.generation,(long long)captureTransfer.targetContext,(unsigned long long)captureTransfer.targetEdit,
+                    (long long)(selectionCapture?selectionCapture->notAfter:0));
+                s->selectionCapture=selectionCapture;
+                if(!s->reconcileNotifyPending) {
+                    // Delivery can finish before the target actually mounts. A later
+                    // window names the original structural predecessor, not that
+                    // never-mounted logical target. Registration still checks the
+                    // full original key and operation; recovery keeps its deadline.
+                    const auto &transfer=s->focusAuthority.transfer;
+                    s->reconcileOldContextId=transfer.operation && transfer.old.valid() &&
+                        transfer.generation==s->focusAuthority.generation &&
+                        transfer.targetContext==next && transfer.targetEdit==s->editingContextGeneration
+                        ? transfer.old.context : old;
+                }
+                freezeOwnedInputTransferLocked(*s);
+                cancelProxyRestoreRequest(*s,"source_window_changed");
+                s->editingContextId=next;s->editingText=syncMirror->text;
+                s->editingMirrorBodyBasis=syncMirror->sourceBasis;
+                s->editingContextBaseVersion=s->editingProjectionVersion=n.pod.projectionVersion;
+                s->lastCompletedInputTicket.reset(); // Registry/FIFO and compact owner terminals remain intact.
+                s->editingTapPending=false;s->selForwardedValid=false;s->selectionIntentConfirmed=false;
+                s->focusNotifyPending=false;s->reconcileNotifyPending=true;
+                RLOGI("source window handoff old=%{public}lld new=%{public}lld operation=%{public}llu owner=%{public}lld origin=%{public}lld/%{public}lld mirrorRevision=%{public}lld/%{public}lld deadline=%{public}lld",
+                    (long long)old,(long long)next,(unsigned long long)s->focusAuthority.transfer.operation,
+                    (long long)syncMirror->ownerContentVersion,(long long)previousBody.value[4],(long long)nextBody.value[4],
+                    (long long)previousBody.value[1],(long long)nextBody.value[1],(long long)s->focusAuthority.transfer.deadline);
+                g_render.post(std::make_shared<RedrawJob>("redraw-callsite-11199"));break;
+            }
             if (cjguiOhosPreserveOwnedInputSurfaceLocked(*s,n,*syncMirror)) break;
             if (!isEditableTextKind(n.pod.nodeKind)) {
                 ownerValue = syncMirror->text;
@@ -10285,7 +13305,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
                 // 连续保 ctx（生产反例：presentation 同文 owner1→2 仍 ctx16）。
                 // 本地接受的推进由 preservesActiveLocalText 分支先行认领，此处
                 // owner 版本推进只可能是外部改版，不存在合法的"自推进"误杀。
-                if (syncMirror->text == s->editingText && s->editingContextLive &&
+                if (sameWindow && syncMirror->text == s->editingText && s->editingContextLive &&
                     !s->previewActive && n.pod.projectionVersion != s->editingContextBaseVersion &&
                     syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion) {
                     s->editingContextBaseVersion = n.pod.projectionVersion;
@@ -10297,7 +13317,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
                           static_cast<long long>(syncMirror->ownerContentVersion));
                     break;
                 }
-                if (syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
+                if (sameWindow && syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
                     n.pod.projectionVersion != s->editingContextBaseVersion &&
                     s->editingContextLive && !s->previewActive) {
                     s->editingContextBaseVersion = n.pod.projectionVersion;
@@ -10326,7 +13346,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
                 // 此处，必须走原外部仲裁（生产反例：普通 owned INPUT 同 owner
                 // 刷新误换 ctx16→17）。本地接受由 preservesActiveLocalText 先行
                 // 认领，到此的推进不可能是"自推进"。
-                if (syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
+                if (sameWindow && syncMirror->ownerContentVersion == s->editingMirrorOwnerVersion &&
                     syncMirror->text == s->editingText && s->editingContextLive &&
                     !s->previewActive &&
                     n.pod.projectionVersion != s->editingContextBaseVersion) {
@@ -10379,6 +13399,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             if (const Session::OwnedMirrorDeclaration *claimMirror = ownedMirrorDeclarationLocked(*s,
                 n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
                 s->editingMirrorOwnerVersion = claimMirror->ownerContentVersion;
+                s->editingMirrorBodyBasis=claimMirror->sourceBasis;
             }
             break;
         }
@@ -10403,8 +13424,21 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             // 外部换版：新上下文编号即新身份，旧恢复请求（连同待发正文/选区）作废，
             // 否则旧恢复串会带着旧上下文号落到新上下文上。
             const int64_t nextContext = g_nextEditingContextId.fetch_add(1);
+            const auto captureCandidate=cjguiOhosPrepareSelectionCaptureLocked(*s,n);
             s->focusAuthority.prepareTransfer(nextContext, s->editingContextGeneration,
                 s->proxyRestore.requestId, s->proxyRestore.deadlineMonoMs);
+            auto selectionCapture=CjguiOhosSelectionCaptureFact::bind(captureCandidate,s->focusAuthority);
+            const bool captureBound=selectionCapture!=nullptr;
+            const bool captureRetained=!captureBound || s->choiceSources.holdAuxiliary(
+                selectionCapture->source->retainedUnits()+selectionCapture->retainedUnits(),selectionCapture->acceptedBody);
+            if(!captureRetained)selectionCapture.reset();
+            const auto &captureTransfer=s->focusAuthority.transfer;
+            RLOGI("selection capture transfer candidate=%{public}d bound=%{public}d retained=%{public}d operation=%{public}llu sourceCtx=%{public}lld sourceEdit=%{public}llu sourceMount=%{public}llu focus=%{public}llu targetCtx=%{public}lld targetEdit=%{public}llu deadline=%{public}lld",
+                captureCandidate!=nullptr,captureBound,captureRetained,(unsigned long long)captureTransfer.operation,
+                (long long)captureTransfer.old.context,(unsigned long long)captureTransfer.old.edit,(unsigned long long)captureTransfer.old.mount,
+                (unsigned long long)captureTransfer.generation,(long long)captureTransfer.targetContext,(unsigned long long)captureTransfer.targetEdit,
+                (long long)(selectionCapture?selectionCapture->notAfter:0));
+            s->selectionCapture=selectionCapture;
             freezeOwnedInputTransferLocked(*s);
             cancelProxyRestoreRequest(*s, "external_version");
             s->textMenuIntent = 0;
@@ -10428,6 +13462,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
             if (const Session::OwnedMirrorDeclaration *syncMirror2 = ownedMirrorDeclarationLocked(*s,
                 n.pod.nodeId, n.pod.resourceId, n.pod.nodeKind)) {
                 s->editingMirrorOwnerVersion = syncMirror2->ownerContentVersion;
+                s->editingMirrorBodyBasis=syncMirror2->sourceBasis;
             }
             s->previewActive = false;
             s->previewText.clear();
@@ -10465,7 +13500,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
                   static_cast<long long>(oldContext),
                   static_cast<long long>(s->editingContextId),
                   static_cast<unsigned long long>(s->editingContextBaseVersion));
-            g_render.post(std::make_shared<RedrawJob>());
+            g_render.post(std::make_shared<RedrawJob>("redraw-callsite-11398"));
             break;
         }
         if (s->previewActive) break;
@@ -10503,6 +13538,7 @@ static void syncEditingBufferAfterAcceptedSceneLocked(Session *s)
         s->reconcileNotifyPending = false;
         cancelProxyRestoreRequest(*s, "node_removed");
     }
+    cjguiOhosPublishSelectionCommandTargetLocked(*s);
 }
 
 // 一次性裁决一张未 ACK 的票据（在 g_sessions.lock 内调用）。
@@ -10592,6 +13628,10 @@ static uint32_t settlePendingTicketLocked(Session *s, int slot, bool *outImageCh
         s->ownedMirrorAccepted.text = p.ownedMirrorText;
         s->ownedMirrorAccepted.sourceBasis = p.ownedMirrorSourceBasis;
         s->ownedMirrorAccepted.ownerAcceptance = p.ownedOwnerAcceptance;
+        s->ownedMirrorAccepted.originalOwnerResult = p.ownedOriginalResult;
+        s->ownedMirrorAccepted.commandId = p.ownedCommandId;
+        s->ownedMirrorAccepted.commandOwner = p.ownedCommandOwner;
+        s->ownedMirrorAccepted.coverage = p.ownedCoverage;
         s->ownedMirrorAccepted.ownerContentVersion = p.ownedMirrorOwnerVersion;
         s->ownedMirrorAccepted.bindingEpoch = p.ownedMirrorBindingEpoch;
         s->ownedMirrorAccepted.declaredBindingEpoch = p.ownedMirrorDeclaredBindingEpoch;
@@ -10668,6 +13708,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     bool frozenSourceLive = false;
     uint64_t frozenParentTicket = 0;
     Session::OwnedMirrorDeclaration frozenOwnedMirror;
+    CjguiOhosTextWorkTraceRef frozenTextWorkTrace;
     uint64_t frozenOwnedNodeId = 0;
     int64_t frozenOwnedResourceId = -1;
     uint32_t frozenOwnedNodeKind = 0;
@@ -10732,8 +13773,15 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
         clearG = s->clearG;
         clearB = s->clearB;
         clearA = s->clearA;
+        const auto &trace=s->textWorkTrace;
+        if(trace && trace->projection==projectionVersion && trace->node==frozenOwnedNodeId &&
+           trace->resource==frozenOwnedResourceId && trace->kind==frozenOwnedNodeKind &&
+           trace->binding==frozenOwnedMirror.bindingEpoch && trace->ownerAfter==frozenOwnedMirror.ownerContentVersion &&
+           trace->afterBasis==frozenOwnedMirror.sourceBasis && trace->matches(frozenOwnedMirror.text))
+            frozenTextWorkTrace=trace;
     }
     std::shared_ptr<PresentJob> presentJob = std::make_shared<PresentJob>();
+    presentJob->textWorkTrace = frozenTextWorkTrace;
     presentJob->session = session;
     presentJob->ticketId = ticketId;
     presentJob->nodes = nodes;
@@ -10744,6 +13792,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     presentJob->ownedMirrorValid = frozenOwnedMirror.valid;
     presentJob->ownedMirrorText = frozenOwnedMirror.text;
     presentJob->ownedOwnerAcceptance = frozenOwnedMirror.ownerAcceptance;
+    presentJob->ownedOriginalResult = frozenOwnedMirror.originalOwnerResult;
+    presentJob->ownedCommandId = frozenOwnedMirror.commandId;
+    presentJob->ownedCommandOwner = frozenOwnedMirror.commandOwner;
+    presentJob->ownedCoverage = frozenOwnedMirror.coverage;
     presentJob->ownedMirrorOwnerVersion = frozenOwnedMirror.ownerContentVersion;
     presentJob->ownedMirrorBindingEpoch = frozenOwnedMirror.bindingEpoch;
     presentJob->ownedMirrorDeclaredBindingEpoch = frozenOwnedMirror.declaredBindingEpoch;
@@ -10805,6 +13857,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
             p.ownedMirrorText = frozenOwnedMirror.text;
             p.ownedMirrorSourceBasis = frozenOwnedMirror.sourceBasis;
             p.ownedOwnerAcceptance = frozenOwnedMirror.ownerAcceptance;
+            p.ownedOriginalResult = frozenOwnedMirror.originalOwnerResult;
+            p.ownedCommandId = frozenOwnedMirror.commandId;
+            p.ownedCommandOwner = frozenOwnedMirror.commandOwner;
+            p.ownedCoverage = frozenOwnedMirror.coverage;
             p.ownedMirrorOwnerVersion = frozenOwnedMirror.ownerContentVersion;
             p.ownedMirrorBindingEpoch = frozenOwnedMirror.bindingEpoch;
             p.ownedMirrorDeclaredBindingEpoch = frozenOwnedMirror.declaredBindingEpoch;
@@ -10935,7 +13991,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(uin
     job.reset();
     presentJob.reset();
     cjguiOhosPruneReleasedImages();
-    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-11871"));
     cjguiOhosLogImageSnapshot("frame");
     RLOGI("present terminal session=%{public}llu ticket=%{public}llu status=0 phase=%{public}d",
               static_cast<unsigned long long>(session), static_cast<unsigned long long>(ticketId),
@@ -10993,7 +14049,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_query_present(
     if (decision != CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_PENDING) {
         cjguiOhosPruneReleasedImages();
     }
-    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>());
+    if (imageChanged) g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-11929"));
     if (decision == CJGUI_INTERNAL_RENDERER_PRESENT_DECISION_ACCEPTED) {
         cjguiOhosLogImageSnapshot("frame");
     }
@@ -11031,6 +14087,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_acknowledge_present(uint64_t
 #endif
     p.job = nullptr;
     p.nodes.clear();
+    p.ownedCoverage.reset();p.ownedOwnerAcceptance.reset();p.ownedOriginalResult.reset();p.ownedCommandId=0;p.ownedCommandOwner.reset();
     p.valid = false;
     p.settled = false;
     p.ticketId = 0;
@@ -11271,8 +14328,14 @@ static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_
         }
         // Core owns reveal and retries after a new accepted scene. No focus
         // event is returned for this programmatic request, preventing a loop.
-        if (restoreGeneration != 0) {
-            if (!s.focusAuthority.eligible(restoreGeneration)) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+        // Reasserting the same eligible target is not a new focus operation.
+        // Pointer selection obtains its generation at the gesture entry;
+        // restore still has to supply and retain its captured generation.
+        const uint64_t executionGeneration = restoreGeneration != 0 ? restoreGeneration :
+            (s.focusAuthority.target(node.pod.nodeId, node.pod.resourceId, kind,
+                node.pod.acceptedBindingEpoch, node.semanticId) ? s.focusAuthority.generation : 0);
+        if (executionGeneration != 0) {
+            if (!s.focusAuthority.eligible(executionGeneration)) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
             if (!s.focusAuthority.target(node.pod.nodeId, node.pod.resourceId, kind,
                     node.pod.acceptedBindingEpoch, node.semanticId) &&
                 !(ownedAnchor && s.focusAuthority.continueOwnedTarget(node.pod.nodeId,
@@ -11285,7 +14348,7 @@ static CjguiInternalRendererStatus focusComposableNodeLocked(Session &s, uint64_
             if (!s.focusAuthority.eligible(s.focusAuthority.generation)) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
         }
         // An accepted refresh cannot renotify an already mounted live target.
-        if (restoreGeneration != 0 && s.editingContextLive && !s.editorRetired &&
+        if (executionGeneration != 0 && s.editingContextLive && !s.editorRetired &&
             s.editingNodeId == node.pod.nodeId && s.editingAcceptedBindingEpoch == node.pod.acceptedBindingEpoch) {
             return CJGUI_INTERNAL_RENDERER_OK;
         }
@@ -11490,6 +14553,43 @@ int64_t cjgui_internal_renderer_data_transfer_event_source_id(uint64_t session)
 // 只有会话落点与平台账本不一致、且无进行中恢复/非显式拖选时才需推送。
 // 整值回调的暂态文尾不得成为推送内容——调用前，commit 路径已保证
 // 落点不是文尾推断值（见 editorCommitPlainChangeLocked）。
+// One already accepted ordinary choice, never a lookup of an arbitrary latest
+// selection. Caller holds the Session lock; read and prepare share this proof.
+static bool cjguiOhosOrdinarySelectionSourceLocked(const Session &s,const CjguiOhosProxyKey &key,
+    uint64_t focus,const std::u16string &value,uint32_t &start,uint32_t &end)
+{
+    const auto &c=s.selectionCommandState;const auto q=c.choice;const auto target=c.target;
+    const auto &d=s.ownedMirrorAccepted;
+    if(!q || !target || !c.owner || c.terminal || c.firstInputConsumed ||
+       q->origin->sourceKind!=1 || q->origin->capturedCommand || !q->accepted || !q->settled ||
+       !(q->origin->key==key) || q->origin->focus!=focus || target->owner!=c.owner ||
+       !(target->predecessor==key) || target->context!=key.context || target->edit!=key.edit ||
+       c.ordinaryNotAfter<=proxyRestoreNowMs() || !s.focusAuthority.permits(key,focus) ||
+       s.closeRequested || s.editorRetired || !s.editingContextLive ||
+       s.editingContextId!=key.context || s.editingContextGeneration!=key.edit ||
+       s.inputOwnerFailed || s.markedActive || s.previewActive || !d.coverage ||
+       !s.acceptedSelection || s.acceptedSelection->receipt!=q ||
+       value!=d.text || value!=q->origin->text || value!=s.editingText ||
+       d.bindingEpoch!=s.ownedTextSessionBindingEpoch || d.bindingEpoch!=q->origin->ownerBinding ||
+       d.ownerContentVersion!=c.owner->version ||
+       !CjguiOhosSourceBasis(d.sourceBasis).sameBody(CjguiOhosSourceBasis(c.owner->basis)))return false;
+    const auto newer=s.choiceSources.latest();
+    if(newer && newer!=q && newer->origin->humanAnchor && newer->origin->coverage &&
+       newer->origin->coverage->qualified && newer->origin->focus==focus && newer->origin->key==key)return false;
+    const auto proof=q->resolvedCoverage?q->resolvedCoverage:q->origin->coverage;
+    uint32_t a=0,b=0;
+    if(!proof || !proof->qualified || !proof->platform || *proof->platform!=value ||
+       !CjguiOhosTextCoverage::local(proof->platformBytes,c.owner->anchor-proof->platformOrigin,a) ||
+       !CjguiOhosTextCoverage::local(proof->platformBytes,c.owner->focus-proof->platformOrigin,b))return false;
+    start=std::min(a,b);end=std::max(a,b);return true;
+}
+static bool cjguiOhosOrdinaryNotificationNeededLocked(const Session &s)
+{
+    const auto &c=s.selectionCommandState;uint32_t a=0,b=0;
+    return c.ordinaryNotificationPending && !c.ordinaryNotificationOffered && !c.installed && c.choice &&
+        cjguiOhosOrdinarySelectionSourceLocked(s,c.choice->origin->key,c.choice->origin->focus,s.editingText,a,b);
+}
+
 static bool editorCaretPushBackNeededLocked(const Session &s)
 {
     const Session::ProxyRestoreRequest &live = s.proxyRestore;
@@ -11499,12 +14599,96 @@ static bool editorCaretPushBackNeededLocked(const Session &s)
     const bool movingSelection = s.selectionDrag.active && s.selectionDrag.anchorReady &&
         !s.selectionDrag.terminal;
     if (movingSelection && !s.humanCaretNotificationPending) return false;
-    if (s.humanCaretNotificationPending) return true;
+    if (s.humanCaretNotificationPending || cjguiOhosOrdinaryNotificationNeededLocked(s)) return true;
     // 文本变化后尚待同源选择观测的值不取得回推资格（r27 收缩交错）。
     if (!s.selectionIntentConfirmed) return false;
     const uint32_t a = std::min(s.selStartUtf16, s.selEndUtf16);
     const uint32_t b = std::max(s.selStartUtf16, s.selEndUtf16);
     return a != s.selPlatformStart || b != s.selPlatformEnd;
+}
+
+static std::string editorCaretNotificationPayloadLocked(Session &s)
+{
+    uint32_t a=std::min(s.selStartUtf16,s.selEndUtf16),b=std::max(s.selStartUtf16,s.selEndUtf16);
+    const auto &c=s.selectionCommandState;uint32_t sa=0,sb=0;
+    const bool sourced=c.ordinaryNotificationPending && !c.installed && c.choice &&
+        cjguiOhosOrdinarySelectionSourceLocked(s,c.choice->origin->key,c.choice->origin->focus,s.editingText,sa,sb);
+    if(sourced){a=sa;b=sb;}
+    std::string payload="{\"action\":\"caret\",\"context\":"+std::to_string(s.editingContextId)+
+        ",\"selStart\":"+std::to_string(a)+",\"selEnd\":"+std::to_string(b);
+    if(sourced) {
+        const auto &key=c.choice->origin->key;
+        payload+=",\"selectionSource\":{\"kind\":1,\"id\":"+std::to_string(c.choice->origin->id)+
+            ",\"deadline\":"+std::to_string(c.ordinaryNotAfter)+",\"target\":"+std::to_string(c.target->sequence)+
+            ",\"app\":"+std::to_string(key.app)+",\"session\":"+std::to_string(key.session)+
+            ",\"context\":"+std::to_string(key.context)+",\"edit\":"+std::to_string(key.edit)+
+            ",\"mount\":"+std::to_string(key.mount)+",\"focus\":"+std::to_string(c.choice->origin->focus)+"}";
+    }
+    payload+="}";
+    s.selPlatformStart=a;s.selPlatformEnd=b;s.humanCaretNotificationPending=false;
+    if(sourced)s.selectionCommandState.ordinaryNotificationOffered=true;
+    return payload;
+}
+
+static void appendPendingFocusScheduleLocked(std::string &payload, const Session &s)
+{
+    const auto &a=s.focusAuthority;const auto &t=a.transfer;
+    const bool mountedPredecessor=!t.pendingFocusSource.valid() && t.old.valid();
+    const CjguiOhosPendingFocusSource source=mountedPredecessor ?
+        CjguiOhosPendingFocusSource{t.old.app,t.old.session,t.old.edit,t.generation,t.old.context} : t.pendingFocusSource;
+    if (!source.valid() || a.mounted.valid() || !a.eligible(source.focus) || !t.operation ||
+        t.generation!=source.focus || t.targetContext!=s.editingContextId ||
+        t.targetEdit!=s.editingContextGeneration || !s.editingContextLive || s.editorRetired) return;
+    payload += std::string(mountedPredecessor ? ",\"unmountedTransfer\":{\"appInstance\":" :
+        ",\"pendingFocus\":{\"appInstance\":")+std::to_string(source.app)+
+        ",\"sessionToken\":"+std::to_string(source.session)+
+        ",\"sourceContext\":"+std::to_string(source.context)+
+        ",\"sourceGeneration\":"+std::to_string(source.edit)+
+        ",\"focusGeneration\":"+std::to_string(source.focus)+
+        ",\"operation\":"+std::to_string(t.operation)+
+        ",\"context\":"+std::to_string(t.targetContext)+
+        ",\"generation\":"+std::to_string(t.targetEdit)+
+        ",\"nodeId\":"+std::to_string(s.editingNodeId)+
+        ",\"resourceId\":"+std::to_string(s.editingResourceId)+
+        ",\"nodeKind\":"+std::to_string(s.editingNodeKind)+
+        ",\"bindingEpoch\":"+std::to_string(s.editingAcceptedBindingEpoch)+
+        ",\"baseVersion\":"+std::to_string(s.editingContextBaseVersion)+
+        ",\"restoreRequest\":"+std::to_string(t.restoreRequest)+
+        ",\"deadlineMonoMs\":"+std::to_string(t.deadline);
+    if (mountedPredecessor) payload += ",\"sourceMount\":"+std::to_string(t.old.mount);
+    payload += ",\"field\":\"";
+    appendJsonEscaped(payload,s.editingFieldName);payload += "\"}";
+}
+
+// Input-specific consumption can finish before independent two-frame install.
+// This only releases an already admitted, genuinely Change-paired FIFO event to
+// the owner; it never grants a new Will or changes platformInstalled.
+static bool cjguiOhosCompletedCommandInputSourceLocked(const Session &s,
+    const CjguiOhosEditTickets::Ticket &t)
+{
+    const auto q=t?t->choice:CjguiOhosChoiceSources::Receipt{};
+    const auto e=t?t->commandExecution:std::shared_ptr<const CjguiOhosSelectionCommandExecution>{};
+    const auto leaf=t?t->sourceLeaf:std::shared_ptr<const CjguiOhosInputSourceLeaf>{};
+    if(!q || !e || !leaf || !q->settled || !q->accepted || !q->origin->capturedCommand ||
+       q->origin->sourceKind!=4 || e->command!=q->origin->id || leaf->command!=e->command ||
+       leaf->execution!=e->sequence || leaf->publication!=e->publication || leaf->attach!=e->attach ||
+       leaf->install!=e->install || leaf->coverage!=e->installedBody || leaf->acceptedBody!=e->acceptedBody ||
+       !e->target || !e->target->owner || !(leaf->key==t->key) || !(e->key==t->key) ||
+       leaf->focus!=t->focusGeneration || e->focus!=t->focusGeneration ||
+       !s.inputTickets.hasPairedChange(t->id) || s.inputTickets.find(t->id)!=t)return false;
+    const auto c=leaf->coverage;const auto owner=e->target->owner;
+    const CjguiOhosSourceBasis basis(c?c->bodyBasis:"");
+    if(!c || !c->qualified || !c->platform || !(c->key==t->key) || c->focus!=t->focusGeneration ||
+       c->node!=t->node || c->resource!=t->resource || c->kind!=t->kind ||
+       c->ownerBinding!=t->ownerBinding || c->acceptedBinding!=t->acceptedBinding ||
+       t->sourceBasis!=c->bodyBasis || !basis.valid || leaf->ownerVersion!=c->ownerVersion ||
+       leaf->ownerVersion!=owner->version || leaf->ownerVersion!=q->ownerVersion ||
+       leaf->selectionRevision!=owner->selectionRevision || leaf->selectionRevision!=basis.value[7] ||
+       leaf->anchor!=0 || owner->anchor!=0 || q->anchorByte!=0 || leaf->active!=owner->focus ||
+       leaf->active!=q->focusByte || leaf->active!=basis.value[5] || owner->basis!=q->basis ||
+       (!leaf->installed && (leaf->firstObservation<0 || leaf->admittedAt<leaf->firstObservation ||
+          leaf->admittedAt>=leaf->notAfter || leaf->notAfter!=e->notAfter)))return false;
+    return t->predecessor || (t->before==*c->platform && t->start==leaf->start && t->end==leaf->end);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session, uint32_t timeoutMs,
@@ -11515,7 +14699,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     outEvent->kind = CJGUI_INTERNAL_RENDERER_EVENT_NONE;
 
     // 1) 吸收 ingress 的原始触摸并按已接受场景合成意图（带完整身份）。
-    // 2) 队首事件出队；空则等待（condvar 上限 16ms，保证 owner 及时拿回控制）。
+    // 2) 队首事件出队；原生 FIFO 就绪可唤醒，原始触摸/定时仍以上限 16ms 兜底。
     static std::mutex pumpMutex;  // pump 串行化（单一仓颉循环调用方）
     std::lock_guard<std::mutex> pumpGuard(pumpMutex);
     const uint64_t pumpRenderEpoch = g_render.currentRunEpoch();
@@ -11567,14 +14751,17 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     if (s->events.empty()) {
         uint32_t clamped = std::min(timeoutMs, static_cast<uint32_t>(kPumpWaitMax.count()));
         if (clamped > 0) {
-            // bounded sleep（阶段1事件源频率低，16ms 粒度足够）；
-            // 睡醒后在锁内吸收可能新到的触摸。
-            g.unlock();
-            struct timespec ts;
-            ts.tv_sec = 0;
-            ts.tv_nsec = static_cast<long>(clamped) * 1000000L;
-            nanosleep(&ts, nullptr);
-            g.lock();
+            // The same Session mutex protects enqueue and readiness. A
+            // different Session's notification does not consume this wait's
+            // deadline; pending-before-wait is checked without releasing it.
+            g_ownerEventReady.wait_for(g, std::chrono::milliseconds(clamped), [&] {
+                const Session *current = lookupSessionLocked(session);
+                return !current || !current->events.empty();
+            });
+            // Session storage can be reset while the wait releases the lock.
+            // Never resume a retired token through the previous pointer.
+            s = lookupSessionLocked(session);
+            if (!s) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
             drainTouches();
         }
     }
@@ -11621,9 +14808,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             }
         }
         if (nodeWidth > 0.0) {
-            g.unlock();
             CaretHitTestJob *job = new CaretHitTestJob();
             job->text = composed;
+            if(const auto *decl=ownedMirrorDeclarationLocked(*s,nodeId,hitResource,nodeKind)) {
+                job->coverage=decl->coverage;job->layoutText=decl->text;
+            } else job->layoutText=composed;
             job->fontSize = fontSize;
             job->fontWeight = fontWeight;
             job->nodeWidth = nodeWidth;
@@ -11631,6 +14820,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             job->nodeKind = nodeKind;
             job->session = session;
             job->contextId = hitContext;
+            job->observationFocus = s->focusAuthority.generation;
+            job->observationOperation = hitOperation;
             job->nodeId = nodeId;
             job->resourceId = hitResource;
             job->bindingEpoch = bindingEpoch;
@@ -11642,6 +14833,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             job->tapX = tapX;
             job->tapY = tapY;
             JobRef jobRef(job);
+            g.unlock();
             const bool posted = g_render.postCaretHitAfterRedraw(jobRef, pumpRenderEpoch);
             uint32_t caret = 0;
             CjguiInternalRendererStatus waited = posted ? job->waitFor() : CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
@@ -11664,7 +14856,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             // 复核：等待期间编辑目标未被替换
             s = lookupSessionLocked(session);
             if (caretOk && s && s->editing && s->editingContextLive && !s->editorRetired && s->editingNodeId == nodeId &&
-                s->selectionOperationGeneration == hitOperation && (hitMode == 0 || !s->previewActive) &&
+                s->selectionOperationGeneration == hitOperation && s->focusAuthority.eligible(job->observationFocus) &&
+                (hitMode == 0 || !s->previewActive) &&
                 s->editingResourceId == hitResource && s->editingNodeKind == nodeKind &&
                 s->editingContextId == hitContext && s->editingContextGeneration == hitContextGeneration &&
                 s->editingProjectionVersion == hitProjection && s->surfaceGeometryRevision == hitSurfaceRevision &&
@@ -11681,8 +14874,18 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
                 if (!sameGeometry) {
                     RLOGW("caret hit discarded after geometry change ctx=%{public}lld", static_cast<long long>(hitContext));
                 } else {
-                applySelectionHitLocked(*s, hitOperation, hitMode, caret, job->caretAffinity,
-                    job->wordStart, job->wordEnd);
+                if(job->requiresTransfer)editorEnqueueLayoutChoiceLocked(*s,*job,hitOperation);
+                else if(applySelectionHitLocked(*s, hitOperation, hitMode, caret, job->caretAffinity,
+                    job->wordStart, job->wordEnd)) {
+                    s->humanAnchor.coverage=job->coverage;s->humanAnchor.paintSerial=job->paintSerial;
+                    s->humanAnchor.paintTicket=job->sourcePaintTicket;
+                    if(!s->humanAnchor.consumed && s->humanAnchor.seq &&
+                       s->humanAnchor.start16==std::min(s->selStartUtf16,s->selEndUtf16) &&
+                       s->humanAnchor.end16==std::max(s->selStartUtf16,s->selEndUtf16)) {
+                        if(editorEnqueueSelectionChanged(*s,s->humanAnchor.start16,s->humanAnchor.end16))
+                            rememberForwardedSelectionLocked(*s,s->humanAnchor.start16,s->humanAnchor.end16);
+                    }
+                }
                 }
             }
             if (s && hitMode != 0 && s->selectionOperationGeneration == hitOperation &&
@@ -11731,7 +14934,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         payload += ",\"focusGeneration\":" + std::to_string(s->focusAuthority.generation);
         payload += ",\"field\":\"";
         appendJsonEscaped(payload, s->editingFieldName);
-        payload += "\"}";
+        payload += "\"";
+        appendPendingFocusScheduleLocked(payload,*s);
+        payload += "}";
         // 平台挂载时按上下文快照取正文与落点：账本对齐到当前值，不再补一条
         // 与快照重复的 caret 通知。
         s->selPlatformStart = std::min(s->selStartUtf16, s->selEndUtf16);
@@ -11750,7 +14955,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
                 std::to_string(oldContext) + ",\"context\":" + std::to_string(newContext);
             payload += ",\"field\":\"";
             appendJsonEscaped(payload, s->editingFieldName);
-            payload += "\"}";
+            payload += "\"";
+            appendPendingFocusScheduleLocked(payload,*s);
+            payload += "}";
             s->reconcileNotifyPending = false;
             s->reconcileOldContextId = 0;
             // 重挂同样按新上下文快照取初值：账本对齐，不补重复通知。
@@ -11772,15 +14979,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         const uint32_t a = std::min(s->selStartUtf16, s->selEndUtf16);
         const uint32_t b = std::max(s->selStartUtf16, s->selEndUtf16);
         if (editorCaretPushBackNeededLocked(*s)) {
-            s->selPlatformStart = a;
-            s->selPlatformEnd = b;
             void (*sink)(const char *) = g_focusRequestSink;
             if (sink) {
-                s->humanCaretNotificationPending = false;
-                std::string payload = "{\"action\":\"caret\",\"context\":" +
-                    std::to_string(s->editingContextId) +
-                    ",\"selStart\":" + std::to_string(a) +
-                    ",\"selEnd\":" + std::to_string(b) + "}";
+                const std::string payload=editorCaretNotificationPayloadLocked(*s);
                 RLOGI("ime caret notification ctx=%{public}lld sel=%{public}u:%{public}u caret=%{public}u",
                       static_cast<long long>(s->editingContextId), a, b, s->caretUtf16);
                 g.unlock();
@@ -11822,7 +15023,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     if (s->proxyRestore.armed && !s->focusAuthority.eligible(s->proxyRestore.focusIntentGeneration)) {
         terminateProxyRestoreRequestLocked(*s, "focus_intent_revoked");
     }
-    if (s->proxyRestore.armed) {
+    cjguiOhosRetireSupersededRestoreLocked(*s);
+    if (s->proxyRestore.armed && !cjguiOhosRestoreWaitsForInputLocked(*s)) {
         // 只读冻结值：绝不在此重读当前 context/field/base——pump 先 drainTouches，
         // 重读会把"A 排恢复→点击 B 换焦"变成 A 的正文配 B 的身份。
         s->proxyRestore.armed = false;
@@ -11835,6 +15037,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
             const Session::ProxyRestoreRequest &req = s->proxyRestore;
             std::string payload = "{\"action\":\"restore\",\"request\":" + std::to_string(req.requestId);
             payload += ",\"context\":" + std::to_string(req.contextId);
+            payload += ",\"originalResult\":" + std::to_string(req.originalOwnerResult?req.originalOwnerResult->id:0);
             payload += ",\"generation\":" + std::to_string(req.contextGeneration);
             payload += ",\"focusGeneration\":" + std::to_string(req.focusIntentGeneration);
             payload += ",\"appInstance\":" + std::to_string(req.appInstance);
@@ -11896,12 +15099,38 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         if (sink) sink(payload.c_str());
         g.lock();
     }
+    s->choiceSources.expire(proxyRestoreNowMs());
+    cjguiOhosExpireSelectionCommandLocked(*s);
     if (s->events.empty()) {
         outEvent->kind = CJGUI_INTERNAL_RENDERER_EVENT_NONE;
         return CJGUI_INTERNAL_RENDERER_OK;
     }
-    QueuedEvent ev = s->events.front();
-    s->events.pop_front();
+    // Owner execution and actual command installation are independent facts.
+    if (s->events.front().inputTicket && s->inputTickets.terminalResult(s->events.front().inputTicket->id)>=0) {
+        const auto q=s->events.front().inputTicket->choice;
+        if (q && q->origin->sourceKind==4 && q->settled && q->accepted && !q->platformInstalled &&
+            !cjguiOhosCompletedCommandInputSourceLocked(*s,s->events.front().inputTicket)) {
+            outEvent->kind=CJGUI_INTERNAL_RENDERER_EVENT_NONE;return CJGUI_INTERNAL_RENDERER_OK;
+        }
+    }
+    // A choice may precede a Will-only Change in the FIFO. Drain only that
+    // original prefix; dependent/new commands cannot enlarge the wait set.
+    auto selected=s->events.begin();
+    const auto blocked=selected->kind==kEvSelectionChanged?selected->choiceObservation:
+        (selected->inputTicket?selected->inputTicket->choice:CjguiOhosChoiceSources::Receipt{});
+    const int choiceReady=blocked&&!blocked->settled?cjguiOhosChoiceReadyLocked(*s,blocked):1;
+    // A refused dependent still drains once as stale below. It cannot wait
+    // forever for the very source/predecessor that has already been canceled.
+    const bool refusedInput=selected->inputTicket && s->inputTickets.terminalResult(selected->inputTicket->id)<0;
+    if(!refusedInput && blocked && !blocked->settled && (choiceReady==0 || selected->inputTicket)) {
+        const auto &prefix=blocked->origin->prefix;
+        selected=std::find_if(s->events.begin(),s->events.end(),[&](const QueuedEvent&e){
+            return e.inputTicket && std::find(prefix.begin(),prefix.end(),e.inputTicket->id)!=prefix.end();
+        });
+        if(selected==s->events.end()){outEvent->kind=CJGUI_INTERNAL_RENDERER_EVENT_NONE;return CJGUI_INTERNAL_RENDERER_OK;}
+    }
+    QueuedEvent ev = *selected;
+    s->events.erase(selected);
     if (ev.kind == kEvSelectionChanged || (ev.kind == 35 && ev.editingContextId != 0)) {
         ev.recordIndex = queuedSelectionContextIsCurrent(*s, ev) ? 0u : 1u;
         if (ev.recordIndex != 0) {
@@ -11910,7 +15139,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
         }
     }
     if (ev.kind == kEvTextRangeChanged) {
-        if (ev.inputTicket && (!s->editingContextLive || s->editorRetired ||
+        if (ev.inputTicket && (s->inputTickets.terminalResult(ev.inputTicket->id)<0 || !s->editingContextLive || s->editorRetired ||
             ((s->editingContextId != ev.inputTicket->key.context || s->editingContextGeneration != ev.inputTicket->key.edit ||
               !s->focusAuthority.permits(ev.inputTicket->key,ev.inputTicket->focusGeneration)) &&
              !s->focusAuthority.permitsTransferredInput(ev.inputTicket->key,ev.inputTicket->focusGeneration,
@@ -11953,6 +15182,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pump_event(uint64_t session,
     s->lastEventProvenanceGen = ev.editingContextGeneration;
     s->lastEventProvenanceSeq += 1;
     s->lastEventText = ev.text;
+    s->lastEventOriginalInsert=ev.originalInsert;
     s->lastEventInputTicket = ev.inputTicket;
     s->lastEventInputTransferred=ev.inputTicket && s->focusAuthority.permitsTransferredInput(
         ev.inputTicket->key,ev.inputTicket->focusGeneration,ev.inputTicket->id,ev.inputTicket->ownerBinding,proxyRestoreNowMs());
@@ -12080,6 +15310,7 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
         RLOGW("ime context query rejected: no editing session");
         return 0;
     }
+    cjguiOhosRetireSupersededRestoreLocked(*s);
     if (!s->editingContextLive || !s->focusAuthority.eligible(s->focusAuthority.generation)) {
         RLOGW("ime context query rejected: context not live ctx=%{public}lld editing=%{public}d",
               static_cast<long long>(s->editingContextId), s->editing ? 1 : 0);
@@ -12094,7 +15325,21 @@ extern "C" int32_t ohos_renderer_ime_context_json(char *out, int32_t capacity)
         if (n.pod.nodeId == s->editingNodeId && n.pod.resourceId == s->editingResourceId &&
             n.pod.nodeKind == s->editingNodeKind && n.semanticId == s->editingFieldName &&
             n.pod.isReadOnly == 0 && n.pod.isInteractive != 0) {
-            if (!cjguiOhosProxyVisibleBox(*s, n.pod, proxyX, proxyY, proxyWidth, proxyHeight)) return 0;
+            if (!cjguiOhosProxyVisibleBox(*s, n.pod, proxyX, proxyY, proxyWidth, proxyHeight)) {
+                // Match the other named context refusals. Once per context,
+                // metadata only: never turn a hidden proxy into write authority.
+                static uint64_t refusedApp=0,refusedSession=0;
+                static int64_t refusedContext=-1;
+                if(refusedApp!=s->appInstance || refusedSession!=s->token || refusedContext!=s->editingContextId) {
+                    refusedApp=s->appInstance;refusedSession=s->token;refusedContext=s->editingContextId;
+                    RLOGW("ime context query rejected: proxy_not_visible ctx=%{public}lld node=%{public}lld surface=%{public}ux%{public}u density=%{public}f overlay=%{public}d rect=%{public}d,%{public}d,%{public}d,%{public}d clips=%{public}u proxy=%{public}f,%{public}f,%{public}f,%{public}f",
+                        (long long)s->editingContextId,(long long)s->editingNodeId,
+                        s->surfaceWidth,s->surfaceHeight,s->surfaceDensity,g_keyboardOverlayTopPx.load(),
+                        n.pod.x,n.pod.y,n.pod.width,n.pod.height,n.pod.clipConstraintCount,
+                        proxyX,proxyY,proxyWidth,proxyHeight);
+                }
+                return 0;
+            }
             x = n.pod.x;
             y = n.pod.y;
             w = n.pod.width;
@@ -12203,6 +15448,104 @@ static Session *takeEditingContextLocked(int64_t contextId)
     return s;
 }
 
+// Physical select-all carries the full key frozen by the key-down producer.
+// The receipt is a semantic command, never a fabricated platform observation.
+static int32_t cjguiOhosEnqueueCapturedSelectAllLocked(Session &s,const CjguiOhosProxyKey &key,uint64_t focus)
+{
+    cjguiOhosExpireSelectionCommandLocked(s);
+    const auto capture=s.selectionCapture;
+    const auto refuse=[&](const char *reason)->int32_t {
+        RLOGI("physical captured command phase=refused reason=%{public}s origin=%{public}llu/%{public}llu/%{public}lld/%{public}llu/%{public}llu focus=%{public}llu observation=%{public}llu captureOperation=%{public}llu actualOperation=%{public}llu target=%{public}lld/%{public}llu actualTarget=%{public}lld/%{public}llu deadline=%{public}lld now=%{public}lld",
+            reason,(unsigned long long)key.app,(unsigned long long)key.session,(long long)key.context,(unsigned long long)key.edit,(unsigned long long)key.mount,(unsigned long long)focus,
+            (unsigned long long)(capture && capture->source?capture->source->receipt->origin->id:0),(unsigned long long)(capture?capture->operation:0),(unsigned long long)s.focusAuthority.transfer.operation,
+            (long long)(capture?capture->targetContext:0),(unsigned long long)(capture?capture->targetEdit:0),(long long)s.editingContextId,(unsigned long long)s.editingContextGeneration,(long long)(capture?capture->notAfter:0),(long long)proxyRestoreNowMs());
+        return 1;
+    };
+    if(!capture || !capture->source || !capture->source->coverage ||
+       (s.selectionCommandState.choice && !s.selectionCommandState.terminal &&
+        (s.selectionCommandState.choice->origin->sourceKind==4 || s.originalInserts.active())) ||
+       !s.focusAuthority.eligible(focus) || !(capture->source->coverage->key==key) ||
+       capture->source->coverage->focus!=focus || proxyRestoreNowMs()>=capture->notAfter ||
+       !s.editingContextLive || s.editorRetired || s.closeRequested || s.inputOwnerFailed ||
+       s.previewActive || s.markedActive || s.selectionDrag.active)return refuse("captured_origin_or_lifecycle");
+    const auto &transfer=s.focusAuthority.transfer;
+    if(transfer.operation!=capture->operation || transfer.generation!=focus || !(transfer.old==key) ||
+       transfer.targetContext!=capture->targetContext || transfer.targetEdit!=capture->targetEdit ||
+       s.editingContextId!=capture->targetContext || s.editingContextGeneration!=capture->targetEdit)return refuse("original_transfer");
+    const auto c=capture->source->coverage;
+    const auto *d=ownedMirrorDeclarationLocked(s,c->node,c->resource,c->kind);
+    if(!d || d->coverage!=capture->acceptedBody || d->ownerContentVersion!=c->ownerVersion ||
+       d->sourceBasis!=capture->acceptedBody->bodyBasis || d->text!=*capture->acceptedBody->layout ||
+       d->ownerAcceptance!=capture->source->acceptance ||
+       c->ownerBinding!=s.ownedTextSessionBindingEpoch ||
+       !s.focusAuthority.target(c->node,c->resource,c->kind,c->acceptedBinding,capture->field))return refuse("accepted_body_or_binding");
+    const size_t charge=capture->source->retainedUnits()+capture->retainedUnits()+CjguiOhosSelectionCommandState::kReservedUnits;
+    if(!s.choiceSources.holdAuxiliary(charge,capture->acceptedBody))return refuse("original_budget");
+    if(s.selectionCommandState.choice && s.selectionCommandState.choice->origin->sourceKind==1)
+        s.selectionCommandState.clear(); // Valid physical intent supersedes only ordinary installation metadata.
+    const CjguiOhosSourceBasis basis(capture->source->basis);
+    CjguiOhosChoiceOrigin o;o.sourceKind=4;o.capturedCommand=true;o.key=key;o.focus=focus;
+    o.node=c->node;o.resource=c->resource;o.kind=c->kind;o.acceptedBinding=c->acceptedBinding;
+    o.ownerBinding=c->ownerBinding;o.text=*c->platform;o.coverage=c;o.bodyBasis=capture->source->basis;
+    o.start=0;o.end=o.text.size();o.sourceAnchor=0;o.sourceFocus=basis.value[5];o.deadline=capture->notAfter;
+    const auto q=s.choiceSources.observe(std::move(o));
+    if(!q || q->origin->id>static_cast<uint64_t>(INT32_MAX-2))return refuse("bounded_choice_capacity");
+    if(!s.selectionCommandState.begin(capture,q)) {s.choiceSources.settle(q,false,"");return refuse("original_command_begin");}
+    QueuedEvent event;event.kind=35;event.text="select_all";event.modifierFlags=0x100000u;
+    event.nodeId=c->node;event.resourceId=c->resource;event.nodeKind=c->kind;
+    event.projectionVersion=capture->paintProjection;event.acceptedBindingEpoch=c->acceptedBinding;
+    event.bindingEpoch=c->ownerBinding;event.editingContextId=key.context;event.editingContextGeneration=key.edit;
+    event.selectionStart=capture->source->receipt->origin->start;event.selectionEnd=capture->source->receipt->origin->end;
+    event.choiceObservation=q;s.events.push_back(std::move(event));s.selectionIntentConfirmed=false;
+    s.semanticSelectionCommand=q->origin->id;
+    RLOGI("physical selection command phase=captured-queued choice=%{public}llu originCtx=%{public}lld operation=%{public}llu target=%{public}lld owner=%{public}lld sourceBytes=%{public}lld deadline=%{public}lld",
+        (unsigned long long)q->origin->id,(long long)key.context,(unsigned long long)capture->operation,
+        (long long)capture->targetContext,(long long)c->ownerVersion,(long long)q->origin->sourceFocus,(long long)capture->notAfter);
+    return static_cast<int32_t>(q->origin->id+2);
+}
+
+static int32_t cjguiOhosEnqueueSelectAllLocked(Session &s,const CjguiOhosProxyKey &key,uint64_t focus)
+{
+    const auto refused=[&](const char *reason)->int32_t {
+        RLOGI("physical selection command phase=refused reason=%{public}s ctx=%{public}lld mount=%{public}llu focus=%{public}llu",
+            reason,(long long)key.context,(unsigned long long)key.mount,(unsigned long long)focus);
+        return 1;
+    };
+    if(!s.focusAuthority.permits(key,focus))
+        return cjguiOhosEnqueueCapturedSelectAllLocked(s,key,focus);
+    if (!s.focusAuthority.permits(key,focus) || s.markedActive || s.previewActive ||
+        s.inputOwnerFailed || s.selectionDrag.active || s.proxyRestore.armed ||
+        s.proxyRestore.awaitingAck || s.proxyRestore.platformInstalled) return refused("input_or_restore_authority");
+    const auto *d=ownedMirrorDeclarationLocked(s,s.editingNodeId,s.editingResourceId,s.editingNodeKind);
+    if (!d || !d->coverage || d->text!=s.editingText) return refused("frozen_body");
+    // Pending typed publication cannot be assigned current-body command authority.
+    std::vector<std::shared_ptr<const CjguiOhosPublicationDependency>> prefix;
+    if (!cjguiOhosPublicationDependenciesForObservationLocked(s,key,focus,d->ownerContentVersion,prefix) ||
+        !prefix.empty()) return refused("pending_publication");
+    const auto c=cjguiOhosObservePaintedBodyLocked(s,d->coverage,focus,false);
+    const CjguiOhosSourceBasis basis(c?c->bodyBasis:"");
+    if (!c || !basis.valid || basis.value[5]<0) return refused("painted_source");
+    CjguiOhosChoiceOrigin o;
+    o.sourceKind=4;o.key=key;o.focus=focus;o.node=s.editingNodeId;o.resource=s.editingResourceId;
+    o.kind=s.editingNodeKind;o.acceptedBinding=s.editingAcceptedBindingEpoch;
+    o.ownerBinding=s.ownedTextSessionBindingEpoch;o.text=s.editingText;o.bodyBasis=c->bodyBasis;o.coverage=c;
+    o.start=0;o.end=static_cast<uint32_t>(o.text.size());o.sourceAnchor=0;o.sourceFocus=basis.value[5];
+    o.deadline=(s.proxyRestore.armed || s.proxyRestore.awaitingAck || s.proxyRestore.platformInstalled) ?
+        s.proxyRestore.deadlineMonoMs : proxyRestoreNowMs()+kProxyRestoreDeadlineMs;
+    const auto q=s.choiceSources.observe(std::move(o));
+    if (!q || q->origin->id>static_cast<uint64_t>(INT32_MAX-2)) return refused("bounded_choice_capacity");
+    QueuedEvent ev;ev.kind=35;ev.text="select_all";ev.modifierFlags=0x100000u;
+    ev.nodeId=q->origin->node;ev.resourceId=q->origin->resource;ev.nodeKind=q->origin->kind;
+    ev.projectionVersion=s.editingProjectionVersion;ev.acceptedBindingEpoch=q->origin->acceptedBinding;
+    ev.bindingEpoch=q->origin->ownerBinding;ev.editingContextId=key.context;ev.editingContextGeneration=key.edit;
+    ev.selectionStart=s.selStartUtf16;ev.selectionEnd=s.selEndUtf16;ev.choiceObservation=q;
+    s.events.push_back(std::move(ev));s.selectionIntentConfirmed=false;s.semanticSelectionCommand=q->origin->id;
+    RLOGI("physical selection command phase=queued choice=%{public}llu ctx=%{public}lld mount=%{public}llu focus=%{public}llu owner=%{public}lld sourceBytes=%{public}lld deadline=%{public}lld",
+        (unsigned long long)q->origin->id,(long long)key.context,(unsigned long long)key.mount,
+        (unsigned long long)focus,(long long)c->ownerVersion,(long long)basis.value[5],(long long)q->origin->deadline);
+    return static_cast<int32_t>(q->origin->id+2); // Admission id; owner execution is a later receipt.
+}
+
 // The actual proxy forwards only physical Left/Right key-down. Freeze the same
 // accepted adapter identity and coordinate range as the selection producer.
 extern "C" int32_t ohos_renderer_ime_plain_key_ctx(const char *intent, int64_t contextId,
@@ -12210,6 +15553,27 @@ extern "C" int32_t ohos_renderer_ime_plain_key_ctx(const char *intent, int64_t c
 {
     if (!intent) return 1;
     const std::string key(intent);
+    if (key.compare(0,11,"select_all,")==0) {
+        std::array<uint64_t,6> values{};const char *at=key.data()+11,*end=key.data()+key.size();
+        for (size_t i=0;i<values.size();++i) {
+            const char *stop=std::find(at,end,',');auto parsed=std::from_chars(at,stop,values[i]);
+            if (parsed.ec!=std::errc{} || parsed.ptr!=stop || at==stop || !values[i] ||
+                (i+1<values.size() && stop==end) || (i+1==values.size() && stop!=end)) return 1;
+            at=stop==end?end:stop+1;
+        }
+        std::lock_guard<std::mutex> g(g_sessions.lock);
+        Session *s=lookupSessionLocked(values[1]);
+        if (!s) {
+            RLOGI("physical selection command phase=refused reason=live_context ctx=%{public}lld edit=%{public}llu",
+                (long long)contextId,(unsigned long long)generation);
+            return 1;
+        }
+        if (!editorOwnsTextSession(*s)) return 2;
+        const CjguiOhosProxyKey frozen{values[0],values[1],values[3],values[4],static_cast<int64_t>(values[2])};
+        if (frozen.context!=contextId || frozen.edit!=generation || frozen.app!=s->appInstance ||
+            frozen.session!=s->token) return 1;
+        return cjguiOhosEnqueueSelectAllLocked(*s,frozen,values[5]);
+    }
     if (key != "left" && key != "right" && key != "extendLeft" && key != "extendRight") return 2;
     std::lock_guard<std::mutex> g(g_sessions.lock);
     Session *s = takeEditingContextLocked(contextId);
@@ -12232,6 +15596,13 @@ extern "C" int32_t ohos_renderer_ime_plain_key_ctx(const char *intent, int64_t c
     ev.editingContextGeneration = s->editingContextGeneration;
     ev.selectionStart = s->selStartUtf16;
     ev.selectionEnd = s->selEndUtf16;
+    const auto command=s->choiceSources.latest();
+    if (command && command->origin->sourceKind==4 && command->origin->id==s->semanticSelectionCommand &&
+        s->focusAuthority.permits(command->origin->key,command->origin->focus)) {
+        ev.selectionStart=command->origin->start;ev.selectionEnd=command->origin->end;
+        ev.choiceObservation=command;
+    }
+    s->semanticSelectionCommand=0; // A distinct physical navigation producer owns the next choice.
     s->events.push_back(ev);
     RLOGI("ime plain key enqueue ctx=%{public}lld gen=%{public}llu binding=%{public}llu key=%{public}s range=%{public}u:%{public}u",
         static_cast<long long>(ev.editingContextId), static_cast<unsigned long long>(generation),
@@ -12412,7 +15783,7 @@ extern "C" int32_t ohos_renderer_ime_preview_text_ctx(const char *text, size_t l
         }
         if (visibleBefore != composedBuffer(*s)) s->caretBlinkResetPending = true;
     }
-    g_render.post(std::make_shared<RedrawJob>());
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-13496"));
     return 0;
 }
 
@@ -12466,7 +15837,7 @@ extern "C" int32_t ohos_renderer_ime_preview_range_ctx(const char *text, size_t 
               static_cast<long long>(contextId), valid ? 1 : 0,
               s->markedStart, s->markedEnd, input.size());
     }
-    g_render.post(std::make_shared<RedrawJob>());
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-13550"));
     return 0;
 }
 
@@ -12480,6 +15851,7 @@ extern "C" int32_t ohos_renderer_ime_finish_editing_ctx(int64_t contextId)
         return 1;
     }
     s->focusAuthority.revoke(s->focusAuthority.generation);
+    cjguiOhosClearSelectionCaptureLocked(*s);
     s->focusNotifyPending = false;
     s->reconcileNotifyPending = false;
     RLOGI("ime finish ctx=%{public}lld reason=platform_end_unknown", static_cast<long long>(contextId));
@@ -12510,6 +15882,8 @@ extern "C" int32_t ohos_renderer_finish_proxy(const char *text, size_t length,
         s->editingContextGeneration != edit || !s->focusAuthority.permits(key, generation)) return 1;
     const int32_t rc = commitEditingTextLocked(*s, input, context);
     s->focusAuthority.revoke(generation);
+    cjguiOhosClearSelectionCaptureLocked(*s);
+    s->textWorkTrace.reset();
     s->inputTickets.clear(); s->lastCompletedInputTicket.reset(); s->choiceSources.clear(); s->lastEventChoice.reset(); s->inputOwnerCompleted=0; s->inputOwnerFailed=false;s->dirtyInputTicket.reset();s->consumedRestoreChoice.reset();
     s->focusNotifyPending = false; s->reconcileNotifyPending = false;
     s->editingContextLive = false; s->editorRetired = true;
@@ -12519,7 +15893,33 @@ extern "C" int32_t ohos_renderer_finish_proxy(const char *text, size_t length,
     return rc;
 }
 
-// 1 bind, 2 permit, 3 pre-register structure, 4 exact terminal. Internal NAPI only.
+// Internal exact structural record. The original operation and live target
+// are compared under one Session lock, before any registration side effect.
+extern "C" int64_t ohos_renderer_focus_transfer_authority(uint64_t app, uint64_t session,
+    int64_t context, uint64_t edit, uint64_t mount, int32_t action, uint64_t focus,
+    int64_t targetContext, uint64_t targetEdit, uint64_t expectedOperation,
+    uint64_t node, int64_t resource, uint32_t kind, uint64_t binding, const char *field,
+    uint64_t request, int64_t deadline)
+{
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    Session *s=lookupSessionLocked(session);
+    if (!s || s->appInstance!=app || !field || !expectedOperation ||
+        (action!=3 && action!=5) || !s->editingContextLive || s->editorRetired ||
+        s->editingContextId!=targetContext || s->editingContextGeneration!=targetEdit ||
+        s->editingNodeId!=node || s->editingResourceId!=resource || s->editingNodeKind!=kind ||
+        s->editingAcceptedBindingEpoch!=binding || s->editingFieldName!=field) return 0;
+    auto &a=s->focusAuthority;
+    const auto &t=a.transfer;
+    if (t.operation!=expectedOperation || (request && t.restoreRequest!=request) ||
+        (deadline>0 && t.deadline!=deadline) ||
+        (t.deadline>0 && proxyRestoreNowMs()>=t.deadline)) return 0;
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    return static_cast<int64_t>(action==3 ? a.registerTransfer(key,focus,targetContext,targetEdit) :
+        a.registeredTransfer(key,focus,targetContext,targetEdit));
+}
+
+// 1 bind, 2 permit, 3 register mounted structure, 4 terminal, 5 query it.
+// 6/7 register/query the frozen *non-mounted* native focus source. Internal NAPI only.
 extern "C" int64_t ohos_renderer_focus_authority(uint64_t app, uint64_t session,
     int64_t context, uint64_t edit, uint64_t mount, int32_t operation,
     uint64_t generation, int64_t targetContext, uint64_t targetEdit)
@@ -12529,14 +15929,23 @@ extern "C" int64_t ohos_renderer_focus_authority(uint64_t app, uint64_t session,
     if (!s || s->appInstance != app) return -1;
     const CjguiOhosProxyKey key{app, session, edit, mount, context};
     auto &a = s->focusAuthority;
+    if (operation == 6 || operation == 7) {
+        const CjguiOhosPendingFocusSource source{app, session, edit, generation, context};
+        if (mount != 0 || !source.valid() || !s->editingContextLive || s->editorRetired ||
+            s->editingContextId != targetContext || s->editingContextGeneration != targetEdit ||
+            (a.transfer.deadline > 0 && proxyRestoreNowMs() >= a.transfer.deadline)) return 0;
+        return static_cast<int64_t>(operation == 6 ? a.registerPendingTransfer(source,targetContext,targetEdit) :
+            a.registeredPendingTransfer(source,targetContext,targetEdit));
+    }
     if (operation == 3) return static_cast<int64_t>(a.registerTransfer(key, generation, targetContext, targetEdit));
+    if (operation == 5) return static_cast<int64_t>(a.registeredTransfer(key,generation,targetContext,targetEdit));
     if (operation == 4 && a.retiredTerminal(key, generation)) return 0;
     if (s->editingContextId != context || s->editingContextGeneration != edit || !s->editingContextLive) return -1;
     if (operation == 1) {
-        const bool sameMount = a.mounted == key;
-        if (!a.bind(key)) return 0;
+        const bool sameMount = a.mounted == key || a.reservedProxy == key;
+        if (!a.reserveProxy(key)) return 0;
         if (!sameMount) {
-            if(!a.transfer.inputOwner || proxyRestoreNowMs()>=a.transfer.deadline) {
+            if(a.transfer.inputPrefix.empty() || proxyRestoreNowMs()>=a.transfer.inputDeadline) {
                 s->inputTickets.clear();s->choiceSources.clear();
             }
             s->lastCompletedInputTicket.reset();s->lastEventChoice.reset();s->inputOwnerCompleted=0;
@@ -12544,9 +15953,11 @@ extern "C" int64_t ohos_renderer_focus_authority(uint64_t app, uint64_t session,
         }
         return static_cast<int64_t>(a.generation);
     }
-    if (operation == 2) return a.permits(key, generation) ? static_cast<int64_t>(a.generation) : 0;
-    if (operation != 4 || !a.permits(key, generation)) return -1;
+    if (operation == 2) return a.proxyEligible(key, generation) ? static_cast<int64_t>(a.generation) : 0;
+    if (operation == 8) return a.componentMounted(key,generation) ? static_cast<int64_t>(a.generation) : 0;
+    if (operation != 4 || !a.proxyEligible(key, generation)) return -1;
     a.revoke(generation);
+    cjguiOhosClearSelectionCaptureLocked(*s);
     s->inputTickets.clear(); s->lastCompletedInputTicket.reset(); s->choiceSources.clear(); s->lastEventChoice.reset(); s->inputOwnerCompleted=0; s->inputOwnerFailed=false;s->dirtyInputTicket.reset();s->consumedRestoreChoice.reset();
     s->focusNotifyPending = false; s->reconcileNotifyPending = false;
     s->editingContextLive = false; s->editorRetired = true;
@@ -12563,6 +15974,7 @@ extern "C" void ohos_renderer_focus_foreground(uint64_t app, int32_t foreground)
     for (Session &s : g_sessions.sessions) {
         if (!s.inUse || s.appInstance != app) continue;
         s.focusAuthority.setForeground(foreground == 1);
+        if(foreground!=1)cjguiOhosClearSelectionCaptureLocked(s);
         if (foreground != 1) { s.inputTickets.clear(); s.lastCompletedInputTicket.reset(); s.choiceSources.clear(); s.lastEventChoice.reset(); s.inputOwnerCompleted=0; s.inputOwnerFailed=false;s.dirtyInputTicket.reset();s.consumedRestoreChoice.reset(); }
         if (foreground == 1) continue; // Foreground is not a new focus intent.
         s.focusNotifyPending = false; s.reconcileNotifyPending = false;
@@ -12744,11 +16156,621 @@ extern "C" const char *ohos_renderer_accepted_state(uint64_t session)
 static bool drainReadyInputCommandsLocked(Session &s)
 {
     while(const auto t=s.inputTickets.takeReady()) {
-        if(!editorEnqueueTextCommit(s,t->before,t->after,t)) {
+        const bool current=s.focusAuthority.permits(t->key,t->focusGeneration) &&
+            s.editingContextId==t->key.context && s.editingContextGeneration==t->key.edit;
+        const bool transferred=s.focusAuthority.permitsTransferredInput(t->key,t->focusGeneration,
+            t->id,t->ownerBinding,proxyRestoreNowMs());
+        const bool local=current || (transferred && s.focusAuthority.mounted==t->key &&
+            s.editingContextId==t->key.context && s.editingContextGeneration==t->key.edit);
+        if((!current && !transferred) || (local && s.editingText!=t->before)) {
             s.inputTickets.complete(t->id,false);return false;
+        }
+        // Original FIFO spans whose platform completion is proved by actual
+        // single Changes or one fully verified Change-covered prefix.
+        if(local)s.editingText=t->after;
+        if(!editorEnqueueTextCommit(s,t->before,t->after,t)) {
+            if(local)s.editingText=t->before;
+            s.inputTickets.complete(t->id,false);return false;
+        }
+        if(local) {
+            if(!t->predecessor && t->choice && t->choice->origin->sourceKind==4 &&
+               t->choice->origin->id==s.semanticSelectionCommand &&
+               t->before==t->choice->origin->text && t->start==t->choice->origin->start && t->end==t->choice->origin->end) {
+                t->choice->platformInstalled=true;s.semanticSelectionCommand=0;
+                RLOGI("physical selection command phase=platform-range-observed-at-prefix choice=%{public}llu input=%{public}llu",
+                    (unsigned long long)t->choice->origin->id,(unsigned long long)t->id);
+            }
+            s.lastCompletedInputTicket=t;
+            s.previewActive=false;s.markedActive=false;s.previewText.clear();
+            s.caretBlinkResetPending=true;s.selectionIntentConfirmed=false;
         }
     }
     return true;
+}
+
+static bool cjguiOhosCommandExecutionCurrentLocked(const Session &s,
+    const std::shared_ptr<const CjguiOhosSelectionCommandExecution> &e)
+{
+    const auto &c=s.selectionCommandState;const auto &d=s.ownedMirrorAccepted;const auto &p=s.paintedBody;
+    if(e && e->sourceKind==1) {
+        // Owner acceptance, ordinary installation and input execution are separate.
+        // Same-body repaint is allowed; another source/binding/body is not.
+        return c.execution==e && !c.terminal && c.choice && c.owner && c.target==e->target &&
+            c.choice->origin->sourceKind==1 && !c.choice->origin->capturedCommand &&
+            c.choice->origin->id==e->command && c.choice->settled && c.choice->accepted &&
+            c.target->owner==c.owner && (!c.installed?proxyRestoreNowMs()<e->notAfter:true) &&
+            s.focusAuthority.permits(e->key,e->focus) && s.editingContextLive && !s.editorRetired &&
+            s.editingContextId==e->key.context && s.editingContextGeneration==e->key.edit &&
+            !s.closeRequested && !s.inputOwnerFailed && !s.markedActive && !s.previewActive &&
+            d.coverage && e->installedBody && e->installedBody->qualified &&
+            d.bindingEpoch==s.ownedTextSessionBindingEpoch && d.bindingEpoch==e->installedBody->ownerBinding &&
+            d.ownerContentVersion==c.owner->version &&
+            CjguiOhosSourceBasis(d.sourceBasis).sameBody(CjguiOhosSourceBasis(e->installedBody->bodyBasis)) &&
+            d.text==*e->installedBody->platform && s.editingText==d.text &&
+            s.focusAuthority.target(e->installedBody->node,e->installedBody->resource,e->installedBody->kind,
+                e->installedBody->acceptedBinding,s.editingFieldName);
+    }
+    if(!e || c.execution!=e || c.terminal || !c.owner || c.target!=e->target || !c.choice ||
+       c.choice->origin->id!=e->command || e->target->owner!=c.owner ||
+       (!c.installed && proxyRestoreNowMs()>=e->notAfter) ||
+       !s.focusAuthority.permits(e->key,e->focus) || s.editingContextId!=e->key.context ||
+       s.editingContextGeneration!=e->key.edit || !s.editingContextLive || s.editorRetired ||
+       s.closeRequested || s.inputOwnerFailed || s.markedActive || s.previewActive ||
+       s.focusAuthority.transfer.operation!=e->target->operation ||
+       s.focusAuthority.transfer.targetContext!=e->target->context ||
+       s.focusAuthority.transfer.targetEdit!=e->target->edit ||
+       d.commandId!=e->command || d.commandOwner!=c.owner || !d.coverage ||
+       (!c.installed && d.coverage!=e->acceptedBody) ||
+       d.coverage->ownerVersion!=e->installedBody->ownerVersion || d.coverage->ownerBinding!=e->installedBody->ownerBinding ||
+       d.coverage->node!=e->installedBody->node || d.coverage->resource!=e->installedBody->resource ||
+       d.coverage->kind!=e->installedBody->kind || !d.coverage->layout || *d.coverage->layout!=*e->installedBody->layout ||
+       d.bindingEpoch!=s.ownedTextSessionBindingEpoch || d.ownerContentVersion!=c.owner->version ||
+       d.sourceBasis!=e->installedBody->bodyBasis || d.text!=*e->installedBody->platform ||
+       s.editingText!=*e->installedBody->platform || p.coverage!=d.coverage ||
+       !p.serial || p.ticket!=s.acceptedPaintTicketId || p.projection!=s.editingProjectionVersion ||
+       p.context!=e->key.context || p.generation!=s.surfaceGeneration ||
+       p.geometryRevision!=s.surfaceGeometryRevision)return false;
+    return s.focusAuthority.target(e->installedBody->node,e->installedBody->resource,e->installedBody->kind,
+        e->installedBody->acceptedBinding,s.editingFieldName);
+}
+
+// Original SDK insertion commands do not use Will/Change tickets or edit the
+// platform buffer. Their first source is the installed Q; successors use only
+// the preceding real owner result, not a stale SDK offset.
+static bool cjguiOhosOriginalCarrierCurrentLocked(const Session &s) {
+    const auto &r=s.originalInserts;const auto e=r.root;
+    return r.active() && e && !s.closeRequested && !s.editorRetired && s.editingContextLive &&
+        !s.markedActive && !s.previewActive && !s.inputOwnerFailed &&
+        s.focusAuthority.permits(e->key,e->focus) && s.editingContextId==e->key.context &&
+        s.editingContextGeneration==e->key.edit && s.ownedTextSessionBindingEpoch==e->installedBody->ownerBinding;
+}
+// Source kind routes proof; it never grants execution by itself. This checks
+// the retained root, not a latest-choice/body substitute. Successors carry only
+// their actual preceding owner result, so own publication may advance the body.
+static bool cjguiOhosOriginalSourceCurrentLocked(const Session &s,
+    const CjguiOhosOriginalInserts::Command &input)
+{
+    const auto &r=s.originalInserts;const auto e=r.root;const auto &c=s.selectionCommandState;
+    if(!input || r.executing!=input || input->execution!=e || !cjguiOhosOriginalCarrierCurrentLocked(s) ||
+       !r.installed || !c.installed || c.terminal || c.execution!=e || !c.choice || !c.owner ||
+       c.choice->origin->id!=e->command || c.choice->origin->sourceKind!=e->sourceKind ||
+       !c.choice->settled || !c.choice->accepted || !c.choice->platformInstalled ||
+       (e->sourceKind!=1 && e->sourceKind!=4) ||
+       c.choice->origin->capturedCommand!=(e->sourceKind==4) ||
+       proxyRestoreNowMs()>=e->notAfter || input->ordinal!=r.completed+1 ||
+       r.pending.empty() || r.pending.front()!=input)return false;
+    const auto newer=s.choiceSources.latest();
+    const auto originalHuman=c.capture && c.capture->source ?
+        c.capture->source->receipt->origin->humanAnchor:c.choice->origin->humanAnchor;
+    if(newer && newer!=c.choice) {
+        const auto &o=*newer->origin;const auto proof=newer->resolvedCoverage?newer->resolvedCoverage:o.coverage;
+        // A genuine later pointer choice is an ordered cancellation before its
+        // owner adoption. Own SDK/restore observations have no NEW human origin.
+        if(o.sourceKind==1 && o.humanAnchor && o.humanAnchor!=originalHuman && o.key==e->key &&
+           o.focus==e->focus && o.ownerBinding==e->installedBody->ownerBinding &&
+           o.acceptedBinding==e->installedBody->acceptedBinding && proof && proof->qualified &&
+           proof->key==e->key && proof->focus==e->focus && proof->node==e->installedBody->node &&
+           proof->resource==e->installedBody->resource && proof->kind==e->installedBody->kind)return false;
+    }
+    if(r.completed==0)return r.completedId==0 && r.version==e->target->owner->version &&
+        r.basis==e->target->owner->basis && r.anchor==e->target->owner->anchor &&
+        r.focus==e->target->owner->focus && cjguiOhosCommandExecutionCurrentLocked(s,e);
+    const auto previous=r.result;const auto &d=s.ownedMirrorAccepted;
+    if(!previous || !previous->accepted || previous->root!=e || previous->id!=r.completedId ||
+       previous->prefix!=r.completed || previous->version!=r.version || previous->basis!=r.basis ||
+       previous->anchor!=r.anchor || previous->focus!=r.focus)return false;
+    if(d.ownerContentVersion==e->target->owner->version &&
+       CjguiOhosSourceBasis(d.sourceBasis).sameBody(CjguiOhosSourceBasis(e->target->owner->basis)))return true;
+    const auto published=d.originalOwnerResult;
+    if(!published || !published->accepted || published->root!=e || !published->id ||
+       !published->prefix || published->prefix>r.completed || published->ordinal!=published->prefix ||
+       d.ownerContentVersion!=published->version || d.sourceBasis!=published->basis)return false;
+    // The platform may still publish an earlier completed prefix while the
+    // owner has already returned its successor. Require the exact immutable
+    // receipt actually issued by this receiver, not equal coordinates, a
+    // copied receipt, or an arbitrary version/prefix assertion. liveResults
+    // already weakly accounts for these bounded receipts; no history is added.
+    for(const auto &weak:r.liveResults)if(weak.lock()==published)return true;
+    return false;
+}
+static void cjguiOhosEnqueueOriginalInsertLocked(Session &s) {
+    auto &r=s.originalInserts;
+    if(!r.active())return;
+    if(!cjguiOhosOriginalCarrierCurrentLocked(s)){r.cancel("carrier_or_binding_retired");return;}
+    const auto c=r.takeReady(proxyRestoreNowMs());if(!c)return;
+    const auto body=c->execution->installedBody;
+    QueuedEvent ev;ev.kind=66;ev.nodeId=body->node;ev.resourceId=body->resource;ev.nodeKind=body->kind;
+    ev.bindingEpoch=body->ownerBinding;ev.acceptedBindingEpoch=body->acceptedBinding;
+    ev.projectionVersion=c->execution->projection;ev.editingContextId=c->execution->key.context;
+    ev.editingContextGeneration=c->execution->key.edit;ev.text=utf16ToUtf8(c->text);ev.originalInsert=c;
+    s.events.push_back(std::move(ev));
+}
+extern "C" int64_t ohos_renderer_original_insert_receive(const uint16_t *text,size_t units,uint32_t offset,
+    uint64_t app,uint64_t session,int64_t context,uint64_t edit,uint64_t mount,uint64_t focus,
+    uint64_t command,uint64_t execution,uint64_t callback) {
+    if(!text || !units || units>32768)return -1;
+    std::u16string raw(reinterpret_cast<const char16_t*>(text),units);
+    // Preserve exactly the SDK UTF-16 payload; never normalize invalid scalars.
+    if(utf8ToUtf16(utf16ToUtf8(raw))!=raw)return -1;
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return -1;
+    auto &r=s->originalInserts;const auto e=r.active()?r.root:s->selectionCommandState.execution;
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(r.root && r.root!=e && (r.terminal || r.feedbackComplete) && !r.ownerStarted && !r.executing)r.clear();
+    if(!e || e->command!=command || e->sequence!=execution || !(e->key==key) || e->focus!=focus ||
+       s->markedActive || s->previewActive || s->inputTickets.pendingCount()!=0 ||
+       (!r.root && !cjguiOhosCommandExecutionCurrentLocked(*s,e)) ||
+       (r.root && !cjguiOhosOriginalCarrierCurrentLocked(*s)))return -1;
+    const auto c=r.receive(e,callback,offset,raw,proxyRestoreNowMs(),s->inputTickets.liveCount(),
+        s->inputTickets.retainedUnits()+s->choiceSources.retainedUnits());
+    if(!c){r.cancel("original_insert_admission_refused");return -1;}
+    RLOGI("original insertion phase=received id=%{public}llu callback=%{public}llu ordinal=%{public}llu q=%{public}llu execution=%{public}llu offset=%{public}u units=%{public}zu deadline=%{public}lld installed=%{public}d sourceKind=%{public}u",
+        (unsigned long long)c->id,(unsigned long long)c->callback,(unsigned long long)c->ordinal,
+        (unsigned long long)e->command,(unsigned long long)e->sequence,offset,units,(long long)e->notAfter,r.installed,e->sourceKind);
+    cjguiOhosEnqueueOriginalInsertLocked(*s);return c->id;
+}
+extern "C" int32_t ohos_renderer_original_insert_begin(uint64_t session,uint64_t id) {
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    // Legacy private consumers are physical-only. New source kinds require v2.
+    if(!s || !s->originalInserts.root || s->originalInserts.root->sourceKind!=4 ||
+       !cjguiOhosOriginalSourceCurrentLocked(*s,s->originalInserts.executing) ||
+       !s->originalInserts.begin(id,proxyRestoreNowMs()))return 1;
+    RLOGI("original insertion phase=owner-begin id=%{public}llu predecessor=%{public}llu version=%{public}lld",
+        (unsigned long long)id,(unsigned long long)s->originalInserts.completedId,(long long)s->originalInserts.version);
+    return 0;
+}
+extern "C" int32_t ohos_renderer_original_insert_begin_v2(uint64_t session,uint64_t id,uint32_t sourceKind,
+    uint64_t source,uint64_t execution,uint64_t predecessor,int64_t version,int64_t anchor,int64_t focus,const char *basis)
+{
+    if(!basis)return 1;std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s)return 1;auto &r=s->originalInserts;const auto e=r.root;const auto input=r.executing;
+    if(!input || input->id!=id || !e || e->sourceKind!=sourceKind || e->command!=source ||
+       e->sequence!=execution || r.completedId!=predecessor || r.version!=version || r.anchor!=anchor ||
+       r.focus!=focus || r.basis!=basis)return 1;
+    if(!cjguiOhosOriginalSourceCurrentLocked(*s,input)) {
+        if(!r.ownerStarted)r.cancel("original_source_retired_before_begin");
+        return 1;
+    }
+    if(!r.begin(id,proxyRestoreNowMs()))return 1;
+    RLOGI("original insertion phase=owner-begin-v2 id=%{public}llu kind=%{public}u source=%{public}llu execution=%{public}llu predecessor=%{public}llu owner=%{public}lld",
+        (unsigned long long)id,sourceKind,(unsigned long long)source,(unsigned long long)execution,
+        (unsigned long long)predecessor,(long long)version);return 0;
+}
+extern "C" int32_t ohos_renderer_original_insert_cancel(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus) {
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return 1;
+    auto &r=s->originalInserts;const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(!r.root || !(r.root->key==key) || r.root->focus!=focus)return 1;
+    r.cancel("ordered_carrier_input_boundary");return 0;
+}
+extern "C" int32_t ohos_renderer_original_insert_exit(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t command,uint64_t execution,uint64_t resultId,uint64_t request)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return 1;
+    auto &r=s->originalInserts;const auto result=r.result;const auto installed=s->consumedRestoreChoice;
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(!result || !r.root || r.terminal || r.feedbackConsumed || !r.feedbackComplete ||
+       result->id!=resultId || r.root->command!=command || r.root->sequence!=execution ||
+       !(r.root->key==key) || r.root->focus!=focus || proxyRestoreNowMs()>=r.root->notAfter ||
+       !r.pending.empty() || r.executing || s->inputTickets.pendingCount()!=0 ||
+       s->consumedOriginalResult!=result || !installed || installed->origin->restoreRequest!=request ||
+       !(installed->origin->key==key) || installed->origin->focus!=focus ||
+       !installed->settled || !installed->accepted || !s->focusAuthority.permits(key,focus) ||
+       s->ownedMirrorAccepted.originalOwnerResult!=result || s->ownedMirrorAccepted.sourceBasis!=result->basis ||
+       s->proxyRestore.armed || s->proxyRestore.awaitingAck || s->proxyRestore.platformInstalled)return 1;
+    r.feedbackConsumed=true;
+    s->acceptedSelection.reset();s->selectionCapture.reset();s->selectionCommandState.clear();
+    s->choiceSources.clearAuxiliary();s->semanticSelectionCommand=0;
+    return 0;
+}
+extern "C" int32_t ohos_renderer_original_insert_status(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus) {
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return -1;
+    auto &r=s->originalInserts;const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(!r.root)return 0;
+    if(!(r.root->key==key) || r.root->focus!=focus)return -1;
+    if(r.feedbackComplete)return 3;
+    if(r.terminal)return r.completed==0 && s->selectionCommandState.installed &&
+        cjguiOhosCommandExecutionCurrentLocked(*s,r.root)?4:-1;
+    if(proxyRestoreNowMs()>=r.root->notAfter){r.cancel("original_deadline");return -1;}
+    return r.pending.empty()?2:1;
+}
+extern "C" const char *ohos_renderer_original_insert_fact(uint64_t session,uint32_t part) {
+    static thread_local std::string result;result.clear();std::lock_guard<std::mutex> guard(g_sessions.lock);
+    Session *s=lookupSessionLocked(session);if(!s)return result.c_str();const auto c=s->lastEventOriginalInsert;
+    auto &r=s->originalInserts;if(!c || r.executing!=c)return result.c_str();
+    if(part==0)result="2,"+std::to_string(c->id)+","+std::to_string(c->execution->sourceKind)+","+
+        std::to_string(c->execution->command)+","+std::to_string(c->execution->sequence)+","+
+        std::to_string(c->callback)+","+std::to_string(c->ordinal)+","+std::to_string(r.completedId)+","+
+        std::to_string(r.version)+","+std::to_string(r.anchor)+","+std::to_string(r.focus);
+    else if(part==1)result=r.basis;
+    else if(part==2)result=utf16ToUtf8(c->text);
+    else if(part==3)result=cjguiOhosOriginalSourceCurrentLocked(*s,c)?"1":"0";
+    return result.c_str();
+}
+extern "C" int32_t ohos_renderer_original_insert_complete(uint64_t session,uint64_t id,int32_t accepted,
+    int64_t version,int64_t anchor,int64_t focus,const char *basis) {
+    if(!basis)return 1;const CjguiOhosSourceBasis result(basis);
+    if(accepted==1 && (!result.valid || result.value[2]!=version || result.value[3]!=version ||
+        result.value[8]!=anchor || result.value[9]!=focus))return 1;
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s || !s->originalInserts.complete(id,accepted==1,version,anchor,focus,basis))return 1;
+    RLOGI("original insertion phase=owner-result id=%{public}llu accepted=%{public}d version=%{public}lld anchor=%{public}lld focus=%{public}lld",
+        (unsigned long long)id,accepted,(long long)version,(long long)anchor,(long long)focus);
+    if(accepted==1)s->selectionCommandState.firstInputConsumed=true;
+    cjguiOhosEnqueueOriginalInsertLocked(*s);return 0;
+}
+
+// Ordinary clicks use the same bounded execution/receiver, with kind1 and the
+// original accepted choice, never a fabricated physical command or transfer.
+extern "C" const char *ohos_renderer_ordinary_selection_source(const char *text,size_t bytes,
+    uint64_t app,uint64_t session,int64_t context,uint64_t edit,uint64_t mount,uint64_t focus)
+{
+    static thread_local std::string result;result.clear();
+    if(!text || bytes>32768)return result.c_str();
+    const std::string raw(text,bytes);const auto value=utf8ToUtf16(raw);
+    if(utf16ToUtf8(value)!=raw)return result.c_str();
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return result.c_str();
+    cjguiOhosExpireSelectionCommandLocked(*s);
+    if(s->selectionCommandState.installed)return result.c_str();
+    const auto &restore=s->proxyRestore;
+    if(restore.requestId && (restore.armed || restore.awaitingAck || restore.platformInstalled))return result.c_str();
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};uint32_t a=0,b=0;
+    if(!cjguiOhosOrdinarySelectionSourceLocked(*s,key,focus,value,a,b))return result.c_str();
+    const auto &c=s->selectionCommandState;
+    result=std::to_string(c.choice->origin->id)+","+std::to_string(a)+","+std::to_string(b)+","+std::to_string(c.ordinaryNotAfter);
+    return result.c_str();
+}
+extern "C" const char *ohos_renderer_ordinary_selection_prepare(const char *text,size_t bytes,
+    uint32_t start,uint32_t end,uint64_t app,uint64_t session,int64_t context,uint64_t edit,
+    uint64_t mount,uint64_t focus,uint64_t sourceId,uint64_t install,int64_t deadline)
+{
+    static thread_local std::string result;result.clear();
+    if(!text || bytes>32768 || !install || deadline<=proxyRestoreNowMs())return result.c_str();
+    const std::string raw(text,bytes);const auto value=utf8ToUtf16(raw);
+    if(utf16ToUtf8(value)!=raw)return result.c_str();
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return result.c_str();
+    cjguiOhosExpireSelectionCommandLocked(*s);auto &c=s->selectionCommandState;
+    const auto q=c.choice;const auto target=c.target;const auto &d=s->ownedMirrorAccepted;
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    uint32_t a=0,b=0;
+    if(!cjguiOhosOrdinarySelectionSourceLocked(*s,key,focus,value,a,b) ||
+       q->origin->id!=sourceId || deadline!=c.ordinaryNotAfter || start!=a || end!=b)return result.c_str();
+    const auto proof=q->resolvedCoverage?q->resolvedCoverage:q->origin->coverage;
+    const auto old=c.execution;
+    if(old && (!(old->key==key) || old->sourceKind!=1 || old->install!=install || old->target!=target))return result.c_str();
+    if(!old) {
+        CjguiOhosSelectionCommandExecution e;e.sourceKind=1;e.sequence=++c.executionSequence;
+        e.command=sourceId;e.key=key;e.focus=focus;e.install=install;e.target=target;
+        e.start=start;e.end=end;e.notAfter=deadline;e.acceptedBody=d.coverage;e.installedBody=proof;
+        e.projection=s->editingProjectionVersion;
+        c.execution=std::make_shared<const CjguiOhosSelectionCommandExecution>(std::move(e));
+    }
+    const auto e=c.execution;if(!cjguiOhosCommandExecutionCurrentLocked(*s,e))return result.c_str();
+    c.ordinaryNotificationPending=false;
+    result=std::to_string(e->sequence)+","+std::to_string(e->start)+","+std::to_string(e->end)+","+std::to_string(e->notAfter);
+    return result.c_str();
+}
+extern "C" int32_t ohos_renderer_ordinary_selection_observe(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t sourceId,uint64_t sequence,
+    uint32_t phase,uint32_t start,uint32_t end,uint64_t attach)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);if(!s)return 1;
+    auto &c=s->selectionCommandState;const auto e=c.execution;const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(!e || e->sourceKind!=1 || e->command!=sourceId || e->sequence!=sequence || !(e->key==key) ||
+       e->focus!=focus || phase>3 || start!=e->start || end!=e->end)return 1;
+    // Cancellation retires only this exact execution, including on old-body
+    // rejection. It cannot cancel a later choice or manufacture installation.
+    if(phase==2){if(!c.installed){c.terminal=true;c.reason="ordinary_platform_unconfirmed";
+        if(s->originalInserts.root==e)s->originalInserts.cancel(c.reason.c_str());}return 0;}
+    cjguiOhosExpireSelectionCommandLocked(*s);
+    if(!attach || !cjguiOhosCommandExecutionCurrentLocked(*s,e) || c.firstInputConsumed)return 1;
+    if(phase==3){if(c.ordinaryAttach && c.ordinaryAttach!=attach)return 1;c.ordinaryAttach=attach;c.setterSent=true;return 0;}
+    if(!c.setterSent || c.ordinaryAttach!=attach)return 1;
+    if(c.installed)return 0;
+    const int64_t now=proxyRestoreNowMs();
+    if(phase==0){if(c.firstObservation<0)c.firstObservation=now;return 0;}
+    if(c.firstObservation<0 || now<=c.firstObservation)return 1;
+    c.installed=true;c.choice->platformInstalled=true;
+    s->selPlatformStart=start;s->selPlatformEnd=end;s->selectionIntentConfirmed=true;
+    if(s->originalInserts.root==e){s->originalInserts.installed=true;cjguiOhosEnqueueOriginalInsertLocked(*s);}
+    RLOGI("ordinary selection phase=execution-installed choice=%{public}llu execution=%{public}llu attach=%{public}llu deadline=%{public}lld",
+        (unsigned long long)sourceId,(unsigned long long)sequence,(unsigned long long)attach,(long long)e->notAfter);
+    return 0;
+}
+
+// Returns an immutable target execution, never the old origin rebound to B/C.
+// publication/attach/install are the common executor's actual sequence facts.
+extern "C" const char *ohos_renderer_selection_command_prepare(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t commandId,uint64_t publication,uint64_t attach,
+    uint64_t install,const char *text,size_t bytes)
+{
+    static thread_local std::string result;result.clear();
+    if(!text || bytes>32768)return result.c_str();
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s)return result.c_str();cjguiOhosExpireSelectionCommandLocked(*s);
+    auto &c=s->selectionCommandState;const auto &d=s->ownedMirrorAccepted;const auto &p=s->paintedBody;
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    const auto target=c.target;const auto q=c.choice;
+    if(!publication && !attach && !install) {
+        // Read-only pending status from the immutable original producer. This
+        // does not grant that retired origin op2, Will or target eligibility.
+        if(q && q->origin->id==commandId && q->origin->key==key && q->origin->focus==focus &&
+           !c.terminal && c.capture)result="0,0,0,"+std::to_string(c.capture->notAfter);
+        return result.c_str();
+    }
+    if(!publication || !attach || !install)return result.c_str();
+    if(!q || q->origin->id!=commandId || !c.owner || !target || c.terminal || c.firstInputConsumed ||
+       !s->focusAuthority.permits(key,focus) || focus!=q->origin->focus || context!=target->context || edit!=target->edit ||
+       !cjguiOhosCapturedCommandSourceCurrentLocked(*s,q) || d.commandId!=commandId || d.commandOwner!=c.owner ||
+       !d.coverage || p.coverage!=d.coverage || !p.serial || p.ticket!=s->acceptedPaintTicketId ||
+       p.projection!=s->editingProjectionVersion || p.context!=context || p.generation!=s->surfaceGeneration ||
+       p.geometryRevision!=s->surfaceGeometryRevision || d.text!=utf8ToUtf16(std::string(text,bytes)) ||
+       s->editingText!=d.text || d.ownerContentVersion!=c.owner->version)return result.c_str();
+    const auto old=c.execution;
+    if(!old || !(old->key==key) || old->publication!=publication || old->attach!=attach || old->install!=install ||
+       old->target!=target || old->acceptedBody!=d.coverage) {
+        if(c.installed)return result.c_str();
+        const auto proof=cjguiOhosFreezeCoverageLocked(*s,d,q->origin->node,q->origin->resource,q->origin->kind,true);
+        const CjguiOhosSourceBasis basis(d.sourceBasis);
+        if(!proof || !basis.valid || basis.value[7]!=c.owner->selectionRevision ||
+           basis.value[8]!=c.owner->anchor || basis.value[9]!=c.owner->focus ||
+           basis.value[10]<0 || basis.value[11]<0 || basis.value[10]>static_cast<int64_t>(d.text.size()) ||
+           basis.value[11]>static_cast<int64_t>(d.text.size()))return result.c_str();
+        CjguiOhosSelectionCommandExecution e;
+        e.sequence=++c.executionSequence;e.command=commandId;e.key=key;e.focus=focus;e.target=target;
+        e.publication=publication;e.attach=attach;e.install=install;e.notAfter=c.capture->notAfter;
+        e.acceptedBody=d.coverage;e.installedBody=proof;e.start=std::min(basis.value[10],basis.value[11]);
+        e.end=std::max(basis.value[10],basis.value[11]);e.paintTicket=p.ticket;e.paintSerial=p.serial;
+        e.projection=p.projection;e.surface=p.generation;e.geometry=p.geometryRevision;
+        // No installation/source authority is published when the original budget refuses.
+        if(!s->choiceSources.holdExecutionCoverage(proof))return result.c_str();
+        q->commandCoverage=proof;
+        c.execution=std::make_shared<const CjguiOhosSelectionCommandExecution>(std::move(e));c.firstObservation=-1;
+    }
+    const auto e=c.execution;
+    if(!cjguiOhosCommandExecutionCurrentLocked(*s,e))return result.c_str();
+    result=std::to_string(e->sequence)+","+std::to_string(e->start)+","+std::to_string(e->end)+","+std::to_string(e->notAfter);
+    return result.c_str();
+}
+
+// Separate cross-frame observations. A setter/ordinary selection or restore ACK
+// cannot reach this command-specific completion, and one getter cannot finish it.
+extern "C" int32_t ohos_renderer_selection_command_observe(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t commandId,uint64_t execution,uint32_t round,
+    uint32_t start,uint32_t end)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    if(!s)return 1;cjguiOhosExpireSelectionCommandLocked(*s);
+    auto &c=s->selectionCommandState;const auto e=c.execution;const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    if(c.choice && c.choice->origin->id==commandId && !c.terminal && c.target &&
+       c.choice->origin->focus==focus && (c.target->context!=context || c.target->edit!=edit))return 2;
+    if(!e || e->sequence!=execution || e->command!=commandId || !(e->key==key) || e->focus!=focus || round>3 ||
+       start!=e->start || end!=e->end || !cjguiOhosCommandExecutionCurrentLocked(*s,e))return 1;
+    if(c.firstInputConsumed)return 1; // A late getter cannot install a consumed input source.
+    if(round==3){c.setterSent=true;return 0;} // Actual common setter returned, never installation evidence.
+    if(round==2){if(!c.installed){c.terminal=true;c.reason="platform_confirmation_failed";}return 0;}
+    if(c.installed)return 0;
+    const int64_t now=proxyRestoreNowMs();
+    if(round==0){if(!c.setterSent)return 1;if(c.firstObservation<0)c.firstObservation=now;return 0;}
+    if(c.firstObservation<0 || now<=c.firstObservation)return 1;
+    c.installed=true;c.choice->platformInstalled=true;
+    if(s->originalInserts.root==e){s->originalInserts.installed=true;cjguiOhosEnqueueOriginalInsertLocked(*s);}
+    s->selStartUtf16=start;s->selEndUtf16=end;s->caretUtf16=end;
+    s->selPlatformStart=start;s->selPlatformEnd=end;s->selectionIntentConfirmed=true;s->caretBlinkResetPending=true;
+    RLOGI("physical selection command phase=execution-installed choice=%{public}llu execution=%{public}llu context=%{public}lld operation=%{public}llu publication=%{public}llu attach=%{public}llu install=%{public}llu deadline=%{public}lld",
+        (unsigned long long)commandId,(unsigned long long)execution,(long long)context,(unsigned long long)e->target->operation,
+        (unsigned long long)e->publication,(unsigned long long)e->attach,(unsigned long long)e->install,(long long)e->notAfter);
+    return 0;
+}
+
+extern "C" int32_t ohos_renderer_selection_command_close_capture(uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus)
+{
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    const auto capture=s?s->selectionCapture:CjguiOhosSelectionCapture{};
+    RLOGI("selection capture close phase=component-disappear app=%{public}llu session=%{public}llu ctx=%{public}lld edit=%{public}llu mount=%{public}llu focus=%{public}llu capture=%{public}d observation=%{public}llu operation=%{public}llu command=%{public}llu",
+        (unsigned long long)app,(unsigned long long)session,(long long)context,(unsigned long long)edit,
+        (unsigned long long)mount,(unsigned long long)focus,capture!=nullptr,
+        (unsigned long long)(capture && capture->source?capture->source->receipt->origin->id:0),
+        (unsigned long long)(capture?capture->operation:0),(unsigned long long)(s && s->selectionCommandState.choice?s->selectionCommandState.choice->origin->id:0));
+    if(!capture || !capture->source || !(capture->source->coverage->key==key) ||
+       capture->source->coverage->focus!=focus)return 1;
+    // The actual component disappearing closes only the new-key producer.
+    // An already admitted Q retains its immutable origin and original deadline.
+    s->selectionCapture.reset();return 0;
+}
+
+static int64_t cjguiOhosInputWillLocked(const char *before, size_t beforeBytes,
+    const char *after, size_t afterBytes, const char *field, uint32_t start, uint32_t end,
+    uint32_t afterStart, uint32_t afterEnd, uint64_t app, uint64_t session, int64_t context,
+    uint64_t edit, uint64_t mount, uint64_t focus,uint64_t expectedCommand,uint64_t expectedExecution=0,uint64_t expectedPredecessor=0)
+{
+    if (!before || !after || !field || beforeBytes>262144 || afterBytes>262144) return -1;
+    Session *s=lookupSessionLocked(session); const CjguiOhosProxyKey key{app,session,edit,mount,context};
+    const auto refuse=[&](const char *reason) -> int64_t {
+        const auto q=s?s->choiceSources.latest():CjguiOhosChoiceSources::Receipt{};
+        const uint64_t choice=q?q->origin->id:0,head=s&&s->lastCompletedInputTicket?s->lastCompletedInputTicket->id:0;
+        struct Refusal {CjguiOhosProxyKey key;uint64_t choice=0,head=0;};
+        static std::array<Refusal,64> first{};static size_t next=0;
+        const bool seen=std::any_of(first.begin(),first.end(),[&](const Refusal&r){return r.key==key && r.choice==choice && r.head==head;});
+        if(!seen) {
+            first[next++%first.size()]={key,choice,head};
+            RLOGW("input Will first refusal reason=%{public}s app=%{public}llu session=%{public}llu ctx=%{public}lld edit=%{public}llu mount=%{public}llu focus=%{public}llu choice=%{public}llu head=%{public}llu pending=%{public}d prefix=%{public}zu coordinateAfter=%{public}llu body_v=%{public}lld platform_v=%{public}lld range=%{public}u:%{public}u after=%{public}u:%{public}u beforeBytes=%{public}zu afterBytes=%{public}zu",
+                reason,(unsigned long long)app,(unsigned long long)session,(long long)context,(unsigned long long)edit,
+                (unsigned long long)mount,(unsigned long long)focus,(unsigned long long)choice,(unsigned long long)head,
+                q&&!q->settled?1:0,q?q->origin->prefix.size():0,(unsigned long long)(q?q->origin->coordinateAfter:0),
+                (long long)(s?s->ownedMirrorAccepted.ownerContentVersion:-1),(long long)(s?s->editingMirrorOwnerVersion:-1),
+                start,end,afterStart,afterEnd,beforeBytes,afterBytes);
+        }
+        return -1;
+    };
+    if(s && s->originalInserts.active()) {
+        if(!cjguiOhosOriginalCarrierCurrentLocked(*s))s->originalInserts.cancel("carrier_retired");
+        else return refuse("original_command_pending");
+    }
+    if (!s || !s->focusAuthority.permits(key,focus) || !s->editingContextLive || s->editorRetired ||
+        s->editingContextId!=context || s->editingContextGeneration!=edit || s->editingFieldName!=field ||
+        s->markedActive || s->previewActive) return refuse("authority_or_platform_state");
+    CjguiOhosEditTicket t; t.before=utf8ToUtf16(std::string(before,beforeBytes)); t.after=utf8ToUtf16(std::string(after,afterBytes));
+    const auto predecessor=s->inputTickets.pendingPredecessor(expectedPredecessor);
+    if(expectedPredecessor && (!predecessor || expectedCommand || expectedExecution ||
+       !(predecessor->key==key) || predecessor->focusGeneration!=focus || predecessor->after!=t.before))
+        return refuse("pending_predecessor_invalid");
+    if(!expectedPredecessor && (s->inputTickets.pendingCount()!=0 || t.before!=s->editingText))
+        return refuse("unproven_platform_prefix");
+    if (start>end || end>t.before.size() ||
+        afterStart!=start || afterEnd<afterStart || afterEnd>t.after.size() ||
+        !utf16IsScalarBoundary(t.before,start) || !utf16IsScalarBoundary(t.before,end) ||
+        !utf16IsScalarBoundary(t.after,afterStart) || !utf16IsScalarBoundary(t.after,afterEnd)) return refuse("before_or_range");
+    t.inserted=t.after.substr(afterStart,afterEnd-afterStart);
+    if (!utf16IsWellFormed(t.before) || !utf16IsWellFormed(t.after) ||
+        t.before.substr(0,start)+t.inserted+t.before.substr(end)!=t.after) return refuse("splice_or_unicode");
+    t.key=key;t.focusGeneration=focus;t.field=field;t.start=start;t.end=end;t.afterStart=afterStart;t.afterEnd=afterEnd;
+    t.node=s->editingNodeId;t.resource=s->editingResourceId;t.kind=s->editingNodeKind;
+    t.projection=s->editingProjectionVersion;t.acceptedBinding=s->editingAcceptedBindingEpoch;
+    t.ownerBinding=editorOwnsTextSession(*s) ? s->ownedTextSessionBindingEpoch : 0;
+    if(predecessor && (predecessor->node!=t.node || predecessor->resource!=t.resource || predecessor->kind!=t.kind ||
+       predecessor->field!=t.field || predecessor->ownerBinding!=t.ownerBinding || predecessor->acceptedBinding!=t.acceptedBinding))
+        return refuse("pending_predecessor_binding");
+    if(predecessor) {
+        const auto observation=s->choiceSources.latest();
+        if(observation && (!predecessor->choice ||
+           (observation->origin->id!=predecessor->choice->origin->id &&
+            !(predecessor->commandExecution && observation->origin->id<predecessor->choice->origin->id))))
+            return refuse("pending_predecessor_choice");
+        t.predecessor=predecessor->id;t.sourceBasis=predecessor->sourceBasis;t.choice=predecessor->choice;
+        t.commandExecution=predecessor->commandExecution;t.sourceLeaf=predecessor->sourceLeaf;
+    }
+    if (editorOwnsTextSession(*s)) {
+        // A refused owner command leaves a dirty proxy even if its bytes are
+        // identical. Only the original rollback ACK can reopen this stream.
+        if(s->inputOwnerFailed)return refuse("dirty_owner");
+        const auto *decl=ownedMirrorDeclarationLocked(*s,t.node,t.resource,t.kind);
+        if (!decl || decl->sourceBasis.empty()) return refuse("body_source_missing");
+        // Explicit stream order wins over byte equality (including semantic same-value commands).
+        const auto observation=s->choiceSources.latest();
+        auto &command=s->selectionCommandState;
+        const bool capturedRoot=expectedCommand && command.choice && command.choice->origin->id==expectedCommand &&
+            command.choice->origin->capturedCommand;
+        if(predecessor) {
+            if(!t.choice || (t.choice->settled && !t.choice->accepted))return refuse("pending_predecessor_source");
+        } else if(capturedRoot) {
+            const auto execution=command.execution;
+            if((!command.installed && (!command.setterSent || command.firstObservation<0)) ||
+               command.firstInputConsumed || !cjguiOhosCommandExecutionCurrentLocked(*s,execution) ||
+               !expectedExecution || execution->sequence!=expectedExecution ||
+               !(execution->key==key) || execution->focus!=focus || t.before!=*execution->installedBody->platform ||
+               start!=execution->start || end!=execution->end || !command.choice->accepted ||
+               execution->installedBody->ownerBinding!=t.ownerBinding || execution->installedBody->acceptedBinding!=t.acceptedBinding)
+                return refuse("physical_command_execution_mismatch");
+            t.choice=command.choice;t.commandExecution=execution;t.sourceBasis=execution->installedBody->bodyBasis;
+            CjguiOhosInputSourceLeaf leaf;
+            leaf.coverage=execution->installedBody;leaf.acceptedBody=execution->acceptedBody;
+            leaf.key=key;leaf.focus=focus;leaf.command=execution->command;leaf.execution=execution->sequence;
+            leaf.publication=execution->publication;leaf.attach=execution->attach;leaf.install=execution->install;
+            leaf.ownerVersion=command.owner->version;leaf.selectionRevision=command.owner->selectionRevision;
+            leaf.anchor=command.owner->anchor;leaf.active=command.owner->focus;
+            leaf.start=start;leaf.end=end;leaf.installed=command.installed;
+            leaf.firstObservation=command.firstObservation;leaf.admittedAt=proxyRestoreNowMs();leaf.notAfter=execution->notAfter;
+            t.sourceLeaf=std::make_shared<const CjguiOhosInputSourceLeaf>(std::move(leaf));
+        } else {
+        if (expectedCommand && (!observation || observation->origin->id!=expectedCommand ||
+            observation->origin->sourceKind!=4 || s->semanticSelectionCommand!=expectedCommand ||
+            !(observation->origin->key==key) || observation->origin->focus!=focus ||
+            observation->origin->text!=t.before || start!=observation->origin->start || end!=observation->origin->end ||
+            (observation->settled && !observation->accepted))) return refuse("physical_command_origin_mismatch");
+        const bool sameChoiceHead=!expectedCommand && s->lastCompletedInputTicket &&
+            (!observation || (s->lastCompletedInputTicket->choice &&
+             s->lastCompletedInputTicket->choice->origin->id==observation->origin->id) ||
+             (s->lastCompletedInputTicket->commandExecution && observation &&
+              s->lastCompletedInputTicket->choice && observation->origin->id<s->lastCompletedInputTicket->choice->origin->id));
+        if(sameChoiceHead && s->lastCompletedInputTicket->key==key &&
+           s->lastCompletedInputTicket->focusGeneration==focus && s->lastCompletedInputTicket->after==t.before &&
+           !s->inputOwnerFailed) {
+            t.sourceBasis=s->lastCompletedInputTicket->sourceBasis;
+            t.choice=s->lastCompletedInputTicket->choice;
+            t.commandExecution=s->lastCompletedInputTicket->commandExecution;
+            t.sourceLeaf=s->lastCompletedInputTicket->sourceLeaf;
+            t.predecessor=s->lastCompletedInputTicket->id;
+        } else {
+            const bool originalPrefixPostimage=observation && !observation->origin->prefixOrigins.empty() &&
+                observation->origin->prefixOrigins.size()==observation->origin->prefix.size() &&
+                s->lastCompletedInputTicket && s->lastCompletedInputTicket->id==observation->origin->prefixOrigins.back()->id &&
+                s->lastCompletedInputTicket->after==t.before &&
+                (observation->origin->coordinateAfter==0 ? observation->origin->prefixOrigins.front()->before==observation->origin->text :
+                 std::any_of(observation->origin->prefixOrigins.begin(),observation->origin->prefixOrigins.end(),[&](const auto&d){
+                    return d->id==observation->origin->coordinateAfter && d->after==observation->origin->text;}));
+            if(!observation || observation->origin->sourceKind==3 || !(observation->origin->key==key) || observation->origin->focus!=focus ||
+               (observation->origin->text!=t.before && !originalPrefixPostimage) || observation->origin->ownerBinding!=t.ownerBinding ||
+               observation->origin->acceptedBinding!=t.acceptedBinding ||
+               (observation->settled && !observation->accepted)) return refuse("choice_source_invalid");
+            if (observation->origin->sourceKind==4 &&
+                (start!=observation->origin->start || end!=observation->origin->end))
+                return refuse("physical_command_range_not_observed");
+            // Only the fresh uninstalled root needs this range proof. Explicit
+            // predecessors and installed composition/deletion keep their paths.
+            if(observation->origin->sourceKind==1 && !observation->platformInstalled &&
+               (start!=std::min(observation->origin->start,observation->origin->end) ||
+                end!=std::max(observation->origin->start,observation->origin->end)))
+                return refuse("ordinary_choice_range_not_installed");
+            if (observation->origin->sourceKind==4 && !observation->platformInstalled &&
+                observation->origin->deadline && proxyRestoreNowMs()>=observation->origin->deadline)
+                return refuse("physical_command_platform_deadline");
+            t.choice=observation; // A pending observation is a reference, never a rewritten source ticket.
+            t.sourceBasis=observation->origin->bodyBasis;
+        }
+        }
+    }
+    if(expectedCommand && (!t.choice || t.choice->origin->id!=expectedCommand || t.predecessor))return refuse("physical_command_not_new_root");
+    const auto accepted=s->inputTickets.admit(std::move(t));
+    if(!accepted)return refuse("input_budget");
+    if(!accepted->predecessor && accepted->choice==s->selectionCommandState.choice &&
+       accepted->choice && accepted->choice->origin->sourceKind==1)
+        s->selectionCommandState.firstInputConsumed=true; // Actual SDK ticket owns position; no later ordinary setter.
+    if(accepted->commandExecution && !accepted->predecessor) {
+        s->selectionCommandState.firstInputConsumed=true;
+        RLOGI("physical selection command phase=source-consumed-at-will choice=%{public}llu execution=%{public}llu input=%{public}llu installed=%{public}d firstObservation=%{public}lld admittedAt=%{public}lld",
+            (unsigned long long)expectedCommand,(unsigned long long)accepted->commandExecution->sequence,
+            (unsigned long long)accepted->id,accepted->sourceLeaf->installed?1:0,
+            (long long)accepted->sourceLeaf->firstObservation,(long long)accepted->sourceLeaf->admittedAt);
+    }
+    if(accepted->before==accepted->after) {
+        // Same-value semantic command is queued at Will. Platform proceeds normally; no Change is required.
+        if(!s->inputTickets.platformChanged(accepted->id,key,accepted->after) || !drainReadyInputCommandsLocked(*s))return refuse("same_value_dispatch");
+        if (!accepted->predecessor && accepted->choice && accepted->choice->origin->sourceKind==4 &&
+            accepted->choice->origin->id==s->semanticSelectionCommand &&
+            accepted->before==accepted->choice->origin->text && accepted->start==accepted->choice->origin->start &&
+            accepted->end==accepted->choice->origin->end) {
+            // The admitted SDK Will carries the actual before-range. Its unchanged
+            // value has no required Change callback; this is not an after-image grant.
+            accepted->choice->platformInstalled=true;
+            s->semanticSelectionCommand=0;
+            RLOGI("physical selection command phase=platform-range-observed-at-same-value-will choice=%{public}llu input=%{public}llu",
+                (unsigned long long)accepted->choice->origin->id,(unsigned long long)accepted->id);
+        }
+    }
+    return static_cast<int64_t>(accepted->id);
 }
 
 extern "C" int64_t ohos_renderer_input_will(const char *before, size_t beforeBytes,
@@ -12756,55 +16778,30 @@ extern "C" int64_t ohos_renderer_input_will(const char *before, size_t beforeByt
     uint32_t afterStart, uint32_t afterEnd, uint64_t app, uint64_t session, int64_t context,
     uint64_t edit, uint64_t mount, uint64_t focus)
 {
-    if (!before || !after || !field || beforeBytes>262144 || afterBytes>262144) return -1;
     std::lock_guard<std::mutex> g(g_sessions.lock);
-    Session *s=lookupSessionLocked(session); const CjguiOhosProxyKey key{app,session,edit,mount,context};
-    if (!s || !s->focusAuthority.permits(key,focus) || !s->editingContextLive || s->editorRetired ||
-        s->editingContextId!=context || s->editingContextGeneration!=edit || s->editingFieldName!=field ||
-        s->markedActive || s->previewActive) return -1;
-    CjguiOhosEditTicket t; t.before=utf8ToUtf16(std::string(before,beforeBytes)); t.after=utf8ToUtf16(std::string(after,afterBytes));
-    if (t.before!=s->editingText || start>end || end>t.before.size() ||
-        afterStart!=start || afterEnd<afterStart || afterEnd>t.after.size() ||
-        !utf16IsScalarBoundary(t.before,start) || !utf16IsScalarBoundary(t.before,end) ||
-        !utf16IsScalarBoundary(t.after,afterStart) || !utf16IsScalarBoundary(t.after,afterEnd)) return -1;
-    t.inserted=t.after.substr(afterStart,afterEnd-afterStart);
-    if (!utf16IsWellFormed(t.before) || !utf16IsWellFormed(t.after) ||
-        t.before.substr(0,start)+t.inserted+t.before.substr(end)!=t.after) return -1;
-    t.key=key;t.focusGeneration=focus;t.field=field;t.start=start;t.end=end;t.afterStart=afterStart;t.afterEnd=afterEnd;
-    t.node=s->editingNodeId;t.resource=s->editingResourceId;t.kind=s->editingNodeKind;
-    t.projection=s->editingProjectionVersion;t.acceptedBinding=s->editingAcceptedBindingEpoch;
-    t.ownerBinding=editorOwnsTextSession(*s) ? s->ownedTextSessionBindingEpoch : 0;
-    if (editorOwnsTextSession(*s)) {
-        // A refused owner command leaves a dirty proxy even if its bytes are
-        // identical. Only the original rollback ACK can reopen this stream.
-        if(s->inputOwnerFailed)return -1;
-        const auto *decl=ownedMirrorDeclarationLocked(*s,t.node,t.resource,t.kind);
-        if (!decl || decl->sourceBasis.empty()) return -1;
-        // Explicit stream order wins over byte equality (including semantic same-value commands).
-        if(s->lastCompletedInputTicket && s->lastCompletedInputTicket->key==key &&
-           s->lastCompletedInputTicket->focusGeneration==focus && s->lastCompletedInputTicket->after==t.before &&
-           !s->inputOwnerFailed) {
-            t.sourceBasis=s->lastCompletedInputTicket->sourceBasis;
-            t.choice=s->lastCompletedInputTicket->choice;
-            t.predecessor=s->lastCompletedInputTicket->id;
-        } else {
-            const auto observation=s->choiceSources.latest();
-            if(!observation || !(observation->origin->key==key) || observation->origin->focus!=focus ||
-               observation->origin->text!=t.before || observation->origin->ownerBinding!=t.ownerBinding ||
-               observation->origin->acceptedBinding!=t.acceptedBinding ||
-               (observation->settled && !observation->accepted)) return -1;
-            t.choice=observation; // A pending observation is a reference, never a rewritten source ticket.
-            t.sourceBasis=observation->origin->bodyBasis;
-        }
-    }
-    const auto accepted=s->inputTickets.admit(std::move(t));
-    if(!accepted)return -1;
-    if(accepted->before==accepted->after) {
-        // Same-value semantic command is queued at Will. Platform proceeds normally; no Change is required.
-        if(!s->inputTickets.platformChanged(accepted->id,key,accepted->after) || !drainReadyInputCommandsLocked(*s))return -1;
-        s->lastCompletedInputTicket=accepted;
-    }
-    return static_cast<int64_t>(accepted->id);
+    return cjguiOhosInputWillLocked(before,beforeBytes,after,afterBytes,field,start,end,afterStart,afterEnd,app,session,context,edit,mount,focus,0);
+}
+
+extern "C" int64_t ohos_renderer_input_will_command(const char *before, size_t beforeBytes,
+    const char *after, size_t afterBytes, const char *field, uint32_t start, uint32_t end,
+    uint32_t afterStart, uint32_t afterEnd, uint64_t app, uint64_t session, int64_t context,
+    uint64_t edit, uint64_t mount, uint64_t focus,uint64_t expectedCommand,uint64_t expectedExecution)
+{
+    if(!expectedCommand)return -1;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    return cjguiOhosInputWillLocked(before,beforeBytes,after,afterBytes,field,start,end,afterStart,afterEnd,app,session,context,edit,mount,focus,expectedCommand,expectedExecution);
+}
+
+// Private bridge extension. Legacy root and command ABI remain unchanged.
+extern "C" int64_t ohos_renderer_input_will_successor(const char *before,size_t beforeBytes,
+    const char *after,size_t afterBytes,const char *field,uint32_t start,uint32_t end,
+    uint32_t afterStart,uint32_t afterEnd,uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t predecessor)
+{
+    if(!predecessor)return -1;
+    std::lock_guard<std::mutex> g(g_sessions.lock);
+    return cjguiOhosInputWillLocked(before,beforeBytes,after,afterBytes,field,start,end,afterStart,afterEnd,
+        app,session,context,edit,mount,focus,0,0,predecessor);
 }
 
 extern "C" int32_t ohos_renderer_input_change(const char *text,size_t bytes,uint64_t ticket,
@@ -12815,24 +16812,57 @@ extern "C" int32_t ohos_renderer_input_change(const char *text,size_t bytes,uint
         std::lock_guard<std::mutex> g(g_sessions.lock); Session *s=lookupSessionLocked(session);
         const CjguiOhosProxyKey key{app,session,edit,mount,context};
         if(!s || !s->editingContextLive || s->editorRetired)return 1;
-        const auto origin=s->inputTickets.find(ticket);if(!origin)return 1;
+        const auto origin=s->inputTickets.find(ticket);if(!origin || origin->focusGeneration!=focus)return 1;
         const bool current=s->focusAuthority.permits(key,focus) && s->editingContextId==context && s->editingContextGeneration==edit;
         const bool transferred=s->focusAuthority.permitsTransferredInput(key,focus,ticket,origin->ownerBinding,proxyRestoreNowMs());
         if(!current && !transferred)return 1;
         const auto after=utf8ToUtf16(std::string(text,bytes));
-        if((current && s->editingText!=origin->before) ||
-           !s->inputTickets.platformChanged(ticket,key,after))return 1;
-        if(current) {
-            s->editingText=after;s->lastCompletedInputTicket=origin;
-            s->previewActive=false;s->markedActive=false;s->previewText.clear();
-            // Only this mount's actual Change changes its visible state.
-            s->caretBlinkResetPending=true;s->selectionIntentConfirmed=false;
-        }
+        if(!s->inputTickets.platformChanged(ticket,key,after))return 1;
         // An old admitted Change settles its original fixed-prefix ticket;
         // it never writes the new mount's local coordinates or platform text.
         if(!drainReadyInputCommandsLocked(*s))return 1;
     }
-    g_render.post(std::make_shared<RedrawJob>());return 0;
+    g_render.post(std::make_shared<RedrawJob>("redraw-callsite-14031"));return 0;
+}
+
+// Private completion extension. Legacy single-ticket Change keeps its ABI and
+// out-of-order waiting semantics. No caller-supplied prefix-valid flag exists.
+extern "C" int64_t ohos_renderer_input_change_prefix(const char *before,size_t beforeBytes,
+    const char *after,size_t afterBytes,uint64_t anchor,uint64_t app,uint64_t session,int64_t context,
+    uint64_t edit,uint64_t mount,uint64_t focus,uint64_t observation,uint32_t start,uint32_t end,
+    uint32_t afterStart,uint32_t afterEnd,int32_t previewOffset,const char *preview,size_t previewBytes,
+    int32_t oldPreviewOffset,const char *oldPreview,size_t oldPreviewBytes)
+{
+    if(!before || !after || !preview || !oldPreview || beforeBytes>262144 || afterBytes>262144 ||
+       previewBytes || oldPreviewBytes || previewOffset!=-1 || oldPreviewOffset!=-1)return 0;
+    int64_t boundary=0;
+    {
+        std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+        if(!s || !s->editingContextLive || s->editorRetired)return 0;
+        CjguiOhosPlatformChangeEvidence evidence;
+        evidence.key={app,session,edit,mount,context};evidence.focus=focus;
+        evidence.anchor=anchor;evidence.observation=observation;
+        evidence.before=utf8ToUtf16(std::string(before,beforeBytes));
+        evidence.after=utf8ToUtf16(std::string(after,afterBytes));
+        if(utf16ToUtf8(evidence.before)!=std::string(before,beforeBytes) ||
+           utf16ToUtf8(evidence.after)!=std::string(after,afterBytes))return 0;
+        evidence.start=start;evidence.end=end;evidence.afterStart=afterStart;evidence.afterEnd=afterEnd;
+        evidence.previewOffset=previewOffset;evidence.oldPreviewOffset=oldPreviewOffset;
+        const auto now=proxyRestoreNowMs();
+        const auto proved=s->inputTickets.platformChangedPrefix(evidence,[&](const CjguiOhosEditTickets::Ticket&t){
+            const bool current=s->focusAuthority.permits(t->key,t->focusGeneration) &&
+                s->editingContextId==t->key.context && s->editingContextGeneration==t->key.edit;
+            return current || s->focusAuthority.permitsTransferredInput(t->key,t->focusGeneration,t->id,t->ownerBinding,now);
+        });
+        if(!proved.boundary)return 0;
+        RLOGI("input platform completion kind=change-prefix observation=%{public}llu anchor=%{public}llu actualChanges=1 covered=%{public}zu newlyReady=%{public}zu",
+            (unsigned long long)observation,(unsigned long long)anchor,proved.covered,proved.newlyReady);
+        // Platform coverage is not owner acceptance. A partial enqueue/owner
+        // refusal retains prior real results and follows existing retirement.
+        if(!drainReadyInputCommandsLocked(*s))return 0;
+        boundary=static_cast<int64_t>(proved.boundary);
+    }
+    g_render.post(std::make_shared<RedrawJob>("input-change-prefix"));return boundary;
 }
 
 extern "C" const char *ohos_renderer_input_ticket_fact(uint64_t session,uint32_t part)
@@ -12850,25 +16880,133 @@ extern "C" const char *ohos_renderer_input_ticket_fact(uint64_t session,uint32_t
         std::to_string(t.start)+","+std::to_string(t.end);
     else if(part==7)storage=utf16ToUtf8(t.inserted);
     else if(part==8)storage=s->lastEventInputTransferred ? "1" : "0";
+    else if(part==9 && t.choice && t.choice->settled && t.choice->accepted && t.choice->origin->sourceKind!=3 && t.choice->origin->sourceKind!=4) {
+        const auto c=t.choice->resolvedCoverage?t.choice->resolvedCoverage:t.choice->origin->coverage;
+        int64_t a,b;
+        if(c && *c->platform==t.before && c->source(false,t.start,a) && c->source(false,t.end,b))
+            storage=std::to_string(t.choice->ownerVersion)+","+std::to_string(t.choice->postOrigin);
+    }
+    else if(part==9)storage.clear(); // Explicit absence of a local continuation map.
+    else if(part==10 && t.commandExecution)storage=t.commandExecution->installedBody->bodyBasis;
+    else if(part==11 && t.commandExecution)storage=std::to_string(t.commandExecution->command)+","+std::to_string(t.commandExecution->sequence);
+    else if(part==10 || part==11)storage.clear();
     else storage=std::to_string(t.id)+"|"+std::to_string(t.predecessor)+"|"+
         std::to_string(t.key.app)+","+std::to_string(t.key.session)+","+std::to_string(t.key.context)+","+
         std::to_string(t.key.edit)+","+std::to_string(t.key.mount)+","+std::to_string(t.focusGeneration)+"|"+t.sourceBasis;
     return storage.c_str();
 }
 
-// Owner completion resolves exactly one producer observation. It does not publish body or alter a scene.
-extern "C" int32_t ohos_renderer_publish_choice(uint64_t session,const char *basis,int32_t accepted)
-{
+// Exact observation completion does not publish body or execute selection again.
+extern "C" int32_t ohos_renderer_publish_choice_id(uint64_t session,uint64_t id,const char *basis,int32_t accepted,
+    int64_t version,int64_t origin,int64_t anchor,int64_t focus) {
     if(!basis)return 1;
-    std::lock_guard<std::mutex> guard(g_sessions.lock); Session *s=lookupSessionLocked(session);
-    if(!s || !s->lastEventChoice)return 1;
-    auto r=s->lastEventChoice;const auto &o=*r->origin;
-    if(!s->focusAuthority.permits(o.key,o.focus) || o.ownerBinding!=s->ownedTextSessionBindingEpoch)return 1;
+    std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    const auto r=s?s->choiceSources.find(id):CjguiOhosChoiceSources::Receipt{};if(!r)return 2;
+    const auto &o=*r->origin;
+    if(o.capturedCommand) {
+        cjguiOhosExpireSelectionCommandLocked(*s);
+        if(!cjguiOhosCapturedCommandSourceCurrentLocked(*s,r))return 2;
+        if(accepted!=1) {
+            s->selectionCommandState.terminal=true;s->selectionCommandState.reason="owner_refused";
+            return s->choiceSources.settle(r,false,"")?0:2;
+        }
+        if(!s->selectionCommandState.completeOwner(s->choiceSources,basis,version,origin,anchor,focus))return 2;
+        auto &command=s->selectionCommandState;
+        if(!command.target) {
+            const auto &t=s->focusAuthority.transfer;
+            CjguiOhosSelectionCommandTarget target{++command.targetSequence,t.operation,t.targetEdit,t.targetContext,t.old,command.owner};
+            command.target=std::make_shared<const CjguiOhosSelectionCommandTarget>(std::move(target));
+        }
+        s->selectionIntentConfirmed=false;
+        RLOGI("physical selection command phase=owner-executed choice=%{public}llu originalCtx=%{public}lld owner=%{public}lld revision=%{public}lld",
+            (unsigned long long)o.id,(long long)o.key.context,(long long)version,
+            (long long)s->selectionCommandState.owner->selectionRevision);
+        return 0;
+    }
+    if(r->settled)return s->choiceSources.settle(r,accepted==1,basis,version,origin,anchor,focus)?0:2;
+    if(!s->focusAuthority.permits(o.key,o.focus) || o.ownerBinding!=s->ownedTextSessionBindingEpoch ||
+       (o.deadline && proxyRestoreNowMs()>=o.deadline)) {
+        r->reason="choice_authority_or_deadline";s->choiceSources.settle(r,false,"");return 2;
+    }
+    if(accepted) {
+        const int ready=cjguiOhosChoiceReadyLocked(*s,r);
+        if(ready<=0)return ready==0?1:2;
+    }
     const auto *decl=ownedMirrorDeclarationLocked(*s,o.node,o.resource,o.kind);
-    if(accepted && (!decl || decl->text!=o.text || !CjguiOhosSourceBasis(decl->sourceBasis).sameBody(CjguiOhosSourceBasis(basis))))return 1;
-    const bool okay=s->choiceSources.settle(r,accepted==1,basis);
-    RLOGI("input choice completion observation=%{public}llu accepted=%{public}d okay=%{public}d",static_cast<unsigned long long>(o.id),accepted,okay?1:0);
-    return okay?0:1;
+    const auto c=r->resolvedCoverage?r->resolvedCoverage:o.coverage;
+    if(accepted && (!decl || !c || version!=decl->ownerContentVersion ||
+       !CjguiOhosSourceBasis(decl->sourceBasis).sameBody(CjguiOhosSourceBasis(basis)) ||
+       (!r->requiresRebase && o.sourceKind!=3 && *c->platform!=o.text))) {
+        r->reason="choice_source_invalid";s->choiceSources.settle(r,false,"");return 2;
+    }
+    const bool okay=s->choiceSources.settle(r,accepted==1,basis,version,origin,anchor,focus);
+    if(!okay){r->reason="choice_mapping_invalid";s->choiceSources.settle(r,false,"");}
+    if(okay && accepted) {
+        if(o.sourceKind==1 || o.sourceKind==3) {
+            cjguiOhosClearSelectionCaptureLocked(*s);
+            const char *freezeRefusal=nullptr;
+            s->acceptedSelection=CjguiOhosAcceptedSelectionFact::freeze(r,&freezeRefusal);
+            const bool frozen=s->acceptedSelection!=nullptr;
+            const bool retained=!frozen || s->choiceSources.holdAuxiliary(s->acceptedSelection->retainedUnits());
+            if(!retained)
+                s->acceptedSelection.reset();
+            if(o.sourceKind==1 && s->acceptedSelection &&
+               s->choiceSources.holdAuxiliary(s->acceptedSelection->retainedUnits()+CjguiOhosSelectionCommandState::kReservedUnits))
+                s->selectionCommandState.beginOrdinary(s->acceptedSelection,o.deadline);
+            RLOGI("selection source freeze observation=%{public}llu kind=%{public}d settled=%{public}d accepted=%{public}d owner=%{public}lld origin=%{public}lld anchor=%{public}lld focus=%{public}lld qualified=%{public}d resolved=%{public}d frozen=%{public}d retained=%{public}d reason=%{public}s basis=%{public}s",
+                (unsigned long long)o.id,o.sourceKind,r->settled,r->accepted,(long long)r->ownerVersion,
+                (long long)r->postOrigin,(long long)r->anchorByte,(long long)r->focusByte,c && c->qualified,
+                r->resolvedCoverage!=nullptr,frozen,retained,freezeRefusal?freezeRefusal:(!retained?"capacity":"accepted"),r->basis.c_str());
+        }
+        s->selectionIntentConfirmed=o.sourceKind==4 ? r->platformInstalled : o.sourceKind!=3;s->caretBlinkResetPending=true;
+        if(o.humanAnchor && s->humanAnchor.seq==o.humanAnchor &&
+           s->humanAnchor.start16==o.start && s->humanAnchor.end16==o.end)s->humanAnchor.consumed=true;
+        g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-14091"));
+    }
+    RLOGI("input choice completion observation=%{public}llu accepted=%{public}d okay=%{public}d",
+        static_cast<unsigned long long>(o.id),accepted,okay?1:0);
+    return okay?0:2;
+}
+extern "C" int32_t ohos_renderer_publish_choice(uint64_t session,const char *basis,int32_t accepted) {
+    // Compatibility callers still consume the original event slot under the lock.
+    if(!basis)return 1;std::lock_guard<std::mutex> guard(g_sessions.lock);Session *s=lookupSessionLocked(session);
+    const auto r=s?s->lastEventChoice:CjguiOhosChoiceSources::Receipt{};if(!r)return 1;
+    const auto &o=*r->origin;const auto *d=ownedMirrorDeclarationLocked(*s,o.node,o.resource,o.kind);
+    if(!s->focusAuthority.permits(o.key,o.focus) || o.ownerBinding!=s->ownedTextSessionBindingEpoch ||
+       (accepted && (!d || d->text!=o.text || !CjguiOhosSourceBasis(d->sourceBasis).sameBody(CjguiOhosSourceBasis(basis)))))return 1;
+    return s->choiceSources.settle(r,accepted==1,basis)?0:1;
+}
+extern "C" const char *ohos_renderer_choice_fact(uint64_t session,uint64_t id,uint32_t part) {
+    thread_local std::string storage;storage.clear();std::lock_guard<std::mutex> guard(g_sessions.lock);
+    Session *s=lookupSessionLocked(session);const auto r=s?(id?s->choiceSources.find(id):s->lastEventChoice):CjguiOhosChoiceSources::Receipt{};
+    if(!r)return storage.c_str();const auto &o=*r->origin;
+    if(part==0)storage=std::to_string(o.id);
+    else if(part==1)storage=utf16ToUtf8(o.text);
+    else if(part==7 && r->requiresRebase && r->resolvedCoverage)storage=utf16ToUtf8(*r->resolvedCoverage->platform);
+    else if(part==8)storage=std::to_string(o.sourceKind);
+    else if(part==10)storage=o.capturedCommand && cjguiOhosCapturedCommandSourceCurrentLocked(*s,r)?"1":"0";
+    else if(part==12)storage=o.capturedCommand && s->selectionCommandState.choice==r &&
+        !s->selectionCommandState.terminal && !s->selectionCommandState.firstInputConsumed?"1":"0";
+    else if(part==9 && r->requiresRebase && r->resolvedCoverage)storage=std::to_string(r->resolvedCoverage->ownerVersion)+","+
+        std::to_string(r->resolvedCoverage->platformOrigin);
+    else if(part==2) {
+        CjguiOhosCoverage described;bool rebase=false;const char *reason=nullptr;
+        const int ready=cjguiOhosDescribeChoiceLocked(*s,r,described,rebase,reason);
+        const auto c=rebase?o.coverage:described;
+        int64_t a,b;
+        if(ready==1 && r->coordinateVersion>=0)
+            storage=std::to_string(r->coordinateVersion)+","+std::to_string(r->coordinateOrigin)+","+
+                std::to_string(r->coordinateAnchor)+","+std::to_string(r->coordinateFocus);
+        else if(ready==1 && c && (o.sourceKind==3 ? *c->layout==o.text : *c->platform==o.text) &&
+            (o.sourceKind==4 ? (a=o.sourceAnchor,b=o.sourceFocus,true) :
+             o.sourceKind==3 ? (a=o.sourceAnchor,b=o.sourceFocus,true) :
+             c->source(false,o.start,a) && c->source(false,o.end,b)))
+            storage=std::to_string(c->ownerVersion)+","+std::to_string(o.sourceKind==3?c->layoutOrigin:c->platformOrigin)+","+std::to_string(a)+","+std::to_string(b);
+    } else if(part==3)storage=r->settled?(r->accepted?"accepted":"refused"):"pending";
+    else if(part==4)storage=r->basis;
+    else if(part==6)storage=r->reason;
+    else if(part==5 && r->accepted)storage=std::to_string(r->ownerVersion)+","+std::to_string(r->postOrigin);
+    return storage.c_str();
 }
 static void markRefusedInputLocked(Session &s,const CjguiOhosEditTickets::Ticket &t)
 {
@@ -12918,7 +17056,33 @@ extern "C" int32_t ohos_renderer_publish_restore_choice(uint64_t session,uint64_
     const auto *decl=ownedMirrorDeclarationLocked(*s,o.node,o.resource,o.kind);
     if(!decl || decl->text!=o.text || o.ownerBinding!=s->ownedTextSessionBindingEpoch ||
        !CjguiOhosSourceBasis(decl->sourceBasis).sameBody(CjguiOhosSourceBasis(basis)))return 1;
-    if(!s->choiceSources.settle(r,true,basis))return 1;
+    const auto proof=cjguiOhosFreezeCoverageLocked(*s,*decl,o.node,o.resource,o.kind,true);
+    int64_t a,b;
+    if(!proof || !proof->source(false,o.start,a) || !proof->source(false,o.end,b))return 1;
+    if(!s->choiceSources.resolveCoverage(r,proof))return 1;
+    const CjguiOhosSourceBasis result(basis);
+    if(!result.valid)return 1;
+    const bool direct=result.value[8]==a && result.value[9]==b;
+    // A wide source selection keeps the established source authority. Its
+    // clipped installation is not an absolute range grant for a new root.
+    if(direct ? !s->choiceSources.settle(r,true,basis,proof->ownerVersion,proof->platformOrigin,a,b)
+              : !s->choiceSources.settle(r,true,basis))return 1;
+    if(s->consumedOriginalResult && !s->originalInserts.holdCoverage(proof,
+       s->inputTickets.retainedUnits()+s->choiceSources.retainedUnits()))return 1;
+    s->ownedMirrorAccepted.coverage=proof;
+    const auto completed=s->consumedOriginalResult;
+    auto &commands=s->originalInserts;
+    if(completed && decl->originalOwnerResult==completed && completed==commands.result &&
+       completed->root==commands.root && !commands.terminal && commands.pending.empty() && !commands.executing &&
+       commands.completed==completed->prefix && decl->sourceBasis==basis && completed->basis==basis &&
+       proxyRestoreNowMs()<completed->root->notAfter && s->inputTickets.pendingCount()==0 &&
+       s->focusAuthority.permits(completed->root->key,completed->root->focus) &&
+       r->origin->key==completed->root->key && r->origin->focus==completed->root->focus) {
+        commands.feedbackComplete=true;
+        RLOGI("original insertion phase=owner-feedback-published id=%{public}llu request=%{public}llu owner=%{public}lld",
+            (unsigned long long)completed->id,(unsigned long long)request,(long long)completed->version);
+    }
+    queueOwnedInteractionFeedbackIfCurrentLocked(s);
     if(!s->inputOwnerFailed){s->lastCompletedInputTicket.reset();s->inputOwnerCompleted=0;}
     return 0;
 }
@@ -12943,6 +17107,7 @@ extern "C" int32_t ohos_renderer_finish_refused_input(uint64_t session,uint64_t 
     s->finishedDirtyTicket=ticket;s->finishedDirtyRestore=request;
     s->inputOwnerFailed=false;s->dirtyInputTicket.reset();
     s->lastCompletedInputTicket.reset();s->inputOwnerCompleted=0;
+    queueOwnedInteractionFeedbackIfCurrentLocked(s);
     RLOGI("input dirty completed ticket=%{public}llu restore=%{public}llu",static_cast<unsigned long long>(ticket),static_cast<unsigned long long>(request));
     return 0;
 }
@@ -12983,6 +17148,22 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
         std::lock_guard<std::mutex> g(g_sessions.lock);
         Session *s = takeEditingContextLocked(contextId);
         if (!s) return 1;
+        const auto command=s->choiceSources.latest();
+        if (command && command->origin->sourceKind==4 && command->origin->id==s->semanticSelectionCommand &&
+            s->focusAuthority.permits(command->origin->key,command->origin->focus)) {
+            const auto &o=*command->origin;
+            if (start<0 || end<0 || static_cast<uint32_t>(start)!=o.start || static_cast<uint32_t>(end)!=o.end ||
+                s->editingText!=o.text || (command->settled && !command->accepted)) return 1;
+            command->platformInstalled=true;
+            s->selStartUtf16=o.start;s->selEndUtf16=o.end;s->caretUtf16=o.end;
+            s->selPlatformStart=o.start;s->selPlatformEnd=o.end;
+            s->selectionIntentConfirmed=command->settled && command->accepted;
+            s->caretBlinkResetPending=true;
+            RLOGI("physical selection command phase=platform-confirmed choice=%{public}llu ownerAccepted=%{public}d range=%{public}u:%{public}u",
+                (unsigned long long)o.id,command->settled&&command->accepted?1:0,o.start,o.end);
+            g_render.postIfRunning(std::make_shared<RedrawJob>("redraw-callsite-14274"));
+            return 0;
+        }
         const std::u16string visible = composedBuffer(*s);
         uint32_t size = static_cast<uint32_t>(visible.size());
         uint32_t a = clampToCodePointBoundary(visible, static_cast<uint32_t>(std::max(0, start)));
@@ -13045,7 +17226,7 @@ extern "C" int32_t ohos_renderer_ime_set_selection_ctx(int32_t start, int32_t en
     // 系统选择手柄期间没有新帧，高亮停留在上一次绘制的状态（实测手动拖选
     // 无高亮的根因）。与预览路径（ime_preview_text_ctx）同一重绘机制。
     if (changed) {
-        g_render.post(std::make_shared<RedrawJob>());
+        g_render.post(std::make_shared<RedrawJob>("redraw-callsite-14339"));
     }
     return 0;
 }
@@ -13114,7 +17295,7 @@ extern "C" int32_t ohos_renderer_ime_menu_command_ctx(const char *action,
         RLOGI("ime menu command ctx=%{public}lld action=%{public}s range=%{public}d:%{public}d accepted=%{public}d",
             static_cast<long long>(context), action ? action : "", start, end, ok ? 1 : 0);
     }
-    if (ok && std::strcmp(action, "validate") != 0) g_render.post(std::make_shared<RedrawJob>());
+    if (ok && std::strcmp(action, "validate") != 0) g_render.post(std::make_shared<RedrawJob>("redraw-callsite-14408"));
     return ok ? 0 : 1;
 }
 
@@ -13156,6 +17337,8 @@ extern "C" int32_t ohos_renderer_ime_restore_ack_ctx(int64_t contextId, uint64_t
               static_cast<long long>(contextId), static_cast<unsigned long long>(requestId));
         return 1;
     }
+    if(s->proxyRestore.requestId==requestId && cjguiOhosRestoreWaitsForInputLocked(*s))return 1;
+    cjguiOhosRetireSupersededRestoreLocked(*s);
     Session::ProxyRestoreRequest &req = s->proxyRestore;
     if (requestId == 0 || req.requestId != requestId) {
         // 不是当前票据号：先查既有终局并原样返回，绝不改写当前票据；没有终局记录
@@ -13339,6 +17522,22 @@ extern "C" uint64_t ohos_renderer_caret_paint_progress(uint64_t session)
     return s ? s->caretPaintProgress : 0;
 }
 
+static const char *cjguiOhosAcceptedCaretRefusal(const Session &s,uint64_t expectedScene)
+{
+    const AcceptedCaretRect &rect=s.activeCaret;
+    const char *reason=nullptr;
+    if(!rect.valid) reason="paint_unready";
+    else if(expectedScene!=s.acceptedSceneVersion) reason="scene_stale";
+    else if(!s.editing || s.editorRetired || !s.editingContextLive) reason="context_inactive";
+    else if(rect.context!=s.editingContextId) reason="context_stale";
+    else if(rect.projection!=s.acceptedProjectionVersion || rect.ticket!=s.acceptedPaintTicketId) reason="accepted_ticket_stale";
+    else if(rect.generation!=s.surfaceGeneration || rect.geometry!=s.surfaceGeometryRevision) reason="surface_geometry_stale";
+    else if(!cjguiOhosActiveEndCurrent(s,rect)) reason="active_end_stale";
+    else if(rect.coverage ? !cjguiOhosCoverageCurrent(s,rect.coverage) || rect.text!=*rect.coverage->layout
+                          : rect.text!=composedBuffer(s)) reason="body_stale";
+    return reason;
+}
+
 extern "C" int32_t ohos_renderer_accepted_active_caret_rect(uint64_t session, uint64_t expectedScene,
     uint64_t *outNodeId, uint64_t *outBinding, double *outLeftVp, double *outTopVp,
     double *outRightVp, double *outBottomVp)
@@ -13348,15 +17547,7 @@ extern "C" int32_t ohos_renderer_accepted_active_caret_rect(uint64_t session, ui
     const Session *s = lookupSessionLocked(session);
     if (!s) return -1;
     const AcceptedCaretRect &rect = s->activeCaret;
-    const char *reason=nullptr;
-    if(!rect.valid) reason="paint_unready";
-    else if(expectedScene!=s->acceptedSceneVersion) reason="scene_stale";
-    else if(!s->editing || s->editorRetired || !s->editingContextLive) reason="context_inactive";
-    else if(rect.context!=s->editingContextId) reason="context_stale";
-    else if(rect.projection!=s->acceptedProjectionVersion || rect.ticket!=s->acceptedPaintTicketId) reason="accepted_ticket_stale";
-    else if(rect.generation!=s->surfaceGeneration || rect.geometry!=s->surfaceGeometryRevision) reason="surface_geometry_stale";
-    else if(rect.caret!=s->caretUtf16) reason="active_end_stale";
-    else if(rect.text!=composedBuffer(*s)) reason="body_stale";
+    const char *reason=cjguiOhosAcceptedCaretRefusal(*s,expectedScene);
     if(reason) {
         RLOGI("caret query refused reason=%{public}s expectedScene=%{public}llu actualScene=%{public}llu progress=%{public}llu",
             reason,static_cast<unsigned long long>(expectedScene),static_cast<unsigned long long>(s->acceptedSceneVersion),static_cast<unsigned long long>(s->caretPaintProgress));
@@ -13373,6 +17564,34 @@ extern "C" int32_t ohos_renderer_accepted_active_caret_rect(uint64_t session, ui
             *outBottomVp = rect.bottom;
             return 1;
         }
+    }
+    return 0;
+}
+
+extern "C" int32_t ohos_renderer_accepted_text_line_bands(uint64_t session,uint64_t expectedScene,
+    uint64_t nodeId,uint64_t binding,double *firstTop,double *firstBottom,double *lastTop,double *lastBottom)
+{
+    if(!firstTop || !firstBottom || !lastTop || !lastBottom || !nodeId || !binding)return -1;
+    std::lock_guard<std::mutex> g(g_sessions.lock);const Session*s=lookupSessionLocked(session);
+    if(!s)return -1;
+    if(expectedScene!=s->acceptedSceneVersion)return 0;
+    for(const auto &b:s->textLineBands)if(b.nodeId==nodeId && b.binding==binding) {
+        if(!b.valid || b.projection!=s->acceptedProjectionVersion || b.ticket!=s->acceptedPaintTicketId ||
+           b.generation!=s->surfaceGeneration || b.geometry!=s->surfaceGeometryRevision)return 0;
+        if(b.dynamicText && (s->activeCaret.nodeId!=nodeId || s->activeCaret.binding!=binding ||
+           cjguiOhosAcceptedCaretRefusal(*s,expectedScene)))return 0;
+        if(b.coverage) {
+            const auto *d=ownedMirrorDeclarationLocked(*s,b.nodeId,b.resourceId,b.kind);
+            if(!d || d->coverage!=b.coverage || d->text!=*b.coverage->layout ||
+               d->sourceBasis!=b.coverage->bodyBasis || !b.activeValid ||
+               !std::isfinite(b.activeTop) || !std::isfinite(b.activeBottom) || b.activeBottom<=b.activeTop)return 0;
+        }
+        for(const auto &n:s->accepted)if(n.pod.nodeId==nodeId && n.pod.resourceId==b.resourceId &&
+            n.pod.nodeKind==b.kind && n.pod.acceptedBindingEpoch==binding &&
+            n.pod.x==b.nodeX && n.pod.y==b.nodeY && n.pod.width==b.nodeWidth && n.pod.height==b.nodeHeight) {
+            *firstTop=b.firstTop;*firstBottom=b.firstBottom;*lastTop=b.lastTop;*lastBottom=b.lastBottom;return 1;
+        }
+        return 0;
     }
     return 0;
 }

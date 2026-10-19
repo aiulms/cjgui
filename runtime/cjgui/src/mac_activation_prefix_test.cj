@@ -1,7 +1,7 @@
 package cjgui
 
 private func prefixFixture(kind: UInt32, ordinal: UInt32, nonce!: UInt64 = 1u64,
-    generation!: UInt64 = 7u64, binding!: UInt64 = 1u64, resource!: Int64 = 102): InternalRendererPumpResult {
+    generation!: UInt64 = 7u64, binding!: UInt64 = 1u64, resource!: Int64 = 102, eventBinding!: UInt64 = 0u64): InternalRendererPumpResult {
     var p = InternalRendererActivationPrefix()
     p.sessionGeneration = generation
     p.nonce = nonce
@@ -16,7 +16,7 @@ private func prefixFixture(kind: UInt32, ordinal: UInt32, nonce!: UInt64 = 1u64,
     p.memberKind = kind
     return InternalRendererPumpResult(0, kind, 0u32, 0u32, 0u32, 4u64, 1u64, resource, 4u32,
         0, 0, 0.0, 0.0, 0.0, 0.0, false, 0, 0u32, -1, 0, -1, 0,
-        0u64, 0u64, 0u64, 0u64, 0u64, 0u64, -1, 0u64, 0u64, activationPrefix: p)
+        0u64, eventBinding, 0u64, 0u64, 0u64, 0u64, -1, 0u64, 0u64, activationPrefix: p)
 }
 
 @Test
@@ -197,4 +197,70 @@ func activationPhysicalClosedGenerationsDoNotExhaustNewSessionOrRevokeItsPrefix(
     @Assert(gate.admit(last, 1u64, true), 2)
     gate.settleTerminal(last.activationPrefix)
     @Assert(gate.pending(), false)
+}
+
+@Test
+func activationCommandOriginRequiresThisAdmittedActualAXTerminal(): Unit {
+    let gate = CjguiMacActivationPrefixGate()
+    let focus = prefixFixture(31u32, 1u32)
+    let terminal = prefixFixture(27u32, 2u32)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    @Assert(gate.admit(focus, 1u64, true), 1)
+    @Assert(gate.commandActionSequence(focus, 1, 1u64), 0u64)
+    @Assert(gate.admit(terminal, 1u64, true), 2)
+    @Assert(gate.commandActionSequence(terminal, 0, 1u64), 0u64)
+    @Assert(gate.commandActionSequence(terminal, 1, 1u64), 0u64)
+    @Assert(gate.commandActionSequence(terminal, 2, 2u64), 0u64)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 1u64)
+    gate.settleTerminal(terminal.activationPrefix)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    @Assert(gate.admit(terminal, 1u64, true), -1)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+}
+
+@Test
+func activationCommandOriginRejectsShapeOnlyWrongOrderOldGenerationAndBinding(): Unit {
+    let gate = CjguiMacActivationPrefixGate()
+    let terminal = prefixFixture(27u32, 2u32)
+    @Assert(gate.admit(terminal, 1u64, true), -1)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    @Assert(gate.admit(prefixFixture(31u32, 1u32), 1u64, true), 1)
+    @Assert(gate.admit(prefixFixture(27u32, 2u32, resource: 103), 1u64, true), -1)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    @Assert(gate.admit(prefixFixture(31u32, 1u32, nonce: 2u64, generation: 8u64), 1u64, true), 1)
+    @Assert(gate.admit(terminal, 1u64, true), -1)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    let fresh = prefixFixture(27u32, 2u32, nonce: 2u64, generation: 8u64)
+    @Assert(gate.admit(fresh, 1u64, true), 2)
+    @Assert(gate.commandActionSequence(terminal, 2, 1u64), 0u64)
+    @Assert(gate.commandActionSequence(fresh, 2, 1u64), 2u64)
+}
+
+@Test
+func activationCommandOriginNeverBorrowsSameNumericPhysicalSequence(): Unit {
+    let gate = CjguiMacActivationPrefixGate()
+    @Assert(gate.admit(prefixFixture(31u32, 1u32, eventBinding: 1u64), 1u64, true), 1)
+    let disguised = prefixFixture(27u32, 2u32, eventBinding: 1u64)
+    @Assert(gate.admit(disguised, 1u64, true), 2)
+    @Assert(gate.commandActionSequence(disguised, 2, 1u64), 0u64)
+    gate.settleTerminal(disguised.activationPrefix)
+    let physical = physicalPrefixFixture(45u32, 2u32, 2u32, nonce: 2u64, sequence: 2u64)
+    @Assert(gate.admit(physicalPrefixFixture(43u32, 1u32, 2u32, nonce: 2u64), 1u64, true), 1)
+    @Assert(gate.admit(physical, 1u64, true), 2)
+    @Assert(gate.commandActionSequence(physical, 2, 1u64), 0u64)
+}
+
+@Test
+func activationCommandOriginRequiresNonzeroOwnerBindingAndRejectsCancelledPair(): Unit {
+    let gate = CjguiMacActivationPrefixGate()
+    @Assert(gate.admit(prefixFixture(31u32, 1u32, binding: 0u64), 1u64, true), 1)
+    let unbound = prefixFixture(27u32, 2u32, binding: 0u64)
+    @Assert(gate.admit(unbound, 1u64, true), 2)
+    @Assert(gate.commandActionSequence(unbound, 2, 1u64), 0u64)
+    gate.settleTerminal(unbound.activationPrefix)
+    @Assert(gate.admit(prefixFixture(31u32, 1u32, nonce: 2u64), 1u64, true), 1)
+    gate.cancel()
+    let cancelled = prefixFixture(27u32, 2u32, nonce: 2u64)
+    @Assert(gate.admit(cancelled, 1u64, true), -1)
+    @Assert(gate.commandActionSequence(cancelled, 2, 1u64), 0u64)
 }

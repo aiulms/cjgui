@@ -1,0 +1,6 @@
+# Windows native compile check (current main tree, not the frozen delivery)
+# date: 2026-10-19 01:42:51 CST
+x86_64-w64-mingw32-gcc (GCC) 16.2.0
+# command: x86_64-w64-mingw32-gcc -std=c11 -fsyntax-only -I runtime/cjgui/native -I runtime/cjgui/platforms/windows/native <file>
+file=runtime/cjgui/platforms/windows/native/cjgui_windows_renderer.c exit=0 logs=       0
+file=runtime/cjgui/platforms/windows/native/cjgui_windows_wic.c exit=0 logs=       0

@@ -20,6 +20,9 @@ HOST="$PLATFORM/host"
 
 [ -d "$MODULE" ] || { echo "缺少消费方模块: $MODULE"; exit 1; }
 [ -f "$PLATFORM/FINGERPRINT.txt" ] || { echo "缺少平台指纹: $PLATFORM/FINGERPRINT.txt"; exit 1; }
+if [ -n "${CJGUI_FROZEN_INPUT_MANIFEST:-}" ]; then
+  python3 "$HERE/source_inputs.py" --verify-frozen-inputs "$CJGUI_FROZEN_INPUT_MANIFEST"
+fi
 FINGERPRINT="$(cat "$PLATFORM/FINGERPRINT.txt")"
 SHORT="${FINGERPRINT:0:12}"
 
@@ -37,7 +40,22 @@ fi
 #    既避免误删范围过大，也不会在构建中途把整个源码树清空。
 mkdir -p "$MODULE/cjgui/src" "$MODULE/shared_operation_core/src"
 rsync -a --delete --exclude 'target' --exclude 'build' "$SNAPSHOT/src/" "$MODULE/cjgui/src/"
-rsync -a --delete --exclude 'target' --exclude 'build' "$SNAPSHOT/shared_operation_core/src/" "$MODULE/shared_operation_core/src/"
+# 共享操作核心：本模块以主树 runtime/cjgui/shared_operation_core 为共同实现。
+# 旧 snapshot/shared_operation_core 只是冻结前的实验基线，不再作为构建来源；
+# 漂移拒绝：同步后共同模块必须带 owner 写入门等共同标记，否则具名失败，
+# 绝不静默退回旧快照。可用 CJGUI_SHARED_CORE_SRC 显式绑定其它来源。
+SHARED_CORE_SRC="${CJGUI_SHARED_CORE_SRC:-$REPO_ROOT/runtime/cjgui/shared_operation_core/src}"
+[ -f "$SHARED_CORE_SRC/shared_operation_contract.cj" ] || { echo "共享操作核心来源缺失: $SHARED_CORE_SRC" >&2; exit 1; }
+rsync -a --delete --exclude 'target' --exclude 'build' "$SHARED_CORE_SRC/" "$MODULE/shared_operation_core/src/"
+if [ -n "${CJGUI_FROZEN_INPUT_MANIFEST:-}" ]; then
+  python3 "$HERE/source_inputs.py" --verify-frozen-inputs "$CJGUI_FROZEN_INPUT_MANIFEST" \
+    "$SHARED_CORE_SRC" "$MODULE/shared_operation_core/src"
+fi
+for marker in CjguiSharedOperationOwnerWriteAdmission CjguiSharedOperationOwnerWriteGate; do
+  grep -q "$marker" "$MODULE/shared_operation_core/src/shared_operation_contract.cj" || {
+    echo "共享操作核心漂移: 同步结果缺 $marker（来源 $SHARED_CORE_SRC）" >&2; exit 1; }
+done
+echo "  共享操作核心来源: $SHARED_CORE_SRC"
 
 # 2) 宿主/桥/渲染器 + CMakeLists（框架拥有）
 #    --delete：cpp/ 只承载框架拥有的文件，快照换代后旧文件必须消失，

@@ -1,0 +1,10 @@
+CJGUI_COMPOSITION_COMMIT id=1 terminal_bytes=6 text=[中文]
+CJGUI_COMPOSITION_COMMIT id=2 terminal_bytes=9 text=[你好吗]
+CJGUI_COMPOSITION_COMMIT id=4 terminal_bytes=3 text=[选]
+CJGUI_LINUX_PASTE bytes=587 replace=6:0
+CJGUI_LINUX_PASTE bytes=605 replace=0:347
+CJGUI_LINUX_PASTE_REJECTED reason=clipboard_too_large status=5
+CJGUI_LINUX_PASTE_REJECTED reason=clipboard_unsupported status=4
+CJGUI_LINUX_PASTE bytes=605 replace=0:0
+CJGUI_COMPOSITION_COMMIT id=5 terminal_bytes=6 text=[继续]
+CJGUI_COMPOSITION_COMMIT id=6 terminal_bytes=3 text=[邦]

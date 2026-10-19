@@ -1,0 +1,23 @@
+{
+  "consultation_exit_code": 0,
+  "adopted": [
+    "vp geometry directly from exact Paint/Flush; no density division",
+    "real visible PasteButton SUCCESS is required before read",
+    "custom copy/cut/selectAll never focus on touch",
+    "cut waits for pasteboard write; async stale snapshots fail once",
+    "native qualification excludes composition/restore/drag/retirement",
+    "paste/cut must synchronize the actual same-mounted proxy before continuation"
+  ],
+  "qualified_recommendation": {
+    "claim": "fresh JavaScript check+assign is sufficient because native text only changes through ArkTS callbacks",
+    "reason": "Public Agent edits run in the Cangjie host and update the accepted native text on another thread; JS check alone cannot atomically protect against them. Keep a private native compare-and-apply adapter on the existing event FIFO. The implemented onMenuInstalled + acceptMenuSnapshot synchronizes the actual same-mounted proxy, preventing the consultant native-only old-mirror counterexample."
+  },
+  "acceptance_required": [
+    "paste then immediate first human input retains full paste",
+    "generic paste then Enter retains whole draft",
+    "async text/version/selection guards reject without owner mutation",
+    "actual PasteButton onClick SUCCESS and any onBlur ordering",
+    "same accepted vp menu endpoint + visible screenshot"
+  ],
+  "consultation_is_runtime_evidence": false
+}

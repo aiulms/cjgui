@@ -1117,6 +1117,36 @@ public class CjguiSharedOperationActionResult {
     }
 }
 
+/// Experimental owner-thread admission before a socket request claims execution.
+/// WaitOriginal retains its original payload, lease, deadline and accounting.
+public enum CjguiSharedOperationOwnerWriteAdmissionKind {
+    Ready | WaitOriginal | TerminalRefusal
+}
+
+public class CjguiSharedOperationOwnerWriteAdmission {
+    public let kind: CjguiSharedOperationOwnerWriteAdmissionKind
+    public let isReady: Bool
+    public let isWaiting: Bool
+    public let isTerminal: Bool
+    public let ownerKey: String
+    public let predecessor: UInt64
+    public let binding: Int64
+    public let reason: String
+    public init(kind: CjguiSharedOperationOwnerWriteAdmissionKind, ownerKey!: String = "",
+        predecessor!: UInt64 = 0u64, binding!: Int64 = 0, reason!: String = "") {
+        this.isReady = match (kind) { case Ready => true; case _ => false }
+        this.isWaiting = match (kind) { case WaitOriginal => true; case _ => false }
+        this.isTerminal = match (kind) { case TerminalRefusal => true; case _ => false }
+        this.kind = kind; this.ownerKey = ownerKey; this.predecessor = predecessor
+        this.binding = binding; this.reason = reason
+    }
+}
+
+public interface CjguiSharedOperationOwnerWriteGate {
+    func admitOwnerWrite(invocation: CjguiSharedOperationActionInvocation,
+        previous: ?CjguiSharedOperationOwnerWriteAdmission): CjguiSharedOperationOwnerWriteAdmission
+}
+
 /// Application-owned truth and action boundary. The external connection never
 /// implements a business action; it validates declared transport facts and
 /// calls this interface. A trusted human entry calls `executeFromHuman`, while

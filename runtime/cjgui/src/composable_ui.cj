@@ -841,6 +841,24 @@ public class CjguiComposableUiEffectRejection {
     }
 }
 
+/// Per-corner radii in logical points. A corner is either declared or absent;
+/// `None` on the style keeps the uniform `cornerRadius` declaration. Negative
+/// input is clamped to zero, matching the uniform radius contract.
+/// Stability: experimental.
+public class CjguiComposableUiCornerRadii {
+    public let topLeft: Int64
+    public let topRight: Int64
+    public let bottomRight: Int64
+    public let bottomLeft: Int64
+
+    public init(topLeft!: Int64 = 0, topRight!: Int64 = 0, bottomRight!: Int64 = 0, bottomLeft!: Int64 = 0) {
+        this.topLeft = if (topLeft < 0) { 0 } else { topLeft }
+        this.topRight = if (topRight < 0) { 0 } else { topRight }
+        this.bottomRight = if (bottomRight < 0) { 0 } else { bottomRight }
+        this.bottomLeft = if (bottomLeft < 0) { 0 } else { bottomLeft }
+    }
+}
+
 public class CjguiComposableUiStyle {
     public let background: CjguiComposableUiColor
     public let border: CjguiComposableUiColor
@@ -856,6 +874,11 @@ public class CjguiComposableUiStyle {
     /// renderer clamps this to the resolved box; it is never an AppKit view
     /// property or a platform-specific control skin.
     public let cornerRadius: Int64
+    /// Optional per-corner override of `cornerRadius`. `None` keeps the
+    /// uniform declaration; when present the four values replace it for the
+    /// box, its inherited clip and hit geometry alike. Experimental: main-tree
+    /// backends currently carry the field without painting per-corner radii.
+    public let cornerRadii: ?CjguiComposableUiCornerRadii
     /// When set, children inherit this component's padded content clip.  The
     /// scene carries both the rectangular bounds and its corner radius so
     /// Metal, hit testing and accessibility resolve one projection.
@@ -869,6 +892,21 @@ public class CjguiComposableUiStyle {
     /// production AppKit measurer and draw layer.
     public let fontSize: Float64
     public let fontWeight: Int64
+    /// Read-only TEXT/button labels: 0 is unlimited, otherwise at most this many lines.
+    /// `ellipsis` with zero lines means a single line. The full value and semantics stay intact.
+    /// Experimental: macOS rendering; other backends retain legacy painting.
+    public let textMaxLines: Int64
+    public let textOverflow: String
+    /// Extra advance between characters in logical points. The admitted range
+    /// is (-1000, 1000); anything outside it normalizes to 0 (inherited
+    /// default), matching the OHOS snapshot contract. Experimental: main-tree
+    /// backends currently carry the field without painting it.
+    public let letterSpacing: Float64
+    /// Explicit line height in logical points. 0 keeps the font's natural
+    /// line height; the admitted range is (0, 1000). Native text APIs receive
+    /// it as the multiplier lineHeight / fontSize. Experimental: main-tree
+    /// backends currently carry the field without painting it.
+    public let lineHeight: Float64
     /// Deliberately small cross-platform font descriptor. Unknown requested
     /// names are normalized to the system family before the native boundary.
     public let fontFamily: String
@@ -892,6 +930,13 @@ public class CjguiComposableUiStyle {
     /// these values never enter integer layout or sibling flow.
     public let translateX: Float64
     public let translateY: Float64
+    /// Paint-only scale around this node's own centre. Layout, ancestor
+    /// clipping and hit testing keep the unscaled rectangle; only this node's
+    /// own paint scales, never its children. Values must be finite and > 0;
+    /// invalid declarations normalize to 1.0. The initial admitted range is
+    /// (0, 16]. Backends that carry but do not paint this value stay unscaled.
+    public let scaleX: Float64
+    public let scaleY: Float64
     /// Declare that wheel gestures over this node (or any of its content) are
     /// routed to it even though it is not a SCROLL_AREA. A plain container
     /// with this flag receives the same SCROLL intent as a scroll area; when
@@ -925,6 +970,30 @@ public class CjguiComposableUiStyle {
     /// dropping the effect. Copied through by the style-composition helpers so
     /// the reason cannot be lost on the way to consumption.
     public let effectRejection: ?CjguiComposableUiEffectRejection
+    /// Paint-order rank among siblings, resolved by the shared layout engine.
+    /// It never changes geometry. Sibling subtrees are stable-sorted by this
+    /// value before the scene is published; equal values keep authored order.
+    /// An `effectGroup` subtree moves as one block, so its array interval is
+    /// never split. Custom-layout containers (tabs, split view, layer host)
+    /// keep their authored order. Experimental: experimental backends carry
+    /// the resolved order through the scene array and do not re-sort.
+    public let zIndex: Int64
+    /// Paint-only rotation in degrees around this node's own centre. Positive
+    /// values turn clockwise in screen space. Layout, ancestor clipping and
+    /// hit testing keep the unrotated rectangle (the accepted approximation);
+    /// only this node's own paint turns, never its children. Backends that
+    /// carry the field without painting it leave the node axis-aligned.
+    public let rotateDegrees: Float64
+    /// Optional monochrome tint for image content. `None` keeps the source
+    /// pixels untouched, which is also the default. When present, every
+    /// sampled RGB channel is multiplied by the tint's RGB and the sampled
+    /// alpha by the tint alpha. Every component must be finite; RGB must be
+    /// inside [0, 1] and alpha inside (0, 1], otherwise the declaration
+    /// normalizes to `None` instead of painting with an unbounded multiplier.
+    /// Only image nodes consult this value; text and shapes ignore it. The
+    /// source asset must be a transparent monochrome glyph, otherwise the
+    /// tint also colours its opaque background.
+    public let iconTint: ?CjguiComposableUiColor
     public init(
         background!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0),
         border!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.0),
@@ -939,6 +1008,10 @@ public class CjguiComposableUiStyle {
         fontSize!: Float64 = 13.0,
         fontWeight!: Int64 = 0,
         fontFamily!: String = "system",
+        textMaxLines!: Int64 = 0,
+        textOverflow!: String = "clip",
+        letterSpacing!: Float64 = 0.0,
+        lineHeight!: Float64 = 0.0,
         minWidth!: Int64 = 0,
         maxWidth!: Int64 = 0,
         idealWidth!: Int64 = 0,
@@ -951,15 +1024,21 @@ public class CjguiComposableUiStyle {
         offsetY!: Int64 = 0,
         translateX!: Float64 = 0.0,
         translateY!: Float64 = 0.0,
+        scaleX!: Float64 = 1.0,
+        scaleY!: Float64 = 1.0,
         wheelScrollable!: Bool = false,
         scrollContentAlignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         cornerRadius!: Int64 = 0,
+        cornerRadii!: ?CjguiComposableUiCornerRadii = None,
         clipsContent!: Bool = false,
         pointerInteractive!: Bool = false,
         shadow!: ?CjguiComposableUiShadowStyle = None,
         gradient!: ?CjguiComposableUiLinearGradient = None,
         effectGroup!: ?CjguiComposableUiEffectGroup = None,
-        effectRejection!: ?CjguiComposableUiEffectRejection = None
+        effectRejection!: ?CjguiComposableUiEffectRejection = None,
+        zIndex!: Int64 = 0,
+        rotateDegrees!: Float64 = 0.0,
+        iconTint!: ?CjguiComposableUiColor = None
     ) {
         this.background = background
         this.border = border
@@ -1006,8 +1085,16 @@ public class CjguiComposableUiStyle {
         } else {
             cornerRadius
         }
+        this.cornerRadii = cornerRadii
         this.clipsContent = clipsContent
         this.pointerInteractive = pointerInteractive
+        this.textMaxLines = if (textMaxLines < 0) { 0 } else if (textMaxLines > 1024) { 1024 } else { textMaxLines }
+        this.textOverflow = if (textOverflow == "ellipsis") { "ellipsis" } else { "clip" }
+        // Admitted ranges follow the OHOS snapshot: an out-of-range or
+        // non-finite request normalizes to the inherited default instead of
+        // being clamped into a value the author never asked for.
+        this.letterSpacing = if (letterSpacing > -1000.0 && letterSpacing < 1000.0) { letterSpacing } else { 0.0 }
+        this.lineHeight = if (lineHeight > 0.0 && lineHeight < 1000.0) { lineHeight } else { 0.0 }
         this.fontSize = if (fontSize < 6.0) {
             6.0
         } else if (fontSize > 144.0) {
@@ -1092,6 +1179,16 @@ public class CjguiComposableUiStyle {
         this.offsetY = offsetY
         this.translateX = translateX
         this.translateY = translateY
+        this.scaleX = if (scaleX.isNaN() || scaleX.isInf() || scaleX <= 0.0 || scaleX > 16.0) {
+            1.0
+        } else {
+            scaleX
+        }
+        this.scaleY = if (scaleY.isNaN() || scaleY.isInf() || scaleY <= 0.0 || scaleY > 16.0) {
+            1.0
+        } else {
+            scaleY
+        }
         this.wheelScrollable = wheelScrollable
         this.scrollContentAlignY = if (scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
             scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END) {
@@ -1144,6 +1241,27 @@ public class CjguiComposableUiStyle {
         } else {
             CjguiComposableUiStyle.declaredEffectRejection(shadow, gradient, effectGroup)
         }
+        this.zIndex = zIndex
+        this.rotateDegrees = if (rotateDegrees.isNaN() || rotateDegrees.isInf()) {
+            0.0
+        } else {
+            rotateDegrees
+        }
+        // Tint is a multiplicative paint value, so an out-of-range component
+        // has no clamped meaning: 0 alpha would paint nothing and >1 would
+        // brighten past the source. Refuse instead of clamping; `None` is the
+        // one accepted "do not tint" state.
+        this.iconTint = if (let Some(value) <- iconTint) {
+            if (value.rejectionReason().isNone() && value.alpha > 0.0 && value.alpha <= 1.0 &&
+                value.red >= 0.0 && value.red <= 1.0 && value.green >= 0.0 && value.green <= 1.0 &&
+                value.blue >= 0.0 && value.blue <= 1.0) {
+                Some(value)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
     }
 
     private static func declaredEffectRejection(shadow: ?CjguiComposableUiShadowStyle,
@@ -1175,7 +1293,7 @@ public class CjguiComposableUiStyle {
 /// staged native node and the accepted input projection (B, 2026-09-28).
 func cjguiComposableUiGroupCarriesInputOrDisplacement(style: CjguiComposableUiStyle): Bool {
     return style.wheelScrollable || style.pointerInteractive || style.offsetX != 0 || style.offsetY != 0 ||
-        style.translateX != 0.0 || style.translateY != 0.0
+        style.translateX != 0.0 || style.translateY != 0.0 || style.scaleX != 1.0 || style.scaleY != 1.0
 }
 
 /// A paint-only override for one interaction state.  The optional fields are
@@ -1207,15 +1325,19 @@ public func cjguiComposableUiStyleWithPaint(base: CjguiComposableUiStyle, backgr
     return CjguiComposableUiStyle(background: background, border: border, textColor: textColor,
         padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
         growX: base.growX, growY: base.growY, borderWidth: borderWidth,
-        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily, minWidth: base.minWidth,
+        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily, textMaxLines: base.textMaxLines, textOverflow: base.textOverflow, minWidth: base.minWidth,
+        letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
         maxWidth: base.maxWidth, idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight,
         idealHeight: base.idealHeight, alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX,
         offsetY: base.offsetY, translateX: base.translateX, translateY: base.translateY,
+        scaleX: base.scaleX, scaleY: base.scaleY,
         wheelScrollable: base.wheelScrollable,
         scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
+        cornerRadii: base.cornerRadii,
         clipsContent: base.clipsContent, pointerInteractive: base.pointerInteractive,
         shadow: shadow, gradient: gradient, effectGroup: effectGroup,
-        effectRejection: base.effectRejection)
+        effectRejection: base.effectRejection, zIndex: base.zIndex, rotateDegrees: base.rotateDegrees,
+        iconTint: base.iconTint)
 }
 
 /// Replace only the post-layout translation in an accepted presentation
@@ -1225,15 +1347,19 @@ public func cjguiComposableUiStyleWithTranslation(base: CjguiComposableUiStyle,
     return CjguiComposableUiStyle(background: base.background, border: base.border, textColor: base.textColor,
         padding: base.padding, gap: base.gap, fixedWidth: base.fixedWidth, fixedHeight: base.fixedHeight,
         growX: base.growX, growY: base.growY, borderWidth: base.borderWidth,
-        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily,
+        fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily, textMaxLines: base.textMaxLines, textOverflow: base.textOverflow,
+        letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
         minWidth: base.minWidth, maxWidth: base.maxWidth, idealWidth: base.idealWidth,
         minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
         alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX, offsetY: base.offsetY,
-        translateX: translateX, translateY: translateY, wheelScrollable: base.wheelScrollable,
+        translateX: translateX, translateY: translateY, scaleX: base.scaleX, scaleY: base.scaleY,
+        wheelScrollable: base.wheelScrollable,
         scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
+        cornerRadii: base.cornerRadii,
         clipsContent: base.clipsContent, pointerInteractive: base.pointerInteractive,
         shadow: base.shadow, gradient: base.gradient, effectGroup: base.effectGroup,
-        effectRejection: base.effectRejection)
+        effectRejection: base.effectRejection, zIndex: base.zIndex, rotateDegrees: base.rotateDegrees,
+        iconTint: base.iconTint)
 }
 
 public class CjguiComposableUiPaintStyle {
@@ -2218,6 +2344,9 @@ public class CjguiComposableUiScrollViewport {
     private var acceptedOriginBindingValue: ?CjguiComposableUiScrollOriginBinding = None
     private var stagedOriginBindingValue: ?CjguiComposableUiScrollOriginBinding = None
     private var stagedOriginAnchorValue: ?CjguiComposableUiScrollOriginAnchor = None
+    private var acceptedOriginSourceContextValue: ?CjguiScrollOriginSourceContext = None
+    private var stagedOriginOwnerRebaseValue: ?CjguiComposableUiScrollOriginOwnerRebase = None
+    private var solvedOriginOwnerRebaseValue: ?CjguiComposableUiScrollOriginOwnerRebase = None
     // Preserve the proof for a completed passive-origin candidate separately
     // from the mutable pending ticket that a later request may retire.
     private var solvedOriginAnchorValue: ?CjguiComposableUiScrollOriginAnchor = None
@@ -2284,6 +2413,22 @@ public class CjguiComposableUiScrollViewport {
     }
     public func pendingOriginAnchor(): ?CjguiComposableUiScrollOriginAnchor {
         return stagedOriginAnchorValue
+    }
+    func acceptedOriginSourceContext(): ?CjguiScrollOriginSourceContext { return acceptedOriginSourceContextValue }
+    func recordAcceptedOriginSource(session: CjguiTextSession, bindingEpoch: UInt64): Unit {
+        let selected = match (session.sourceSelectionSnapshot()) { case Some(value) => value; case None => return }
+        let binding = match (acceptedOriginBindingValue) { case Some(value) => value; case None => return }
+        if (session.isBound() && selected.documentId.size > 0 && selected.sessionEpoch > 0 &&
+            selected.version == binding.ownerVersion) {
+            acceptedOriginSourceContextValue = Some(CjguiScrollOriginSourceContext(selected,
+                session.contextEpochValue(), bindingEpoch))
+        }
+    }
+    func pendingOriginOwnerRebase(): ?CjguiComposableUiScrollOriginOwnerRebase { return stagedOriginOwnerRebaseValue }
+    private func retireOriginOwnerRebase(): Unit {
+        if (let Some(value) <- stagedOriginOwnerRebaseValue) { value.retire() }
+        if (let Some(value) <- solvedOriginOwnerRebaseValue) { value.retire() }
+        stagedOriginOwnerRebaseValue = None; solvedOriginOwnerRebaseValue = None
     }
     public func stagedOriginTargetNodeId(): Int64 {
         return stagedOriginTargetNodeIdValue
@@ -2373,6 +2518,7 @@ public class CjguiComposableUiScrollViewport {
         requestGenerationValue += 1
         // A request after ticket issuance retires the ticket even when the
         // accepted scene has not moved yet.
+        this.retireOriginOwnerRebase()
         stagedOriginAnchorValue = None
         stagedOriginTicketRequestGenerationValue = -1
         if (!stagedOriginNavigationValue && originStagePendingValue) {
@@ -2386,7 +2532,8 @@ public class CjguiComposableUiScrollViewport {
     /// explicit navigation may start at the local origin without one.
     public func stageCoordinateOrigin(binding: CjguiComposableUiScrollOriginBinding,
         anchor!: ?CjguiComposableUiScrollOriginAnchor = None, targetNodeId!: Int64 = -1,
-        targetLocalByte!: Int64 = -1): String {
+        targetLocalByte!: Int64 = -1,
+        ownerRebase!: ?CjguiComposableUiScrollOriginOwnerRebase = None): String {
         if (binding.ownerIdentity.size == 0 || binding.mapIdentity.size == 0 || binding.layoutOrigin.size == 0) {
             originStageRefusalValue = "scroll_origin_binding_invalid"
             return "scroll_origin_binding_invalid"
@@ -2449,18 +2596,23 @@ public class CjguiComposableUiScrollViewport {
             } else {
                 false
             }
+            let rebasedVersionMatches = match (ownerRebase) {
+                case Some(value) => value.matches(ticket, binding, targetNodeId, targetLocalByte)
+                case None => false
+            }
             if (ticket.viewportIdentity != viewStateIdentityValue || ticket.windowToken <= 0 ||
                 ticket.windowToken != ownerWindowTokenValue || ticket.acceptedSolve != acceptedSolveCountValue ||
                 ticket.requestGeneration != requestGenerationValue || !acceptedMatches ||
                 ticket.localByte != targetLocalByte ||
                 ticket.oldWidth <= 0 ||
                 ticket.acceptedBinding.ownerIdentity != binding.ownerIdentity ||
-                ticket.acceptedBinding.ownerVersion != binding.ownerVersion) {
+                (ticket.acceptedBinding.ownerVersion != binding.ownerVersion && !rebasedVersionMatches)) {
                 originStageRefusalValue = "scroll_origin_anchor_stale"
                 return "scroll_origin_anchor_stale"
             }
             stagedOriginBindingValue = Some(binding)
             stagedOriginAnchorValue = Some(ticket)
+            stagedOriginOwnerRebaseValue = if (rebasedVersionMatches) { ownerRebase } else { None }
             stagedOriginTargetNodeIdValue = targetNodeId
             stagedOriginTargetLocalByteValue = targetLocalByte
             stagedOriginTicketRequestGenerationValue = ticket.requestGeneration
@@ -2477,6 +2629,7 @@ public class CjguiComposableUiScrollViewport {
         stagedOriginNavigationValue = true
         stagedOriginNavigationBoundValue = false
         stagedOriginBindingValue = acceptedOriginBindingValue
+        this.retireOriginOwnerRebase()
         stagedOriginAnchorValue = None
         stagedOriginTargetNodeIdValue = -1
         stagedOriginTargetLocalByteValue = -1
@@ -2509,9 +2662,14 @@ public class CjguiComposableUiScrollViewport {
         if (!stagedOriginTicketIsCurrent(ticket)) { return false }
         solvedOriginAnchorValue = Some(ticket)
         solvedOriginBindingValue = stagedOriginBindingValue
+        solvedOriginOwnerRebaseValue = stagedOriginOwnerRebaseValue
         return true
     }
     func stagedOriginTicketIsCurrent(ticket: CjguiComposableUiScrollOriginAnchor): Bool {
+        if (let Some(proof) <- stagedOriginOwnerRebaseValue) {
+            let target = match (stagedOriginBindingValue) { case Some(value) => value; case None => return false }
+            if (!proof.matches(ticket, target, stagedOriginTargetNodeIdValue, stagedOriginTargetLocalByteValue)) { return false }
+        }
         if (requestGenerationValue != ticket.requestGeneration ||
             acceptedSolveCountValue != ticket.acceptedSolve || ownerWindowTokenValue != ticket.windowToken ||
             ticket.viewportIdentity != viewStateIdentityValue || stagedOriginTicketRequestGenerationValue !=
@@ -2548,7 +2706,10 @@ public class CjguiComposableUiScrollViewport {
             } else { false }
             let candidateBindingMatches = if (let Some(binding) <- solvedOriginBindingValue) {
                 binding.ownerIdentity == ticket.acceptedBinding.ownerIdentity &&
-                    binding.ownerVersion == ticket.acceptedBinding.ownerVersion
+                    (binding.ownerVersion == ticket.acceptedBinding.ownerVersion ||
+                        if (let Some(proof) <- solvedOriginOwnerRebaseValue) {
+                            proof.matches(ticket, binding, stagedOriginTargetNodeIdValue, stagedOriginTargetLocalByteValue)
+                        } else { false })
             } else { false }
             let stagedBindingMatches = if (let Some(solved) <- solvedOriginBindingValue) {
                 if (let Some(current) <- stagedOriginBindingValue) { solved.matches(current) } else { false }
@@ -2576,6 +2737,7 @@ public class CjguiComposableUiScrollViewport {
         if (next != requestedOffsetValue) {
             requestedOffsetValue = next
         }
+        this.retireOriginOwnerRebase()
         stagedOriginAnchorValue = None
         stagedOriginTicketRequestGenerationValue = -1
         if (!stagedOriginNavigationValue && originStagePendingValue) {
@@ -2947,6 +3109,7 @@ public class CjguiComposableUiScrollViewport {
             let rebased = clamp(requestedOffsetValue)
             requestedOffsetValue = rebased
         }
+        this.retireOriginOwnerRebase()
         acceptedRequestGenerationValue = stagedRequestGenerationValue
         acceptedSolveCountValue += 1
         stagedSolvedValue = false
@@ -2960,6 +3123,13 @@ public class CjguiComposableUiScrollViewport {
     /// pending request is preserved, so the next legal refresh can present it
     /// instead of silently forgetting or mislabelling it.
     public func discardStagedExtents(): Unit {
+        if (stagedOriginOwnerRebaseValue.isSome() || solvedOriginOwnerRebaseValue.isSome()) {
+            this.retireOriginOwnerRebase()
+            stagedOriginAnchorValue = None
+            stagedOriginTicketRequestGenerationValue = -1
+            stagedOriginBindingValue = acceptedOriginBindingValue
+            originStagePendingValue = false
+        }
         stagedSolvedValue = false
         solvedOriginAnchorValue = None
         solvedOriginBindingValue = None
@@ -4021,6 +4191,10 @@ public class CjguiComposableUiIdentity {
         return localKeyValue
     }
 
+    func materializedContentIdentity(): CjguiComposableUiIdentity {
+        return scopeValue.child(localKeyValue).local("materialized")
+    }
+
     func isValid(): Bool {
         return scopeValue.isValid() && CjguiComposableUiIdentityScope.validSegment(localKeyValue) &&
             canonicalKey().size <= 384
@@ -4449,8 +4623,9 @@ public class CjguiComposableUiNode {
             0
         }
         this.isEnabled = enabled
-        this.isReadOnly = readOnly && (nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind ==
-            CJGUI_COMPOSABLE_UI_INTEGER_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        this.isReadOnly = readOnly && (nodeKind == CJGUI_COMPOSABLE_UI_TEXT ||
+            nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT ||
+            nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
         this.tabInsertsText = tabInsertsText && nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
         this.pointerControlRole = pointerControlRole
         this.pointerControlAxis = if (pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL) {
@@ -5482,12 +5657,13 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
     operationActionName!: String = "", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
     identity!: ?CjguiComposableUiIdentity = None,
-    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
+    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
+    readOnly!: Bool = false): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
         textStyleRuns: textStyleRuns, fieldId: fieldId, operationActionName: operationActionName,
         operationResourceId: operationResourceId,
         displayValueRole: displayValueRole, interactionStyle: interactionStyle,
-        ownerInteractionState: ownerInteractionState, identity: identity)
+        ownerInteractionState: ownerInteractionState, identity: identity, readOnly: readOnly)
 }
 
 /// Whole-group binding for a static text node (same one-argument contract as
@@ -5496,11 +5672,13 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
     boundStyle: CjguiComposableUiBoundStyle, resourceId!: Int64 = -1, fieldId!: String = "",
     displayValueRole!: String = "", operationResourceId!: Int64 = -1,
     operationActionName!: String = "",
-    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE, identity!: ?CjguiComposableUiIdentity = None,
+    readOnly!: Bool = false): CjguiComposableUiNode {
     return cjguiComposableText(nodeId, semanticId, value, boundStyle.style, resourceId: resourceId, fieldId: fieldId,
         displayValueRole: displayValueRole, operationResourceId: operationResourceId,
         operationActionName: operationActionName,
-        interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState, identity: identity)
+        interactionStyle: boundStyle.interaction, ownerInteractionState: ownerInteractionState, identity: identity,
+        readOnly: readOnly)
 }
 
 /// Whole-group binding: the component receives ONE bound value carrying both
@@ -6299,12 +6477,18 @@ public class CjguiComposableUiVisualRect {
 public class CjguiComposableUiVisualGeometry {
     public let translateX: Float64
     public let translateY: Float64
+    /// Paint-only per-node scale resolved by the shared style. Descendants do
+    /// not inherit it; each node's own paint scales around its own centre.
+    public let scaleX: Float64
+    public let scaleY: Float64
     private let clipOwnerXs: ArrayList<Float64>
     private let clipOwnerYs: ArrayList<Float64>
     public init(translateX: Float64, translateY: Float64, clipOwnerXs: ArrayList<Float64>,
-        clipOwnerYs: ArrayList<Float64>) {
+        clipOwnerYs: ArrayList<Float64>, scaleX!: Float64 = 1.0, scaleY!: Float64 = 1.0) {
         this.translateX = translateX
         this.translateY = translateY
+        this.scaleX = scaleX
+        this.scaleY = scaleY
         this.clipOwnerXs = ArrayList<Float64>(clipOwnerXs)
         this.clipOwnerYs = ArrayList<Float64>(clipOwnerYs)
     }
@@ -6582,7 +6766,8 @@ public class CjguiComposableUiScene {
                 clipXs.add(ownerX)
                 clipYs.add(ownerY)
             }
-            geometries.add(CjguiComposableUiVisualGeometry(x, y, clipXs, clipYs))
+            geometries.add(CjguiComposableUiVisualGeometry(x, y, clipXs, clipYs,
+                scaleX: node.style.scaleX, scaleY: node.style.scaleY))
             if (depth < ancestry.size) { ancestry[depth] = index } else { ancestry.add(index) }
             depth += 1
             index += 1
@@ -7442,6 +7627,15 @@ public class CjguiComposableUiLayoutReuseCache {
         appendFloat(builder, byteCount, cacheable, style.fontSize)
         appendInt(builder, byteCount, cacheable, style.fontWeight)
         appendString(builder, byteCount, cacheable, style.fontFamily)
+        appendFloat(builder, byteCount, cacheable, style.letterSpacing)
+        appendFloat(builder, byteCount, cacheable, style.lineHeight)
+        appendString(builder, byteCount, cacheable, "overflow=${style.textMaxLines}:${style.textOverflow}")
+        if (let Some(radii) <- style.cornerRadii) {
+            appendString(builder, byteCount, cacheable,
+                "corners=${radii.topLeft}:${radii.topRight}:${radii.bottomRight}:${radii.bottomLeft}")
+        } else {
+            appendString(builder, byteCount, cacheable, "corners=-")
+        }
         appendInt(builder, byteCount, cacheable, style.minWidth)
         appendInt(builder, byteCount, cacheable, style.maxWidth)
         appendInt(builder, byteCount, cacheable, style.idealWidth)
@@ -7459,6 +7653,16 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, style.offsetY)
         appendFloat(builder, byteCount, cacheable, style.translateX)
         appendFloat(builder, byteCount, cacheable, style.translateY)
+        appendFloat(builder, byteCount, cacheable, style.scaleX)
+        appendFloat(builder, byteCount, cacheable, style.scaleY)
+        appendInt(builder, byteCount, cacheable, style.zIndex)
+        appendFloat(builder, byteCount, cacheable, style.rotateDegrees)
+        if (let Some(value) <- style.iconTint) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendColor(builder, byteCount, cacheable, value)
+        } else {
+            appendInt(builder, byteCount, cacheable, 0)
+        }
         appendBool(builder, byteCount, cacheable, style.wheelScrollable)
         appendInt(builder, byteCount, cacheable, style.scrollContentAlignY)
         appendBool(builder, byteCount, cacheable, style.pointerInteractive)
@@ -7615,7 +7819,9 @@ private class CjguiComposableUiLayoutMeasurementCacheEntry {
             this.style.padding == style.padding && this.style.gap == style.gap && this.style.fixedWidth == style
             .fixedWidth && this.style.fixedHeight == style.fixedHeight && this.style.growX == style.growX &&
             this.style.growY == style.growY && this.style.borderWidth == style.borderWidth && this.style.fontSize == style
-            .fontSize && this.style.fontWeight == style.fontWeight && this.style.fontFamily == style.fontFamily &&
+            .fontSize && this.style.fontWeight == style.fontWeight && this.style.fontFamily == style.fontFamily && this.style.textMaxLines == style.textMaxLines &&
+            this.style.textOverflow == style.textOverflow &&
+            this.style.letterSpacing == style.letterSpacing && this.style.lineHeight == style.lineHeight &&
             this.style.minWidth == style.minWidth && this.style.maxWidth == style.maxWidth && this.style.idealWidth == style
             .idealWidth && this.style.minHeight == style.minHeight && this.style.maxHeight == style.maxHeight &&
             this.style.idealHeight == style.idealHeight && this.style.alignX == style.alignX && this.style.alignY == style
@@ -7846,11 +8052,14 @@ public class CjguiComposableUiLayoutEngine {
         let a = left.declaredStyle
         let b = right.declaredStyle
         if (a.fontSize != b.fontSize || a.fontWeight != b.fontWeight || a.fontFamily != b.fontFamily ||
+            a.textMaxLines != b.textMaxLines || a.textOverflow != b.textOverflow ||
+            a.letterSpacing != b.letterSpacing || a.lineHeight != b.lineHeight ||
             a.padding != b.padding || a.fixedWidth != b.fixedWidth || a.fixedHeight != b.fixedHeight ||
             a.minWidth != b.minWidth || a.maxWidth != b.maxWidth || a.idealWidth != b.idealWidth ||
             a.minHeight != b.minHeight || a.maxHeight != b.maxHeight || a.idealHeight != b.idealHeight ||
             a.alignX != b.alignX || a.alignY != b.alignY || a.offsetX != b.offsetX || a.offsetY != b.offsetY ||
-            a.translateX != b.translateX || a.translateY != b.translateY) {
+            a.translateX != b.translateX || a.translateY != b.translateY ||
+            a.scaleX != b.scaleX || a.scaleY != b.scaleY) {
             return false
         }
         // Selection backgrounds are transient paint-only decorations. Ignore
@@ -8489,11 +8698,22 @@ public class CjguiComposableUiLayoutEngine {
                     "",
                     -1,
                     CjguiComposableUiStyle(gap: node.virtualListRowGap()),
+                    identity: if (node.virtualListContentNodeId() < 0) {
+                        match (node.scopedIdentity()) {
+                            case Some(identity) => Some(identity.materializedContentIdentity())
+                            case None => None
+                        }
+                    } else { None },
                     virtualContentHeight: totalHeight,
                     virtualVerticalOrigin: state
                         .materializedStart()
                         .saturatingMul(node.virtualListRowHeight().saturatingAdd(node.virtualListRowGap()))
                 )
+                let contentIdentityIssue = resolveMaterializedIdentity(content, identityRegistry)
+                if (contentIdentityIssue.size > 0) {
+                    work.dynamicIdentityIssue = contentIdentityIssue
+                    return
+                }
                 var index = state.materializedStart()
                 let seenKeys = ArrayList<String>()
                 while (index < state.materializedEnd()) {
@@ -8842,6 +9062,9 @@ public class CjguiComposableUiLayoutEngine {
             }, false)
         }
         var cursor = inner.y + owner.virtualVerticalOrigin()
+        let paintBase = output.size
+        let paintStarts = ArrayList<Int64>()
+        let paintZIndexes = ArrayList<Int64>()
         index = 0
         while (index < children.size) {
             let child = children[index];
@@ -8851,11 +9074,14 @@ public class CjguiComposableUiLayoutEngine {
             let rowY = if (owner.virtualContentHeight() > 0 && child.variableRowOffset() >= 0) {
                 inner.y + child.variableRowOffset()
             } else { cursor }
+            paintStarts.add(output.size)
+            paintZIndexes.add(child.style.zIndex)
             layoutNodeOrReuse(child, CjguiComposableUiRect(x, rowY, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += height + gap
             index += 1
         }
+        orderSiblingPaintBlocks(output, paintBase, paintStarts, paintZIndexes)
     }
 
     private static func layoutHorizontal(children: ArrayList<CjguiComposableUiNode>, inner: CjguiComposableUiRect,
@@ -8866,6 +9092,9 @@ public class CjguiComposableUiLayoutEngine {
         work.horizontalContainerSolveCount += 1
         let widths = resolvedHorizontalWidths(children, inner.width, gap, measurer)
         var cursor = inner.x
+        let paintBase = output.size
+        let paintStarts = ArrayList<Int64>()
+        let paintZIndexes = ArrayList<Int64>()
         var index: Int64 = 0
         while (index < children.size) {
             let child = children[index];
@@ -8877,11 +9106,74 @@ public class CjguiComposableUiLayoutEngine {
             // high in a taller row.
             let height = crossAxisLength(child, inner.height, width, false, measurer)
             let y = alignedOrigin(inner.y, inner.height, height, child.style.alignY)
+            paintStarts.add(output.size)
+            paintZIndexes.add(child.style.zIndex)
             layoutNodeOrReuse(child, CjguiComposableUiRect(cursor, y, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += width + gap
             index += 1
         }
+        orderSiblingPaintBlocks(output, paintBase, paintStarts, paintZIndexes)
+    }
+
+    /// Paint order only. Every sibling was emitted as one contiguous preorder
+    /// subtree, so a stable insertion sort of those whole blocks reorders
+    /// painting and hit routing without moving any geometry. Moving the block
+    /// also moves an `effectGroup` node together with its subtree count, so an
+    /// effect group's array interval is never split by zIndex. Equal values
+    /// keep authored order; all-zero siblings are left untouched.
+    private static func orderSiblingPaintBlocks(output: ArrayList<CjguiComposableUiLayoutNode>, base: Int64,
+        starts: ArrayList<Int64>, zIndexes: ArrayList<Int64>): Unit {
+        if (starts.size < 2) {
+            return
+        }
+        var sorted = true
+        var index: Int64 = 1
+        while (index < starts.size) {
+            if (zIndexes[index] < zIndexes[index - 1]) {
+                sorted = false
+                break
+            }
+            index += 1
+        }
+        if (sorted) {
+            return
+        }
+        let order = ArrayList<Int64>()
+        index = 0
+        while (index < starts.size) {
+            order.add(index)
+            index += 1
+        }
+        index = 1
+        while (index < order.size) {
+            let current = order[index]
+            var position = index - 1
+            while (position >= 0 && zIndexes[order[position]] > zIndexes[current]) {
+                order[position + 1] = order[position]
+                position -= 1
+            }
+            order[position + 1] = current
+            index += 1
+        }
+        let staged = ArrayList<CjguiComposableUiLayoutNode>()
+        for (position in order) {
+            let start = starts[position]
+            let end = if (position + 1 < starts.size) {
+                starts[position + 1]
+            } else {
+                output.size
+            }
+            var cursor = start
+            while (cursor < end) {
+                staged.add(output[cursor])
+                cursor += 1
+            }
+        }
+        while (output.size > base) {
+            let _ = output.remove(at: output.size - 1)
+        }
+        output.add(all: staged)
     }
 
     /// Allocate the two panes and handle from one bounded track. The handle
@@ -9219,7 +9511,7 @@ public class CjguiComposableUiLayoutEngine {
         // renderer uses the corresponding inset, so a measured line is never
         // clipped merely because the font's line box fills its node bounds.
         let intrinsic = if (node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT) {
-            measurer.measure(node.value, node.style, textContentWidth(availableWidth)).height + 4
+            readonlyTextHeight(node, availableWidth, measurer) + 4
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
             120
         } else if (node.nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
@@ -9246,6 +9538,15 @@ public class CjguiComposableUiLayoutEngine {
         }
         return constrainedLength(intrinsic, node.style.fixedHeight, node.style.minHeight, node.style.maxHeight,
             node.style.idealHeight)
+    }
+    private static func readonlyTextHeight(node: CjguiComposableUiNode, width: Int64,
+        measurer: CjguiComposableUiTextMeasurer): Int64 {
+        let measured = measurer.measure(node.value, node.style, textContentWidth(width))
+        let limit = if (node.style.textMaxLines > 0) { node.style.textMaxLines }
+            else if (node.style.textOverflow == "ellipsis") { 1 } else { 0 }
+        return if (limit > 0 && measured.height > measured.lineHeight * limit) {
+            measured.lineHeight * limit
+        } else { measured.height }
     }
     private static func naturalHeight(node: CjguiComposableUiNode, availableWidth: Int64,
         measurer: CjguiComposableUiTextMeasurer): Int64 {

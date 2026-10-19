@@ -1,0 +1,64 @@
+{
+  "sources": {
+    "/Users/jiangxuanyang/Desktop/Pharos Mark/apps/pharos_mark_ohos/entry/src/main/ets/pages/Index.ets": "8a95e9b2adc6105637963025ce3aa13513e35c042ab2bbbc789957fd8944eae7",
+    "/Users/jiangxuanyang/Desktop/cangjie/labs/ohos_thermo_app/entry/src/main/ets/pages/Index.ets": "6db4e0beca029687c15399bfe3aca536579da90c6f171e9d29ff3e24d4fd0745"
+  },
+  "pharos": {
+    "name": "pharos",
+    "cases": {
+      "positive": {
+        "terminal": "INSTALLED",
+        "native": 1,
+        "rc": "0"
+      },
+      "hang": {
+        "terminal": "UNCONFIRMED",
+        "pending": false,
+        "native": 0,
+        "timers_left": 0
+      },
+      "evidence": {
+        "a": true,
+        "b": false
+      },
+      "native_reject": {
+        "terminal": "UNCONFIRMED",
+        "native": 1,
+        "recorded": false
+      }
+    },
+    "timers_left": 0,
+    "logs": []
+  },
+  "thermo": {
+    "name": "thermo",
+    "cases": {
+      "positive": {
+        "terminal": "INSTALLED",
+        "native": 1,
+        "rc": "0"
+      },
+      "hang": {
+        "terminal": "UNCONFIRMED",
+        "pending": false,
+        "native": 0,
+        "timers_left": 0
+      },
+      "evidence": {
+        "a": true,
+        "b": false
+      },
+      "native_reject": {
+        "terminal": "UNCONFIRMED",
+        "native": 1,
+        "recorded": false
+      }
+    },
+    "timers_left": 0,
+    "logs": []
+  },
+  "verdict": {
+    "pharos": true,
+    "thermo": true
+  }
+}

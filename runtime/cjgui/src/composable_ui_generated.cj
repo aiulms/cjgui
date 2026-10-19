@@ -399,15 +399,15 @@ public class CjguiGeneratedUiPresentation {
     /// numeric style name because it is a real layout/paint field on the shared
     /// Style.
     public static func isPaintPropertyName(name: String): Bool {
-        return name == "background" || name == "border" || name == "textColor" || name == "shadow" ||
-            name == "gradient" || name == "effectGroup"
+        return name == "background" || name == "border" || name == "textColor" || name == "shadow" || name == "gradient" ||
+            name == "effectGroup"
     }
 
     public static func isStylePropertyName(name: String): Bool {
         return name == "fixedWidth" || name == "fixedHeight" || name == "minWidth" || name == "maxWidth" || name ==
             "minHeight" || name == "maxHeight" || name == "growX" || name == "growY" || name == "alignX" || name ==
-            "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth" ||
-            name == "translateX" || name == "translateY"
+            "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth" || name == "translateX" ||
+            name == "translateY" || name == "textMaxLines" || name == "textOverflow"
     }
 
     /// Whether one presentation consumes one style property. A container also
@@ -430,6 +430,10 @@ public class CjguiGeneratedUiPresentation {
                 return true
             }
         }
+        if (name == "textMaxLines" || name == "textOverflow") {
+            return presentation == CJGUI_GENERATED_PRESENTATION_LABEL || presentation ==
+                CJGUI_GENERATED_PRESENTATION_ACTION
+        }
         if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
             return true
         }
@@ -450,6 +454,9 @@ public class CjguiGeneratedUiPresentation {
             return valueType == "STRING" || valueType == "INTEGER" || valueType == "BOOLEAN"
         }
         if (name == "alignX" || name == "alignY") {
+            return consumesStyleProperty(presentation, name) && valueType == "STRING"
+        }
+        if (name == "textOverflow") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
         if (name == "translateX" || name == "translateY") {
@@ -500,8 +507,8 @@ public class CjguiGeneratedUiPresentation {
             // generated action may also declare a transfer endpoint; the
             // application validates its role/format and stages a real window
             // provider binding with the scene before it becomes accepted.
-            return (name == "label" || name == "action" || name == "transferRole" ||
-                name == "transferFormat" || name == "transferFileSource") && valueType == "STRING"
+            return (name == "label" || name == "action" || name == "transferRole" || name == "transferFormat" || name ==
+                "transferFileSource") && valueType == "STRING"
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_IMAGE) {
             // The logical resource key and its version are resolved against the
@@ -583,21 +590,24 @@ public class CjguiGeneratedUiPresentation {
                 stability: CjguiComposableUiEffectValidation.EFFECT_STABILITY,
                 backendSupport: CjguiComposableUiEffectValidation.EFFECT_GROUP_BACKEND_SUPPORT))
         properties.add(CjguiGeneratedUiPropertySpec("borderWidth", "INTEGER", minimum: 0, maximum: 64, defaultValue: "1"))
-        properties.add(CjguiGeneratedUiPropertySpec("translateX", "STRING", maxLength: 12,
-            defaultValue: "", encoding: "signed decimal, at most 3 fractional digits",
-            unit: "logical points", valueRange: "[-1024,1024]; cumulative [-4096,4096]",
-            semantics: "absent=inherit named style; empty=clear to 0",
-            stability: "experimental", backendSupport: "macOS; other backends unsupported"))
-        properties.add(CjguiGeneratedUiPropertySpec("translateY", "STRING", maxLength: 12,
-            defaultValue: "", encoding: "signed decimal, at most 3 fractional digits",
-            unit: "logical points", valueRange: "[-1024,1024]; cumulative [-4096,4096]",
-            semantics: "absent=inherit named style; empty=clear to 0",
-            stability: "experimental", backendSupport: "macOS; other backends unsupported"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("translateX", "STRING", maxLength: 12, defaultValue: "",
+                encoding: "signed decimal, at most 3 fractional digits", unit: "logical points",
+                valueRange: "[-1024,1024]; cumulative [-4096,4096]",
+                semantics: "absent=inherit named style; empty=clear to 0", stability: "experimental",
+                backendSupport: "macOS; other backends unsupported"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("translateY", "STRING", maxLength: 12, defaultValue: "",
+                encoding: "signed decimal, at most 3 fractional digits", unit: "logical points",
+                valueRange: "[-1024,1024]; cumulative [-4096,4096]",
+                semantics: "absent=inherit named style; empty=clear to 0", stability: "experimental",
+                backendSupport: "macOS; other backends unsupported"))
         // A registered app rule may be referenced by any accepted generated
         // instance. The holder publishes the resolved rule only with that
         // instance's accepted structure transaction.
-        properties.add(CjguiGeneratedUiPropertySpec("motion", "STRING", maxLength: 64,
-            stability: "experimental", backendSupport: "accepted generated node animation"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("motion", "STRING", maxLength: 64, stability: "experimental",
+                backendSupport: "accepted generated node animation"))
         return properties
     }
 
@@ -618,6 +628,17 @@ public class CjguiGeneratedUiPresentation {
         let properties = boxProperties()
         properties.add(CjguiGeneratedUiPropertySpec("fontSize", "INTEGER", minimum: 1, maximum: 128, defaultValue: "13"))
         properties.add(CjguiGeneratedUiPropertySpec("fontWeight", "INTEGER", minimum: 0, maximum: 1, defaultValue: "0"))
+        return properties
+    }
+
+    public static func readonlyTextStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = leafStyleProperties()
+        properties.add(
+            CjguiGeneratedUiPropertySpec("textMaxLines", "INTEGER", minimum: 0, maximum: 1024, defaultValue: "0",
+                stability: "experimental", backendSupport: "macOS read-only text"))
+        properties.add(
+            CjguiGeneratedUiPropertySpec("textOverflow", "STRING", values: ArrayList<String>(["clip", "ellipsis"]),
+                defaultValue: "clip", stability: "experimental", backendSupport: "macOS read-only text"))
         return properties
     }
 
@@ -787,7 +808,11 @@ public class CjguiGeneratedUiCapabilityCatalog {
     /// remains scoped to this catalog/application.
     public func registerMotionRule(rule: CjguiGeneratedMotionRule): Bool {
         let accepted = motionRuleRegistryValue.registerRule(rule)
-        lastRegistrationIssue = if (accepted) { "" } else { motionRuleRegistryValue.lastIssue() }
+        lastRegistrationIssue = if (accepted) {
+            ""
+        } else {
+            motionRuleRegistryValue.lastIssue()
+        }
         return accepted
     }
 
@@ -1518,18 +1543,19 @@ public class CjguiGeneratedUiValidator {
                 // application component catalog. Kind/role admission remains
                 // strict so a label cannot claim to be an actionable tree row.
                 if (name == "semanticRole") {
-                    if (!((value == "outline" && spec.presentation == CJGUI_GENERATED_PRESENTATION_SCROLL) ||
-                        (value == "row" && spec.presentation == CJGUI_GENERATED_PRESENTATION_ACTION))) {
-                        return CjguiGeneratedUiValidation.reject("semantic_role_kind_invalid", "${path}/${node.key}/${name}")
+                    if (!((value == "outline" && spec.presentation == CJGUI_GENERATED_PRESENTATION_SCROLL) || (value ==
+                        "row" && spec.presentation == CJGUI_GENERATED_PRESENTATION_ACTION))) {
+                        return CjguiGeneratedUiValidation.reject("semantic_role_kind_invalid",
+                            "${path}/${node.key}/${name}")
                     }
                     continue
                 }
-                if (name == "semanticSelected" || name == "semanticExpandable" || name == "semanticExpanded" ||
-                    name == "disabled") {
-                    if ((value != "true" && value != "false") ||
-                        (name != "disabled" && node.property("semanticRole") != "row") ||
-                        (name == "disabled" && spec.presentation != CJGUI_GENERATED_PRESENTATION_ACTION)) {
-                        return CjguiGeneratedUiValidation.reject("semantic_boolean_invalid", "${path}/${node.key}/${name}")
+                if (name == "semanticSelected" || name == "semanticExpandable" || name == "semanticExpanded" || name ==
+                    "disabled") {
+                    if ((value != "true" && value != "false") || (name != "disabled" && node.property("semanticRole") !=
+                        "row") || (name == "disabled" && spec.presentation != CJGUI_GENERATED_PRESENTATION_ACTION)) {
+                        return CjguiGeneratedUiValidation.reject("semantic_boolean_invalid",
+                            "${path}/${node.key}/${name}")
                     }
                     continue
                 }
@@ -1566,12 +1592,11 @@ public class CjguiGeneratedUiValidator {
                 }
             }
             if (node.property("semanticRole") == "row") {
-                if (node.property("semanticExpanded") == "true" &&
-                    node.property("semanticExpandable") != "true") {
+                if (node.property("semanticExpanded") == "true" && node.property("semanticExpandable") != "true") {
                     return CjguiGeneratedUiValidation.reject("semantic_expanded_without_group", "${path}/${node.key}")
                 }
-                if (node.property("semanticParentKey").size > 0 &&
-                    node.property("semanticParentKey") == node.property("semanticRowKey")) {
+                if (node.property("semanticParentKey").size > 0 && node.property("semanticParentKey") == node.property(
+                    "semanticRowKey")) {
                     return CjguiGeneratedUiValidation.reject("semantic_parent_cycle", "${path}/${node.key}")
                 }
             }
@@ -1731,6 +1756,10 @@ public class CjguiGeneratedUiValidator {
                 if (catalog.namedStyles().forName(value).isNone()) {
                     return "style_reference_not_registered"
                 }
+            } else if (property.name == "textOverflow") {
+                if (value != "clip" && value != "ellipsis") {
+                    return "text_overflow_value_invalid"
+                }
             } else if (property.name == "translateX" || property.name == "translateY") {
                 if (value.size > 0 && cjguiComposableUiParseTranslationScalar(value).isNone()) {
                     return "translation_value_invalid"
@@ -1872,8 +1901,8 @@ private func cjguiCollectGeneratedSpecKeys(spec: CjguiGeneratedUiNodeSpec, keys:
 /// The validator has already proved each reference exists, so a missing value
 /// here is treated defensively by omitting it; such a candidate cannot reach
 /// this helper through the public submit path.
-private func cjguiCollectGeneratedMotionRules(spec: CjguiGeneratedUiNodeSpec,
-    registry: CjguiGeneratedMotionRegistry, bindings: HashMap<String, CjguiGeneratedMotionRule>): Unit {
+private func cjguiCollectGeneratedMotionRules(spec: CjguiGeneratedUiNodeSpec, registry: CjguiGeneratedMotionRegistry,
+    bindings: HashMap<String, CjguiGeneratedMotionRule>): Unit {
     let motionName = spec.property("motion")
     if (motionName.size > 0) {
         if (let Some(rule) <- registry.ruleFor(motionName)) {
@@ -1995,8 +2024,8 @@ public interface CjguiGeneratedUiBindingProvider {
     /// 把该字段源字节选区从 fromVersion 映射到当前版本；返回
     /// (当前版本, 新start, 新end)，无法无歧义映射时 None。默认 None
     /// （外部改版后的旧选区按不可映射具名处理，不猜偏移）。
-    func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
-        endByte: Int64): ?(Int64, Int64, Int64) {
+    func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64, endByte: Int64): ?(Int64,
+        Int64, Int64) {
         let _ = fieldId
         let _ = fromVersion
         let _ = startByte
@@ -3337,8 +3366,7 @@ public class CjguiGeneratedUiStructureHolder {
             }
             let action = cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
                 enabled: actionEnabledFor(provider, spec.actionName) && spec.property("disabled") != "true",
-                operationActionName: spec.actionName,
-                interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+                operationActionName: spec.actionName, interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
             action.semanticIncarnation = generatedSemanticActionIncarnation(spec.actionName)
             if (spec.property("semanticRole") == "row") {
                 action.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW
@@ -4155,21 +4183,29 @@ public class CjguiGeneratedUiStructureHolder {
         let alignX = declaredAlignmentOf(properties, "alignX", base.alignX)
         let alignY = declaredAlignmentOf(properties, "alignY", base.alignY)
         let translateX = if (let Some(token) <- properties.get("translateX")) {
-            if (token.size == 0) { 0.0 } else {
+            if (token.size == 0) {
+                0.0
+            } else {
                 match (cjguiComposableUiParseTranslationScalar(token)) {
                     case Some(value) => value
                     case None => base.translateX
                 }
             }
-        } else { base.translateX }
+        } else {
+            base.translateX
+        }
         let translateY = if (let Some(token) <- properties.get("translateY")) {
-            if (token.size == 0) { 0.0 } else {
+            if (token.size == 0) {
+                0.0
+            } else {
                 match (cjguiComposableUiParseTranslationScalar(token)) {
                     case Some(value) => value
                     case None => base.translateY
                 }
             }
-        } else { base.translateY }
+        } else {
+            base.translateY
+        }
         // The rebuilt style carries the base's named effect rejection through, so
         // a definition the shared contract already refused can never be laundered
         // into a clean `None` by the ordinary property-resolution rebuild. The
@@ -4179,14 +4215,21 @@ public class CjguiGeneratedUiStructureHolder {
             border: declaredColor(properties, "border", base.border),
             textColor: declaredColor(properties, "textColor", base.textColor), padding: padding, gap: gap,
             fixedWidth: fixedWidth, fixedHeight: fixedHeight, growX: growX, growY: growY, borderWidth: borderWidth,
-            fontSize: fontSize, fontWeight: fontWeight, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight,
-            maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: base.cornerRadius,
-            offsetX: base.offsetX, offsetY: base.offsetY, translateX: translateX, translateY: translateY,
-            wheelScrollable: base.wheelScrollable, scrollContentAlignY: base.scrollContentAlignY,
-            pointerInteractive: base.pointerInteractive,
+            fontSize: fontSize, fontWeight: fontWeight, fontFamily: base.fontFamily,
+            letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
+            textMaxLines: declaredStyleValue(properties, "textMaxLines", base.textMaxLines),
+            textOverflow: if (propertyOf(properties, "textOverflow").size > 0) {
+                propertyOf(properties, "textOverflow")
+            } else {
+                base.textOverflow
+            }, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight, alignX: alignX,
+            alignY: alignY, cornerRadius: base.cornerRadius, cornerRadii: base.cornerRadii, offsetX: base.offsetX, offsetY: base.offsetY,
+            translateX: translateX, translateY: translateY, wheelScrollable: base.wheelScrollable,
+            scrollContentAlignY: base.scrollContentAlignY, pointerInteractive: base.pointerInteractive,
             clipsContent: base.clipsContent, shadow: declaredShadowOf(properties, base.shadow),
             gradient: declaredGradientOf(properties, base.gradient),
-            effectGroup: declaredEffectGroupOf(properties, base.effectGroup), effectRejection: base.effectRejection)
+            effectGroup: declaredEffectGroupOf(properties, base.effectGroup), effectRejection: base.effectRejection,
+            zIndex: base.zIndex, rotateDegrees: base.rotateDegrees, iconTint: base.iconTint)
     }
 
     private func propertyOf(properties: HashMap<String, String>, name: String): String {
@@ -4366,10 +4409,9 @@ public class CjguiGeneratedUiAcceptedInstance {
     public init(key: String, elementKey: String, role: String, nodeId: Int64, semanticId: String, kindToken: String,
         fieldId: String, actionName: String, label: String, visible: Bool, bounds: CjguiComposableUiRect,
         imageResourceId!: String = "", imageResourceVersion!: Int64 = 0, imageResourceState!: String = "unrequested",
-        effectGroupToken!: String = "none", controlRole!: String = "none",
-        controlSelected!: Bool = false, controlExpandable!: Bool = false,
-        controlExpanded!: Bool = false, controlEnabled!: Bool = true, controlLevel!: Int64 = 0,
-        controlRowKey!: String = "", controlParentKey!: String = "") {
+        effectGroupToken!: String = "none", controlRole!: String = "none", controlSelected!: Bool = false,
+        controlExpandable!: Bool = false, controlExpanded!: Bool = false, controlEnabled!: Bool = true,
+        controlLevel!: Int64 = 0, controlRowKey!: String = "", controlParentKey!: String = "") {
         this.key = key
         this.elementKey = elementKey
         this.role = role
@@ -4431,13 +4473,27 @@ public func cjguiGeneratedUiKindToken(nodeKind: Int64): String {
 }
 
 public func cjguiGeneratedUiControlRoleToken(role: Int64): String {
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB_GROUP) { return "tab_group" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB) { return "tab" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA) { return "scroll_area" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE) { return "outline" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW) { return "row" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON) { return "button" }
-    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX) { return "checkbox" }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB_GROUP) {
+        return "tab_group"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TAB) {
+        return "tab"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA) {
+        return "scroll_area"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE) {
+        return "outline"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_TREE_ROW) {
+        return "row"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON) {
+        return "button"
+    }
+    if (role == CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX) {
+        return "checkbox"
+    }
     return "none"
 }
 
@@ -4463,8 +4519,7 @@ public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow, h
         } else {
             node.actionName
         }
-        let visible = node.bounds.width > 0 && node.bounds.height > 0 &&
-            node.clip.width > 0 && node.clip.height > 0
+        let visible = node.bounds.width > 0 && node.bounds.height > 0 && node.clip.width > 0 && node.clip.height > 0
         result.add(
             CjguiGeneratedUiAcceptedInstance(key, elementKey, role, node.nodeId, node.semanticId,
                 cjguiGeneratedUiKindToken(node.nodeKind), node.fieldId, publicActionName, node.label, visible,
@@ -4476,9 +4531,8 @@ public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow, h
                     "none"
                 }, controlRole: cjguiGeneratedUiControlRoleToken(node.semanticRole),
                 controlSelected: node.semanticSelected, controlExpandable: node.semanticExpandable,
-                controlExpanded: node.semanticExpanded, controlEnabled: node.isEnabled,
-                controlLevel: node.semanticLevel, controlRowKey: node.semanticKey,
-                controlParentKey: node.semanticParentKey))
+                controlExpanded: node.semanticExpanded, controlEnabled: node.isEnabled, controlLevel: node.semanticLevel,
+                controlRowKey: node.semanticKey, controlParentKey: node.semanticParentKey))
     }
     return result
 }
@@ -4541,22 +4595,25 @@ public class CjguiGeneratedUiEncoding {
         builder.append(
             "BOUNDS ${catalog.maxDepth} ${catalog.maxNodes} ${catalog.maxPropertiesPerNode} " +
                 "${catalog.maxStringLength}\n")
-        builder.append("SEMANTIC_PROPERTY semanticRole outline:scrollArea,row:action " +
-            "semanticLabel semanticSelected semanticExpandable semanticExpanded semanticLevel " +
-            "semanticRowKey semanticParentKey disabled stability=experimental\n")
-        builder.append("PLATFORM_ACCENT ${CJGUI_COMPOSABLE_UI_PLATFORM_SYSTEM_ACCENT_COLOR} " +
-            "scope=window source=system,fixed color=srgb8 status=PLATFORM " +
-            "support=macos_appkit,ohos_unverified stability=experimental\n")
+        builder.append(
+            "SEMANTIC_PROPERTY semanticRole outline:scrollArea,row:action " +
+                "semanticLabel semanticSelected semanticExpandable semanticExpanded semanticLevel " +
+                "semanticRowKey semanticParentKey disabled stability=experimental\n")
+        builder.append(
+            "PLATFORM_ACCENT ${CJGUI_COMPOSABLE_UI_PLATFORM_SYSTEM_ACCENT_COLOR} " +
+                "scope=window source=system,fixed color=srgb8 status=PLATFORM " +
+                "support=macos_appkit,ohos_unverified stability=experimental\n")
         builder.append(catalog.motionRuleRegistry().describe())
         if (catalog.windowBackgroundEnabled()) {
             // This property belongs to the structure root, not to a component
             // presentation. Its grammar and support labels come from the same
             // public policy contract that the validator consumes.
-            builder.append("WINDOW_BACKGROUND_PROPERTY windowBackground STRING root_only=1 " +
-                "encoding=${CjguiGeneratedUiEncoding.windowBackgroundEncoding()} " +
-                "default=${CjguiWindowBackgroundPolicy.OPAQUE} omitted=${CjguiWindowBackgroundPolicy.OPAQUE} " +
-                "stability=${CjguiWindowBackgroundPolicy.STABILITY} " +
-                "support=${CjguiWindowBackgroundPolicy.BACKEND_SUPPORT}\n")
+            builder.append(
+                "WINDOW_BACKGROUND_PROPERTY windowBackground STRING root_only=1 " +
+                    "encoding=${CjguiGeneratedUiEncoding.windowBackgroundEncoding()} " +
+                    "default=${CjguiWindowBackgroundPolicy.OPAQUE} omitted=${CjguiWindowBackgroundPolicy.OPAQUE} " +
+                    "stability=${CjguiWindowBackgroundPolicy.STABILITY} " +
+                    "support=${CjguiWindowBackgroundPolicy.BACKEND_SUPPORT}\n")
         }
         for (kind in catalog.componentKinds()) {
             if (let Some(spec) <- catalog.componentFor(kind)) {
@@ -5375,7 +5432,9 @@ public func cjguiGeneratedUiSnapshotPayload(tracker: CjguiGeneratedUiObservation
         sections.add(effectFacts)
     }
     let platformFacts = snapshotSection("SNAPSHOT_PLATFORM", source.platformFacts)
-    if (platformFacts.size > 0) { sections.add(platformFacts) }
+    if (platformFacts.size > 0) {
+        sections.add(platformFacts)
+    }
     for ((marker, payload) in [("SNAPSHOT_FIELD", fieldsPayload), ("SNAPSHOT_STRUCTURE", structurePayload),
         ("SNAPSHOT_INSTANCE", instancesPayload), ("SNAPSHOT_STYLE", stylesPayload)]) {
         let encoded = snapshotSection(marker, payload)
@@ -5477,9 +5536,10 @@ public func cjguiGeneratedUiInstanceRevision(instances: ArrayList<CjguiGenerated
     for (instance in instances) {
         hash = hash ^ fingerprintText(instance.key)
         hash = hash ^ fingerprintMix(instance.nodeId)
-        hash = hash ^ fingerprintText("${instance.controlRole}|${instance.controlRowKey}|" +
-            "${instance.controlParentKey}|${instance.controlSelected}|${instance.controlExpandable}|" +
-            "${instance.controlExpanded}|${instance.controlEnabled}|${instance.controlLevel}|${instance.label}")
+        hash = hash ^ fingerprintText(
+            "${instance.controlRole}|${instance.controlRowKey}|" +
+                "${instance.controlParentKey}|${instance.controlSelected}|${instance.controlExpandable}|" +
+                "${instance.controlExpanded}|${instance.controlEnabled}|${instance.controlLevel}|${instance.label}")
     }
     return hash
 }

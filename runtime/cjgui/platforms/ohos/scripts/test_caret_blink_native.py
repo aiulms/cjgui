@@ -16,6 +16,7 @@ PREFIX = r'''
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <chrono>
 #include <memory>
 #include <mutex>
 struct Session {
@@ -23,8 +24,13 @@ struct Session {
  int64_t caretBlinkNextMs=0;
 };
 enum class JobKind { Redraw, Present };
-struct WaitableJob { JobKind kind; explicit WaitableJob(JobKind k):kind(k){} };
+struct WaitableJob { JobKind kind; const char *observationReason="unspecified";
+ std::chrono::steady_clock::time_point observationEnqueued{}, observationDequeued{}, observationCreated{};
+ uint64_t observationId=0, observationRenderEpoch=0;
+ explicit WaitableJob(JobKind k):kind(k){} virtual ~WaitableJob()=default; };
 using JobRef=std::shared_ptr<WaitableJob>;
+struct Coverage {};
+using CjguiOhosCoverage = std::shared_ptr<Coverage>;
 '''
 RENDER = r'''
 struct Render {

@@ -57,6 +57,54 @@ static int ensure_wsa(void) {
     return 0;
 }
 
+
+// Private finite transport observation. Disabled unless explicitly requested;
+// records lengths and identities only, never tokens or document/request bodies.
+static int gRpcTraceEnabled = -1;
+static uint64_t gRpcGeneration, gRpcSequence, gRpcTurn, gRpcLines;
+static int64_t gRpcId = -1, gRpcOffset = -1, gRpcCount = -1;
+static char gRpcOp[33] = "pending";
+int32_t pharos_agent_trace_enabled(void) {
+    if (gRpcTraceEnabled < 0) {
+        char value[8] = {0};
+        gRpcTraceEnabled = GetEnvironmentVariableA("PHAROS_WINDOWS_RPC_TRACE", value, sizeof(value)) == 1 && value[0] == '1';
+    }
+    return gRpcTraceEnabled;
+}
+static void rpc_boundary(const char *stage, int result, int error, size_t before) {
+    if (!pharos_agent_trace_enabled()) return;
+    if (gRpcLines++ >= 150000u) {
+        if (gRpcLines == 150001u) { fprintf(stderr, "PHAROS_RPC_BOUNDARY limit=150000 evidence_incomplete=1\n"); fflush(stderr); }
+        return;
+    }
+    fprintf(stderr, "PHAROS_RPC_BOUNDARY seq=%llu ms=%llu conn=%llu turn=%llu stage=%s id=%lld op=%s offset=%lld count=%lld req=%zu total=%zu before=%zu cursor=%zu result=%d error=%d\n",
+        (unsigned long long)++gRpcSequence, (unsigned long long)GetTickCount64(),
+        (unsigned long long)gRpcGeneration, (unsigned long long)gRpcTurn, stage,
+        (long long)gRpcId, gRpcOp, (long long)gRpcOffset, (long long)gRpcCount,
+        gRequestLength, gReplyLength, before, gReplySent, result, error);
+    fflush(stderr);
+}
+void pharos_agent_trace_stage(int32_t stage, int64_t id, const char *op, int64_t offset, int64_t count) {
+    if (!pharos_agent_trace_enabled()) return;
+    if (stage == 0) {
+        ++gRpcTurn;
+        if (gClientSocket != INVALID_SOCKET) rpc_boundary("owner_turn", 0, 0, gReplySent);
+        return;
+    }
+    if (stage == 1) {
+        gRpcId = id; gRpcOffset = offset; gRpcCount = count;
+        size_t i = 0;
+        for (; op && op[i] && i < 32u; ++i) {
+            char c = op[i];
+            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')) break;
+            gRpcOp[i] = c;
+        }
+        gRpcOp[i] = 0;
+        if (!i || (op && op[i])) memcpy(gRpcOp, "other", 6);
+    }
+    rpc_boundary(stage == 1 ? "dispatch_begin" : "dispatch_end", 0, 0, gReplySent);
+}
+
 static void close_client(void) {
     if (gClientSocket != INVALID_SOCKET) {
         closesocket(gClientSocket);
@@ -219,6 +267,8 @@ int pharos_agent_unlink_private_file(const char *path) {
 // Accept one pending connection (non-blocking).
 int32_t pharos_agent_accept(void) {
     if (gListenSocket == INVALID_SOCKET) return -1;
+    // Preserve this connection until its request/reply and EOF are retired.
+    if (gClientSocket != INVALID_SOCKET) return 0;
     SOCKET fd = accept(gListenSocket, NULL, NULL);
     if (fd == INVALID_SOCKET) {
         int err = WSAGetLastError();
@@ -229,6 +279,8 @@ int32_t pharos_agent_accept(void) {
     close_client();
     gClientSocket = fd;
     gRequestLength = 0;
+    ++gRpcGeneration; gRpcId = gRpcOffset = gRpcCount = -1; memcpy(gRpcOp, "pending", 8);
+    rpc_boundary("accepted", 1, 0, 0);
     return 1;
 }
 
@@ -239,12 +291,14 @@ int32_t pharos_agent_poll(void) {
     char chunk[4096];
     int got = recv(gClientSocket, chunk, (int)sizeof(chunk), 0);
     if (got == 0) {
+        rpc_boundary("recv_eof", 0, 0, gReplySent);
         close_client();
         return -1;
     }
     if (got < 0) {
         int err = WSAGetLastError();
         if (err == WSAEWOULDBLOCK) return 0;
+        rpc_boundary("recv_error", got, err, gReplySent);
         close_client();
         return -1;
     }
@@ -254,7 +308,11 @@ int32_t pharos_agent_poll(void) {
         }
     }
     gRequest[gRequestLength] = '\0';
-    if (memchr(gRequest, '\n', gRequestLength) != NULL) return 1;
+    if (memchr(gRequest, '\n', gRequestLength) != NULL) {
+        gRpcId = gRpcOffset = gRpcCount = -1; memcpy(gRpcOp, "pending", 8);
+        rpc_boundary("line_complete", got, 0, gReplySent); return 1;
+    }
+    rpc_boundary("recv_partial", got, 0, gReplySent);
     return 0;
 }
 
@@ -277,6 +335,7 @@ int32_t pharos_agent_reply(const char *payload) {
     gReply[length] = '\n';
     gReplyLength = length + 1;
     gReplySent = 0;
+    rpc_boundary("reply_staged", 0, 0, 0);
     return 0;
 }
 
@@ -284,15 +343,21 @@ int32_t pharos_agent_reply(const char *payload) {
 int32_t pharos_agent_flush(void) {
     if (gClientSocket == INVALID_SOCKET || gReplyLength == 0) return 1;
     int want = (int)(gReplyLength - gReplySent);
+    size_t before = gReplySent;
+    rpc_boundary("send_begin", want, 0, before);
     int put = send(gClientSocket, gReply + gReplySent, want, 0);
     if (put < 0) {
         int err = WSAGetLastError();
+        rpc_boundary("send_result", put, err, before);
         if (err == WSAEWOULDBLOCK) return 0;
+        rpc_boundary("send_close", put, err, before);
         close_client();
         return -1;
     }
     gReplySent += (size_t)put;
+    rpc_boundary("send_result", put, 0, before);
     if (gReplySent >= gReplyLength) {
+        rpc_boundary("line_sent", 1, 0, before);
         gReplyLength = 0;
         gReplySent = 0;
         return 1;
@@ -300,13 +365,12 @@ int32_t pharos_agent_flush(void) {
     return 0;
 }
 
-// 单调时钟（纳秒），对应 macOS 的 clock_gettime 实现，用于生产计时路径。
+// Use the framework's QPC conversion so input, owner and accepted observations
+// share exactly the same unit and origin. This is an existing private bridge.
+extern uint64_t cjgui_internal_renderer_owner_clock_ns(void);
 int64_t pharos_monotonic_ns(void) {
-    LARGE_INTEGER frequency;
-    LARGE_INTEGER counter;
-    if (!QueryPerformanceFrequency(&frequency) || frequency.QuadPart <= 0) return -1;
-    if (!QueryPerformanceCounter(&counter)) return -1;
-    return (int64_t)((counter.QuadPart * 1000000000LL) / frequency.QuadPart);
+    uint64_t ns = cjgui_internal_renderer_owner_clock_ns();
+    return ns != 0u && ns <= INT64_MAX ? (int64_t)ns : -1;
 }
 
 int32_t pharos_process_id(void) {

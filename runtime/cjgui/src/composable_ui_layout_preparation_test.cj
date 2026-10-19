@@ -164,3 +164,95 @@ func layoutPreparationDoesNotStartColdMeasurementAfterBuildClosesAllowance(): Un
         @Assert(controller.rollbacks, 0)
     } finally { budget.end(); window.close() }
 }
+
+private class OversizedColdLayoutController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
+    var revision: Int64 = 1
+    var rows: Int64 = 1
+    var commits: Int64 = 0
+    var rollbacks: Int64 = 0
+    var ignoredScrollChild: Bool = false
+    public func uiSceneVersion(): Int64 { return revision }
+    public func beginSceneRefresh(): Bool { return true }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(910000, "capacity-cold-root", CjguiComposableUiStyle())
+        for (index in 0..rows) {
+            root.add(cjguiComposableText(910001 + index, "capacity-cold-row-${index}",
+                "capacity cold ${revision}/${index}", CjguiComposableUiStyle(fontSize: 14.0)))
+        }
+        if (ignoredScrollChild) {
+            let scroll = cjguiComposableScrollArea(909999, "capacity-one-content", 0, CjguiComposableUiStyle())
+            scroll.add(cjguiComposableText(909998, "capacity-visible", "small current body", CjguiComposableUiStyle()))
+            scroll.add(root)
+            return scroll
+        }
+        return root
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> { return ArrayList() }
+    public func commitSceneRefresh(): Unit { commits += 1 }
+    public func rollbackSceneRefresh(): Unit { rollbacks += 1 }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func oversizedStaticCandidateRefusesBeforeColdNativeMeasurement(): Unit {
+    let controller = OversizedColdLayoutController()
+    let window = CjguiComposableUiWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        let nativeBefore = layoutPreparationNativeMeasurementCount(window)
+        let original = window.acceptedNodeValue("capacity-cold-row-0") ?? ""
+        controller.revision = 2
+        controller.rows = 1024
+        window.requestRefresh()
+        @Assert(window.refreshIfNeeded(), false)
+        @Assert(controller.rollbacks, 1)
+        @Assert(controller.commits, 1)
+        @Assert(window.acceptedNodeValue("capacity-cold-row-0") ?? "", original)
+        // The original node ceiling is already known. Measuring 1024 cold
+        // strings only to reject this same candidate is unnecessary UI work.
+        @Assert(layoutPreparationNativeMeasurementCount(window), nativeBefore)
+        controller.revision = 3
+        controller.rows = 2
+        window.requestRefresh()
+        @Assert(window.refreshIfNeeded(), true)
+        @Assert(controller.commits, 2)
+        @Assert(window.acceptedNodeValue("capacity-cold-row-0") ?? "", "capacity cold 3/0")
+    } finally { window.close() }
+}
+
+@Test
+func emittedCapacityDoesNotCountIgnoredScrollChildren(): Unit {
+    let controller = OversizedColdLayoutController()
+    controller.rows = 1100
+    controller.ignoredScrollChild = true
+    let window = CjguiComposableUiWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.acceptedSceneNodes().size, 2)
+        @Assert(window.acceptedNodeValue("capacity-visible") ?? "", "small current body")
+        @Assert(controller.commits, 1)
+        @Assert(controller.rollbacks, 0)
+    } finally { window.close() }
+}
+
+@Test
+func emittedCapacityKeepsExactOriginalNodeCeilingValid(): Unit {
+    let controller = OversizedColdLayoutController()
+    controller.rows = 1023
+    let window = CjguiComposableUiWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.acceptedSceneNodes().size, 1024)
+        @Assert(controller.commits, 1)
+        @Assert(controller.rollbacks, 0)
+    } finally { window.close() }
+}

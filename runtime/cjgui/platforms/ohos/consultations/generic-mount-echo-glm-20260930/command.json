@@ -1,0 +1,19 @@
+[
+  "/Users/jiangxuanyang/.local/bin/pi",
+  "-p",
+  "--provider",
+  "zai-coding-cn",
+  "--model",
+  "glm-5.3",
+  "--no-session",
+  "--no-context-files",
+  "--no-extensions",
+  "--no-skills",
+  "--no-prompt-templates",
+  "--no-themes",
+  "--tools",
+  "read,grep,find,ls",
+  "--system-prompt",
+  "只读技术咨询。只查问题所需文件，不修改、不构建、不操作桌面。区分证据与推断，给根因假设、区分实验、机制方案及验收反例。",
+  "@/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/consultations/generic-mount-echo-glm-20260930/request.md"
+]

@@ -23,8 +23,15 @@ int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];id<MTLDevice> device=MTLCreateSystemDefaultDevice();if(!device)return 1;
     CJGuiInternalSession *first=MakeSession(device);uint32_t ready=99;
     uint64_t begin=cjgui_internal_renderer_owner_clock_ns();
-    CHECK(cjgui_internal_renderer_prepare_frame_resources(first.rendererSessionToken,17,begin-1,&ready)==0 &&
-        ready==0 && gCjguiPreparedFramePipelines.count==0,"expired_deadline_does_not_start_compile");
+    CjguiInternalRendererStatus expiredStatus = cjgui_internal_renderer_prepare_frame_resources(
+        first.rendererSessionToken,17,begin-1,&ready);
+    BOOL noCompile = YES;
+    for (CjguiPreparedFramePipelines *pending in gCjguiPreparedFramePipelines)
+        noCompile = noCompile && pending.startedRoles == 0 && pending.completedRoles == 0 &&
+            !pending.scene && !pending.image && !pending.vector;
+    // A bounded key reservation is not a compiler start or GPU resource.
+    CHECK(expiredStatus==0 && ready==0 && noCompile && !first.view.composablePipeline &&
+        !first.view.composableImagePipeline,"expired_deadline_does_not_start_compile");
     begin=cjgui_internal_renderer_owner_clock_ns();
     CHECK(cjgui_internal_renderer_prepare_frame_resources(first.rendererSessionToken,17,begin+16000000,&ready)==0 &&
         ready==0 && gCjguiPreparedFramePipelines.count==1,"cold_preparation_yields_before_real_compiler_completes");

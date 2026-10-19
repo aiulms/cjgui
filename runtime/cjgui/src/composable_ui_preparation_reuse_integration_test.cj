@@ -192,3 +192,93 @@ func cangjieWindowViewportRefreshRunsThePreparedReuseBridge(): Unit {
         acceptReuseMutation(window, controller, budget, 8, "reuse-row-4", "stable label")
     } finally { budget.end(); window.close() }
 }
+
+@When[os == "macOS"]
+foreign {
+    func cjgui_internal_renderer_test_frame_resource_check_count(session: UInt64, outCount: CPointer<UInt64>): Int32
+}
+
+@When[os == "macOS"]
+private func preparedActualLegacyFrameCheckCount(window: CjguiComposableUiWindow): UInt64 {
+    var count = 0u64
+    @Assert(unsafe { cjgui_internal_renderer_test_frame_resource_check_count(window.testSessionToken(), inout count) },
+        CJGUI_INTERNAL_RENDERER_OK)
+    return count
+}
+
+// The added native-call counter is macOS-only; the original portable Ready
+// scheduling assertions below are unchanged on other platforms.
+@When[os != "macOS"]
+private func preparedActualLegacyFrameCheckCount(window: CjguiComposableUiWindow): UInt64 { return 0u64 }
+
+@When[os == "macOS"]
+private func assertPreparedLegacyFrameChecksUnchanged(window: CjguiComposableUiWindow, before: UInt64): Unit {
+    @Assert(preparedActualLegacyFrameCheckCount(window), before)
+}
+
+@When[os != "macOS"]
+private func assertPreparedLegacyFrameChecksUnchanged(window: CjguiComposableUiWindow, before: UInt64): Unit {}
+
+private class PreparationReadySubmitWaitState { var calls: Int64 = 0 }
+
+@Test
+func preparedReadySubmitBudgetYieldDoesNotWaitForWorker(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    let controller = PreparationReuseViewportController(viewport)
+    let window = CjguiComposableUiWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    let waitState = PreparationReadySubmitWaitState()
+    var retainedReady = false
+    try {
+        window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let legacyFrameChecksBefore = preparedActualLegacyFrameCheckCount(window)
+        let oldScene = window.displayedSceneVersion()
+        let oldDump = window.acceptedSceneDump()
+        budget.testUseClock({ =>
+            let actual = Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() })
+            return if (window.testPreparedCandidateReady()) { actual + 10000000 } else { actual }
+        })
+        budget.testUseSchedulingWait({ _, _ => waitState.calls += 1; return 0 })
+        controller.stringMutation = 1
+        controller.revision += 1
+        window.requestRefresh()
+        var turns: Int64 = 0
+        while (!retainedReady && turns < 64) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            retainedReady = window.testPreparedCandidateReady()
+            if (retainedReady) {
+                @Assert(window.displayedSceneVersion(), oldScene)
+                @Assert(window.acceptedSceneDump(), oldDump)
+                @Assert(budget.remainingMicroseconds() < 14000, true)
+                // The packet is actually Ready; only this turn's tail allowance
+                // was refused. The common round must not wait for a worker.
+                let _ = budget.finishScheduling()
+                println("READY_SUBMIT_BUDGET_COUNTEREXAMPLE ready=true wait_calls=${waitState.calls} " +
+                    "remaining_us=${budget.remainingMicroseconds()} old_scene=${oldScene}")
+                @Assert(waitState.calls, 0)
+            }
+            budget.end()
+            turns += 1
+        }
+        @Assert(retainedReady, true)
+        budget.testUseClock({ => Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() }) })
+        var published = false
+        turns = 0
+        while (!published && turns < 64) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            let _ = window.pump(0u32)
+            budget.end()
+            published = window.displayedSceneVersion() > oldScene
+            turns += 1
+        }
+        @Assert(published, true)
+        @Assert(window.acceptedSceneNodes().size > 0, true)
+        @Assert(window.acceptedNodeValue("reuse-row-4").getOrThrow(), "stable value")
+        assertPreparedLegacyFrameChecksUnchanged(window, legacyFrameChecksBefore)
+        @Assert(controller.builds, 2)
+    } finally { budget.end(); window.close() }
+}

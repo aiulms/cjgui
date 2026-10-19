@@ -1,0 +1,9 @@
+{
+  "pid": 28901,
+  "result": [
+    "942",
+    "app1/s1/c2/e1/m2"
+  ],
+  "source": "labs/ohos_cangjie_smoke/artifacts/cjgui-backend/run/h2-2-thermo-release-20260930/hand_input_r4",
+  "no_input_replayed": true
+}

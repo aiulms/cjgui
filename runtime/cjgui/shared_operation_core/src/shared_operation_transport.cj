@@ -306,7 +306,24 @@ private class CjguiSharedOperationBoundedTextBuilder {
 /// obtain a second domain or UI owner.
 internal class CjguiSharedOperationPendingClientRequest {
     let payload: String
-    private let responseQueue: ArrayBlockingQueue<String>
+    var leaseId: Int64 = 0
+    var diagnostic: ?CjguiSharedRequestDiagnostic = None
+    func diagnosticMark(phase: Int64, pump!: Int64 = 0, terminal!: Int64 = 0): Unit {
+        if (let Some(recorder) <- diagnostic) { recorder.mark(leaseId, phase, pump: pump, terminal: terminal) }
+    }
+    func diagnosticQueued(recorder: CjguiSharedRequestDiagnostic, depth: Int64, predecessor: Int64): Unit {
+        diagnostic = Some(recorder)
+        recorder.queued(leaseId, payload, readyDeadlineStarted, depth, predecessor)
+    }
+    var invocation: ?CjguiSharedOperationActionInvocation = None
+    var admission: ?CjguiSharedOperationOwnerWriteAdmission = None
+    var lastOwnerWriteTrace: String = ""
+    private let responseQueue: ArrayBlockingQueue<CjguiSharedOperationPendingResponse>
+    private var preparedReply: ?CjguiSharedOperationPendingResponse = None
+    var readBudget: ?CjguiDetachedReadBudget = None
+    var bindGeneration: Int64 = 0
+    var detachedReadEnabled: Bool = true
+    var encodingProbe: ?CjguiDetachedReadEncodingProbe = None
     private let lifecycleLock: Mutex
     // A complete frame creates this object immediately before it enters the
     // ready queue.  The owner checks this monotonic origin under the same
@@ -317,11 +334,12 @@ internal class CjguiSharedOperationPendingClientRequest {
     // timeout may cancel only `waiting`; it can never race an owner into a
     // late mutation after reporting the request as expired.
     private var lifecycle: Int64
+    private var ownerClaimed: Bool = false
     private var responsePublished: Bool
 
     init(payload: String) {
         this.payload = payload
-        this.responseQueue = ArrayBlockingQueue<String>(1)
+        this.responseQueue = ArrayBlockingQueue<CjguiSharedOperationPendingResponse>(1)
         this.lifecycleLock = Mutex()
         this.readyDeadlineStarted = MonoTime.now()
         this.lifecycle = 0
@@ -330,13 +348,17 @@ internal class CjguiSharedOperationPendingClientRequest {
 
     func claimForOwner(): Bool {
         return synchronized(lifecycleLock) {
+            diagnosticMark(2)
             if (lifecycle == 0) {
                 if ((MonoTime.now() - readyDeadlineStarted).toMilliseconds() >=
                     CJGUI_SHARED_OPERATION_READY_WAIT_DEADLINE_MS) {
                     lifecycle = 2
+                    diagnosticMark(4, terminal: 2)
                     false
                 } else {
                     lifecycle = 1
+                    ownerClaimed = true
+                    diagnosticMark(3)
                     true
                 }
             } else {
@@ -345,10 +367,17 @@ internal class CjguiSharedOperationPendingClientRequest {
         }
     }
 
+    func wasClaimed(): Bool { return synchronized(lifecycleLock) { ownerClaimed } }
+
+    func readyAgeMs(): Int64 {
+        return (MonoTime.now() - readyDeadlineStarted).toMilliseconds()
+    }
+
     func cancelIfUnclaimed(): Bool {
         return synchronized(lifecycleLock) {
             if (lifecycle == 0) {
                 lifecycle = 2
+                diagnosticMark(5, terminal: 2)
                 true
             } else {
                 false
@@ -358,9 +387,12 @@ internal class CjguiSharedOperationPendingClientRequest {
 
     func complete(response: String): Bool {
         return synchronized(lifecycleLock) {
-            if (lifecycle == 1) {
-                if (responseQueue.tryAdd(response)) {
+            if (lifecycle == 1 && !responsePublished) {
+                let reply = if (let Some(prepared) <- preparedReply) { prepared } else { CjguiSharedOperationPendingResponse(response) }
+                if (responseQueue.tryAdd(reply)) {
+                    preparedReply = None
                     responsePublished = true
+                    diagnosticMark(8)
                     true
                 } else {
                     false
@@ -374,6 +406,7 @@ internal class CjguiSharedOperationPendingClientRequest {
     func cancel(): Unit {
         synchronized(lifecycleLock) {
             lifecycle = 2
+            diagnosticMark(22)
         }
     }
 
@@ -389,8 +422,34 @@ internal class CjguiSharedOperationPendingClientRequest {
         }
     }
 
-    func waitForResponse(): ?String {
+    func prepareReservedWire(body: String, reservation: CjguiDetachedReadReservation): Bool {
+        return synchronized(lifecycleLock) {
+            if (lifecycle != 1 || responsePublished || preparedReply.isSome()) { false }
+            else { preparedReply = Some(CjguiSharedOperationPendingResponse(body, reservation: Some(reservation))); true }
+        }
+    }
+    func prepareDetachedReply(range: CjguiDetachedRangeValue, reservation: CjguiDetachedReadReservation): Bool {
+        return synchronized(lifecycleLock) {
+            if (lifecycle != 1 || responsePublished || preparedReply.isSome()) { false }
+            else { preparedReply = Some(CjguiSharedOperationPendingResponse(range, reservation)); true }
+        }
+    }
+    // Only the owner discards an unpublished preparation. Cancellation never
+    // pretends that an owner still inside a provider has dropped its buffers.
+    func discardPreparedReply(): Unit {
+        let reply = synchronized(lifecycleLock) { let owned = preparedReply; preparedReply = None; owned }
+        if (let Some(owned) <- reply) { owned.discard() }
+    }
+    // Queue ownership belongs to its worker, including close-before-take.
+    func discardQueuedReply(): Unit {
+        if (let Some(owned) <- responseQueue.tryRemove()) { owned.discard() }
+    }
+    func waitForResponseWork(): ?CjguiSharedOperationPendingResponse {
         return responseQueue.remove(Duration.millisecond * CJGUI_SHARED_OPERATION_IO_SLICE_MS)
+    }
+    func waitForResponse(): ?String {
+        if (let Some(reply) <- waitForResponseWork()) { let body = reply.wire; reply.discard(); return body }
+        return None
     }
 
     func hasPublishedResponse(): Bool {
@@ -421,6 +480,7 @@ private class CjguiSharedOperationActiveClient {
 private class CjguiSharedOperationPendingClientLease {
     let leaseId: Int64
     let request: CjguiSharedOperationPendingClientRequest
+    var charged: Bool = true
 
     init(leaseId: Int64, request: CjguiSharedOperationPendingClientRequest) {
         this.leaseId = leaseId
@@ -445,6 +505,11 @@ private class CjguiSharedOperationClientRead {
 /// socket from a later descriptor/session.
 internal class CjguiSharedOperationIoState {
     private let lock: Mutex
+    let diagnostic: ?CjguiSharedRequestDiagnostic
+    let readBudget: CjguiDetachedReadBudget
+    let bindGeneration: Int64
+    let detachedReadEnabled: Bool
+    let encodingProbe: ?CjguiDetachedReadEncodingProbe
     private var running: Bool
     private var queuedRequestBytes: Int64
     private var nextLeaseId: Int64
@@ -460,7 +525,12 @@ internal class CjguiSharedOperationIoState {
     private let pendingRequests: ArrayList<CjguiSharedOperationPendingClientLease>
     private let workers: ArrayList<Future<Unit>>
 
-    init() {
+    init(diagnostic!: ?CjguiSharedRequestDiagnostic = None,
+        readBudget!: CjguiDetachedReadBudget = CjguiDetachedReadBudget(), bindGeneration!: Int64 = 0,
+        detachedReadEnabled!: Bool = true, encodingProbe!: ?CjguiDetachedReadEncodingProbe = None) {
+        this.diagnostic = diagnostic
+        this.readBudget = readBudget; this.bindGeneration = bindGeneration
+        this.detachedReadEnabled = detachedReadEnabled; this.encodingProbe = encodingProbe
         this.lock = Mutex()
         this.running = true
         this.queuedRequestBytes = 0
@@ -569,7 +639,8 @@ internal class CjguiSharedOperationIoState {
 
     func tryQueueRequest(request: CjguiSharedOperationPendingClientRequest): ?Int64 {
         return synchronized(lock) {
-            if (!running || request.payload.size > CJGUI_SHARED_OPERATION_MAX_READY_REQUEST_BYTES ||
+            if (!running || readyRequestCount >= CJGUI_SHARED_OPERATION_MAX_READY_REQUESTS ||
+                request.payload.size > CJGUI_SHARED_OPERATION_MAX_READY_REQUEST_BYTES ||
                 queuedRequestBytes > CJGUI_SHARED_OPERATION_MAX_READY_REQUEST_BYTES - request.payload.size) {
                 None
             } else {
@@ -586,32 +657,68 @@ internal class CjguiSharedOperationIoState {
                 if (queuedRequestBytes > readyRequestBytesHighWater) {
                     readyRequestBytesHighWater = queuedRequestBytes
                 }
+                request.leaseId = next
+                request.readBudget = Some(readBudget); request.bindGeneration = bindGeneration
+                request.detachedReadEnabled = detachedReadEnabled; request.encodingProbe = encodingProbe
+                if (let Some(recorder) <- diagnostic) {
+                    let predecessor = if (pendingRequests.size > 0) { pendingRequests[pendingRequests.size - 1].leaseId } else { 0 }
+                    request.diagnosticQueued(recorder, readyRequestCount, predecessor)
+                }
                 pendingRequests.add(CjguiSharedOperationPendingClientLease(next, request))
                 Some(next)
             }
         }
     }
 
-    func takeReadyRequest(timeoutMs: UInt32): ?CjguiSharedOperationPendingClientRequest {
-        let request = if (timeoutMs == 0u32) {
-            readyRequests.tryRemove()
-        } else {
-            readyRequests.remove(Duration.millisecond * Int64(timeoutMs))
+    // Pending leases stay charged while the UI owner prepares the predecessor.
+    // Only bytes/queue notifications cross threads; callbacks run outside locks.
+    func readyBatch(timeoutMs: UInt32, diagnosticPump!: Int64 = 0): ArrayList<CjguiSharedOperationPendingClientRequest> {
+        if (diagnosticPump > 0) { if (let Some(r) <- diagnostic) { r.pumpPhase(diagnosticPump, 8) } }
+        var batch = synchronized(lock) {
+            if (diagnosticPump > 0) { if (let Some(r) <- diagnostic) { r.pumpPhase(diagnosticPump, 9) } }
+            let result = ArrayList<CjguiSharedOperationPendingClientRequest>()
+            for (pending in pendingRequests) { if (pending.charged) { result.add(pending.request) } }
+            result
         }
-        if (let Some(ready) <- request) {
-            synchronized(lock) {
-                queuedRequestBytes -= ready.payload.size
-                if (queuedRequestBytes < 0) {
-                    queuedRequestBytes = 0
-                }
-                readyRequestCount -= 1
-                if (readyRequestCount < 0) {
-                    readyRequestCount = 0
+        if (diagnosticPump > 0) { if (let Some(r) <- diagnostic) { r.pumpPhase(diagnosticPump, 10) } }
+        if (batch.size == 0 && timeoutMs > 0u32) {
+            let _ = readyRequests.remove(Duration.millisecond * Int64(timeoutMs))
+            batch = synchronized(lock) {
+                let result = ArrayList<CjguiSharedOperationPendingClientRequest>()
+                for (pending in pendingRequests) { if (pending.charged) { result.add(pending.request) } }
+                result
+            }
+        }
+        while (readyRequests.tryRemove().isSome()) { }
+        return batch
+    }
+
+    func releaseReadyCharge(leaseId: Int64): Unit {
+        synchronized(lock) {
+            for (pending in pendingRequests) {
+                if (pending.leaseId == leaseId && pending.charged) {
+                    pending.charged = false
+                    queuedRequestBytes -= pending.request.payload.size
+                    readyRequestCount -= 1
+                    if (pending.request.isCancelled()) {
+                        var index = 0
+                        while (index < pendingRequests.size) {
+                            if (pendingRequests[index].leaseId == leaseId) { let _ = pendingRequests.remove(at: index); break }
+                            index += 1
+                        }
+                    }
+                    return
                 }
             }
-            return Some(ready)
         }
-        return None
+    }
+
+    func takeReadyRequest(timeoutMs: UInt32): ?CjguiSharedOperationPendingClientRequest {
+        let batch = readyBatch(timeoutMs)
+        if (batch.size == 0) { return None }
+        let request = batch[0]
+        releaseReadyCharge(request.leaseId)
+        return Some(request)
     }
 
     func finishPendingRequest(leaseId: Int64): Unit {
@@ -619,6 +726,10 @@ internal class CjguiSharedOperationIoState {
             var index = 0
             while (index < pendingRequests.size) {
                 if (pendingRequests[index].leaseId == leaseId) {
+                    let pending = pendingRequests[index]
+                    // A cancelled queue tombstone still retains its payload.
+                    // The owner drain (or stop) releases that original charge.
+                    if (pending.charged) { return }
                     let _ = pendingRequests.remove(at: index)
                     return
                 }
@@ -700,6 +811,10 @@ internal class CjguiSharedOperationIoState {
             var index = 0
             while (index < pendingRequests.size) {
                 if (pendingRequests[index].leaseId == leaseId) {
+                    let pending = pendingRequests[index]
+                    // A cancelled queue tombstone still retains its payload.
+                    // The owner drain (or stop) releases that original charge.
+                    if (pending.charged) { return }
                     let _ = pendingRequests.remove(at: index)
                     return
                 }
@@ -758,6 +873,14 @@ private func closeClientQuietly(client: StreamingSocket): Unit {
 public class CjguiSharedOperationExternalConnection {
     public var socketPath: String
     private let domain: CjguiSharedOperationDomain
+    private var ownerWriteGate: ?CjguiSharedOperationOwnerWriteGate = None
+    private let detachedReadBudget = CjguiDetachedReadBudget()
+    private var detachedReadEnabled: Bool = true
+    private var detachedReadProbe: ?CjguiDetachedReadEncodingProbe = None
+    private var requestDiagnostic: ?CjguiSharedRequestDiagnostic = None
+    private let ownerWriteTraceEnabled: Bool = getVariable("CJGUI_TRACE_OWNER_WRITE").isSome()
+    private let ownerWriteTrace = ArrayList<String>()
+    private var ownerWriteTraceDropped: Int64 = 0
     private let changeDomain: ?CjguiSharedOperationChangeDomain
     private var targetedContextDomain: ?CjguiSharedOperationTargetedContextDomain
     private var rangeReadDomain: ?CjguiSharedOperationRangeReadDomain
@@ -1392,50 +1515,118 @@ public class CjguiSharedOperationExternalConnection {
     /// Services at most one complete framed request already read by the fixed
     /// I/O workers. Domain and window work remain on the caller's established
     /// thread; a slow socket cannot occupy that thread.
+    /// Experimental clock pairing for opt-in request diagnostics. Negative
+    /// means disabled. This samples only the recorder's relative MonoTime;
+    /// the host brackets it with its own clock rather than assuming an epoch.
+    internal func configureDetachedReadCounter(enabled: Bool, probe: ?CjguiDetachedReadEncodingProbe): Bool {
+        return synchronized(transportLock) {
+            if (server.isSome()) { false } else { detachedReadEnabled = enabled; detachedReadProbe = probe; true }
+        }
+    }
+    internal func configureDetachedReadCapacity(bytes: Int64): Bool {
+        return synchronized(transportLock) { if (server.isSome()) { false } else { detachedReadBudget.configure(bytes) } }
+    }
+    internal func detachedReadAccounting(): Array<Int64> { return detachedReadBudget.snapshot() }
+
+    public func requestDiagnosticClockAnchor(): Int64 {
+        if (let Some(recorder) <- requestDiagnostic) { return recorder.elapsedAt(MonoTime.now()) }
+        return -1
+    }
+
     public func pump(timeoutMs: UInt32): Bool {
-        // Owner-thread maintenance beat (E1): hard-deadline expiry, deferred
-        // cleanup retries and terminal-window recycling run every turn even
-        // when no client sends anything, so an idle endpoint still reclaims
-        // its leases. The table is owner-only by contract; this is that owner.
+        let recorder = requestDiagnostic
+        let sequence = if (let Some(r) <- recorder) { r.beginPump() } else { 0 }
+        try { return pumpRecorded(timeoutMs, recorder, sequence) } finally {
+            if (let Some(r) <- recorder) { r.pumpPhase(sequence, 7) }
+        }
+    }
+
+    private func pumpRecorded(timeoutMs: UInt32, recorder: ?CjguiSharedRequestDiagnostic, sequence: Int64): Bool {
         synchronized(transportLock) {
+            if (let Some(r) <- recorder) { r.pumpPhase(sequence, 2); r.pumpPhase(sequence, 3) }
             if (let Some(table) <- snapshotLeases) {
+                if (let Some(r) <- recorder) { r.pumpCounts(sequence, table.activeCount(), table.cleanupPendingCount(), false) }
                 let _ = table.purgeExpired()
+                if (let Some(r) <- recorder) { r.pumpCounts(sequence, table.activeCount(), table.cleanupPendingCount(), true) }
             }
+            if (let Some(r) <- recorder) { r.pumpPhase(sequence, 4) }
         }
-        let activeState = synchronized(transportLock) {
-            ioState
-        }
+        let activeState = synchronized(transportLock) { ioState }
         if (let Some(state) <- activeState) {
-            let started = MonoTime.now()
-            while (state.isRunning()) {
-                let elapsedMs = (MonoTime.now() - started).toMilliseconds()
-                if (timeoutMs > 0u32 && elapsedMs >= Int64(timeoutMs)) {
-                    return false
-                }
-                let remainingMs: UInt32 = if (timeoutMs == 0u32) {
-                    0u32
-                } else {
-                    UInt32(Int64(timeoutMs) - elapsedMs)
-                }
-                if (let Some(request) <- state.takeReadyRequest(remainingMs)) {
-                    // A ready queue may contain an expired tombstone. Drain
-                    // it without treating the cancelled request as served;
-                    // the next request still gets the original caller's
-                    // bounded wait budget.
-                    if (!request.claimForOwner()) {
-                        continue
+            let blockedOwners = ArrayList<String>()
+            if (let Some(r) <- recorder) { r.pumpPhase(sequence, 5) }
+            let ready = state.readyBatch(timeoutMs, diagnosticPump: sequence)
+            if (let Some(r) <- recorder) { r.pumpPhase(sequence, 6) }
+            for (request in ready) {
+                request.diagnosticMark(2, pump: sequence)
+                if (!request.isWaitingForOwner()) { state.releaseReadyCharge(request.leaseId); continue }
+                var terminal: ?String = None
+                let lines = request.payload.split("\n")
+                if (lines.size >= 3 && lines[2].startsWith("INVOKE ")) {
+                    terminal = validatePayload(request.payload)
+                    if (terminal.isNone()) {
+                        let parsed = parseInvocation(lines)
+                        if (parsed[0].isNone()) { terminal = Some(parsed[1]) }
+                        else {
+                            if (request.invocation.isNone()) { request.invocation = parsed[0] }
+                            if (let Some(gate) <- ownerWriteGate) {
+                                let admitted = gate.admitOwnerWrite(request.invocation.getOrThrow(), request.admission)
+                                request.admission = Some(admitted)
+                                traceOwnerWrite(request, if (admitted.isWaiting) { "wait_original" }
+                                    else if (admitted.isTerminal) { "terminal_refusal" } else { "ready" })
+                                if (admitted.isTerminal) {
+                                    terminal = Some(errorPayload(admitted.reason))
+                                } else if (admitted.ownerKey != "" && blockedOwners.contains(admitted.ownerKey)) {
+                                    continue
+                                } else if (admitted.isWaiting) {
+                                    blockedOwners.add(admitted.ownerKey)
+                                    continue
+                                }
+                            }
+                        }
                     }
-                    // Authorization and version checks intentionally happen
-                    // here, at execution time, rather than when an I/O
-                    // worker queued a syntactically complete request.
-                    let _ = request.complete(dispatchPayload(request.payload))
-                    return true
                 }
-                return false
+                // The original absolute deadline and cancellation race are
+                // resolved atomically here, after admission and before writing.
+                if (!request.claimForOwner()) {
+                    traceOwnerWrite(request, "claim_refused")
+                    state.releaseReadyCharge(request.leaseId); continue
+                }
+                traceOwnerWrite(request, "claimed")
+                state.releaseReadyCharge(request.leaseId)
+                request.diagnosticMark(6)
+                let response = if (let Some(refusal) <- terminal) { refusal }
+                    else if (let Some(invocation) <- request.invocation) { executeInvocation(invocation) }
+                    else { dispatchPayloadRecorded(request.payload, Some(request)) }
+                request.diagnosticMark(7)
+                if (!request.complete(response)) { request.discardPreparedReply() }
+                traceOwnerWrite(request, "completed")
+                return true
             }
-            return false
         }
         return false
+    }
+
+    private func traceOwnerWrite(request: CjguiSharedOperationPendingClientRequest, phase: String): Unit {
+        if (!ownerWriteTraceEnabled || request.invocation.isNone() || request.admission.isNone() ||
+            request.lastOwnerWriteTrace == phase) { return }
+        request.lastOwnerWriteTrace = phase
+        if (ownerWriteTrace.size >= 64) { ownerWriteTraceDropped += 1; return }
+        let invocation = request.invocation.getOrThrow()
+        let admission = request.admission.getOrThrow()
+        let resource = if (invocation.targetResourceIds.size > 0) { invocation.targetResourceIds[0] } else { 0 }
+        ownerWriteTrace.add("CJGUI_OWNER_WRITE_ADMISSION lease=${request.leaseId} phase=${phase} " +
+            "action=${invocation.actionName} expected_version=${invocation.expectedVersion} resource=${resource} " +
+            "predecessor=${admission.predecessor} binding=${admission.binding} age_ms=${request.readyAgeMs()} " +
+            "reason=${admission.reason}")
+    }
+
+    public func enableOwnerWriteAdmission(gate: CjguiSharedOperationOwnerWriteGate): Bool {
+        return synchronized(transportLock) {
+            if (server.isSome()) { return false }
+            ownerWriteGate = Some(gate)
+            true
+        }
     }
 
     /// Serves a bounded burst before a window owner consumes its coalesced
@@ -1491,33 +1682,56 @@ public class CjguiSharedOperationExternalConnection {
                 }
             }
         }
+        if (let Some(recorder) <- requestDiagnostic) {
+            recorder.dump()
+            let accounting = detachedReadBudget.snapshot()
+            println("CJGUI_DETACHED_READ_ACCOUNTING endpoint=${endpointInstanceValue} generation=${endpointGeneration} " +
+                "capacity=${accounting[0]} held=${accounting[1]} peak=${accounting[2]} live_leases=${accounting[3]} " +
+                "refused=${accounting[4]} returned=${accounting[5]} scope=active_and_retiring logical_reservation_only=true")
+        }
+        if (ownerWriteTraceEnabled) {
+            for (record in ownerWriteTrace) { println(record) }
+            println("CJGUI_OWNER_WRITE_ADMISSION_SUMMARY capacity=64 records=${ownerWriteTrace.size} " +
+                "dropped=${ownerWriteTraceDropped}")
+            ownerWriteTrace.clear()
+        }
     }
 
     /// Exposes the same authorization and declaration checks as the socket for
     /// another local transport implementation; it is not a privileged bypass.
-    public func dispatchPayload(payload: String): String {
+    private func validatePayload(payload: String): ?String {
         if (synchronized(transportLock) { authorizationRevoked }) {
             // A revoked authorization is dead, not paused: nothing from the
             // old capability is dispatched and no provider is touched.
-            return errorPayload("authorization_revoked")
+            return Some(errorPayload("authorization_revoked"))
         }
         if (!hasSafeAuthorization()) {
-            return errorPayload("unauthorized_caller")
+            return Some(errorPayload("unauthorized_caller"))
         }
         if (payload.size <= 0 || payload.size > CJGUI_SHARED_OPERATION_MAX_FRAME_BYTES) {
-            return errorPayload("invalid_request")
+            return Some(errorPayload("invalid_request"))
         }
         let lines = payload.split("\n")
         if (lines.size < 3 || lines[0] != "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}") {
-            return errorPayload("invalid_request")
+            return Some(errorPayload("invalid_request"))
         }
         let authorizationFields = lines[1].split(" ")
         if (authorizationFields.size != 2 || authorizationFields[0] != "AUTH") {
-            return errorPayload("invalid_request")
+            return Some(errorPayload("invalid_request"))
         }
         if (!authorization.matchesCapability(authorizationFields[1])) {
-            return errorPayload("unauthorized_caller")
+            return Some(errorPayload("unauthorized_caller"))
         }
+        return None
+    }
+
+    public func dispatchPayload(payload: String): String {
+        return dispatchPayloadRecorded(payload, None)
+    }
+
+    private func dispatchPayloadRecorded(payload: String, diagnosticRequest: ?CjguiSharedOperationPendingClientRequest): String {
+        if (let Some(refusal) <- validatePayload(payload)) { return refusal }
+        let lines = payload.split("\n")
         if (lines[2].startsWith("GET_CONTEXT ")) {
             return dispatchContextRead(lines)
         }
@@ -1558,7 +1772,7 @@ public class CjguiSharedOperationExternalConnection {
             return dispatchWindowInteractionRead(lines)
         }
         if (lines[2].startsWith("READ_RANGE ")) {
-            return dispatchRangeRead(lines)
+            return dispatchRangeRead(lines, diagnosticRequest)
         }
         if (lines[2].startsWith("SNAPSHOT_ACQUIRE ")) {
             return dispatchSnapshotAcquire(lines)
@@ -1654,7 +1868,11 @@ public class CjguiSharedOperationExternalConnection {
                 cleanupOwnedTransport()
                 return false
             }
-            let newIoState = CjguiSharedOperationIoState()
+            requestDiagnostic = if (getVariable("CJGUI_REQUEST_DIAGNOSTIC").isSome()) {
+                Some(CjguiSharedRequestDiagnostic(endpointInstanceValue, endpointGeneration))
+            } else { None }
+            let newIoState = CjguiSharedOperationIoState(diagnostic: requestDiagnostic, readBudget: detachedReadBudget,
+                bindGeneration: endpointGeneration, detachedReadEnabled: detachedReadEnabled, encodingProbe: detachedReadProbe)
             ioState = Some(newIoState)
             startIoWorkers(boundServer, newIoState)
             return true
@@ -1689,7 +1907,11 @@ public class CjguiSharedOperationExternalConnection {
                 cleanupOwnedTransport()
                 return false
             }
-            let newIoState = CjguiSharedOperationIoState()
+            requestDiagnostic = if (getVariable("CJGUI_REQUEST_DIAGNOSTIC").isSome()) {
+                Some(CjguiSharedRequestDiagnostic(endpointInstanceValue, endpointGeneration))
+            } else { None }
+            let newIoState = CjguiSharedOperationIoState(diagnostic: requestDiagnostic, readBudget: detachedReadBudget,
+                bindGeneration: endpointGeneration, detachedReadEnabled: detachedReadEnabled, encodingProbe: detachedReadProbe)
             ioState = Some(newIoState)
             startIoWorkers(boundServer, newIoState)
             return true
@@ -1789,19 +2011,40 @@ public class CjguiSharedOperationExternalConnection {
         if (!state.tryEnterWorker()) {
             return
         }
-        while (state.isRunning()) {
-            if (let Some(accepted) <- state.takeAcceptedClient()) {
-                serveQueuedClient(accepted.client, state)
+        try {
+            while (state.isRunning()) {
+                if (let Some(accepted) <- state.takeAcceptedClient()) {
+                    serveQueuedClient(accepted.client, state)
+                }
             }
-        }
-        state.workerExited()
+        } finally { state.workerExited() }
+    }
+
+    private func serveDetachedRead(client: StreamingSocket, state: CjguiSharedOperationIoState,
+        request: CjguiSharedOperationPendingClientRequest, value: CjguiDetachedRangeValue): Unit {
+        if (!state.isRunning() || request.isCancelled()) { return }
+        var payload = ""
+        try {
+            payload = formatSharedRangeRead(value.range, value.requestedResource, value.requestedStart,
+                value.requestedEnd, Some(request))
+        } catch (_: Exception) { payload = sharedReadErrorPayload("range_encoding_failed") }
+        if (!state.isRunning() || request.isCancelled()) { return }
+        request.diagnosticMark(10)
+        let frame = CjguiSharedOperationFrame.encode(payload)
+        request.diagnosticMark(11); request.diagnosticMark(19)
+        let _ = writeFrameWithDeadline(client, frame, state)
+        request.diagnosticMark(20)
     }
 
     private func serveQueuedClient(client: StreamingSocket, state: CjguiSharedOperationIoState): Unit {
         if (let Some(clientLeaseId) <- state.activateClient(client)) {
+            var pending: ?CjguiSharedOperationPendingClientRequest = None
+            var taken: ?CjguiSharedOperationPendingResponse = None
+            try {
             let read = readClientFrame(client, state)
             if (read.isComplete) {
                 let request = CjguiSharedOperationPendingClientRequest(read.payload)
+                pending = Some(request)
                 if (let Some(requestLeaseId) <- state.tryQueueRequest(request)) {
                     if (let Some(observer) <- testReadyRequestObserver) {
                         readyRequestSequence += 1
@@ -1818,15 +2061,29 @@ public class CjguiSharedOperationExternalConnection {
                         }
                         sleep(Duration.millisecond)
                     }
-                    var response: ?String = None
+                    if (let Some(probe) <- request.encodingProbe) {
+                        if (let Some(beforeTake) <- (probe as CjguiDetachedReadBeforeTakeProbe)) { beforeTake.beforeResponseTake(request.leaseId) }
+                    }
+                    var response: ?CjguiSharedOperationPendingResponse = None
                     while (state.isRunning() && !request.isCancelled()) {
-                        if (let Some(nextResponse) <- request.waitForResponse()) {
+                        if (let Some(nextResponse) <- request.waitForResponseWork()) {
                             response = Some(nextResponse)
+                            request.diagnosticMark(9)
                             break
                         }
                     }
-                    if (let Some(payload) <- response) {
-                        let _ = writeFrameWithDeadline(client, CjguiSharedOperationFrame.encode(payload), state)
+                    if (let Some(reply) <- response) {
+                        taken = Some(reply)
+                        if (let Some(detached) <- reply.takeRange()) {
+                            serveDetachedRead(client, state, request, detached)
+                        } else if (let Some(payload) <- reply.wire) {
+                        request.diagnosticMark(10)
+                        let frame = CjguiSharedOperationFrame.encode(payload)
+                        request.diagnosticMark(11)
+                        request.diagnosticMark(19)
+                        let _ = writeFrameWithDeadline(client, frame, state)
+                        request.diagnosticMark(20)
+                        }
                     } else {
                         // The owner did not claim the request within the bounded
                         // ready wait (or the endpoint stopped): name the outcome
@@ -1837,12 +2094,12 @@ public class CjguiSharedOperationExternalConnection {
                         if (state.isRunning()) {
                             let _ = writeFrameWithDeadline(
                                 client,
-                                CjguiSharedOperationFrame.encode(errorPayload("owner_busy")),
+                                CjguiSharedOperationFrame.encode(errorPayload(if (request.wasClaimed()) { "request_cancelled" } else { "owner_busy" })),
                                 state
                             )
                         }
                     }
-                    state.finishPendingRequest(requestLeaseId)
+                    request.diagnosticMark(21, terminal: if (request.isCancelled()) { 3 } else { 1 })
                 } else {
                     let _ = writeFrameWithDeadline(
                         client,
@@ -1857,9 +2114,19 @@ public class CjguiSharedOperationExternalConnection {
                     state
                 )
             }
-            state.deactivateClient(clientLeaseId)
-        }
-        closeClientQuietly(client)
+            } catch (_: Exception) {
+                // A bad request/encoder retires only this client, not a worker.
+            } finally {
+                if (let Some(reply) <- taken) { reply.discard() }
+                taken = None
+                if (let Some(request) <- pending) {
+                    request.discardQueuedReply()
+                    state.finishPendingRequest(request.leaseId)
+                }
+                state.deactivateClient(clientLeaseId)
+                closeClientQuietly(client)
+            }
+        } else { closeClientQuietly(client) }
     }
 
     private func readClientFrame(client: StreamingSocket, state: CjguiSharedOperationIoState): CjguiSharedOperationClientRead {
@@ -2043,7 +2310,7 @@ public class CjguiSharedOperationExternalConnection {
         return errorPayload("invalid_request")
     }
 
-    private func dispatchRangeRead(lines: Array<String>): String {
+    private func dispatchRangeRead(lines: Array<String>, diagnosticRequest: ?CjguiSharedOperationPendingClientRequest): String {
         if (!authorization.permitsAction("READ_RANGE")) {
             return errorPayload("unauthorized_action")
         }
@@ -2066,12 +2333,49 @@ public class CjguiSharedOperationExternalConnection {
                             return errorPayload("unauthorized_resource")
                         }
                         if (let Some(provider) <- rangeReadDomain) {
-                            return rangeReadPayload(
-                                provider.readRangeFromExternal(resourceId, start, end, expectedVersion),
-                                resourceId,
-                                start,
-                                end
-                            )
+                            // Socket reads reserve before any provider access.
+                            // Direct dispatch stays synchronous and uses the same kernel.
+                            if (let Some(request) <- diagnosticRequest) {
+                                if (request.detachedReadEnabled) {
+                                    if (let Some(budget) <- request.readBudget) {
+                                        if (let Some(reservation) <- budget.reserve(request.bindGeneration,
+                                            request.leaseId, request.payload.size, end - start)) {
+                                            var handed = false
+                                            try {
+                                                if (request.isCancelled()) { return errorPayload("request_cancelled") }
+                                                request.diagnosticMark(12)
+                                                let read = provider.readRangeFromExternal(resourceId, start, end, expectedVersion)
+                                                request.diagnosticMark(13); request.diagnosticMark(14)
+                                                if (let Some(error) <- validateSharedRangeRead(read, resourceId, start, end)) {
+                                                    handed = request.prepareReservedWire(errorPayload(error), reservation)
+                                                    return ""
+                                                }
+                                                request.diagnosticMark(15)
+                                                if (read.isAvailable && read.content.size > 0) {
+                                                    let detached = CjguiDetachedRangeValue(read, resourceId, start, end)
+                                                    if (!request.prepareDetachedReply(detached, reservation)) {
+                                                        return errorPayload("request_cancelled")
+                                                    }
+                                                    handed = true
+                                                    return "" // private typed handoff, never a wire response
+                                                }
+                                                let body = rangeReadPayload(read, resourceId, start, end, diagnosticRequest: diagnosticRequest)
+                                                handed = request.prepareReservedWire(body, reservation)
+                                                return ""
+                                            } catch (_: Exception) {
+                                                handed = request.prepareReservedWire(errorPayload("range_read_failed"), reservation)
+                                                return ""
+                                            }
+                                            finally { if (!handed) { reservation.release() } }
+                                        }
+                                        return errorPayload("range_read_capacity")
+                                    }
+                                }
+                            }
+                            if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(12) }
+                            let read = provider.readRangeFromExternal(resourceId, start, end, expectedVersion)
+                            if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(13) }
+                            return rangeReadPayload(read, resourceId, start, end, diagnosticRequest: diagnosticRequest)
                         }
                     }
                 }
@@ -2971,15 +3275,15 @@ public class CjguiSharedOperationExternalConnection {
         return errorPayload("window_interaction_target_unavailable")
     }
 
-    private func dispatchInvocation(lines: Array<String>): String {
+    private func parseInvocation(lines: Array<String>): (?CjguiSharedOperationActionInvocation, String) {
         let command = lines[2].split(" ")
         if (command.size != 5 || command[0] != "INVOKE") {
-            return errorPayload("invalid_request")
+            return (None, errorPayload("invalid_request"))
         }
         if (let Some(expectedVersion) <- Int64.tryParse(command[1])) {
             let actionName = command[2]
             if (!authorization.permitsAction(actionName)) {
-                return errorPayload("unauthorized_action")
+                return (None, errorPayload("unauthorized_action"))
             }
             if (let Some(targetCount) <- Int64.tryParse(command[3])) {
                 if (let Some(argumentCount) <- Int64.tryParse(command[4])) {
@@ -2989,25 +3293,25 @@ public class CjguiSharedOperationExternalConnection {
                             targetCount > CJGUI_SHARED_OPERATION_MAX_TARGETS || argumentCount < 0 || argumentCount > action
                             .parameters
                             .size || lines.size != 3 + targetCount + argumentCount) {
-                            return errorPayload("invalid_parameters")
+                            return (None, errorPayload("invalid_parameters"))
                         }
                         let targets = ArrayList<Int64>()
                         var index = 3
                         while (index < 3 + targetCount) {
                             let fields = lines[index].split(" ")
                             if (fields.size != 2 || fields[0] != "ID") {
-                                return errorPayload("invalid_request")
+                                return (None, errorPayload("invalid_request"))
                             }
                             if (let Some(resourceId) <- Int64.tryParse(fields[1])) {
                                 if (!authorization.permitsResource(actionName, resourceId)) {
-                                    return errorPayload("unauthorized_resource")
+                                    return (None, errorPayload("unauthorized_resource"))
                                 }
                                 if (containsId(targets, resourceId)) {
-                                    return errorPayload("invalid_parameters")
+                                    return (None, errorPayload("invalid_parameters"))
                                 }
                                 targets.add(resourceId)
                             } else {
-                                return errorPayload("invalid_request")
+                                return (None, errorPayload("invalid_request"))
                             }
                             index += 1
                         }
@@ -3015,31 +3319,42 @@ public class CjguiSharedOperationExternalConnection {
                         while (index < lines.size) {
                             if (let Some(argument) <- parseArgument(lines[index])) {
                                 if (containsArgument(arguments, argument.name)) {
-                                    return errorPayload("invalid_parameters")
+                                    return (None, errorPayload("invalid_parameters"))
                                 }
                                 arguments.add(argument)
                             } else {
-                                return errorPayload("invalid_parameters")
+                                return (None, errorPayload("invalid_parameters"))
                             }
                             index += 1
                         }
                         if (!matchesDeclaredParameters(action, arguments)) {
-                            return errorPayload("invalid_parameters")
+                            return (None, errorPayload("invalid_parameters"))
                         }
-                        let result = domain.executeFromExternal(
-                            CjguiSharedOperationActionInvocation(actionName, expectedVersion, targets, arguments))
-                        if (result.applied) {
-                            synchronized(transportLock) {
-                                windowRefreshRequested = true
-                            }
-                        }
-                        return resultPayload(result)
+                        return (Some(CjguiSharedOperationActionInvocation(actionName, expectedVersion, targets, arguments)), "")
                     }
-                    return errorPayload("unauthorized_action")
+                    return (None, errorPayload("unauthorized_action"))
                 }
             }
         }
-        return errorPayload("invalid_request")
+        return (None, errorPayload("invalid_request"))
+    }
+
+    private func dispatchInvocation(lines: Array<String>): String {
+        let parsed = parseInvocation(lines)
+        let invocation = match (parsed[0]) { case Some(value) => value; case None => return parsed[1] }
+        if (let Some(gate) <- ownerWriteGate) {
+            let admission = gate.admitOwnerWrite(invocation, None)
+            if (!admission.isReady) {
+                return errorPayload(if (admission.reason != "") { admission.reason } else { "owner_predecessor_pending" })
+            }
+        }
+        return executeInvocation(invocation)
+    }
+
+    private func executeInvocation(invocation: CjguiSharedOperationActionInvocation): String {
+        let result = domain.executeFromExternal(invocation)
+        if (result.applied) { synchronized(transportLock) { windowRefreshRequested = true } }
+        return resultPayload(result)
     }
 
     private func snapshotPayload(targets: ArrayList<Int64>, hasExplicitTargets: Bool): String {
@@ -3251,30 +3566,10 @@ public class CjguiSharedOperationExternalConnection {
         rangeRead: CjguiSharedOperationRangeRead,
         requestedResourceId: Int64,
         requestedStart: Int64,
-        requestedEnd: Int64
+        requestedEnd: Int64,
+        diagnosticRequest!: ?CjguiSharedOperationPendingClientRequest = None
     ): String {
-        if (rangeRead.resourceId != requestedResourceId || rangeRead.version < 0 || rangeRead.start < 0 ||
-            rangeRead.end < rangeRead.start || !isSafeIdentifier(rangeRead.reason)) {
-            return errorPayload("invalid_range")
-        }
-        if (rangeRead.isAvailable) {
-            if (rangeRead.isVersionConflict || rangeRead.start != requestedStart || rangeRead.end != requestedEnd ||
-                rangeRead.content.size != requestedEnd - requestedStart || rangeRead.content.size >
-                CJGUI_SHARED_OPERATION_MAX_STRING_BYTES) {
-                return errorPayload("invalid_range")
-            }
-        } else if (rangeRead.content.size != 0) {
-            return errorPayload("invalid_range")
-        }
-        var payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND RANGE\nAVAILABLE ${rangeRead.isAvailable}\nCONFLICT ${rangeRead.isVersionConflict}\nRESOURCE ${rangeRead.resourceId}\nVERSION ${rangeRead.version}\nRANGE ${rangeRead.start} ${rangeRead.end}\nREASON ${rangeRead.reason}\n"
-        if (rangeRead.isAvailable) {
-            payload = "${payload}CONTENT_UTF8_HEX ${rangeRead.content.size} ${encodeUtf8HexValue(rangeRead.content)}\n"
-        }
-        payload = "${payload}END"
-        if (!isBoundedPayload(payload)) {
-            return errorPayload("response_too_large")
-        }
-        return payload
+        return formatSharedRangeRead(rangeRead, requestedResourceId, requestedStart, requestedEnd, diagnosticRequest)
     }
 
     private func changesPayload(
@@ -4341,3 +4636,49 @@ private func containsAction(actions: ArrayList<CjguiSharedOperationActionDescrip
     }
     return false
 }
+
+private func sharedReadErrorPayload(reason: String): String {
+    return "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND ERROR\nERROR ${reason}\nEND"
+}
+private func validateSharedRangeRead(rangeRead: CjguiSharedOperationRangeRead,
+    requestedResourceId: Int64, requestedStart: Int64, requestedEnd: Int64): ?String {
+        if (rangeRead.resourceId != requestedResourceId || rangeRead.version < 0 || rangeRead.start < 0 ||
+            rangeRead.end < rangeRead.start || rangeRead.reason.size > 64 || !isSafeIdentifier(rangeRead.reason)) {
+            return Some("invalid_range")
+        }
+        if (rangeRead.isAvailable) {
+            if (rangeRead.isVersionConflict || rangeRead.start != requestedStart || rangeRead.end != requestedEnd ||
+                rangeRead.content.size != requestedEnd - requestedStart || rangeRead.content.size >
+                CJGUI_SHARED_OPERATION_MAX_STRING_BYTES) {
+                return Some("invalid_range")
+            }
+        } else if (rangeRead.content.size != 0) {
+            return Some("invalid_range")
+        }
+    return None
+}
+private func formatSharedRangeRead(rangeRead: CjguiSharedOperationRangeRead,
+    requestedResourceId: Int64, requestedStart: Int64, requestedEnd: Int64,
+    diagnosticRequest: ?CjguiSharedOperationPendingClientRequest): String {
+        if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(14) }
+        if (let Some(error) <- validateSharedRangeRead(rangeRead, requestedResourceId, requestedStart, requestedEnd)) {
+            return sharedReadErrorPayload(error)
+        }
+        if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(15) }
+        var payload = "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND RANGE\nAVAILABLE ${rangeRead.isAvailable}\nCONFLICT ${rangeRead.isVersionConflict}\nRESOURCE ${rangeRead.resourceId}\nVERSION ${rangeRead.version}\nRANGE ${rangeRead.start} ${rangeRead.end}\nREASON ${rangeRead.reason}\n"
+        if (rangeRead.isAvailable) {
+            if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(16) }
+            if (let Some(request) <- diagnosticRequest) {
+                if (let Some(probe) <- request.encodingProbe) { probe.beforeEncoding(request.leaseId) }
+            }
+            let hex = encodeUtf8HexValue(rangeRead.content)
+            if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(17) }
+            payload = "${payload}CONTENT_UTF8_HEX ${rangeRead.content.size} ${hex}\n"
+        }
+        payload = "${payload}END"
+        if (payload.size > CJGUI_SHARED_OPERATION_MAX_FRAME_BYTES - 512) {
+            return sharedReadErrorPayload("response_too_large")
+        }
+        if (let Some(request) <- diagnosticRequest) { request.diagnosticMark(18) }
+        return payload
+ }

@@ -1,0 +1,23 @@
+__attribute__((__availability__(ohos, introduced=11.0.0)));
+
+/**
+ * @brief Obtains text boxes in a given range of a typography object. This function must be called after
+ * {@link OH_Drawing_TypographyLayout} is called. Release this pointer by calling
+ * {@link OH_Drawing_TypographyDestroyTextBox} when this object is no longer needed.
+ *
+ * @syscap SystemCapability.Graphic.Graphic2D.NativeDrawing
+ * @param typography Pointer to the **OH_Drawing_Typography** object, which is obtained from
+ *     {@link OH_Drawing_CreateTypography}.
+ * @param start Start position. The value ranges from 0 to the text length, counted in UTF-16 code units. Must be less
+ *     than end; otherwise, an empty result is returned.
+ * @param end End position. The value ranges from 0 to the text length, counted in UTF-16 code units. If the value
+ *     exceeds the text length, the text length is used. If the value is 0, an empty result is returned.
+ * @param heightStyle Height style. For details about the available options, see {@link OH_Drawing_RectHeightStyle}.
+ * @param widthStyle Width style. For details about the available options, see {@link OH_Drawing_RectWidthStyle}.
+ * @return Text box in the specified range. For details, see {@link OH_Drawing_TextBox}.
+ * @since 11
+ * @version 1.0
+ */
+OH_Drawing_TextBox* OH_Drawing_TypographyGetRectsForRange(OH_Drawing_Typography* typography,
+    size_t start, size_t end, OH_Drawing_RectHeightStyle heightStyle, OH_Drawing_RectWidthStyle widthStyle)
+    __attribute__((__availability__(ohos, introduced=11.0.0)));

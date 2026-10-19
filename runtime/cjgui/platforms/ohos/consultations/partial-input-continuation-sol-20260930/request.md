@@ -1,0 +1,14 @@
+只读复杂技术咨询，gpt-6-sol/max。禁止修改、构建、设备/桌面操作。只查指定局部文件与日志。请质疑已有归因，给确定性生产反例、现有架构内最小修复和完整验收；不加owner/编辑协议，不引外部GUI依赖，不动E/mac共享树。
+目标normal Pharos源码编辑，CJGUI通用文本/滚动。已闭合恢复不可重复另造。r9 normal HAP4db23f8c5c861e56fdee89808b957277ae4a676db17d3d23e5288e92e9dba3e4，PID12026。
+新RED：先first long afterblur选alpha[5,10)已稳定10个观测和实际getter平台安装，owner v1正文136B(原文在master/55-preserve-at-r9-install/saved-user.owner.utf8)。然后唯一uitest uiInput text alphaH（ASCII逐字系统注入，不是直接owner写入），预期[5,10) alpha->alphaH完整137B。但实际 owner v4 134B：第二行只剩a，末尾Agent审验aH，lph丢失。不得容许丢字，不重试直到绿。Agent尚未发，当前独立读回全文在master/58-final-partial-input-red-observation-r9/result.json。原输入与完整回包在master/57-final-human-agent-partial-restore-r9/exchanges.jsonl。
+日志关键：16:26:29.936 native delta6:10 inserted0（首a替换alpha=删除lpha）；29.942 actualselection6:6；29.968 native delta6:6 inserted l，actual7:7；30.017 native delta7:7 inserted p，actual8:8；30.030 context reconcile old1 new2 base3；30.031窗口只判首笔count1 accepted ownerv2 132B；30.069新proxy onChange64，actual64:64；30.180 delta64:64 a，30.239 delta65:65 H，被接受v3/v4。第一笔本地接受时native buffer已是alp而owner只是a，native将ownerValue!=editingText误认外部换版，换ctx并丢/拒旧delta，剩余系统输入落在文末。l/p为何未判（continuation旧scene解析?)需核证。
+当前r9仅新增same-text无preview/marked的mount onChange guard，不动真实different-text或N1tickets：此修复经生产excerptRED rc11→6项green+原bugnormal长按稳定已证明。GLM只读机制咨询383s rc0答复runtime/cjgui/platforms/ohos/consultations/mount-echo-word-drift-glm-20260930/answer.md。不要将此不同新RED混为guard失败或撤回保护。
+拟假设待挑战：1) kind51接受后没有设置原kind28的pendingLocalText/continuation旗标，accepted先回显中间owner值，而native已经领先数笔，从而重建context；2) resolveLocalTextContinuation拒绝旧projection的kind51导致queued后续静默不进判决；3) native plainChange先设置caret全文末尾独立有风险，但本trace selection6/7/8都已到，不应凭diff端点推caret（重复字符串diff端点不唯一）。真实caret属于平台单独观测；必修不能只把caret改成delta.nextEnd或debounce/延时以掩盖并发。
+请明确：合法连续本地delta的原身份与顺序、每笔owner仲裁及accepted回显、Agent外部交错仍须拒旧delta并恢复，不能泛化preserve所有native领先缓冲；无需改公共owner协议的最小本地延续凭证是什么；重复文本插入/非空替换/跨帧队列/拒绝首笔及Agent夹在队列中/跨context旧selection实际getter都要有判别反例。
+源码入口（当前canonical等价冻结r9）：
+- runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp Session编辑/QueuedEvent字段；editorEnqueueTextCommit(~5494)，editorCommitPlainChangeLocked(~8875)，nativeaccepted reconcile(~7440-7555)，pump事件出队，onIme选择(~9000)
+- runtime/cjgui/platforms/ohos/snapshot/src/composable_ui_window.cj pump(~2170-2345)，routeOwnedTextSessionRangeEdit(~6240)，resolveLocalTextContinuation(~5762)，stage preservesActiveLocalText(~3400与4720)，accepted结算恢复；只读相关段
+- snapshot/src/text_session.cj replaceRange16/afterOwnAck/mirror/source/version/selection守卫
+- 产品apps/pharos_mark_ohos/application/src/pharos_ohos_controller.cj，必要应用scene版本/owner接受与command；不存在新owner
+- scripts/test_ime_range_delta_native.py，test_generated_reorder_editing_context.py，fixtures/window_restore_adoption_snapshot_test.cj，适宜新实际生产窗口fixture请指定。
+局部原日志就在此问题目录device-red.hilog.txt。需要成熟实现只借思路，桌面仓颉GUI 开发工具仓库中的GPUI/Flutter只读。输出证据与推断、区分检查、机制修复顺序、负控、所需SDK最小对照。不能把咨询当运行验收。

@@ -25,6 +25,7 @@ const SRC = process.env.PROXY_SRC ||
 const timers = [];
 let now = 0, timerSerial = 0;
 const env = {};
+env.FrameCallback = class {};
 env.setTimeout = (fn, delay) => {
   const id = ++timerSerial;
   timers.push({ id, due: now + (delay || 0), fn });
@@ -35,10 +36,11 @@ env.clearTimeout = (id) => {
   if (at >= 0) timers.splice(at, 1);
 };
 vm.createContext(env);
-const src = mod.stripTypeScriptTypes(fs.readFileSync(SRC, 'utf8'), { mode: 'transform' });
+const src = mod.stripTypeScriptTypes(fs.readFileSync(SRC, 'utf8').replace(/^import .*;\s*$/gm, ''), { mode: 'transform' });
 vm.runInContext(src.replace(/export /g, '') + ';globalThis.LC=CjguiImeSelectionLifecycle;', env);
 
-const mountOf = (name) => ({ fieldId: name, key: { contextId: 7, describe() { return 'c7/' + name; } } });
+const mountOf = (name) => ({ fieldId: name, focusGeneration: 1, draft: 'abcdef', commandExecution: null, ordinaryExecution: null, selectionCommand: null,
+  key: { contextId: 7, describe() { return 'c7/' + name; } } });
 const flushMicrotasks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 async function advance(deltaMs) {
   const target = now + deltaMs;
@@ -64,9 +66,12 @@ function makeCtl(opts) {
   };
   let current = opts.mount;
   const h = {
+    monotonicNowMs() { return now; },
     attachSession() {
       st.attachCalls += 1;
-      return { then(fn) { st.resolvers.push(fn); return { catch(cb) { st.rejectors.push(cb); } }; } };
+      let settled=false;
+      return { then(fn) { st.resolvers.push(()=>{if(!settled){settled=true;fn();}});
+        return { catch(cb) { st.rejectors.push(err=>{if(!settled){settled=true;cb(err);}}); } }; } };
     },
     hasImeTrafficEvidence(m) { return !!(opts.trafficMounts && opts.trafficMounts.has(m)); },
     readSelection() {
@@ -160,15 +165,16 @@ const results = {};
     unrecovered_logged: ctl.logged(s => s.includes('attach unrecovered')),
     saw_restore_terminal: terminalsBefore, timers_left: timers.length };
 }
-// R4d：重试票据归属——旧尝试的重试不得抢占更新的在飞成功。
+// R4d migration: the same mount/focus entry joins its original retry; a genuine
+// replacement-cycle stale retry is independently retained in r4l below.
 {
   const mount = mountOf('r4d');
   const { ctl, lc } = armHost(mount);
   lc.arm(mount, 1, 3, 'd');
   lc.requestAttach(mount, 'd');                                // attachSeq=1 在飞
   ctl.rejectAll({ code: 12800009 });                           // 无证据→排一次重试（retrySeq=1）
-  lc.requestAttach(mount, 'focus2');                           // 新尝试 attachSeq=2 在飞
-  await advance(400);                                          // 旧重试到期：旧：++attachSeq→杀 seq2
+  lc.requestAttach(mount, 'focus2');                           // Same cycle joins, not a new sequence.
+  await advance(400);
   ctl.resolveAll();                                            // 解决当前在飞的成功
   const attached = lc.isAttachedTo(mount);
   await advance(200);
@@ -208,6 +214,49 @@ const results = {};
   results.r4g = { attached_stale: lc.isAttachedTo(a), timers_left: timers.length };
 }
 
+// Actual shared function, no pending/SDK status shortcut: two real page entry
+// points plus caret must join the same unresolved system-display request.
+{
+ const mount=mountOf('r4h'),{ctl,lc}=armHost(mount);
+ lc.arm(mount,1,3,'mount');lc.requestAttach(mount,'focus');
+ lc.requestAttach(mount,'focus-requested');lc.requestAttach(mount,'caret');
+ const calls=ctl.st.attachCalls;ctl.st.resolvers.shift()();
+ const original_success_attached=lc.isAttachedTo(mount);await advance(9000);
+ results.r4h={calls,original_success_attached,installs:ctl.st.installs,commits:ctl.st.commits,timers_left:timers.length};
+ ctl.resolveAll();
+}
+// New reasons cannot replenish the original four-retry budget, including
+// after exhaustion and when no selection installation is pending.
+{
+ const mount=mountOf('r4i'),{ctl,lc}=armHost(mount);
+ lc.requestAttach(mount,'focus');
+ for(let i=0;i<8;i++){ctl.rejectAll({code:12800009});lc.requestAttach(mount,'caret');await advance(1000);}
+ lc.requestAttach(mount,'focus-requested');await advance(9000);
+ results.r4i={calls:ctl.st.attachCalls,attached:lc.isAttachedTo(mount),timers_left:timers.length};
+}
+// Explicit invalidation of a still-current object must also revoke an unresolved
+// request; otherwise the old promise reattaches it after teardown/blur.
+{
+ const mount=mountOf('r4j'),{ctl,lc}=armHost(mount);
+ lc.requestAttach(mount,'focus');lc.invalidateAttachmentFor(mount);ctl.resolveAll();
+ results.r4j={attached_after_invalidation:lc.isAttachedTo(mount),timers_left:timers.length};
+}
+// A mutable mount's new focus cycle is not the old promise's source generation.
+{
+ const mount=mountOf('r4k'),{ctl,lc}=armHost(mount);
+ lc.requestAttach(mount,'focus');mount.focusGeneration++;
+ ctl.st.resolvers.shift()();const old_attached_new_focus=lc.isAttachedTo(mount);
+ lc.requestAttach(mount,'new-focus');ctl.resolveAll();
+ results.r4k={old_attached_new_focus,new_focus_attached:lc.isAttachedTo(mount),calls:ctl.st.attachCalls};
+}
+// Keep the old genuine replacement-session retry-pollution counterexample.
+{
+ const a=mountOf('r4l-a'),b=mountOf('r4l-b'),{ctl,lc}=armHost(a);
+ lc.requestAttach(a,'focus');ctl.rejectAll({code:12800009});
+ ctl.setCurrent(b);lc.requestAttach(b,'focus');await advance(400);ctl.resolveAll();
+ results.r4l={a_attached:lc.isAttachedTo(a),b_attached:lc.isAttachedTo(b),calls:ctl.st.attachCalls,timers_left:timers.length};
+}
+
 console.log(JSON.stringify(results, null, 1));
 const ok = (c, m) => { if (!c) { console.error('FAIL: ' + m); return 1; } return 0; };
 let fail = 0;
@@ -225,8 +274,8 @@ fail += ok(results.r4c2.attached === false, 'r4c2 not attached without evidence'
 fail += ok(results.r4c2.spurious_terminal === false, 'r4c2 no spurious selection terminal');
 fail += ok(results.r4c2.unrecovered_logged === true, 'r4c2 logs session unrecovered');
 fail += ok(results.r4c2.timers_left === 0, 'r4c2 no timers left');
-fail += ok(results.r4d.attached === true, 'r4d newer in-flight success preserved');
-fail += ok(results.r4d.attach_calls === 2, 'r4d stale retry did not start a third attach');
+fail += ok(results.r4d.attached === true, 'r4d same-cycle original retry success preserved');
+fail += ok(results.r4d.attach_calls === 2, 'r4d exactly original request plus one retry');
 fail += ok(results.r4e.installs === 1, 'r4e same-seq setter sent once');
 fail += ok(results.r4e.timers_left === 0, 'r4e no timers left');
 fail += ok(results.r4f.terminal === 'UNCONFIRMED' && results.r4f.pending === false && results.r4f.installs === 0,
@@ -234,5 +283,11 @@ fail += ok(results.r4f.terminal === 'UNCONFIRMED' && results.r4f.pending === fal
 fail += ok(results.r4f.timers_left === 0, 'r4f no timers left');
 fail += ok(results.r4g.attached_stale === false, 'r4g stale success does not attach');
 fail += ok(results.r4g.timers_left === 0, 'r4g no timers left');
+fail += ok(results.r4h.calls === 1 && results.r4h.original_success_attached, 'r4h two focus entries/caret join the original unresolved request');
+fail += ok(results.r4h.installs === 1 && results.r4h.commits === 1 && results.r4h.timers_left === 0, 'r4h delayed original success installs once');
+fail += ok(results.r4i.calls === 5 && !results.r4i.attached && results.r4i.timers_left === 0, 'r4i same-cycle reasons do not reset four retries');
+fail += ok(!results.r4j.attached_after_invalidation && results.r4j.timers_left === 0, 'r4j invalidation revokes unresolved same-object request');
+fail += ok(!results.r4k.old_attached_new_focus && results.r4k.new_focus_attached && results.r4k.calls === 2, 'r4k old promise cannot grant a new focus cycle');
+fail += ok(!results.r4l.a_attached && results.r4l.b_attached && results.r4l.calls === 2 && results.r4l.timers_left === 0, 'r4l old retry cannot supersede a replacement session');
 process.exitCode = fail ? 1 : 0;
 })().catch(err => { console.error(err); process.exitCode = 1; });

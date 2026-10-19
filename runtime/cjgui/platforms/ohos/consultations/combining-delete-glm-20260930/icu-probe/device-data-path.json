@@ -1,0 +1,12 @@
+{
+  "command": [
+    "/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc",
+    "-t",
+    "127.0.0.1:5555",
+    "shell",
+    "ls -l /system/lib64/libicu.so /system/usr/ohos_icu /system/usr/icu /system/usr/share/icu 2>&1"
+  ],
+  "rc": 0,
+  "stdout": "ls: /system/lib64/libicu.so: No such file or directory\nls: /system/usr/ohos_icu: Permission denied\nls: /system/usr/icu: Permission denied\nls: /system/usr/share/icu: Permission denied\n",
+  "stderr": ""
+}

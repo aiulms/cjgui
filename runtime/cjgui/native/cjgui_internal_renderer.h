@@ -29,6 +29,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// Bumped whenever the node POD changes. The OHOS fork header carries the same
+// constant and the session handshake rejects a mismatch.
+#define CJGUI_INTERNAL_RENDERER_ABI_VERSION 8u
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -115,6 +119,9 @@ typedef enum CjguiInternalRendererStatus {
     // it ran exactly once and its result is retained for reap. The caller must
     // NOT resubmit the side effect; reap the outcome, then re-read state.
     CJGUI_INTERNAL_RENDERER_COMMAND_IN_FLIGHT = 38,
+    // No frame/ticket was submitted. An actual A input must be dispatched
+    // before this candidate; a Pending pump request alone never returns it.
+    CJGUI_INTERNAL_RENDERER_SCENE_INPUT_PENDING = 39,
     // An extended private style run has an unknown tag or malformed fields.
     // No candidate using it may become accepted or fall back to ordinary runs.
     CJGUI_INTERNAL_RENDERER_STYLE_RUN_INVALID = 36,
@@ -767,11 +774,54 @@ typedef struct CjguiInternalRendererComposableNode {
     // from style.wheelScrollable; hit routing matches it alongside
     // COMPOSABLE_SCROLL_AREA.
     uint32_t wheelScrollable;
+    // Read-only label overflow, 0 keeps legacy wrapping. Native mirrors must match.
+    uint32_t textMaxLines;
+    uint32_t textOverflow; // 0=clip, 1=tail ellipsis
     uint64_t acceptedBindingEpoch;
+    // ---- Typography / per-corner backfill (ABI 5, append-only) ----
+    // These five groups existed only in the OHOS snapshot before ABI 5. They
+    // are appended here so the shared style model can declare them on every
+    // platform. Semantics and admission ranges match the OHOS fork:
+    //   letterSpacing: logical points, (-1000, 1000), 0 = inherited default
+    //   lineHeightPoints: logical points, (0, 1000), 0 = natural line height;
+    //     consumers pass lineHeightPoints / fontSize as a multiplier
+    //   maxLines: 0 = unlimited; mirrors the shared textMaxLines declaration
+    //   ellipsisEnabled: 1 = tail ellipsis; mirrors textOverflow = "ellipsis"
+    //   cornerRadii*: present=1 replaces the uniform cornerRadius
+    // macOS / Windows / Linux currently CARRY these fields WITHOUT painting
+    // them; OHOS paints them. Do not insert fields above this block.
+    double letterSpacing;
+    double lineHeightPoints;
+    uint32_t maxLines;
+    uint32_t ellipsisEnabled;
+    uint32_t cornerRadiiPresent;
+    double cornerTopLeft;
+    double cornerTopRight;
+    double cornerBottomRight;
+    double cornerBottomLeft;
+    // Resolved sibling paint rank. The shared layout engine emits the scene
+    // array in this order; every backend paints and hit-tests in array order
+    // and must NOT sort again. An effectGroup subtree moves as one block, so
+    // the group's interval stays contiguous. 0 is the authored order.
+    int64_t zIndex;
+    // Paint-only rotation around the node's own centre, in degrees. Layout,
+    // ancestor clipping and hit testing keep the unrotated rectangle; only
+    // this node's own paint turns, never its children. 0 = axis aligned.
+    // Backends that carry but do not paint this field stay axis aligned.
+    double rotateDegrees;
+    // Monochrome image tint. Sampled RGB is multiplied by (r,g,b) and sampled
+    // alpha by a; a == 0 keeps the source pixels untouched, which is also the
+    // default. Only image nodes consult these fields; text and shapes ignore
+    // them. The source asset must be a transparent monochrome glyph, otherwise
+    // the tint colours the opaque background too.
+    double iconTintRed;
+    double iconTintGreen;
+    double iconTintBlue;
+    double iconTintAlpha;
 } CjguiInternalRendererComposableNode;
-_Static_assert(offsetof(CjguiInternalRendererComposableNode, acceptedBindingEpoch) + 8 ==
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 ==
                sizeof(CjguiInternalRendererComposableNode),
-               "CjguiInternalRendererComposableNode binding tail drifted");
+               "CjguiInternalRendererComposableNode iconTintAlpha tail drifted");
 
 typedef struct CjguiInternalRendererViewport {
     uint32_t width;
@@ -923,6 +973,59 @@ int cjgui_internal_renderer_owner_consumed_input_provenance(uint64_t session,
 void cjgui_internal_renderer_publish_owner_consumed_input_provenance(uint64_t session,
     uint64_t sessionGeneration, uint64_t sequence, uint64_t previousSequence,
     uint32_t eventKind);
+
+// Private command origin. Published declarations carry managed identity tokens;
+// actual producers freeze those tokens and focus before deferred FIFO dispatch.
+// This POD is a pump sideband, never a replacement Event or a new source receipt.
+#define CJGUI_INTERNAL_COMMAND_SOURCE_ABI 2
+typedef struct CjguiInternalCommandSource {
+    uint64_t originSerial;
+    uint64_t sessionGeneration;
+    uint64_t capturedScene;
+    uint64_t declarationToken;
+    uint64_t targetNodeId;
+    int64_t targetResourceId;
+    uint32_t targetNodeKind;
+    uint32_t isValid;
+    uint64_t focusedNodeId;
+    int64_t focusedResourceId;
+    uint32_t focusedNodeKind;
+    uint32_t originEventKind;
+    uint64_t bindingEpoch;
+    int64_t ownerVersion;
+    uint32_t completionPolicy;
+    uint32_t reservedCompletion;
+} CjguiInternalCommandSource;
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_command_completion_policy(
+    uint64_t session, uint32_t itemIndex, uint32_t completionPolicy);
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_command_identity(
+    uint64_t session, uint32_t itemIndex, uint64_t declarationToken,
+    uint64_t targetNodeId, int64_t targetResourceId, uint32_t targetNodeKind);
+// OK with isValid=0 means the genuine captured origin has since lost continuity.
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_consumed_command_source(
+    uint64_t session, CjguiInternalCommandSource *outSource);
+#define CJGUI_INTERNAL_COMMAND_TEXT_CONTEXT_ABI 1
+// Only an actual declared, activated press and its validated managed PressLease
+// can admit the pre-DOWN text context. A receipt alone cannot create this right.
+CjguiInternalRendererStatus cjgui_internal_renderer_admit_command_text_context(
+    uint64_t session, uint64_t originSerial, uint64_t declarationToken, uint64_t pressSequence,
+    uint64_t targetNodeId, int64_t targetResourceId, uint32_t targetNodeKind,
+    uint64_t bindingEpoch, int64_t ownerVersion, uint64_t ownerHandoffId);
+// Private macOS dispatch completion; refusal retires only the exact original
+// ACTIVATE. It never interprets an event or grants editing authority.
+CjguiInternalRendererStatus cjgui_internal_renderer_finish_command_text_context_admission(
+    uint64_t session, uint64_t actionSequence, uint64_t nodeId, int64_t resourceId,
+    uint32_t nodeKind, uint64_t admittedOriginSerial);
+CjguiInternalRendererStatus cjgui_internal_renderer_commit_installed_selection_command_menu(
+    uint64_t session, uint64_t transferId, uint64_t generation, uint64_t bindingEpoch,
+    int64_t ownerVersion, int64_t ownerSelectionRevision);
+#define CJGUI_INTERNAL_OWNER_COMMAND_RECEIPT_ABI 1
+// Exact original FIFO input plus one sealed actual owner result. No presentation ACK.
+CjguiInternalRendererStatus cjgui_internal_renderer_accept_owner_command_receipt(
+    uint64_t session, uint64_t identity, uint64_t generation, uint64_t sequence, uint64_t previous,
+    int64_t beforeVersion, int64_t afterVersion, int64_t revision, int64_t anchor, int64_t focus, uint32_t applied);
+CjguiInternalRendererStatus cjgui_internal_renderer_retire_owner_command_presentation(
+    uint64_t session, uint64_t identity);
 // Private macOS caret-prefix settlement. It does not change Event/Node PODs.
 // 1=actual owner/native selection commit, 2=unchanged proven boundary, 3=abort.
 CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_input(uint64_t session,
@@ -930,14 +1033,34 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_input(uint64_t 
     uint64_t nonce, uint64_t proxyGeneration, uint64_t selectionRevision,
     int64_t ownerVersion, uint64_t contextEpoch, uint64_t windowToken);
 
+// Exact producer cancellation fact; never reports a successful settlement.
+CjguiInternalRendererStatus cjgui_internal_renderer_caret_input_terminal(uint64_t session,
+    uint64_t generation, uint64_t sequence, uint64_t previous, uint8_t *outRetired);
+
 // Private association of a real dequeued caret owner with its selection
 // candidate. A pointer selection never acquires this causal input prefix.
 CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_selection_transfer(
     uint64_t session, uint64_t transferId, uint64_t generation,
     uint64_t sequence, uint64_t previousSequence);
 
+// Same-choice projection migration only. It retains the exact A association
+// until COMMITTED and never acknowledges or consumes the original selector.
+CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_projection_transfer(
+    uint64_t session, uint64_t transferId, uint64_t generation,
+    uint64_t sequence, uint64_t previousSequence);
+
 // Private owner-to-input boundary; actual A and future owner authority remain
 // separate. The public Event/Node ABI carries no new native object.
+// Private purpose: same-version choice is never an owner-command receipt.
+#define CJGUI_SELECTION_ONLY_HANDOFF_SUPPORTED 1
+typedef enum CjguiOwnerHandoffPurpose {
+    CJGUI_OWNER_HANDOFF_BODY_MUTATION = 0,
+    CJGUI_OWNER_HANDOFF_SELECTION_ONLY = 1,
+} CjguiOwnerHandoffPurpose;
+CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_begin_with_purpose(uint64_t session,
+    const char *document, int64_t documentEpoch, uint64_t window, uint64_t context,
+    uint64_t binding, int64_t beforeVersion, uint64_t rangeNonce, uint64_t rangeSequence,
+    CjguiOwnerHandoffPurpose purpose, uint64_t *outId);
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_begin(uint64_t session,
     const char *document, int64_t documentEpoch, uint64_t window, uint64_t context,
     uint64_t binding, int64_t beforeVersion, uint64_t rangeNonce, uint64_t rangeSequence,
@@ -1042,6 +1165,12 @@ typedef struct {
     double clip1X, clip1Y;
     double clip2X, clip2Y;
     double clip3X, clip3Y;
+    // Paint-only per-node scale around the node's own centre. Values are
+    // finite and > 0; the shared packing normalizes anything outside (0, 16]
+    // to 1.0. Descendants do not inherit it. Appended after the stable clip
+    // slots so older sidecar consumers keep their offsets.
+    double scaleX;
+    double scaleY;
 } CjguiInternalRendererComposableGeometry;
 
 // Private budgeted preparation. Handles own unpublished nodes and are never
@@ -1072,6 +1201,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_reuse_composable_node_batch(
     uint64_t deadlineNs, uint32_t *outReused);
 CjguiInternalRendererStatus cjgui_internal_renderer_advance_composable_preparation(uint64_t session, uint64_t preparationId,
     uint64_t deadlineNs, uint32_t *outReady);
+// Private macOS resource preparation, after selection preparation and before
+// Present: OK/0 retains the SAME staged candidate; OK/1 owns its exact drawable
+// lease. No native object, acceptance receipt or Present ticket crosses FFI.
+CjguiInternalRendererStatus cjgui_internal_renderer_reserve_composable_drawable(uint64_t session,
+    uint64_t preparationId, uint64_t projectionVersion, uint32_t *outReady);
 CjguiInternalRendererStatus cjgui_internal_renderer_promote_composable_preparation(uint64_t session, uint64_t preparationId);
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_preparation(uint64_t session, uint64_t preparationId);
 
@@ -2552,6 +2686,8 @@ uint64_t cjgui_internal_renderer_owner_trace_ns(void);
 uint64_t cjgui_internal_renderer_owner_clock_ns(void);
 // Internal observation only. CPU is reported separately, never credited as idle.
 uint64_t cjgui_internal_renderer_owner_thread_cpu_ns(void);
+// Internal correlation only: actual calling OS thread, unknown on failure.
+uint64_t cjgui_internal_renderer_owner_thread_id(void);
 uint8_t cjgui_internal_renderer_source_install_pending_scalar(uint64_t session);
 // Windows-only: saturating count of ordinary/nav/composition inputs held while
 // a source-install gate was pending (never emitted as owner transactions).
@@ -2659,6 +2795,17 @@ typedef enum CjguiInternalSelectionTransferAdmission {
 } CjguiInternalSelectionTransferAdmission;
 // Frozen candidate-local caret. preparationId=0 names the staged transaction;
 // nonzero names its private preparation. Absence is an explicit declaration.
+// Internal, copied scalars only. No query-side AppKit dispatch or layout.
+CjguiInternalRendererStatus cjgui_internal_renderer_accepted_caret_value(
+    uint64_t session, uint64_t generation, uint64_t scene, int64_t node, int64_t byte,
+    uint32_t affinity, const uint64_t *semantic12, uint64_t *meta16, double *rect8);
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_accepted_selection_decoration(
+    uint64_t session, uint64_t transfer, uint64_t generation, uint64_t binding,
+    int64_t ownerVersion, int64_t ownerRevision, int64_t projectionId, uint64_t scene,
+    double red, double green, double blue, double alpha, const char *rows, const uint64_t *semantic);
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_candidate_caret_identity(
+    uint64_t session, uint64_t preparationId, uint64_t sceneVersion, uint8_t present,
+    int64_t nodeId, int64_t localByte, uint32_t affinity, const uint64_t *semantic12, const int64_t *origin16);
 CjguiInternalRendererStatus cjgui_internal_renderer_stage_candidate_caret(uint64_t session,
     uint64_t preparationId, uint64_t sceneVersion, uint8_t present,
     int64_t nodeId, int64_t localByte, uint32_t affinity);
@@ -2765,6 +2912,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_prepare_b
 // The only production commit path: install/readback/decision in one main operation.
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_install_b(
     uint64_t session, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt);
+#if defined(__APPLE__)
+// Internal macOS resource completion, separate from installation/owner decision.
+// The owner descriptor remains live until the common reservation has settled.
+#define CJGUI_INTERNAL_SELECTION_INSTALL_RETIREMENT 1
+CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_install_b_retiring(
+    uint64_t session, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt,
+    uint8_t *outNativeCapsuleRetired);
+#endif
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_verify_b(
     uint64_t session, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt);
 // Restore A and verify body, selection, active identity and first responder.
@@ -2775,6 +2930,32 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_selection_paint_publi
     uint64_t session, uint64_t transferId, uint64_t generation, uint64_t binding,
     uint64_t proxyGeneration, uint64_t nativeRevision, int64_t ownerVersion,
     int64_t ownerRevision, uint8_t proxyOnly, uint8_t *outNeedsProjection);
+#if defined(__APPLE__)
+typedef struct CjguiInternalPointerSelectionOrigin {
+    uint64_t generation, gesture, first, last, previous, coordinate;
+    uint64_t scene, nodeId;
+    int64_t resourceId;
+    uint32_t nodeKind, phase;
+} CjguiInternalPointerSelectionOrigin;
+// Private transport of the actually dequeued pointer record. A local UI
+// dispatch sequence is never a native FIFO sequence or a new input producer.
+CjguiInternalRendererStatus cjgui_internal_renderer_freeze_pointer_selection_dispatch(
+    uint64_t session, const CjguiInternalPointerSelectionOrigin *origin,
+    int64_t ownerVersion, int64_t ownerRevision, int64_t anchor, int64_t focus, uint64_t *outIdentity);
+CjguiInternalRendererStatus cjgui_internal_renderer_bind_pointer_selection_dispatch(
+    uint64_t session, uint64_t identity, uint64_t transfer);
+CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_selection_dispatch(
+    uint64_t session, uint64_t identity, uint64_t generation, uint64_t window, uint64_t context,
+    const CjguiInternalSelectionTransferReceipt *receipt, int64_t version, int64_t revision,
+    int64_t anchor, int64_t focus, uint8_t coversEnd);
+CjguiInternalRendererStatus cjgui_internal_renderer_refuse_pointer_selection_dispatch(
+    uint64_t session, uint64_t identity);
+// Same installed receipt plus the common owner's adopted choice. This only
+// publishes metadata; it does not satisfy a paint obligation or run providers.
+CjguiInternalRendererStatus cjgui_internal_renderer_publish_installed_selection_owner(
+    uint64_t session, uint64_t generation, uint64_t window, uint64_t context,
+    const CjguiInternalSelectionTransferReceipt *receipt, int64_t ownerVersion, int64_t ownerRevision);
+#endif
 CjguiInternalRendererStatus cjgui_internal_renderer_stage_selection_paint_publication(
     uint64_t session, uint64_t transferId, uint64_t generation, uint64_t binding,
     int64_t ownerVersion, int64_t ownerRevision, uint64_t sceneVersion);
@@ -2800,6 +2981,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_receipt(
 // not arm, activate, or authorize input.
 CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_active_receipt(
     uint64_t session, uint64_t nonce, CjguiInternalInstalledRangeReceipt *outReceipt);
+// Pure Mac capture-currentness plus resident-receipt observation; no renewal.
+CjguiInternalRendererStatus cjgui_internal_renderer_unchanged_capture_receipt(
+    uint64_t session, uint64_t nonce, uint64_t acceptedScene, uint64_t gesture,
+    uint64_t nodeId, int64_t resourceId, uint64_t captureBinding,
+    CjguiInternalInstalledRangeReceipt *outReceipt);
 // Activate only the exact provisional receipt after the owner postcheck.
 CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_activate(
     uint64_t session, uint64_t nonce, uint64_t proxyGeneration, uint64_t selectionRevision);
@@ -2846,9 +3032,9 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs,
     CjguiInternalRendererEvent *outEvent, uint64_t *outIdleWaitNs);
 
-// A pending acquisition or a READY event still owns the accepted input scene.
-// READY NONE is terminal and carries no scene-dependent input. Thread-safe,
-// observational, and scoped to the live session generation.
+// Only a READY actual event owns input removed from the FIFO. Pending is an
+// acquisition request, and READY NONE is a terminal without an event. The
+// main-thread Present seam separately checks the FIFO and exact B dependency.
 uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t session);
 
 CjguiInternalRendererStatus
@@ -2874,6 +3060,16 @@ cjgui_internal_renderer_restore_composable_selection(uint64_t session, uint64_t 
                                                      uint64_t sceneVersion, const char *expectedValue,
                                                      uint32_t selectionStart, uint32_t selectionEnd,
                                                      uint32_t *outSelectionStart, uint32_t *outSelectionEnd);
+
+// Windows ordinary-restore paint observation, frozen by the same dispatcher
+// command. facts[10]: request, command, renderer generation, native binding,
+// scene, node, resource, kind, ordered UTF-16 start/end. This is NOT a transfer
+// or source-install receipt. Outputs are published only on exact success.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_restore_composable_selection_paint_result(uint64_t session,
+    uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion,
+    const char *expectedValue, uint32_t selectionStart, uint32_t selectionEnd,
+    uint64_t bindingEpoch, uint64_t requestId, uint64_t *outFacts);
 
 // Source-only atomic focus/selection installation for an already bound owner.
 // Requires the exact live owner-issued install gate, accepted scene and value;
@@ -3091,6 +3287,15 @@ CjguiInternalRendererStatus cjgui_internal_renderer_ack_drag_edge_viewport(
     uint64_t session, uint64_t gesture, uint64_t node, int64_t resource,
     uint64_t binding, uint64_t identity, int64_t requestGeneration,
     int64_t requested, int64_t accepted, uint64_t scene, uint32_t phase);
+
+// Private: retire this still-unpresented request only for the original admitted
+// UPDATE whose real edge resolver proves the opposite direction. Scalars are
+// copied before main dispatch; no native object or new Event POD is exposed.
+CjguiInternalRendererStatus cjgui_internal_renderer_retire_reversed_drag_edge_request(
+    uint64_t session, uint64_t gesture, uint64_t node, int64_t resource,
+    uint64_t binding, uint64_t identity, int64_t requestGeneration,
+    int64_t requested, int64_t accepted, uint64_t scene,
+    uint64_t pointerGeneration, uint64_t pointerSequence, double pointX, double pointY);
 
 // Private, candidate-scoped continuation for a captured text drag whose
 // original rendered fragment is being windowed out. The offer contains only

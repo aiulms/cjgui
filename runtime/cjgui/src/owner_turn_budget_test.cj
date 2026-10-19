@@ -3,6 +3,17 @@ package cjgui
 private class OwnerBudgetTestClock { var value: Int64 = 1000000 }
 private class OwnerSchedulingWaitState { var calls: Int64 = 0; var deadline: UInt64 = 0u64 }
 
+@When[os == "macOS"]
+@Test
+func testOwnerTraceElapsedClockFailureStaysUnknown(): Unit {
+    @Assert(cjguiOwnerTraceElapsedValue(-1), UInt64.Max)
+    @Assert(cjguiOwnerTraceElapsedValue(Int64.Min), UInt64.Max)
+    @Assert(cjguiOwnerTraceElapsedValue(0), 0u64)
+    @Assert(cjguiOwnerTraceElapsedValue(1), 1u64)
+    @Assert(cjguiOwnerTraceElapsedValue(1234567), 1234567u64)
+    @Assert(cjguiOwnerTraceElapsedValue(Int64.Max), UInt64(Int64.Max))
+}
+
 @Test
 func testSharedOwnerBudgetDoesNotResetForSecondWindowOrCallback(): Unit {
     let clock = OwnerBudgetTestClock()

@@ -1,0 +1,3 @@
+Huawei current FAQ (2026-06-26): https://developer.huawei.com/consumer/cn/doc/doccenter-dev-faq/faqs-arkui-933 and faqs-arkui-1389 describe resetting selection to end after assigning text. This supports treating value and selection installation as separate events; it does not establish all callback orderings. Actual r8 PID30467 log provides observed ordering.
+Local Flutter widgets/editable_text.dart:3742–3763 skips identical TextEditingValue and treats unchanged text/composition as selection-only; read-only reference, no dependency.
+Native targeted production excerpt RED: test_plain_mount_echo_native positive returns11 (word selection lost), host compiler rc0, test rc1.

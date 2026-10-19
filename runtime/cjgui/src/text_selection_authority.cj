@@ -17,6 +17,19 @@ public class CjguiSourceSelectionSnapshot {
         this.version = version; this.revision = revision
         this.anchorByte = anchorByte; this.focusByte = focusByte
     }
+    /// Experimental: collapse a nonempty directed source choice at its own
+    /// endpoint. Empty/invalid choices return None; callers still freeze and
+    /// arbitrate this snapshot's identity at the ordinary selection decision.
+    public func nonemptyCollapseEndpoint(forward: Bool): ?Int64 {
+        return cjguiNonemptySelectionCollapseEndpoint(anchorByte, focusByte, forward)
+    }
+}
+
+// Shared endpoint semantics, also used by the plain mirror adapter. This
+// chooses an existing boundary only; it grants no selection/write authority.
+func cjguiNonemptySelectionCollapseEndpoint(anchor: Int64, focus: Int64, forward: Bool): ?Int64 {
+    if (anchor < 0 || focus < 0 || anchor == focus) { return None }
+    return Some(if (forward) { max(anchor, focus) } else { min(anchor, focus) })
 }
 
 /// Scalar-only calls: no AppKit dispatch, owner callback, allocation of a native
@@ -66,4 +79,35 @@ class CjguiNativeSelectionDecision <: CjguiSelectionDecision {
 /// No selected interior is materialised by the framework.
 public interface CjguiRangeTextSelectionEditSink {
     func applySourceSelectionEdit(choice: CjguiSourceSelectionSnapshot, inserted: String): CjguiRangeTextEditOutcome
+}
+
+// One private original reservation. Its owner and decision never migrate to a
+// later session; terminal folding happens while the native cell is still live.
+class CjguiSourceSelectionReservation {
+    let owner: CjguiRangeTextSelectionOwner
+    let semantic: CjguiTextSelectionTicket
+    let anchorByte: Int64
+    let focusByte: Int64
+    let revision: Int64
+    let decision: CjguiSelectionDecision
+    private var terminal: Int64 = 1
+    init(owner: CjguiRangeTextSelectionOwner, semantic: CjguiTextSelectionTicket,
+        anchor: Int64, focus: Int64, revision: Int64, decision: CjguiSelectionDecision) {
+        this.owner = owner; this.semantic = semantic
+        this.anchorByte = anchor; this.focusByte = focus
+        this.revision = revision; this.decision = decision
+    }
+    func matches(ticket: CjguiTextSelectionTicket, anchor: Int64, focus: Int64): Bool {
+        return semantic.contextEpoch == ticket.contextEpoch && semantic.mirrorRevision == ticket.mirrorRevision &&
+            semantic.contentVersion == ticket.contentVersion && semantic.sourceVersion == ticket.sourceVersion &&
+            semantic.selectionRevision == ticket.selectionRevision && anchorByte == anchor && focusByte == focus
+    }
+    func settle(): Bool {
+        if (terminal == 3 || terminal == 4 || terminal == 6) { return terminal == 3 }
+        let state = decision.state()
+        if (state != 3 && state != 4 && state != 6) { return false }
+        owner.settleSourceSelection(revision)
+        terminal = state
+        return terminal == 3
+    }
 }

@@ -1,0 +1,10 @@
+09-30 09:34:27.469  5552  5724 I A00000/CjguiRenderer: fling velocity=0.046 samples=8
+09-30 09:34:27.469  5552  5724 I A00000/CjguiRenderer: gesture-scroll-terminal terminal=END app=1 comp=1 surface=1 pointer=0 epoch=1 samples=101 rawDy=-90.000000 whole=-90 remainder=0.000000
+09-30 09:34:29.461  5552  5724 I A00000/CjguiRenderer: fling velocity=0.046 samples=8
+09-30 09:34:29.461  5552  5724 I A00000/CjguiRenderer: gesture-scroll-terminal terminal=END app=1 comp=1 surface=1 pointer=0 epoch=2 samples=103 rawDy=-90.000000 whole=-90 remainder=0.000000
+09-30 09:34:31.492  5552  5724 I A00000/CjguiRenderer: fling velocity=0.045 samples=8
+09-30 09:34:31.492  5552  5724 I A00000/CjguiRenderer: gesture-scroll-terminal terminal=END app=1 comp=1 surface=1 pointer=0 epoch=3 samples=105 rawDy=-90.000000 whole=-90 remainder=0.000000
+09-30 09:35:03.350  5552  5724 I A00000/CjguiRenderer: fling velocity=0.051 samples=8
+09-30 09:35:03.350  5552  5724 I A00000/CjguiRenderer: gesture-scroll-terminal terminal=END app=1 comp=1 surface=1 pointer=0 epoch=4 samples=117 rawDy=-100.000000 whole=-100 remainder=0.000000
+09-30 09:35:37.406  5552  5724 I A00000/CjguiRenderer: fling velocity=0.050 samples=8
+09-30 09:35:37.406  5552  5724 I A00000/CjguiRenderer: gesture-scroll-terminal terminal=END app=1 comp=1 surface=1 pointer=0 epoch=5 samples=37 rawDy=-40.000008 whole=-40 remainder=-0.000008

@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 // app_activate: pid-addressed activation and frontmost query for real-input
 // verification scripts.
@@ -22,6 +23,24 @@ guard args.count >= 2, let pid = pid_t(args[1]) else {
     exit(2)
 }
 let mode = args.count > 2 ? args[2] : ""
+
+// Opt-in bounded call boundaries share the renderer's mach monotonic clock.
+// No document text or unrelated application arguments enter this record.
+let ownedBoundaryTraceEnabled = ProcessInfo.processInfo.environment["CJGUI_DRIVER_BOUNDARIES"] == "1"
+let ownedBoundaryOperation = "activate:" + mode
+let ownedBoundaryTargetPid = String(pid)
+func traceOwnedDriverBoundary(_ phase: String) {
+    guard ownedBoundaryTraceEnabled else { return }
+    var scale = mach_timebase_info_data_t()
+    mach_timebase_info(&scale)
+    let ticks = mach_absolute_time()
+    let denominator = UInt64(scale.denom), numerator = UInt64(scale.numer)
+    let nanos = (ticks / denominator) * numerator + ((ticks % denominator) * numerator) / denominator
+    let line = "CJGUI_DRIVER_BOUNDARY mono_ns=\(nanos) phase=\(phase) operation=\(ownedBoundaryOperation) driver_pid=\(getpid()) target_pid=\(ownedBoundaryTargetPid) buttons=\(NSEvent.pressedMouseButtons)\n"
+    FileHandle.standardError.write(Data(line.utf8))
+}
+traceOwnedDriverBoundary("begin")
+atexit { traceOwnedDriverBoundary("end") }
 
 if mode == "--frontmost" {
     let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier

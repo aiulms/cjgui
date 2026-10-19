@@ -19,6 +19,7 @@ PREFIX = r'''
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <dlfcn.h>

@@ -37,6 +37,42 @@ public interface CjguiComposableUiCandidateSelectionProvider {
     func candidateSelectionProjection(): ?CjguiComposableUiCandidateSelectionProjection
 }
 
+// Frozen before preparation; acceptance publishes exactly this candidate key.
+// These are identity scalars, never coordinates recovered from a later mirror.
+func cjguiCandidateCaretInstalledOrigin(value: CjguiComposableUiCandidateSelectionProjection,
+    binding: UInt64, session: UInt64, newTransfer: Bool): Array<Int64> {
+    let none = Array<Int64>(16, repeat: 0)
+    // B has no installation receipt while it is being prepared. Native attaches
+    // its actual receipt only after that same candidate has committed.
+    if (newTransfer) { return none }
+    let source = match (value.sourceCompletion) { case Some(v) => v; case None => return none }
+    let start = if (value.localAnchor16 <= value.localFocus16) { value.localAnchor16 } else { value.localFocus16 }
+    let end = if (value.localAnchor16 >= value.localFocus16) { value.localAnchor16 } else { value.localFocus16 }
+    // An ordinary completion describes THIS target, not the previous accepted
+    // selection. Global direction remains frozen; a clipped range may collapse
+    // locally, but a noncollapsed local range cannot reverse that direction.
+    if (!source.matches(value.selection, value.semantic, binding, session) ||
+        source.targetNodeId != value.targetNodeId || source.targetResourceId != value.targetResourceId ||
+        source.targetNodeKind != value.targetNodeKind || source.targetBody != value.targetBody ||
+        source.targetSelectionStart16 != start || source.targetSelectionEnd16 != end ||
+        (value.localAnchor16 < value.localFocus16 && value.selection.anchorByte >= value.selection.focusByte) ||
+        (value.localAnchor16 > value.localFocus16 && value.selection.anchorByte <= value.selection.focusByte)) { return none }
+    return [Int64(source.transferId), Int64(source.rendererSessionGeneration), Int64(source.windowInstanceToken),
+        Int64(source.targetBindingEpoch), source.targetSceneVersion, source.targetProjectionVersion,
+        source.targetNodeId, source.targetResourceId, source.targetNodeKind, Int64(source.targetProxyGeneration),
+        Int64(source.targetSelectionRevision), source.sourceSelection.version, source.sourceSelection.revision,
+        value.localAnchor16, value.localFocus16, 1]
+}
+
+func cjguiCandidateCaretIdentity(value: CjguiComposableUiCandidateSelectionProjection,
+    window: UInt64, binding: UInt64): Array<UInt64> {
+    let t = value.semantic; let s = value.selection
+    return [window, binding, UInt64(t.contextEpoch), UInt64(t.mirrorRevision),
+        UInt64(t.contentVersion), UInt64(t.sourceVersion), UInt64(t.selectionRevision),
+        UInt64(s.sessionEpoch), UInt64(s.version), UInt64(s.revision),
+        UInt64(s.anchorByte), UInt64(s.focusByte)]
+}
+
 class CjguiCandidateSelectionDeclaration {
     let projection: ?CjguiComposableUiCandidateSelectionProjection
     init(projection: ?CjguiComposableUiCandidateSelectionProjection) { this.projection = projection }

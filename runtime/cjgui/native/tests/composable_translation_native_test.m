@@ -573,14 +573,14 @@ int main(void) {
         source.node = sourcePOD;
         CGSize cacheDrawable = CGSizeMake(240, 160);
         MTLClearColor cacheClear = MTLClearColorMake(0.0, 0.0, 0.0, 1.0);
-        NSString *groupBefore = CjguiEffectContentSignature(ctx.composableNodes, 0, 2,
+        NSString *groupBefore = CjguiEffectContentSignature(ctx, ctx.composableNodes, 0, 2,
             0, 0, 120, 80, NO, NSMakeSize(120, 80), cacheDrawable);
         NSString *backdropBefore = CjguiBackdropSignature(ctx.view, 1, 0, 0, 20, 20,
             0, 20, 4, 2.0f, 2.0f, 6, 6, cacheDrawable, cacheClear);
         CjguiInternalRendererComposableGeometry sourceGeometry = source.geometry;
         sourceGeometry.translateX += 0.125;
         source.geometry = sourceGeometry;
-        NSString *groupAfter = CjguiEffectContentSignature(ctx.composableNodes, 0, 2,
+        NSString *groupAfter = CjguiEffectContentSignature(ctx, ctx.composableNodes, 0, 2,
             0, 0, 120, 80, NO, NSMakeSize(120, 80), cacheDrawable);
         NSString *backdropAfter = CjguiBackdropSignature(ctx.view, 1, 0, 0, 20, 20,
             0, 20, 4, 2.0f, 2.0f, 6, 6, cacheDrawable, cacheClear);

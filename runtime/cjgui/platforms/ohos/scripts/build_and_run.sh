@@ -6,7 +6,7 @@
 #    分开：环境阻塞单独打印 ENV-BLOCK，产品失败打印 PRODUCT-FAIL）。
 #  - 断言只认本轮 PID；共享设备可保留其他应用日志。
 #
-# 用法： bash build_and_run.sh <LAB_ROOT> [--no-emulator-start] [--run-id <id>]
+# 用法： bash build_and_run.sh <LAB_ROOT> [--no-emulator-start|--build-only] [--run-id <id>]
 # 负对照（必须产出失败，用于证明闸门有效）：
 #   CJGUI_NEGATIVE_MISSING_LIB=libnope.so   闭包校验必须 FAIL
 #   CJGUI_NEGATIVE_NO_START=1               启动断言必须 FAIL（旧日志不得假绿）
@@ -37,19 +37,33 @@ LAB="$(cd "$LAB" && pwd)"
 source "$HERE/env.sh"
 
 NO_START=0
+BUILD_ONLY=0
 RUN_ID=""
 VERIFY_TRANSPORT=0
 TEST_GATES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-emulator-start) NO_START=1 ;;
+    --build-only) BUILD_ONLY=1 ;;
     --verify-transport) VERIFY_TRANSPORT=1 ;;
     --test-gates) TEST_GATES=1 ;;
+    --no-replay-merge) export CJGUI_NO_REPLAY_MERGE=1 ;;
     --run-id) RUN_ID="${2:?--run-id 需要值}"; shift ;;
     *) echo "未知参数: $1"; exit 2 ;;
   esac
   shift
 done
+
+if [ "$BUILD_ONLY" = "1" ] && { [ "${CJGUI_NEGATIVE_NO_START:-0}" = "1" ] ||
+    [ "${CJGUI_NEGATIVE_STALE_LOG:-0}" = "1" ] || [ "${CJGUI_NEGATIVE_SEAM_ONLY:-0}" = "1" ]; }; then
+  echo "ENTRY-FAIL --build-only 不能替代运行期负对照" >&2
+  exit 2
+fi
+
+# A bound stage refuses changed inputs before fingerprint/sync/relink mutations.
+if [ -n "${CJGUI_FROZEN_INPUT_MANIFEST:-}" ]; then
+  python3 "$HERE/source_inputs.py" --verify-frozen-inputs "$CJGUI_FROZEN_INPUT_MANIFEST"
+fi
 
 # 变体身份必须显式、可核对。两个维度相互独立，可同时开：
 #  - verify-transport：把 transport/verify 编入 src-dir（测试控制帧可用）
@@ -77,6 +91,9 @@ fi
 if [ "$TEST_GATES" = "1" ]; then
   export CJGUI_TEST_GATES=1
 fi
+if [ "$(printenv CJGUI_NO_REPLAY_MERGE 2>/dev/null)" = "1" ]; then
+  GATE_RENDERER_ARG="$GATE_RENDERER_ARG --no-replay-merge"
+fi
 echo "BUILD_VARIANT=$BUILD_VARIANT"
 
 # A1 §5 闸门参数：按住首帧 Flush 的时长与次数。默认 4000ms / 1 次——
@@ -85,7 +102,7 @@ echo "BUILD_VARIANT=$BUILD_VARIANT"
 GATE_HOLD_MS="${CJGUI_TEST_GATE_FLUSH_HOLD_MS:-4000}"
 GATE_HOLD_COUNT="${CJGUI_TEST_GATE_FLUSH_HOLD_COUNT:-1}"
 
-ARTIFACTS="$REPO_ROOT/labs/ohos_cangjie_smoke/artifacts/cjgui-backend"
+ARTIFACTS="${CJGUI_BUILD_ARTIFACT_ROOT:-$REPO_ROOT/labs/ohos_cangjie_smoke/artifacts/cjgui-backend}"
 mkdir -p "$ARTIFACTS/build" "$ARTIFACTS/run" "$ARTIFACTS/screenshots"
 [ -n "$RUN_ID" ] || RUN_ID="run_$(date +%Y%m%d_%H%M%S)"
 RUN_DIR="$ARTIFACTS/run/$RUN_ID"
@@ -223,6 +240,17 @@ if ! CJGUI_APP_PKG_LIB="$APP_PKG_LIB_FOR_CLOSURE" \
   fi
   echo "PRODUCT-FAIL 依赖闭包不完整"
   exit 1
+fi
+
+# Package-only work has a truthful boundary: compile/relink/closure/manifest,
+# never installation, a new app PID, a screen capture or a startup assertion.
+if [ "$BUILD_ONLY" = "1" ]; then
+  echo "$BUILD_VARIANT" > "$RUN_DIR/variant_$RUN_ID.txt"
+  bash "$HERE/source_manifest.sh" "$LAB" "$RUN_DIR/source_manifest_$RUN_ID.txt"
+  printf 'build=verified\nclosure=verified\nvariant=%s\nhap_sha256=%s\ninstall=not_run\nstartup=not_run\nwindow=not_run\n' \
+    "$BUILD_VARIANT" "$HAP_SHA" > "$RUN_DIR/build_only_$RUN_ID.txt"
+  echo "BUILD-ONLY 完成：构建/闭包/清单已验；安装/启动/窗口 not_run。run_dir=$RUN_DIR"
+  exit 0
 fi
 
 # 断言函数：只接受本轮日志（缓冲已清空）。

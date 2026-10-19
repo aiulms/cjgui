@@ -46,7 +46,7 @@ REDRAW_START = ("        TextPaintFrame paintFrame{lastFrameSession, lastFrameTi
 REDRAW_END = "        publishPaintedLayout(paintFrame);"
 PRESENT_COMMENT = "        // A2：必需目标超出保留预算 ⇒ 零 Flush 拒候选。drawNodeText 的早返回只销毁"
 PRESENT_FLUSH_DECL = "        OH_Drawing_ErrorCode flush = OH_DRAWING_SUCCESS;"
-RETENTION_TRIGGER = "if (retainHere) {\n                auto retained"
+RETENTION_TRIGGER = "if (retainHere || retainRenderOnly) {\n                auto retained"
 # A2 准入片段：从"计费资格"第一条语句起，到排版调用为止（不含）。
 ADMISSION_TRIGGER = "        const bool leaseEligible = kind == kKindText"
 
@@ -105,7 +105,9 @@ def build_pieces(text=None):
         "present gate must precede Flush declaration"
 
     t = text.index(ADMISSION_TRIGGER)
-    admission_block = balanced_block_upto(text, t, "const bool reuseEditing =")
+    admission_block = balanced_block_upto(text, t, "const PaintedTextLayout *reusedLayout =")
+    acquire_start = text.index("        const PaintedTextLayout *reusedLayout =", t)
+    acquisition_block = text[acquire_start:text.index("        if (!m.typography)", acquire_start)]
     r = text.index(RETENTION_TRIGGER)
     outer = text.rindex("if (!isEditingNode) {", 0, r)
     retention_block = balanced_block(text, outer)
@@ -115,8 +117,10 @@ def build_pieces(text=None):
         "enums": (extract_function(text, "enum class JobKind") + ";\n" +
                   extract_function(text, "enum class JobPhase") + ";"),
         "gesture_struct": extract_function(text, "struct TouchGesture {") + ";",
+        "style_struct": extract_function(text, "struct OhosTextStyleRun {") + ";",
         "layout_struct": extract_function(text, "struct PaintedTextLayout {") + ";",
         "frame_struct": extract_function(text, "struct AcceptedCaretRect {") + ";\n" +
+                        extract_function(text, "struct AcceptedTextLineBands {") + ";\n" +
                         extract_function(text, "struct TextPaintFrame {") + ";",
         "utf8_fn": extract_function(text, "std::u16string utf8ToUtf16(const std::string &utf8)"),
         "cancel_fn": extract_function(text, "bool cancelBeforeCommit()"),
@@ -124,6 +128,12 @@ def build_pieces(text=None):
         "post_if_fn": extract_function(text, "bool postIfRunning(const JobRef &job)"),
         "hit_post_fn": extract_function(text, "bool postCaretHitAfterRedraw("),
         "lease_units_fn": extract_function(text, "static size_t leaseTableUnits("),
+        "owned_units_fn": extract_function(text, "static size_t ownedLeaseTableUnits("),
+        "owned_slots_fn": extract_function(text, "static size_t ownedLeaseTableSlots("),
+        "prune_fn": extract_function(text, "void pruneRenderOnlyLayouts("),
+        "reuse_fn": extract_function(text, "static bool cjguiOhosCanReuseEditingTypography("),
+        "width_fn": extract_function(text, "static double cjguiOhosTextLayoutWidth("),
+        "measured_struct": extract_function(text, "struct Measured {") + ";",
         "frozen_owner_fn": extract_function(text, "static int64_t cjguiOhosFrozenPaintOwnerVersion("),
         "drag_target_fn": extract_function(text, "uint64_t activePresentationDragTarget(uint64_t session)"),
         "plan_fn": extract_function(text, "void planPresentationLeaseReservation("),
@@ -132,8 +142,13 @@ def build_pieces(text=None):
         "redraw_region": redraw_region,
         "present_region": present_region,
         "admission_block": admission_block,
+        "acquisition_block": acquisition_block,
         "retention_block": retention_block,
     }
+    draw_at = text.index('    void drawNodeText(')
+    editing_at = text.index('        if (isEditingNode) {\n            auto painted', draw_at)
+    pieces['editing_block'] = text[editing_at:text.index('            {\n                double sx =', editing_at)] + \
+        '            frame.candidate = std::move(painted);\n        }\n'
     for key in ("post_fn", "post_if_fn", "hit_post_fn"):
         assert "kPresentationQueryQueueMax" in pieces[key], key
     # 释放线程归属本身不在宿主切片里冒充证明——它由设备原件（teardown 日志行的 TID）
@@ -170,6 +185,8 @@ HARNESS_HEAD = r'''
 // 判定逻辑全部来自抽取的生产文本。
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cassert>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
@@ -180,6 +197,8 @@ HARNESS_HEAD = r'''
 #include <string>
 #include <type_traits>
 #include <vector>
+#include "cjgui_ohos_font_lease.h"
+#include "cjgui_ohos_text_work_trace.h"
 // 日志替身：格式串 + 任意位置出现的 const char* 实参（具名 reason）拼接，
 // 供 countLog 断言（数字实参跳过）。
 static void logAppend(std::string &out, const char *s) { out += " "; out += s; }
@@ -205,6 +224,7 @@ enum CjguiInternalRendererComposableNodeKind { kKindText = 3, kKindButton = 4, k
 enum OH_Drawing_ErrorCode { OH_DRAWING_SUCCESS = 0, OH_DRAWING_ERROR = 1 };
 
 static unsigned long g_flushCount = 0;
+static bool g_failNextFlush = false;
 static std::vector<std::string> g_logSink;
 static int countLog(const char *needle) {
   int n = 0;
@@ -214,13 +234,25 @@ static int countLog(const char *needle) {
 
 struct OH_Drawing_Typography { int dummy = 0; };
 static OH_Drawing_Typography *OH_Drawing_TypographyCreateStub() {
-  static OH_Drawing_Typography t;
-  return &t;
+  return new OH_Drawing_Typography;
 }
-static void OH_Drawing_DestroyTypography(OH_Drawing_Typography *) {}
+static void OH_Drawing_DestroyTypography(OH_Drawing_Typography *p) { delete p; }
+static void cjguiOhosDestroyObservedTypography(OH_Drawing_Typography *p) {
+  OH_Drawing_DestroyTypography(p);
+}
+struct OH_Drawing_FontCollection {};
+using OhosFontPool = CjguiOhosFontPool<OH_Drawing_FontCollection>;
+static double OH_Drawing_TypographyGetHeight(OH_Drawing_Typography*) {return 20;}
+static double OH_Drawing_TypographyGetLongestLine(OH_Drawing_Typography*) {return 1;}
+static double OH_Drawing_TypographyGetMaxWidth(OH_Drawing_Typography*) {return 100;}
+static size_t OH_Drawing_TypographyGetLineCount(OH_Drawing_Typography*) {return 1;}
+static double OH_Drawing_TypographyGetAlphabeticBaseline(OH_Drawing_Typography*) {return 16;}
+// Diagnostic hooks have no admission/selection authority; preserve their calls.
+static void cjguiOhosObserveTextWork(const char *, const CjguiOhosTextWorkTraceRef &, uint64_t) {}
 struct OH_Drawing_Surface { int dummy = 0; };
 static OH_Drawing_ErrorCode OH_Drawing_SurfaceFlush(OH_Drawing_Surface *) {
   g_flushCount += 1;
+  if (g_failNextFlush) { g_failNextFlush=false;return OH_DRAWING_ERROR; }
   return OH_DRAWING_SUCCESS;
 }
 struct OH_Drawing_Canvas { int dummy = 0; };
@@ -256,15 +288,18 @@ struct CjguiInternalRendererComposableNode {
   uint32_t isReadOnly = 0;
   double fontSize = 13.0;
   uint32_t fontWeight = 400;
+  double textRed=0,textGreen=0,textBlue=0,textAlpha=1;
   uint64_t acceptedBindingEpoch = 0;
 };
 struct SceneNode {
   CjguiInternalRendererComposableNode pod;
   std::string value;
   // 生产准入只读 `.size()`（样式 runs 条数上界）；类型按最小替身提供。
-  std::vector<uint32_t> textStyleRuns;
+  std::vector<OhosTextStyleRun> textStyleRuns;
 };
-struct PaintedSelectionHandles { bool valid = false; uint32_t start = 0, end = 0; };
+struct PaintedSelectionHandles {
+  bool valid = false; uint32_t start = 0, end = 0; std::u16string text;
+};
 struct PresentJobStub {
   uint64_t session = 42, ticketId = 5, generation = 3, geometryRevision = 11;
   void *window = reinterpret_cast<void *>(0xABCD);
@@ -280,6 +315,13 @@ HARNESS_SESSION = r'''
 // 会话替身：TouchGesture 为真实抽取结构；publish/hit 的会话分支按字段取值。
 struct Session {
   AcceptedCaretRect activeCaret;
+  std::vector<AcceptedTextLineBands> textLineBands;
+  struct PaintedBodyFact {
+    CjguiOhosCoverage coverage;
+    uint64_t ticket=0,serial=0,projection=0,generation=0,geometryRevision=0;
+    int64_t context=0;
+  } paintedBody;
+  uint64_t caretPaintProgress = 0;
   using TouchGesture = ::TouchGesture;   // 生产文本以 Session::TouchGesture 限定
   TouchGesture gesture;
   uint64_t acceptedPaintTicketId = 0;
@@ -294,6 +336,7 @@ struct Session {
   bool inUse = false;
   uint64_t token = 0;
   uint64_t editingNodeId = 0;
+  std::u16string editingText;
   int64_t editingMirrorOwnerVersion = -1;
 };
 static std::map<uint64_t, Session> g_sessionMap;
@@ -302,8 +345,11 @@ static Session *lookupSessionLocked(uint64_t id) {
   auto it = g_sessionMap.find(id);
   return it == g_sessionMap.end() ? nullptr : &it->second;
 }
-static std::u16string composedBuffer(const Session &) { return u""; }
+static std::u16string composedBuffer(const Session &s) { return s.editingText; }
 static std::string displayTextForNode(const SceneNode &node) { return node.value; }
+// These legacy budget fixtures have no coverage source. Coverage behavior is
+// checked by its production tests, not inferred from this null-source harness.
+static bool cjguiOhosCoverageCurrent(const Session &, const CjguiOhosCoverage &) { return false; }
 '''
 
 HARNESS_MAIN_CLASS = r'''
@@ -319,6 +365,8 @@ struct CjguiHitJob {
   uint64_t session = 0, nodeId = 0, bindingEpoch = 0, projectionVersion = 0;
   int64_t resourceId = -1, contextId = 0, nodeX = 0, nodeY = 0;
   uint64_t paintSerial = 0, sourcePaintTicket = 0;
+  std::chrono::steady_clock::time_point observationEnqueued;
+  uint64_t observationRenderEpoch = 0;
   bool presentation = false;
   JobKind kind = JobKind::CaretHitTest;
   std::mutex mutex;
@@ -328,7 +376,9 @@ struct CjguiHitJob {
 %CANCEL_FN%
 };
 // RedrawJob 替身：队列只需一个 kind=Redraw 的任务对象；判定逻辑不读它的字段。
-struct RedrawJob : CjguiHitJob { RedrawJob() { kind = JobKind::Redraw; } };
+struct RedrawJob : CjguiHitJob {
+  explicit RedrawJob(const char * = "unspecified") { kind = JobKind::Redraw; }
+};
 using CaretHitTestJob = CjguiHitJob;   // 生产文本的类型名
 using JobRef = std::shared_ptr<CjguiHitJob>;
 
@@ -350,13 +400,19 @@ struct QueueHarness {
 // separately compiled by test_text_visible_budget_native.py.
 static bool cjguiOhosTextIntersectsClip(const CjguiInternalRendererComposableNode &n) { return n.width > 0 && n.height > 0; }
 %FROZEN_OWNER_FN%
+%REUSE_FN%
+%WIDTH_FN%
 // ---- 帧运行链：替身成员 + 真实抽取成员（计费/必需目标/发布/命中/保留块） ----
 struct FrameHarness {
+    OhosFontPool fontPool{[]{return new OH_Drawing_FontCollection;},[](OH_Drawing_FontCollection *p){delete p;}};
+    uint64_t fontConfigurationGeneration=1;
     OH_Drawing_Surface *surface = reinterpret_cast<OH_Drawing_Surface *>(0x1);
     OH_Drawing_Canvas *canvas = reinterpret_cast<OH_Drawing_Canvas *>(0x2);
     std::vector<SceneNode> lastNodes;
     uint64_t lastFrameSession = 42, lastFrameTicket = 5, lastProjectionVersion = 9;
     bool lastFrameMirrorValid = false; std::u16string lastFrameMirrorText; int64_t lastFrameMirrorOwnerVersion = -1;
+    CjguiOhosCoverage lastFrameCoverage;
+    CjguiOhosTextWorkTraceRef lastFrameTextWorkTrace;
     uint64_t lastFrameMirrorBindingEpoch = 0, lastFrameMirrorDeclaredBindingEpoch = 0, lastFrameOwnedNodeId = 0;
     int64_t lastFrameOwnedResourceId = -1, lastFrameSourceContextId = 0;
     uint32_t lastFrameOwnedNodeKind = 0;
@@ -370,8 +426,18 @@ struct FrameHarness {
     double surfaceDensity = 1.0;
     std::unique_ptr<PaintedTextLayout> lastPaintLayout;
     std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> publishedPresentationLease;
+    std::map<uint64_t, std::unique_ptr<PaintedTextLayout>> publishedRenderOnlyLease;
     bool paintedLayoutUsable = false;
     int teardownCalls = 0;
+    std::unique_ptr<int> preparedMeasurement; // this fixture has no private measurement job
+    bool preparedMeasurementMatches(const TextPaintFrame &, const SceneNode &, const std::string &, int64_t) {
+        assert(!preparedMeasurement); return false;
+    }
+    void stagePreparedMeasurement(const std::vector<SceneNode> &, TextPaintFrame &) {
+        assert(!preparedMeasurement);
+    }
+    static size_t observedCoverageInput(const CjguiOhosCoverage &) { return 0; }
+    void observeResources(const char *, uint64_t, uint64_t, uint64_t, int64_t, size_t) {}
 
     // teardown 的租约表释放由设备原件验证（宿主替身只计调用次数，不充当证据）。
     void teardownSurface(bool) { teardownCalls += 1; }
@@ -386,13 +452,25 @@ struct FrameHarness {
     void drawBorder(OH_Drawing_Canvas *, const CjguiInternalRendererComposableNode &) {}
 
 %LEASE_UNITS_FN%
+%OWNED_UNITS_FN%
+%OWNED_SLOTS_FN%
+%PRUNE_FN%
+%MEASURED_STRUCT%
+    Measured takePreparedMeasurement(uint32_t) {assert(false);return {};}
+    uint64_t textWorkFingerprint(const std::string&) {return 1;}
+    Measured layoutTextStyled(const std::string &text,double,uint32_t,double,bool,uint32_t,
+        const OhosTextStyleRun*,size_t,uint64_t,TextPaintFrame*) {
+        auto font=fontPool.acquire(utf8ToUtf16(text).size(),fontConfigurationGeneration);
+        if(!font)return {};
+        ++layoutCalls;Measured m;m.fontLease=font;m.typography=OH_Drawing_TypographyCreateStub();return m;
+    }
 
 %DRAG_TARGET_FN%
 
 %PLAN_FN%
 
-    // 真实生产切片逐字挂在最小替身环境上：**准入块**（三界计费、必需/可选分流、
-    // 预留限制）与**登记块**（把本帧实际绘制的排版保留进租约表）都来自生产文本。
+    // Production admission, actual acquisition/sharing and publication/retention
+    // slices run verbatim; only Drawing SDK creation/metrics are substitutes.
     // `isEditingNode` 由 `editingNodeUnderTest` 注入 ⇒ "实际编辑排版是否入账"可测；
     // 排版替身调用位于准入**之后** ⇒ `layoutCalls` 是"准入在昂贵准备之前"的可观测
     // 断言（被拒节点必须零排版调用）。
@@ -410,14 +488,17 @@ struct FrameHarness {
             for (char c : node.value) editComposed.push_back(static_cast<char16_t>(c));
         }
         std::string text = node.value;
+        const int64_t layoutSourceContext = 0, caretContext=0;
+        const bool presentFeedback=false;
+        const uint32_t textColor=0xff000000;
         if (text.empty() && kind == kKindText && node.pod.isInteractive != 0 &&
             node.pod.isReadOnly == 0) text = " ";
         if (text.empty()) return;
-        struct Measured { OH_Drawing_Typography *typography = nullptr; } m;
         struct Geom { double originX = 0.0, originY = 0.0; } geom;
 %ADMISSION_BLOCK%
-        m.typography = OH_Drawing_TypographyCreateStub();
-        ++layoutCalls;
+%ACQUISITION_BLOCK%
+        if(!m.typography) return;
+%EDITING_BLOCK%
 %RETENTION_BLOCK%
     }
 
@@ -427,6 +508,11 @@ struct FrameHarness {
 
     void executeRedrawRegion()
     {
+        // Inject the declared fixture editing bytes at the input boundary;
+        // reservation itself is the unchanged production method below.
+        for(auto &s:g_sessions.sessions)if(s.inUse && s.editing)
+            for(const auto &node:lastNodes)if(node.pod.nodeId==s.editingNodeId)
+                s.editingText=utf8ToUtf16(node.value);
 %REDRAW_REGION%
     }
 
@@ -491,7 +577,9 @@ static size_t publishFromEmpty(size_t count, size_t units) {
   g_sessionMap.clear();
   ensureHitSession();
   g_h.publishedPresentationLease.clear();
+  g_h.publishedRenderOnlyLease.clear();
   g_h.lastPaintLayout.reset();
+  g_h.fontPool.clear();
   g_h.editingNodeUnderTest = 0;
   g_h.lastNodes.clear();
   for (uint64_t id = 1; id <= count; ++id) g_h.lastNodes.push_back(makeTextNode(id, units));
@@ -529,8 +617,9 @@ static size_t publishBaseline() {
 int main() {
   unsigned long flushBase = 0;
   // ============ ① 可选第 65 个条目：具名不保留、照常 Flush、命中按名拒绝 ============
-  // 计费含"同一 id 的旧条目将被本帧换代"的让位关系 ⇒ 稳定满表可以重绘，
-  // 而真正的第 65 个条目（新 id）必须具名不保留。
+  // A stable full table redraws by borrowing the same SDK objects, not by
+  // discounting objects which a future Flush might replace. A new 65th object
+  // must still be refused by the original retained-slot boundary.
   if (publishFromEmpty(kPresentationLeaseMax, 1) != kPresentationLeaseMax) return 10;
   flushBase = g_flushCount;
   g_logSink.clear();
@@ -620,7 +709,7 @@ int main() {
   g_logSink.clear();
   {
     SceneNode n = makeTextNode(600, 1);
-    n.textStyleRuns.resize(kPresentationLeaseNodeRunsMax + 1, 0xFF000000u);
+    n.textStyleRuns.resize(kPresentationLeaseNodeRunsMax + 1, OhosTextStyleRun{});
     g_h.lastNodes.clear();
     g_h.lastNodes.push_back(n);
     for (uint64_t id = 1; id <= 8; ++id) g_h.lastNodes.push_back(makeTextNode(id, 1));
@@ -841,6 +930,30 @@ int main() {
   if(g_flushCount!=flushBase+1 || countLog("transient_peak_over_budget")!=0) return 141;
   if(g_h.publishedPresentationLease.size()>kPresentationLeaseMax) return 142;
 
+  // Actual failed SurfaceFlush must keep the old native owners without
+  // granting input on an unverified paint. The next successful repaint restores
+  // the existing query gate using those same actual layouts.
+  g_sessionMap.clear();ensureHitSession();
+  for(auto &s:g_sessions.sessions)s=Session{};
+  if(publishFromEmpty(1,1)!=1)return 143;
+  g_h.lastNodes={makeTextNode(1,1),makeTextNode(1000,3)};
+  g_h.lastNodes.back().pod.isInteractive=0;
+  g_h.executeRedrawRegion();
+  if(g_h.publishedRenderOnlyLease.count(1000)!=1 || g_h.publishedPresentationLease.count(1000))return 144;
+  const auto *oldRender=g_h.publishedRenderOnlyLease.at(1000)->typography.get();
+  const auto *oldInput=g_h.publishedPresentationLease.at(1)->typography.get();
+  const size_t beforeFlushFailure=g_h.layoutCalls;
+  g_failNextFlush=true;g_h.executeRedrawRegion();
+  if(g_h.layoutCalls!=beforeFlushFailure || g_h.publishedRenderOnlyLease.at(1000)->typography.get()!=oldRender ||
+     g_h.publishedPresentationLease.at(1)->typography.get()!=oldInput)return 145;
+  if(g_h.paintedLayoutUsable)return 146;
+  {auto query=makeHitJob(1);if(g_h.runPresentationHitLocked(query.get())!=CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY)return 147;}
+  g_h.lastNodes.back().value="changed";g_failNextFlush=true;g_h.executeRedrawRegion();
+  if(g_h.layoutCalls!=beforeFlushFailure+1 || g_h.publishedRenderOnlyLease.at(1000)->typography.get()!=oldRender ||
+     g_h.publishedRenderOnlyLease.at(1000)->renderTextBytes!="aaa")return 148;
+  g_h.lastNodes.back().value="aaa";g_h.executeRedrawRegion();
+  if(!g_h.paintedLayoutUsable || g_h.publishedRenderOnlyLease.at(1000)->typography.get()!=oldRender)return 149;
+  {auto query=makeHitJob(1);if(g_h.runPresentationHitLocked(query.get())!=CJGUI_INTERNAL_RENDERER_OK)return 150;}
   std::cout << "presentation_budget_real_frame=ok" << std::endl;
   return 0;
 }
@@ -850,7 +963,7 @@ int main() {
 def assemble(text=None):
     p = build_pieces(text)
     src = HARNESS_HEAD + "\n" + p["constants"] + "\n" + p["enums"] + "\n" \
-        + HARNESS_REPLICAS + "\n" + p["gesture_struct"] + "\n" \
+        + p["style_struct"] + "\n" + HARNESS_REPLICAS + "\n" + p["gesture_struct"] + "\n" \
         + p["layout_struct"] + "\n" + p["frame_struct"] \
         + "\n" + p["utf8_fn"] + "\n" + HARNESS_SESSION + "\n" + HARNESS_MAIN_CLASS
     src = src.replace("%CANCEL_FN%", p["cancel_fn"])
@@ -858,6 +971,9 @@ def assemble(text=None):
     src = src.replace("%POST_IF_FN%", p["post_if_fn"])
     src = src.replace("%HIT_POST_FN%", p["hit_post_fn"])
     src = src.replace("%LEASE_UNITS_FN%", p["lease_units_fn"])
+    for key in ('owned_units_fn','owned_slots_fn','prune_fn','reuse_fn','width_fn','measured_struct',
+                'acquisition_block','editing_block'):
+        src = src.replace('%'+key.upper()+'%',p[key])
     src = src.replace("%FROZEN_OWNER_FN%", p["frozen_owner_fn"])
     src = src.replace("%DRAG_TARGET_FN%", p["drag_target_fn"])
     src = src.replace("%PUBLISH_FN%", p["publish_fn"])
@@ -877,7 +993,7 @@ def build_and_run(harness):
         cpp.write_text(harness, encoding="utf-8")
         exe = pathlib.Path(td) / "budget_real_frame"
         build = subprocess.run(
-            ["clang++", "-std=c++17", "-Wall", "-Wextra",
+            ["clang++", "-std=c++17", "-Wall", "-Wextra", "-I", str(ROOT / "host"),
              "-Wno-unused-parameter", "-Wno-unused-variable",
              "-o", str(exe), str(cpp)],
             capture_output=True, text=True)
@@ -959,8 +1075,8 @@ class MutationDiscriminationTest(unittest.TestCase):
         # 计费反例必须翻红（生产表达式为两行，变异按当前文本锚定）。
         def mutate(text):
             return text.replace(
-                "const size_t heldUnits = leaseTableUnits(publishedPresentationLease) -",
-                "const size_t heldUnits = std::min(leaseTableUnits(publishedPresentationLease), size_t(0)) -", 1)
+                "return leaseTableUnits(publishedPresentationLease) + leaseTableUnits(publishedRenderOnlyLease) +",
+                "return std::min(leaseTableUnits(publishedPresentationLease), size_t(0)) + leaseTableUnits(publishedRenderOnlyLease) +", 1)
         self._run_mutated(mutate, "run_red")
 
     def test_billing_ignoring_transient_peak_is_detected(self):
@@ -968,8 +1084,8 @@ class MutationDiscriminationTest(unittest.TestCase):
         # 本帧待保留文本）不计入总工作量，② 的峰值越界腿必须翻红。
         def mutate(text):
             return text.replace(
-                "leaseTableUnits(frame.presentationLease) + frame.leaseTransientUnits;",
-                "leaseTableUnits(frame.presentationLease);", 1)
+                "ownedLeaseTableUnits(frame.renderOnlyLease) +\n                frame.leaseTransientUnits;",
+                "ownedLeaseTableUnits(frame.renderOnlyLease);", 1)
         self._run_mutated(mutate, "run_red")
 
     def test_admission_after_expensive_layout_is_detected(self):
@@ -992,19 +1108,21 @@ class MutationDiscriminationTest(unittest.TestCase):
     def test_teardown_unmeasured_release_amount_is_detected(self):
         # 变异：退回旧实现——清空后才打印写死的 retained=0。结构断言必须失败，
         # 否则"资源在渲染线程释放"这条设备判据又变成不可证（无前置非零观测）。
-        measured = (
-            "        const size_t releasedLeaseSlots = publishedPresentationLease.size();\n"
-            "        const size_t releasedLeaseUnits = leaseTableUnits(publishedPresentationLease);\n"
-            "        publishedPresentationLease.clear();\n"
+        measured_slots = "        const size_t releasedLeaseSlots = publishedPresentationLease.size();\n"
+        measured_units = "        const size_t releasedLeaseUnits = leaseTableUnits(publishedPresentationLease);\n"
+        measured_log = (
             '        RLOGI("presentation lease cleared on teardown released_slots=%{public}zu "\n'
             '              "released_units=%{public}zu remaining=0",\n'
             "              releasedLeaseSlots, releasedLeaseUnits);\n")
-        constant = ('        publishedPresentationLease.clear();\n'
-                    '        RLOGI("presentation lease cleared on teardown retained=0");\n')
+        constant_log = '        RLOGI("presentation lease cleared on teardown retained=0");\n'
 
         def mutate(text):
-            assert measured in text, "teardown measurement anchor moved"
-            return text.replace(measured, constant, 1)
+            # Font retirement now lies between clear and the measured log.
+            # Remove only the measured values/log; keep that real cleanup intact.
+            for original in (measured_slots, measured_units, measured_log):
+                assert text.count(original) == 1, "teardown measurement anchor moved"
+            return text.replace(measured_slots, "", 1).replace(measured_units, "", 1).replace(
+                measured_log, constant_log, 1)
         self._run_mutated(mutate, "extract_fails")
 
 

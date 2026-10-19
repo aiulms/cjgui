@@ -58,10 +58,18 @@ let CJGUI_INTERNAL_RENDERER_SCENE_STALE: Int32 = 33
 // H 内部恢复票据的「等待人锚」回执：与 PRESENT_PENDING 同类，是**有终态的等待**
 // 而不是拒绝。窗口不得把它计入失败重试预算，也不得据此声称选区已落位。
 let CJGUI_INTERNAL_RENDERER_PROXY_RESTORE_ANCHOR_PENDING: Int32 = 36
+// OHOS-private terminal: the automatic prefix target was superseded by a
+// genuinely completed admitted input. It is neither installed nor failed.
+let CJGUI_OHOS_RESTORE_SUPERSEDED_BY_ADMITTED_INPUT: Int32 = 39
+let CJGUI_OHOS_RESTORE_SUPERSEDED_BY_ORIGINAL_RESULT: Int32 = 40
 let CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR: Int32 = 99
 
 // Invalid session token sentinel.
 let CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN: UInt64 = 0
+/// 渲染器 ABI 版本。**改 CjguiInternalRendererComposableNode 的任何字段时，
+/// 必须同时改 cjgui_internal_renderer.h 的 CJGUI_INTERNAL_RENDERER_ABI_VERSION**。
+/// 两侧不一致时拒绝建立会话 —— 字段表错位只会画出花屏，不会报错，必须在这里拦住。
+let CJGUI_INTERNAL_RENDERER_ABI_VERSION: UInt32 = 8u32
 
 // ---- @C struct mappings (layout-identical to the C POD structs) ----
 
@@ -226,6 +234,25 @@ struct CjguiInternalRendererComposableDataTransferItem {
 }
 
 @C
+struct CjguiInternalRendererComposableGeometry {
+    var nodeId: UInt64 = 0
+    var clipCount: UInt32 = 0
+    var reserved: UInt32 = 0
+    var translateX: Float64 = 0.0
+    var translateY: Float64 = 0.0
+    var clip0X: Float64 = 0.0
+    var clip0Y: Float64 = 0.0
+    var clip1X: Float64 = 0.0
+    var clip1Y: Float64 = 0.0
+    var clip2X: Float64 = 0.0
+    var clip2Y: Float64 = 0.0
+    var clip3X: Float64 = 0.0
+    var clip3Y: Float64 = 0.0
+    var scaleX: Float64 = 1.0
+    var scaleY: Float64 = 1.0
+}
+
+@C
 struct CjguiInternalRendererComposableNode {
     var nodeId: UInt64 = 0
     var projectionVersion: UInt64 = 0
@@ -346,7 +373,27 @@ struct CjguiInternalRendererComposableNode {
     var effectBackdropBlurRadiusPoints: UInt32 = 0
     var effectBackdropBlurFallback: UInt32 = 0
     var wheelScrollable: UInt32 = 0
+    var textMaxLines: UInt32 = 0
+    var textOverflow: UInt32 = 0
     var acceptedBindingEpoch: UInt64 = 0
+    var letterSpacing: Float64 = 0.0
+    var lineHeightPoints: Float64 = 0.0
+    var maxLines: UInt32 = 0
+    var ellipsisEnabled: UInt32 = 0
+    var cornerRadiiPresent: UInt32 = 0
+    var cornerTopLeft: Float64 = 0.0
+    var cornerTopRight: Float64 = 0.0
+    var cornerBottomRight: Float64 = 0.0
+    var cornerBottomLeft: Float64 = 0.0
+    var zIndex: Int64 = 0
+    var rotateDegrees: Float64 = 0.0
+    // 单色图标着色。采样 RGB 乘以 (r,g,b)，alpha 乘以 a；a == 0 表示不染色，
+    // 这也是默认值。只有图片节点读取这些字段，文字与形状忽略。源图必须是
+    // 透明底单色字形，否则会把不透明背景一起染上颜色。
+    var iconTintRed: Float64 = 0.0
+    var iconTintGreen: Float64 = 0.0
+    var iconTintBlue: Float64 = 0.0
+    var iconTintAlpha: Float64 = 0.0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -383,7 +430,14 @@ struct CjguiInternalRendererComposableNode {
         effectMaskStop1Position!: Float64 = 0.0, effectMaskStop1Alpha!: Float64 = 0.0,
         effectMaskStop2Position!: Float64 = 0.0, effectMaskStop2Alpha!: Float64 = 0.0,
         effectMaskStop3Position!: Float64 = 0.0, effectMaskStop3Alpha!: Float64 = 0.0,
-        effectBackdropBlurRadiusPoints!: UInt32 = 0u32, effectBackdropBlurFallback!: UInt32 = 0u32) {
+        effectBackdropBlurRadiusPoints!: UInt32 = 0u32, effectBackdropBlurFallback!: UInt32 = 0u32,
+        letterSpacing!: Float64 = 0.0, lineHeightPoints!: Float64 = 0.0,
+        maxLines!: UInt32 = 0u32, ellipsisEnabled!: UInt32 = 0u32,
+        textMaxLines!: UInt32 = 0u32, textOverflow!: UInt32 = 0u32,
+        cornerRadiiPresent!: UInt32 = 0u32, cornerTopLeft!: Float64 = 0.0, cornerTopRight!: Float64 = 0.0,
+        cornerBottomRight!: Float64 = 0.0, cornerBottomLeft!: Float64 = 0.0, zIndex!: Int64 = 0,
+        rotateDegrees!: Float64 = 0.0, iconTintRed!: Float64 = 0.0, iconTintGreen!: Float64 = 0.0,
+        iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0) {
         this.nodeId = nodeId
         this.projectionVersion = projectionVersion
         this.resourceId = resourceId
@@ -502,6 +556,23 @@ struct CjguiInternalRendererComposableNode {
         this.effectMaskStop3Alpha = effectMaskStop3Alpha
         this.effectBackdropBlurRadiusPoints = effectBackdropBlurRadiusPoints
         this.effectBackdropBlurFallback = effectBackdropBlurFallback
+        this.letterSpacing = letterSpacing
+        this.lineHeightPoints = lineHeightPoints
+        this.maxLines = maxLines
+        this.ellipsisEnabled = ellipsisEnabled
+        this.textMaxLines = textMaxLines
+        this.textOverflow = textOverflow
+        this.cornerRadiiPresent = cornerRadiiPresent
+        this.cornerTopLeft = cornerTopLeft
+        this.cornerTopRight = cornerTopRight
+        this.cornerBottomRight = cornerBottomRight
+        this.cornerBottomLeft = cornerBottomLeft
+        this.zIndex = zIndex
+        this.rotateDegrees = rotateDegrees
+        this.iconTintRed = iconTintRed
+        this.iconTintGreen = iconTintGreen
+        this.iconTintBlue = iconTintBlue
+        this.iconTintAlpha = iconTintAlpha
     }
 }
 
@@ -763,6 +834,8 @@ foreign {
 
     func cjgui_internal_renderer_has_unkeyed_application_exit_request(): UInt8
 
+    func cjgui_internal_renderer_abi_version(): UInt32
+
     func cjgui_internal_renderer_create(
         config: CPointer<CjguiInternalRendererConfig>,
         outStatus: CPointer<Int32>
@@ -805,6 +878,13 @@ foreign {
         outTicket: CPointer<CjguiInternalRendererProxyRestoreTicket>
     ): Int32
 
+    func cjgui_ohos_recover_accepted_text_proxy_ticket(
+        session: UInt64, nodeId: UInt64, resourceId: Int64, nodeKind: UInt32,
+        sceneVersion: UInt64, acceptedValue: CString, selectionStart: UInt32,
+        selectionEnd: UInt32, selectionIntentRevision: UInt64,
+        outTicket: CPointer<CjguiInternalRendererProxyRestoreTicket>
+    ): Int32
+
     func cjgui_internal_renderer_query_proxy_restore_ticket(
         session: UInt64,
         requestId: UInt64,
@@ -829,6 +909,11 @@ foreign {
         session: UInt64,
         projectionVersion: UInt64,
         nodeCount: UInt32
+    ): Int32
+
+    func cjgui_internal_renderer_set_composable_scene_geometry(
+        session: UInt64, projectionVersion: UInt64, nodeIndex: UInt32,
+        geometry: CPointer<CjguiInternalRendererComposableGeometry>
     ): Int32
 
     func cjgui_internal_renderer_set_composable_scene_node(
@@ -992,6 +1077,9 @@ foreign {
     func ohos_renderer_accepted_active_caret_rect(session: UInt64, expectedScene: UInt64,
         outNodeId: CPointer<UInt64>, outBinding: CPointer<UInt64>, outLeftVp: CPointer<Float64>,
         outTopVp: CPointer<Float64>, outRightVp: CPointer<Float64>, outBottomVp: CPointer<Float64>): Int32
+    func ohos_renderer_accepted_text_line_bands(session: UInt64, expectedScene: UInt64,
+        node: UInt64, binding: UInt64, firstTop: CPointer<Float64>, firstBottom: CPointer<Float64>,
+        lastTop: CPointer<Float64>, lastBottom: CPointer<Float64>): Int32
 
     // round9-A（H 私有只读接缝）：取**最近一次出队事件**在入队时冻结的来源身份
     // （editingContextId + editingContextGeneration）。公共事件 POD 没有这两个
@@ -1017,9 +1105,21 @@ foreign {
     func cjgui_ohos_declare_owned_text_source(session: UInt64, nodeId: UInt64, resourceId: Int64,
         nodeKind: UInt32, bindingEpoch: UInt64, enabled: Int32, mirrorText: CString,
         mirrorVersion: Int64, basis: CString): Int32
+    func ohos_renderer_declare_selection_command(session: UInt64, commandId: UInt64): Int32
+    func ohos_renderer_declare_original_owner_result(session: UInt64, resultId: UInt64): Int32
     func ohos_renderer_caret_paint_progress(session: UInt64): UInt64
     func ohos_renderer_input_ticket_fact(session: UInt64, part: UInt32): CString
+    func ohos_renderer_original_insert_fact(session: UInt64, part: UInt32): CString
+    func ohos_renderer_original_insert_begin(session: UInt64, id: UInt64): Int32
+    func ohos_renderer_original_insert_begin_v2(session: UInt64, id: UInt64, sourceKind: UInt32,
+        source: UInt64, execution: UInt64, predecessor: UInt64, version: Int64,
+        anchor: Int64, focus: Int64, basis: CString): Int32
+    func ohos_renderer_original_insert_complete(session: UInt64, id: UInt64, accepted: Int32,
+        version: Int64, anchor: Int64, focus: Int64, basis: CString): Int32
     func ohos_renderer_publish_choice(session: UInt64, basis: CString, accepted: Int32): Int32
+    func ohos_renderer_publish_choice_id(session: UInt64, id: UInt64, basis: CString, accepted: Int32,
+        version: Int64, origin: Int64, anchor: Int64, focus: Int64): Int32
+    func ohos_renderer_choice_fact(session: UInt64, id: UInt64, part: UInt32): CString
     func ohos_renderer_input_dirty_ticket(session: UInt64): UInt64
     func ohos_renderer_finish_refused_input(session: UInt64, ticket: UInt64, request: UInt64, basis: CString): Int32
     func ohos_renderer_publish_restore_choice(session: UInt64, request: UInt64, basis: CString): Int32
@@ -1088,6 +1188,14 @@ foreign {
         maximumWidth: UInt32,
         outMeasurement: CPointer<CjguiInternalRendererTextMeasurement>
     ): Int32
+
+    func ohos_renderer_observe_candidate_text_source(session: UInt64, projection: UInt64,
+        input: UInt64, node: UInt64, resource: Int64, kind: UInt32, binding: UInt64,
+        version: Int64, basis: CString, text: CString): Unit
+
+    func ohos_renderer_observe_managed_text_boundary(session: UInt64, input: Int64, request: UInt64,
+        version: Int64, phase: CString, basis: CString, allocated: Int64, physical: Int64,
+        gcCount: Int64, gcFreed: Int64, gcTime: Int64): Unit
 
     func cjgui_internal_renderer_measure_composable_multiline_natural_height(
         session: UInt64,
@@ -1206,6 +1314,16 @@ func internalRendererHasUnkeyedApplicationExitRequest(): Bool {
 }
 
 func internalRendererCreate(config: CjguiInternalRendererConfig): InternalRendererCreateResult {
+    // ABI 版本握手：渲染器静态库可能来自另一次构建（框架快照与产品 .so 不同代）。
+    // 版本不一致时不会进入绘制路径 —— 否则字段按错误偏移读出垃圾值，
+    // 表现为圆角变成个位数、卡片慢慢歪掉这种查不出原因的怪象。
+    // 只比版本号：@C 结构的字节数在 host 与设备 aarch64 上并不相等（对齐规则不同），
+    // 比大小会假报错。字段级一致性由 host 侧哨兵测试保证，这里只拦"代次不同"。
+    let nativeAbiVersion = unsafe { cjgui_internal_renderer_abi_version() }
+    if (nativeAbiVersion != CJGUI_INTERNAL_RENDERER_ABI_VERSION) {
+        return InternalRendererCreateResult(CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN,
+            CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR)
+    }
     var cfg = config
     var status: Int32 = 0
     var token: UInt64 = CJGUI_INTERNAL_RENDERER_INVALID_SESSION_TOKEN
@@ -1374,6 +1492,17 @@ func internalRendererSetComposableSceneNode(
                 }
             }
         }
+    }
+    return status
+}
+
+func internalRendererSetComposableSceneGeometry(session: UInt64, projectionVersion: UInt64,
+    nodeIndex: UInt32, geometry: CjguiInternalRendererComposableGeometry): Int32 {
+    var mutableGeometry = geometry
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    unsafe {
+        status = cjgui_internal_renderer_set_composable_scene_geometry(session, projectionVersion,
+            nodeIndex, inout mutableGeometry)
     }
     return status
 }
@@ -1627,6 +1756,21 @@ func internalRendererAcceptedActiveCaretRect(session: UInt64, expectedScene: UIn
     return (status, nodeId, binding, leftVp, topVp, rightVp, bottomVp)
 }
 
+// Only value geometry from the current successful Paint/Flush. Missing/stale
+// geometry asks the existing bounded activity to wait; never infer a font line.
+func internalRendererAcceptedTextLineBands(session: UInt64, expectedScene: UInt64, node: UInt64, binding: UInt64): (Int32,
+    Float64, Float64, Float64, Float64) {
+    var firstTop: Float64 = 0.0
+    var firstBottom: Float64 = 0.0
+    var lastTop: Float64 = 0.0
+    var lastBottom: Float64 = 0.0
+    let status = unsafe {
+        ohos_renderer_accepted_text_line_bands(session, expectedScene, node, binding, inout firstTop, inout firstBottom,
+            inout lastTop, inout lastBottom)
+    }
+    return (status, firstTop, firstBottom, lastTop, lastBottom)
+}
+
 /// round9-A：读回「最近一次出队事件」的冻结来源身份。
 ///
 /// 返回 `(hasSource, ctx, generation, seq)`。`hasSource=false` 时**不得**推测来源
@@ -1751,7 +1895,7 @@ struct InternalRendererProxyRestoreTicket {
 
 func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, resourceId: Int64,
     nodeKind: Int64, sceneVersion: Int64, acceptedValue: String, start: Int64,
-    end: Int64): (Int32, InternalRendererProxyRestoreTicket) {
+    end: Int64, automaticIntentRevision!: Int64 = -1): (Int32, InternalRendererProxyRestoreTicket) {
     var ticket = CjguiInternalRendererProxyRestoreTicket()
     // resourceId = -1 合法：presentation 锚点节点（可视编辑包，如预览正文容器）
     // 声明时不带资源号，native 侧按完整身份校验，这里不再提前拒绝。
@@ -1767,9 +1911,15 @@ func internalRendererRecoverTextProxyTicket(session: UInt64, nodeId: Int64, reso
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     try (valueResource = cValue.asResource()) {
         unsafe {
-            status = cjgui_internal_renderer_recover_text_proxy_ticket(session, UInt64(nodeId), resourceId,
-                UInt32(nodeKind), UInt64(sceneVersion), valueResource.value, UInt32(start), UInt32(end),
-                inout ticket)
+            if (automaticIntentRevision >= 0) {
+                status = cjgui_ohos_recover_accepted_text_proxy_ticket(session, UInt64(nodeId), resourceId,
+                    UInt32(nodeKind), UInt64(sceneVersion), valueResource.value, UInt32(start), UInt32(end),
+                    UInt64(automaticIntentRevision), inout ticket)
+            } else {
+                status = cjgui_internal_renderer_recover_text_proxy_ticket(session, UInt64(nodeId), resourceId,
+                    UInt32(nodeKind), UInt64(sceneVersion), valueResource.value, UInt32(start), UInt32(end),
+                    inout ticket)
+            }
         }
     }
     return (status, InternalRendererProxyRestoreTicket(status, ticket))
@@ -2210,7 +2360,7 @@ func internalRendererSetComposableRangeEditDelta(session: UInt64, enabled: Bool)
 /// 恢复校验时优先消费它，节点只提供身份与几何。撤回时传空串。
 func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt64, resourceId: Int64,
     nodeKind: UInt32, bindingEpoch: UInt64, enabled: Bool, mirrorText!: String = "",
-    mirrorVersion!: Int64 = -1, sourceBasis!: String = ""): Int32 {
+    mirrorVersion!: Int64 = -1, sourceBasis!: String = "", commandId!: UInt64 = 0u64, originalResultId!: UInt64 = 0u64): Int32 {
     let flag: Int32 = if (enabled) {
         1
     } else {
@@ -2227,6 +2377,14 @@ func internalRendererSetComposableOwnedTextSession(session: UInt64, nodeId: UInt
             }
         }
     }
+    if (status == CJGUI_INTERNAL_RENDERER_OK) {
+        if (unsafe { ohos_renderer_declare_selection_command(session, commandId) } != 0) {
+            status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        }
+        if (status==CJGUI_INTERNAL_RENDERER_OK && unsafe {ohos_renderer_declare_original_owner_result(session,originalResultId)}!=0) {
+            status=CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        }
+    }
     return status
 }
 
@@ -2235,16 +2393,21 @@ class CjguiOhosInputTicketFact {
     let id: Int64; let predecessor: Int64; let key: String; let basis: String
     let before: String; let after: String; let field: String
     let choiceBasis: String; let observation: Int64
+    let choiceVersion: Int64; let choiceOrigin: Int64
+    let executionBasis: String; let executionCommand: Int64; let executionSequence: Int64
     let node: Int64; let resource: Int64; let nodeKind: Int64
     let ownerBinding: UInt64; let acceptedBinding: UInt64; let projection: UInt64
     let start16: Int64; let end16: Int64; let inserted: String; let malformed: Bool; let transferred: Bool
     init(id: Int64, predecessor: Int64, key: String, basis: String,
-        before: String, after: String, field: String, choiceBasis!: String = "", observation!: Int64 = 0,
+        before: String, after: String, field: String, choiceBasis!: String = "", observation!: Int64 = 0, choiceVersion!: Int64 = -1, choiceOrigin!: Int64 = -1,
         node!: Int64 = -1, resource!: Int64 = -1, nodeKind!: Int64 = -1,
         ownerBinding!: UInt64 = 0u64, acceptedBinding!: UInt64 = 0u64, projection!: UInt64 = 0u64,
-        start16!: Int64 = -1, end16!: Int64 = -1, inserted!: String = "", malformed!: Bool = false, transferred!: Bool = false) {
+        start16!: Int64 = -1, end16!: Int64 = -1, inserted!: String = "", malformed!: Bool = false, transferred!: Bool = false,
+        executionBasis!: String = "", executionCommand!: Int64 = 0, executionSequence!: Int64 = 0) {
         this.id=id; this.predecessor=predecessor; this.key=key; this.basis=basis
         this.before=before; this.after=after; this.field=field; this.choiceBasis=choiceBasis; this.observation=observation
+        this.choiceVersion=choiceVersion; this.choiceOrigin=choiceOrigin
+        this.executionBasis=executionBasis; this.executionCommand=executionCommand; this.executionSequence=executionSequence
         this.node=node; this.resource=resource; this.nodeKind=nodeKind
         this.ownerBinding=ownerBinding; this.acceptedBinding=acceptedBinding; this.projection=projection
         this.start16=start16; this.end16=end16; this.inserted=inserted; this.malformed=malformed; this.transferred=transferred
@@ -2275,12 +2438,75 @@ func internalRendererInputTicket(session: UInt64): ?CjguiOhosInputTicketFact {
     }
     if (values[0] <= 0 || values[2] <= 0 || values[3] <= 0 || values[4] <= 0 || values[5] < 0 ||
         values[6] < 0 || values[7] < values[6]) { return Some(invalid) }
+    let mapping=unsafe { ohos_renderer_input_ticket_fact(session,9u32) }.toString().split(",")
+    var choiceVersion: Int64 = -1; var choiceOrigin: Int64 = -1
+    if(mapping.size==2) {
+        choiceVersion=match(Int64.tryParse(mapping[0])) {case Some(v)=>v;case None=>-1}
+        choiceOrigin=match(Int64.tryParse(mapping[1])) {case Some(v)=>v;case None=>-1}
+    }
     let inserted = unsafe { ohos_renderer_input_ticket_fact(session, 7u32) }.toString()
+    let executionBasis = unsafe { ohos_renderer_input_ticket_fact(session, 10u32) }.toString()
+    let execution = unsafe { ohos_renderer_input_ticket_fact(session, 11u32) }.toString().split(",")
+    var executionCommand: Int64 = 0; var executionSequence: Int64 = 0
+    if (!executionBasis.isEmpty()) {
+        if (execution.size != 2) { return Some(invalid) }
+        executionCommand = match (Int64.tryParse(execution[0])) { case Some(v) => v; case None => 0 }
+        executionSequence = match (Int64.tryParse(execution[1])) { case Some(v) => v; case None => 0 }
+        if (executionCommand != observation || executionSequence <= 0) { return Some(invalid) }
+    }
     return Some(CjguiOhosInputTicketFact(id,predecessor,parts[2],parts[3],before,after,field,
-        choiceBasis:choice,observation:observation,node:values[0],resource:values[1],nodeKind:values[2],
+        choiceBasis:choice,observation:observation,choiceVersion:choiceVersion,choiceOrigin:choiceOrigin,node:values[0],resource:values[1],nodeKind:values[2],
         projection:UInt64(values[3]),acceptedBinding:UInt64(values[4]),ownerBinding:UInt64(values[5]),
         start16:values[6],end16:values[7],inserted:inserted,
-        transferred: unsafe { ohos_renderer_input_ticket_fact(session,8u32) }.toString() == "1"))
+        transferred: unsafe { ohos_renderer_input_ticket_fact(session,8u32) }.toString() == "1",
+        executionBasis: executionBasis, executionCommand: executionCommand, executionSequence: executionSequence))
+}
+
+func internalRendererOhosCommandPending(session: UInt64, command: UInt64): Bool {
+    return command > 0u64 && unsafe { ohos_renderer_choice_fact(session, command, 12u32) }.toString() == "1"
+}
+
+// One copied observation, read before another event can replace the native slot.
+class CjguiOhosChoiceFact {
+    let id: Int64; let text: String; let version: Int64; let origin: Int64; let anchor: Int64; let focus: Int64
+    let observedText: String; let targetVersion: Int64; let targetOrigin: Int64; let targetText: String; let transfer: Bool
+    let semanticCommand: Bool
+    let capturedCommand: Bool
+    init(id: Int64,text: String,version: Int64,origin: Int64,anchor: Int64,focus: Int64,
+        observedText!: ?String = None,targetVersion!: Int64 = -1,targetOrigin!: Int64 = -1,targetText!: String = "",transfer!: Bool = false, semanticCommand!: Bool = false, capturedCommand!: Bool = false) {
+        this.id=id;this.text=text;this.version=version;this.origin=origin;this.anchor=anchor;this.focus=focus
+        this.observedText=match(observedText){case Some(v)=>v;case None=>text}
+        this.targetVersion=targetVersion;this.targetOrigin=targetOrigin;this.targetText=targetText;this.transfer=transfer
+        this.semanticCommand = semanticCommand
+        this.capturedCommand = capturedCommand
+    }
+}
+func internalRendererObservedChoice(session: UInt64): ?CjguiOhosChoiceFact {
+    let id=match(Int64.tryParse(unsafe {ohos_renderer_choice_fact(session,0u64,0u32)}.toString())) {
+        case Some(v)=>v;case None=>return None
+    }
+    let text=unsafe {ohos_renderer_choice_fact(session,UInt64(id),1u32)}.toString()
+    let mapping=unsafe {ohos_renderer_choice_fact(session,UInt64(id),2u32)}.toString().split(",")
+    if(mapping.size!=4) { return Some(CjguiOhosChoiceFact(id,text,-1,-1,-1,-1)) }
+    var values=ArrayList<Int64>()
+    for(part in mapping){values.add(match(Int64.tryParse(part)){case Some(v)=>v;case None=>-1})}
+    let target=unsafe {ohos_renderer_choice_fact(session,UInt64(id),9u32)}.toString().split(",")
+    let tv=if(target.size==2){match(Int64.tryParse(target[0])){case Some(v)=>v;case None=>-1}}else{-1}
+    let to=if(target.size==2){match(Int64.tryParse(target[1])){case Some(v)=>v;case None=>-1}}else{-1}
+    return Some(CjguiOhosChoiceFact(id,text,values[0],values[1],values[2],values[3],targetVersion:tv,targetOrigin:to,
+        targetText:unsafe{ohos_renderer_choice_fact(session,UInt64(id),7u32)}.toString(),
+        transfer:unsafe{ohos_renderer_choice_fact(session,UInt64(id),8u32)}.toString()=="3",
+        semanticCommand: unsafe { ohos_renderer_choice_fact(session, UInt64(id), 8u32) }.toString() == "4",
+        capturedCommand: unsafe { ohos_renderer_choice_fact(session, UInt64(id), 10u32) }.toString() == "1"))
+}
+func internalRendererCompleteObservedChoice(session: UInt64,c: CjguiOhosChoiceFact,basis: String,accepted: Bool): Int32 {
+    let text=unsafe {LibC.mallocCString(basis)}
+    var rc: Int32 = 1
+    try(resource=text.asResource()) {
+        rc = unsafe {ohos_renderer_publish_choice_id(session,UInt64(c.id),resource.value,
+            if(accepted){1}else{0},c.version,c.origin,c.anchor,c.focus)}
+    }
+    return rc
 }
 
 func internalRendererPublishObservedChoice(session: UInt64, basis: String, accepted: Bool): Bool {
@@ -2310,6 +2536,31 @@ func internalRendererFinishRefusedInput(session: UInt64, ticket: Int64, request:
     }
     return okay
 }
+func internalRendererObserveCandidateTextSource(session: UInt64, projection: UInt64,
+    input: UInt64, node: UInt64, resource: Int64, kind: UInt32, binding: UInt64,
+    version: Int64, basis: String, text: String): Unit {
+    let b=unsafe { LibC.mallocCString(basis) };let t=unsafe { LibC.mallocCString(text) }
+    try (br=b.asResource()) {
+        try (tr=t.asResource()) {
+            unsafe { ohos_renderer_observe_candidate_text_source(session,projection,input,node,resource,kind,binding,
+                version,br.value,tr.value) }
+        }
+    }
+}
+
+func internalRendererObserveManagedTextBoundary(session: UInt64, input: Int64, request: UInt64,
+    version: Int64, phase: String, basis: String, allocated: Int64, physical: Int64,
+    gcCount: Int64, gcFreed: Int64, gcTime: Int64): Unit {
+    let p=unsafe { LibC.mallocCString(phase) }
+    try (pr=p.asResource()) {
+        let b=unsafe { LibC.mallocCString(basis) }
+        try (br=b.asResource()) {
+            unsafe { ohos_renderer_observe_managed_text_boundary(session,input,request,version,pr.value,br.value,
+                allocated,physical,gcCount,gcFreed,gcTime) }
+        }
+    }
+}
+
 func internalRendererInputOwnerCompletion(session: UInt64, id: Int64, accepted: Bool,
     ownerVersion!: Int64 = -1, postOrigin!: Int64 = -1, basis!: String = ""): Bool {
     if (id <= 0) { return false }
@@ -2503,4 +2754,91 @@ public func cjguiExperimentalDocumentPreview(
         prefix
     }
     return CjguiExperimentalDocumentPreviewResult(preview, true, wasTruncated, "ok")
+}
+
+// Internal OHOS command discriminator; no SDK delta or fabricated Change.
+class CjguiOhosOriginalInsertFact {
+    let id: Int64
+    let command: Int64
+    let version: Int64
+    let anchor: Int64
+    let focus: Int64
+    let sourceKind: Int64
+    let execution: Int64
+    let callback: Int64
+    let ordinal: Int64
+    let predecessor: Int64
+    let basis: String
+    let text: String
+    let current: Bool
+    init(v: ArrayList<Int64>, basis: String, text: String, current: Bool) {
+        id = v[1]
+        sourceKind = v[2]
+        command = v[3]
+        execution = v[4]
+        callback = v[5]
+        ordinal = v[6]
+        predecessor = v[7]
+        version = v[8]
+        anchor = v[9]
+        focus = v[10]
+        this.basis = basis
+        this.text = text
+        this.current = current
+    }
+}
+func internalRendererOriginalInsert(session: UInt64): ?CjguiOhosOriginalInsertFact {
+    let metadata = unsafe { ohos_renderer_original_insert_fact(session, 0u32) }.toString()
+    let parts = metadata.split(",")
+    if (parts.size != 11) {
+        internalRendererWindowLog("CJGUI_OHOS_ORIGINAL_INSERT refused reason=fact_schema_fields expected=2x11")
+        return None
+    }
+    var values = ArrayList<Int64>()
+    for (p in parts) {
+        let n = match (Int64.tryParse(p)) {
+            case Some(v) => v;
+            case None => return None
+        };
+        values.add(n)
+    }
+    if (values[0] != 2 || values[1] <= 0 || (values[2] != 1 && values[2] != 4) || values[3] <= 0 || values[4] <= 0 ||
+        values[5] <= 0 || values[6] <= 0 || values[7] < 0 || values[8] < 0 || values[9] < 0 || values[10] < 0 || (values[6] ==
+        1 && values[7] != 0) || (values[6] > 1 && values[7] <= 0)) {
+        internalRendererWindowLog("CJGUI_OHOS_ORIGINAL_INSERT refused reason=fact_schema_or_source_kind")
+        return None
+    }
+    let basis = unsafe { ohos_renderer_original_insert_fact(session, 1u32) }.toString()
+    let text = unsafe { ohos_renderer_original_insert_fact(session, 2u32) }.toString()
+    let current = unsafe { ohos_renderer_original_insert_fact(session, 3u32) }.toString() == "1"
+    // Parts belong to the original event slot. Never combine two inputs or
+    // predecessor results when a native callback advanced between reads.
+    if (metadata != unsafe { ohos_renderer_original_insert_fact(session, 0u32) }.toString()) {
+        internalRendererWindowLog("CJGUI_OHOS_ORIGINAL_INSERT refused reason=fact_snapshot_changed")
+        return None
+    }
+    return Some(CjguiOhosOriginalInsertFact(values, basis, text, current))
+}
+func internalRendererCompleteOriginalInsert(session: UInt64,id: Int64,accepted: Bool,
+    version: Int64,anchor: Int64,focus: Int64,basis: String): Bool {
+    let c=unsafe {LibC.mallocCString(basis)}
+    var okay=false
+    try(resource=c.asResource()) {
+        okay=unsafe {ohos_renderer_original_insert_complete(session,UInt64(id),if(accepted){1}else{0},
+            version,anchor,focus,resource.value)}==0
+    }
+    return okay
+}
+
+func internalRendererBeginOriginalInsert(session: UInt64, t: CjguiOhosOriginalInsertFact): Bool {
+    if (t.id <= 0 || t.command <= 0 || t.execution <= 0 || (t.sourceKind != 1 && t.sourceKind != 4)) {
+        return false
+    }
+    let b = unsafe { LibC.mallocCString(t.basis) }
+    var accepted = false
+    try (r = b.asResource()) {
+        accepted = unsafe { ohos_renderer_original_insert_begin_v2(session, UInt64(t.id), UInt32(t.sourceKind),
+            UInt64(t.command), UInt64(t.execution), UInt64(t.predecessor), t.version, t.anchor, t.focus, r.value) } == 0
+    }
+    return accepted
 }

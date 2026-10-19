@@ -159,6 +159,23 @@ class CjguiMacActivationPrefixGate {
             }
         }
     }
+    // Only this gate's already admitted AX terminal can transport an action
+    // identity. A shaped prefix alone is not proof that FOCUS preceded it.
+    func commandActionSequence(event: InternalRendererPumpResult, member: Int64, binding: UInt64): UInt64 {
+        let p = event.activationPrefix
+        let first = match (active) { case Some(value) => value; case None => return 0u64 }
+        if (member != 2 || nextOrdinal != 3u32 || event.eventKind != 27u32 ||
+            event.gestureEpoch != 0u64 || event.bindingEpoch != 0u64 ||
+            p.nonce == 0u64 || p.sessionGeneration == 0u64 || p.memberCount != 2u32 ||
+            p.ordinal != 2u32 || p.secondKind != 27u32 || p.memberKind != 27u32 ||
+            p.bindingEpoch == 0u64 || p.bindingEpoch != binding || !terminalMatches(first, p) ||
+            p.sceneVersion != event.projectionVersion || p.nodeId != event.nodeId ||
+            p.resourceId != event.resourceId || p.nodeKind != event.nodeKind ||
+            (event.inputSessionGeneration != 0u64 && event.inputSessionGeneration != p.sessionGeneration)) {
+            return 0u64
+        }
+        return p.nonce
+    }
     // Existing pair consumers retain their package-only convenience.
     func settleSecond(): Unit {
         var terminal = snapshot()

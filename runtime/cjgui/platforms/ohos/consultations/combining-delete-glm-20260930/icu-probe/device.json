@@ -1,0 +1,31 @@
+[
+  {
+    "args": [
+      "file",
+      "send",
+      "runtime/cjgui/platforms/ohos/consultations/combining-delete-glm-20260930/icu-probe/icu-grapheme-probe",
+      "/data/local/tmp/h-icu-grapheme-probe-20260930"
+    ],
+    "rc": 0,
+    "stdout": "FileTransfer finish, Size:37592, File count = 1, time:6ms rate:6265.33kB/s\n",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "shell",
+      "chmod 700 /data/local/tmp/h-icu-grapheme-probe-20260930"
+    ],
+    "rc": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "args": [
+      "shell",
+      "/data/local/tmp/h-icu-grapheme-probe-20260930"
+    ],
+    "rc": 0,
+    "stdout": "ICU_HEADER=72.1\nOPEN_ERROR=2\n",
+    "stderr": ""
+  }
+]

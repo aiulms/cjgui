@@ -1,0 +1,9 @@
+
+Authorized users only. All activities may be monitored and reported.
+image 640 x 480 background (15, 15, 23)
+red count 9600 bbox 100,70..219,149
+green count 8400 bbox 340,120..479,179
+blue count 0 absent
+yellow count 4800 bbox 360,280..439,339
+white count 8000 bbox 40,400..239,439
+samples red_in (230, 51, 51) red_out (15, 15, 23) green_in (51, 217, 89) green_out (15, 15, 23) yellow_in (242, 217, 64) white_in (242, 242, 242)

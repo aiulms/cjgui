@@ -15,6 +15,7 @@ shift || true
 TEST_GATES=0
 for arg in "$@"; do
   if [ "$arg" = "--test-gates" ]; then TEST_GATES=1; fi
+  if [ "$arg" = "--no-replay-merge" ]; then NO_REPLAY_MERGE=1; fi
 done
 
 source "$HERE/env.sh"
@@ -33,13 +34,18 @@ if [ "$TEST_GATES" = "1" ]; then
   GATE_FLAG="-DCJGUI_OHOS_TEST_GATES"
   echo "测试闸门变体：-DCJGUI_OHOS_TEST_GATES"
 fi
+NO_REPLAY_MERGE_FLAG=""
+if [ "${NO_REPLAY_MERGE:-0}" = "1" ]; then
+  NO_REPLAY_MERGE_FLAG="-DCJGUI_OHOS_NO_REPLAY_MERGE"
+  echo "OFF 变体：-DCJGUI_OHOS_NO_REPLAY_MERGE"
+fi
 
 "$CLANG" --target=aarch64-linux-ohos \
   --sysroot="$DEVECO_OH_NATIVE_HOME/sysroot" \
   -I "$SRC" \
   -I "$PLATFORM/snapshot" \
   -I "$REPO_ROOT/runtime/cjgui/native" \
-  -D__MUSL__ $GATE_FLAG \
+  -D__MUSL__ $GATE_FLAG $NO_REPLAY_MERGE_FLAG \
   -O2 -fPIC -ffunction-sections -fdata-sections \
   -std=c++17 \
   -c "$SRC/ohos_renderer.cpp" \

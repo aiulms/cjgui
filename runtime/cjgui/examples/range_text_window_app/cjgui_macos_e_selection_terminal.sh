@@ -1,0 +1,5 @@
+CJGUI_MACOS_APP_BUNDLE_NAME='CJGUI E Pointer Consumer Current'
+CJGUI_MACOS_APP_EXECUTABLE_NAME='CJGUIRangeTextConsumer'
+CJGUI_MACOS_APP_IDENTIFIER='org.cangjie.cjgui.e.pointer.consumer.current'
+CJGUI_MACOS_APP_DISPLAY_NAME='CJGUI E Pointer Consumer Current'
+CJGUI_MACOS_APP_RESOURCES=()

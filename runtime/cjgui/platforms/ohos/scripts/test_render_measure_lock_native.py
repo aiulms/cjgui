@@ -25,14 +25,27 @@ PREFIX = r'''
 #include <string>
 #include <thread>
 #define RLOGW(...) ((void)0)
+constexpr uint32_t kKindMultiline=10;
 enum CjguiInternalRendererStatus {CJGUI_INTERNAL_RENDERER_OK=0,CJGUI_INTERNAL_RENDERER_INVALID_SESSION=11,
  CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR=99};
-struct Session {};
+struct TraceStub { bool matches(const std::u16string &) const { return false; } };
+struct Session {
+ int64_t editingContextId=0,editingContextBaseVersion=0,editingResourceId=-1;
+ uint64_t editingProjectionVersion=0,editingNodeId=0,editingAcceptedBindingEpoch=0;
+ uint32_t editingNodeKind=0;bool editingContextLive=false,editorRetired=false;
+ std::shared_ptr<TraceStub>textWorkTrace;
+};
+static std::u16string utf8ToUtf16(const std::string &s){return std::u16string(s.begin(),s.end());}
 struct {std::mutex lock;Session session;bool valid=true;} g_sessions;
 Session *lookupSessionLocked(uint64_t token){return token==17&&g_sessions.valid?&g_sessions.session:nullptr;}
 struct CjguiInternalRendererTextMeasurement {uint32_t width=0,height=0,lineHeight=0,baseline=0;};
 struct MeasureJob {
  std::string text;double fontSize=0,constraintWidth=0;uint32_t fontWeight=0;bool unlimitedWidth=false;
+ uint64_t traceSession=0,traceProjection=0,preparedNode=0,preparedBinding=0;
+ int64_t traceContext=0,traceOwnerBase=-1,preparedResource=-1;
+ uint32_t preparedKind=0;bool keepPrivateLayout=false;
+ std::chrono::steady_clock::time_point traceSubmitted;
+ std::shared_ptr<TraceStub>textWorkTrace;
  CjguiInternalRendererTextMeasurement measurement;
  std::mutex lock;std::condition_variable cv;bool done=false;
  CjguiInternalRendererStatus waitFor(){
@@ -76,9 +89,9 @@ class RenderMeasureLockNativeTest(unittest.TestCase):
             text = PREFIX + '\n'.join(extract_decl(source, marker) for marker in MARKERS) + MAIN
             (root / 'probe.cpp').write_text(text)
             p = subprocess.run(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror',
-                                str(root / 'probe.cpp'), '-o', str(root / 'probe')], capture_output=True, text=True)
+                                str(root / 'probe.cpp'), '-o', str(root / 'probe')], capture_output=True, text=True, timeout=30)
             self.assertEqual(p.returncode, 0, p.stderr)
-            return subprocess.run([str(root / 'probe'), *args], capture_output=True, text=True)
+            return subprocess.run([str(root / 'probe'), *args], capture_output=True, text=True, timeout=10)
 
     def test_queued_redraw_does_not_block_measure(self):
         for args in [[], ['multiline']]:
@@ -105,6 +118,13 @@ class RenderMeasureLockNativeTest(unittest.TestCase):
             held = body.replace(short_lock, '''    std::lock_guard<std::mutex> g(g_sessions.lock);
     if (!lookupSessionLocked(session)) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
 ''', 1).replace(short_lock, '', 1)
+            # Trace/key capture now has its own short Session guard. In this
+            # deliberately-held mutation it is already protected; retaining a
+            # nested nonrecursive guard would test self-deadlock before post,
+            # rather than the intended queued redraw -> Measure inversion.
+            trace_guard = '        std::lock_guard<std::mutex> g(g_sessions.lock);'
+            self.assertEqual(held.count(trace_guard), 1)
+            held = held.replace(trace_guard, '', 1)
             args = [] if 'measure_composable_text(' in marker else ['multiline']
             p = self.run_source(source.replace(body, held, 1), args)
             self.assertNotEqual(p.returncode, 0, 'holding Session across post/wait must fail')

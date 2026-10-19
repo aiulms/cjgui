@@ -1,0 +1,5 @@
+只读聚焦技术咨询，新问题独立上下文，精确 glm-5.3。不要修改/构建/设备操作，不扫仓库历史。
+CJGUI OHOS当前新caret blink及实际Paint布局缓存：渲染线程 drawNodeText/executeCaretHitTest 短持g_sessions.lock读取单Session身份/正文；pump发hit前已解锁，postCaretHitAfterRedraw按renderer runEpoch把真实Redraw和Hit依序入队，不带native对象进owner。
+新锁序疑点：host/ohos_renderer.cpp 中 cjgui_internal_renderer_measure_composable_text 和 measure_composable_multiline_natural_height 仍在g_sessions.lock范围内post MeasureJob并同步waitFor；renderer若先遇已queued Redraw/Hit，需要g_sessions.lock，就可能等待 owner，而owner等待后面的MeasureJob，形成循环。existingdraw就有这条风险，新blink使触发机会更高。不是运行成功/故障证据，只是明确源码锁图。
+拟议最小修复：两测量C ABI只在最初短锁核session有效；释放后post/wait；等结果后短锁复核同一token仍有效，再返纯value的测量结果。不取新的版本/文本，测量入参已经是不变字符串/参数。作确定性test摘真实C ABI，用真实mutex及串行队列：前置Redraw在owner入队Measure后才尝试Session锁；原版wait返回超时错误，新版正常返回原输入测量。Context/scene无变化；停机查询按已有render lifecycle，不引新线程进生产。
+请读直接相关两C ABI、RenderThread::run、drawNodeText/executeCaretHitTest/post，质疑是否真的有锁循环、最小scope方案是否改变测量/销毁/Session合同，以及可区分反例。给可靠修复和负控。普通编译scope问题正在独立修，勿混为这个问题。只读源码路径 runtime/cjgui/platforms/ohos/host/ohos_renderer.cpp 和必要内部头。

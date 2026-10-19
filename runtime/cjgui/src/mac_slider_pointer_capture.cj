@@ -23,9 +23,11 @@ public class CjguiComposableUiSliderCaptureMapping {
     public let value: Int64
     public let outputReceipt: ?CjguiComposableUiSliderCaptureReceipt
     public let isVertical: Bool
+    private let outputReadback: Option<() -> ?Int64>
     public init(revision: Int64, trackStart: Float64, trackLength: Float64,
         thumbLength: Float64, thumbStart: Float64, value: Int64,
-        outputReceipt!: ?CjguiComposableUiSliderCaptureReceipt = None, isVertical!: Bool = true) {
+        outputReceipt!: ?CjguiComposableUiSliderCaptureReceipt = None, isVertical!: Bool = true,
+        outputReadback!: Option<() -> ?Int64> = None) {
         this.revision = revision
         this.trackStart = trackStart
         this.trackLength = trackLength
@@ -34,6 +36,16 @@ public class CjguiComposableUiSliderCaptureMapping {
         this.value = value
         this.outputReceipt = outputReceipt
         this.isVertical = isVertical
+        this.outputReadback = outputReadback
+    }
+    // Publication facts stay frozen while an admitted business callback changes
+    // its actual output. Read that output separately when issuing its receipt;
+    // a failed readback must never fall back to the accepted presentation value.
+    func readOutputValue(): ?Int64 {
+        return match (outputReadback) {
+            case Some(read) => read()
+            case None => Some(value)
+        }
     }
     func valid(node: CjguiComposableUiLayoutNode): Bool {
         return revision >= 0 && CjguiComposableUiEffectValidation.isFinite(trackStart) &&

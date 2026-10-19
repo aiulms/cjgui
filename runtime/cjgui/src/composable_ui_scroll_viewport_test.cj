@@ -1039,3 +1039,113 @@ func scrollOriginNavigationCandidateCannotConsumeNewNavigation(): Unit {
     let bindingC = CjguiComposableUiScrollOriginBinding("document", 9, "map-C", "origin-C")
     @Assert(viewport.stageCoordinateOrigin(bindingC), "scroll_origin_navigation")
 }
+
+
+// The owner fixture records real edit maps; these tests concern only shared
+// source/viewport admission. Normal platform/owner consumption is separate.
+@Test
+func scrollOriginOwnerPrefixRebaseUsesActualSourceAndCanonicalSolve(): Unit {
+    let owner = SourceCoordinatesTestOwner("anchor body")
+    let session = sourceCoordinatesSession(owner)
+    let viewport = CjguiComposableUiScrollViewport()
+    let a = CjguiComposableUiScrollOriginBinding("document", 1, "map-A", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, a)
+    viewport.recordAcceptedOriginSource(session, 7u64)
+    let oldY = accepted.nodeForId(8105).bounds.y
+    let requested = viewport.acceptedOffset() + 7
+    @Assert(viewport.requestOffset(requested), true)
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, a)
+    let edited = owner.applyRangeTextEdit(1, 0, 0, "AG")
+    @Assert(edited.applied, true)
+    let b = CjguiComposableUiScrollOriginBinding("document", 2, "map-B", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(b, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4), "scroll_origin_anchor_stale")
+    let mapped = cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 7u64, { => true })
+    @Assert(mapped.isSome(), true)
+    let proof = mapped.getOrThrow().forTarget(8125, 4)
+    @Assert(proof.sourceByte, 4); @Assert(proof.targetByte, 6)
+    @Assert(ticket.acceptedBinding.ownerVersion, 1)
+    @Assert(viewport.stageCoordinateOrigin(b, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4, ownerRebase: Some(proof)), "scroll_origin_anchor_staged")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(candidate.isValid(), true)
+    @Assert(candidate.nodeForId(8125).bounds.y, oldY - 7)
+    @Assert(viewport.canCommitCoordinateOrigin(), true)
+    viewport.commitStagedExtents()
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().ownerVersion, 2)
+    @Assert(viewport.acceptedOffset(), requested)
+    @Assert(owner.body.writeCalls, 1)
+}
+
+@Test
+func scrollOriginOwnerRebaseRetiresTargetAndRequestProofs(): Unit {
+    let owner = SourceCoordinatesTestOwner("anchor body")
+    let session = sourceCoordinatesSession(owner)
+    let viewport = CjguiComposableUiScrollViewport()
+    let a = CjguiComposableUiScrollOriginBinding("document", 1, "map-A", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, a)
+    viewport.recordAcceptedOriginSource(session, 7u64)
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, a)
+    let _ = owner.applyRangeTextEdit(1, 0, 0, "AG")
+    let b = CjguiComposableUiScrollOriginBinding("document", 2, "map-B", "origin-B")
+    let proof = cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 7u64,
+        { => true }).getOrThrow().forTarget(8125, 4)
+    let wrong = CjguiComposableUiScrollOriginBinding("document", 2, "wrong-map", "origin-B")
+    @Assert(viewport.stageCoordinateOrigin(wrong, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4, ownerRebase: Some(proof)), "scroll_origin_anchor_stale")
+    @Assert(viewport.stageCoordinateOrigin(b, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 5, ownerRebase: Some(proof)), "scroll_origin_anchor_stale")
+    @Assert(viewport.stageCoordinateOrigin(b, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4, ownerRebase: Some(proof)), "scroll_origin_anchor_staged")
+    let candidate = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(candidate.isValid(), true)
+    let _ = viewport.requestOffset(viewport.offset() + 1)
+    @Assert(viewport.canCommitCoordinateOrigin(), false)
+    @Assert(cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 7u64,
+        { => true }).isNone(), true)
+}
+
+@Test
+func scrollOriginOwnerRebaseRejectsChangeGapDeletionAndGeometryChange(): Unit {
+    let owner = SourceCoordinatesTestOwner("anchor body")
+    let session = sourceCoordinatesSession(owner)
+    let viewport = CjguiComposableUiScrollViewport()
+    let a = CjguiComposableUiScrollOriginBinding("document", 1, "map-A", "origin-A")
+    let accepted = acceptScrollOriginInitial(viewport, a)
+    viewport.recordAcceptedOriginSource(session, 7u64)
+    let ticket = scrollOriginTicketFromAccepted(viewport, accepted, a)
+    let _ = owner.applyRangeTextEdit(1, 0, 0, "AG")
+    let b = CjguiComposableUiScrollOriginBinding("document", 2, "map-B", "origin-B")
+    @Assert(cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 8u64,
+        { => true }).isNone(), true)
+    @Assert(cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 7u64,
+        { => false }).isNone(), true)
+    let proof = cjguiRebaseScrollOriginFromSource(viewport, ticket, b, 4, session, 7u64,
+        { => true }).getOrThrow().forTarget(8125, 4)
+    @Assert(viewport.stageCoordinateOrigin(b, anchor: Some(ticket), targetNodeId: 8125,
+        targetLocalByte: 4, ownerRebase: Some(proof)), "scroll_origin_anchor_staged")
+    let wrongBody = CjguiComposableUiLayoutEngine.layout(scrollOriginTestTree(viewport, 30,
+        targetNodeId: 8125, body: "changed body"), CjguiComposableUiRect(0, 0, 240, 170), 3)
+    @Assert(wrongBody.isValid(), false)
+    @Assert(viewport.acceptedCoordinateOrigin().getOrThrow().ownerVersion, 1)
+    viewport.discardStagedExtents()
+    @Assert(viewport.pendingOriginOwnerRebase().isNone(), true)
+    let _ = owner.applyRangeTextEdit(2, 0, 0, "X")
+    @Assert(proof.isCurrent(), false)
+    let c = CjguiComposableUiScrollOriginBinding("document", 3, "map-C", "origin-C")
+    let next = cjguiRebaseScrollOriginFromSource(viewport, ticket, c, 4, session, 7u64, { => true })
+    @Assert(next.isSome(), true); @Assert(next.getOrThrow().targetByte, 7)
+    owner.body.maps.clear()
+    @Assert(cjguiRebaseScrollOriginFromSource(viewport, ticket, c, 4, session, 7u64, { => true }).isNone(), true)
+    let removed = SourceCoordinatesTestOwner("anchor body")
+    let removedSession = sourceCoordinatesSession(removed)
+    let removedViewport = CjguiComposableUiScrollViewport()
+    let before = acceptScrollOriginInitial(removedViewport, a)
+    removedViewport.recordAcceptedOriginSource(removedSession, 7u64)
+    let removedTicket = scrollOriginTicketFromAccepted(removedViewport, before, a)
+    let _ = removed.applyRangeTextEdit(1, 3, 5, "X")
+    @Assert(cjguiRebaseScrollOriginFromSource(removedViewport, removedTicket, b, 4,
+        removedSession, 7u64, { => true }).isNone(), true)
+}

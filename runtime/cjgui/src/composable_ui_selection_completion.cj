@@ -1,5 +1,7 @@
 package cjgui
 
+import std.env.*
+
 /// Experimental immutable publication of one actual A-to-B installation.
 /// Native receipt and owner adoption are captured together, before the next
 /// dequeue. This is an observation, not a new selection or write capability.
@@ -85,6 +87,34 @@ public class CjguiInstalledSelectionCompletion {
             semantic.contentVersion == current.contentVersion && semantic.sourceVersion == current.sourceVersion &&
             semantic.selectionRevision == current.selectionRevision
     }
+    func firstMismatch(selected: CjguiSourceSelectionSnapshot, current: CjguiTextSelectionTicket,
+        binding: UInt64, windowSession: UInt64): String {
+        let frozen = this.sourceSelection
+        if (!(actualInstall)) { return "actual_install" }
+        if (!(this.windowSession == windowSession)) { return "window" }
+        if (!(targetBindingEpoch == binding)) { return "binding" }
+        if (!(frozen.documentId.size > 0)) { return "document_valid" }
+        if (!(frozen.sessionEpoch > 0)) { return "epoch_valid" }
+        if (!(frozen.documentId == selected.documentId)) { return "document" }
+        if (!(frozen.sessionEpoch == selected.sessionEpoch)) { return "epoch" }
+        if (!(frozen.viewGeneration == selected.viewGeneration)) { return "view_generation" }
+        if (!(frozen.version == selected.version)) { return "owner_version" }
+        if (!(frozen.revision == selected.revision)) { return "owner_revision" }
+        if (!(frozen.anchorByte == selected.anchorByte)) { return "source_anchor" }
+        if (!(frozen.focusByte == selected.focusByte)) { return "source_focus" }
+        if (!(sourceOwnerVersion == frozen.version)) { return "source_owner_version" }
+        if (!(frozen.revision == semantic.selectionRevision)) { return "frozen_selection_revision" }
+        if (!(sourceContextEpoch == sourceSemantic.contextEpoch)) { return "source_context" }
+        if (!(sourceMirrorRevision == sourceSemantic.mirrorRevision)) { return "source_mirror" }
+        if (!(frozen.version == semantic.contentVersion)) { return "frozen_content_version" }
+        if (!(semantic.contextEpoch == current.contextEpoch)) { return "context" }
+        if (!(semantic.mirrorRevision == current.mirrorRevision)) { return "mirror" }
+        if (!(semantic.contentVersion == current.contentVersion)) { return "content_version" }
+        if (!(semantic.sourceVersion == current.sourceVersion)) { return "source_version" }
+        if (!(semantic.selectionRevision == current.selectionRevision)) { return "selection_revision" }
+        return "none"
+    }
+
 }
 
 /// Optional synchronous owner notification. It runs after the existing
@@ -98,6 +128,7 @@ public interface CjguiComposableUiSelectionCompletionProvider {
 /// Rechecking current identity expires old observations without replaying any
 /// input; a repeated terminal can never notify the same installation twice.
 class CjguiSelectionCompletionPublication {
+    private var failureObservations: Int64 = 0
     private var held: ?CjguiInstalledSelectionCompletion = None
     private var deliveredWindow: UInt64 = 0u64
     private var deliveredTransfer: UInt64 = 0u64
@@ -118,12 +149,39 @@ class CjguiSelectionCompletionPublication {
         binding: UInt64, windowSession: UInt64): ?CjguiInstalledSelectionCompletion {
         if (let Some(completion) <- held) {
             if (completion.matches(selected, semantic, binding, windowSession)) { return Some(completion) }
+            if (failureObservations < 16 && getVariable("CJGUI_TRACE_IME_PUMP") == Some("1")) {
+                failureObservations += 1
+                getStdOut().writeln("CJGUI_COMPLETION_EXPIRED mono_ns=${unsafe { cjgui_internal_renderer_owner_clock_ns() }} " +
+                    "session=${windowSession} transfer=${completion.transferId} proxy=${completion.targetProxyGeneration} " +
+                    "reason=${completion.firstMismatch(selected, semantic, binding, windowSession)} " +
+                    "old_binding=${completion.targetBindingEpoch} binding=${binding} " +
+                    "old_epoch=${completion.sourceSelection.sessionEpoch} epoch=${selected.sessionEpoch} " +
+                    "old_view=${completion.sourceSelection.viewGeneration} view=${selected.viewGeneration} " +
+                    "old_version=${completion.sourceSelection.version} version=${selected.version} " +
+                    "old_revision=${completion.sourceSelection.revision} revision=${selected.revision} " +
+                    "old_anchor=${completion.sourceSelection.anchorByte} anchor=${selected.anchorByte} " +
+                    "old_focus=${completion.sourceSelection.focusByte} focus=${selected.focusByte} " +
+                    "old_context=${completion.semantic.contextEpoch} context=${semantic.contextEpoch} " +
+                    "old_mirror=${completion.semantic.mirrorRevision} mirror=${semantic.mirrorRevision} " +
+                    "old_content=${completion.semantic.contentVersion} content=${semantic.contentVersion} " +
+                    "old_source=${completion.semantic.sourceVersion} source=${semantic.sourceVersion} " +
+                    "old_selection=${completion.semantic.selectionRevision} selection=${semantic.selectionRevision}")
+                getStdOut().flush()
+            }
         }
         held = None
         return None
     }
 
     func clear(): Unit {
+        if (let Some(completion) <- held) {
+            if (failureObservations < 16 && getVariable("CJGUI_TRACE_IME_PUMP") == Some("1")) {
+                failureObservations += 1
+                getStdOut().writeln("CJGUI_COMPLETION_CLEARED mono_ns=${unsafe { cjgui_internal_renderer_owner_clock_ns() }} " +
+                    "session=${completion.windowSession} transfer=${completion.transferId} proxy=${completion.targetProxyGeneration}")
+                getStdOut().flush()
+            }
+        }
         held = None
         deliveredWindow = 0u64; deliveredTransfer = 0u64; deliveredProxy = 0u64
     }

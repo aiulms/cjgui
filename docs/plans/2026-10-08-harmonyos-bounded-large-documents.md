@@ -1,9 +1,353 @@
 # 鸿蒙：正常写作成本与有界大文件接入
 
-2026-10-08 指导阶段提示词。2026-10-10 normal30资源回收已经单项收口，原包尚未完成。当前实施依据为下面“normal30 上层FIFO、发布交接与拒绝恢复”，优先于normal29及更早指导的冲突部分；这是指导交接，不自动恢复已暂停/blocked的执行任务。既有正常包及失败原件保留，不逐补丁请示，不自动调用顾问。
+**H 2026-10-13 PreIME与原门实际接续（原包active、未完成）：** 冻结510/f5b8e60f与正式normal Pharos b7a4bd2d／thermo d2fe51f9保留。Pharos同8292原一次ShiftRight快x123首过；原一次click→CtrlA→快x123也首过，原Q10、四笔owner5→9、原request6 ACK及全文4B精确，真实PreIME首接管事实完整，旧6a Q0失败不改。1GiB正常Documents原1073741824B首全文16384段/SHA9d9a329c核验；首中尾各一次、首次UndoRedo、Agent→免点击人、owner8/1073741843B/SHA c152138d保存和正常关闭8292，再新29557/v1完整16385段432.876秒精确。原短返回首部手势FAIL保留，经指定线程指导的独立正确几何诊断一次到ctx322/原request13 ACK，无正文写、不能代原连续通过；跨窗替换仍未验。thermo同5452原单手势静止56/72次accepted滚动、反向／UP停止／原ACK／reveal／X与其他字段零污染有证，450帧16.387秒零丢，严格物理配对仍FAIL。SDK64066按原90分钟上限finally退出，末两应用正常关闭工具均未获准确任务卡而失败、零dismissal，不声称正常关停；以前保存／新PID全文成功独立成立。原6a canonical20完整反馈123–269／中位166ms、0/20≤100及自然高RSS峰1110364KiB继续FAIL；当前共同不可变输入→实际排版／发布成本追踪为未构建WIP，不冒充优化或新正常通过。GiB必要私有底本按原页14GiB例外计账，VM此次实际增2205294592B、宿主约151.5GiB；本轮61,480,960B自有原始日志经无损核验归档退休，旧原件／E/W／用户／暂存stash不动，无Git写。 [本轮原件与准确范围](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/selection-command-pending-focus-current/ORIGINAL_INSERT_CURRENT_STATUS.json)
+
+**本轮GiB空间例外（仅原链）：** 按AGENTS产物容量节，复用原Documents只读1GiB与宿主262144B周期底本，一份新的正常私有工作文件；稳定non-CoW底本、原子保存和重开重叠预留来宾4GiB、新增总峰5GiB。本线保守约9GiB+来宾新增至13GiB，本具体链临时保留上限14GiB，宿主33.6GiB余量不变；开工来宾实际5.92GiB可用。无宿主全文副本/逐笔GiB克隆。仅阶段前缀preime-original-GiB-使用例外，其他仍10GiB；真实关闭、全字节证明后按owner支持的准确自有路径收尾，VM不保证收缩、仍计实际分配；不追溯删除旧原件。具体入口已读取并记录该例外，非只改文案。
+
+<a id="h-large-focus-source-window-handoff-20261011"></a>
+**本轮原链成本汇合空间接续：** 原1GiB工作/底本仍为跨窗替换所需，保守11868475392B已高于默认10GiB；仅列明的文本成本冻结、同UUID启动、双正式构建和最长120秒诊断沿用14GiB临时保留。预计新增保留≤1.5GiB、证据≤512MiB，启动峰值14GiB/构建4GiB分别重查宿主33.6GiB；不再导入或克隆GiB基准。实际准入见原current/preime-text-cost-space-policy.json及入口，其他stage默认10GiB不变。必要旧原包保护，新成本候选每消费者仅一个、构建目录复用；临时二进制finally、完全相同搬运包核hash/句柄退休，VM实占继续计账。
+
+## 当前接续：新焦点观察来源、原票切窗与完整反馈（2026-10-11）
+
+**这是给当前执行者的具体实施依据，不是生产修复或验收结论，也不自动恢复已暂停的goal。** 原整包仍未完成。先完成下面两项共同交接，接着持续完成本包成本和正常消费，不按反例、文件或一次构建停工。复用R37已落地的publication dependency、typed输入保全、有向活动端、原restore/attach/确认、ICU租约及资源计费；本轮推进的是普通输入和有界窗口共用的焦点/坐标来源生命周期，不增建Pharos私有输入通道，不重开无关来源/A2/旧65腿。主执行者直接实现、自验，不调用顾问。
+
+<a id="h-focus-window-current-execution-20261011"></a>
+
+**H 2026-10-13最新实际增量：** 已冻结4379ff1a，双normal7269dc44/26594bf2，503/431匹配；共同输入专属Will证明、源leaf、真实onFrame确认及实际pump接线有生产反例/撤回、真实service/File及80根回收证据。normal原ShiftRight快x123各新包首过；原CtrlA全链仍失败，各次“1”“123”“x12”“owner5不动”“12”原件不混淆不重投。最新24171 x在原SDK末尾caret/全选执行之前被拒，后继2缓冲被较早自有body发布退到1的精确反例，已升级指定线程，未猜改。thermo1962正常一次完整机制56/76静止accepted/反向/UP/ACK/X/零污染/键盘成立，494帧原电影保留；strict画面配对仍FAIL。原64MiB基准和预备体完整固定核验，首次点源0非原990，20未投/100ms/RSS及1GiB剩余仍欠。原包active未完成；自有24171/22581正常关闭、SDK46846准确stop，自有转发无、外15447保持；八项保护相同，保守留存8.26GiB/宿主157.22GiB，正式移动别名实际释放345.97MiB。不stage/commit/push。 [当前准确范围与原件](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/selection-command-pending-focus-current/COMMAND_OWNER_TARGET_CURRENT.md)。
+
+**H 2026-10-12当前实际接续（原包active、未完成）：** 508冻结8fadcb94，正式normal Pharos9ee19d63/thermo59aa33eb，501/429编译输入匹配；共同实际A→首B/原operation/live target及一份无输入权限ended身份接续，30+18+24对照和撤回、恢复17/44通过。正常首次Undo原3、Redo原4和Agent原5 ACK及全字节成立；其后3B续写被已满262144容量拒绝，不能记绿。新64MiB20变体源0..114（原990..1104）全文精确，122–238ms/中位153、0/20≤100、RSS+490.816MiB仍FAIL；job-retired仅最后发布身份的进程采样。实际NAPI压掉choice id的接线已修，正常971原快x123首过；原一次click→立即CtrlA仍在A→B间隙被ordinary权限拒，x123/重投0。指定线程只读方案已明确原accepted choice/typed receipt捕获凭据与独立B/C execution/首根保全；下述来源持留候选已实现自验，专用命令准入及执行/安装仍未接齐；普通输入门不放宽。job/排版阶段/自然Cj堆观测是当前未冻结候选。SDK82718期限结束，末尾两实例正常关闭缺证，旧正常关闭/归零保留；外国Pura90/15447保持。原100ms/资源/canonical20/thermo受影响消费/1GiB剩余链欠，不stage/commit/push；本线保守7.46GiB、宿主146.92GiB。 [正常包、精确范围与原件](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/README.md)。 **本次源码候选进展：** 原已采纳选择由真实publish_choice_id独立持留，sync前核原A/P12291与同票Flush D12288并绑定原结构operation/有限截止；当前生产工厂正控、22负控、80连续根后释放0、32票/原1048576预算及两关键撤回RED通过。OHOS四个自然堆接口编译链接通过，未设备运行。物理命令专用准入、owner执行、B/C真实安装及首根仍须接齐，未新SDK/HAP/GiB或重投；旧FAIL不变。[候选与准确边界](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/selection-command-pending-focus-current/SELECTION_CAPTURE_CURRENT.md)。 **2026-10-13续进：** native原A物理Q准入/FIFO/独立owner结果和不依赖几何交集的语义全源端点已接；真实service/file owner1→5、P12291/D12288后一次Q选0:262137且固定8段全字节精确，撤共同owner来源分支RED。候选携显式Q/owner因果标签，实际sync的B未挂载到C和B经native op8后到C保持原号/原2600截止，未带标签/另一结果不能续命；SDK安装/attach/getter及首根仍not_run，ArkTS producer尚未接新native准入，无新SDK/HAP，旧性能及1GiB剩余FAIL保持。[准确范围](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/selection-command-pending-focus-current/COMMAND_OWNER_TARGET_CURRENT.md)。
+
+**共同连续目标修复实际接续（2026-10-12，原包未完成）：** 共同native保留真实注册A的原旧身份，B通知已消费但未挂载继续到C时共同registry按当前原生操作登记执行目标；两个消费者仅薄接线。实际native四对照/共同双消费者21/原恢复44及两关键撤回通过，NDK/skip-script/diff绿。508冻结451e4ccb、正式串行normal Pharos64be470a/thermoddcc28de，501/429实际编译输入无漂移，四份E活动源码保持原H装配快照。原1GiB Documents1073741824B，同PID3580首中尾/原中部99交接和request2原12秒ACK、尾request3/回首4完成；首次UndoRedo、Agent7→免点击人8、保存正常关闭→新8985固定16385段1073741843B/SHAc8935205全字节精确。原Ctrl+A实际SDK选0..12288被普通光标安装吞，首拒caret_confirm_mismatch，跨窗替换0；只暂停该依赖。原64MiB20同25458/owner2→22字节精确，首次UndoRedo/Agent25/人26保存关闭→新3248固定1025段67109147B/SHAfe24fd3e；完整反馈114–207ms/中位151、0/20≤100ms，RSS+547.52MiB仍FAIL。原生45秒采样错过输入全部owner2，不伪称同期；实际系统内存服务同owner26映射主要jemalloc811140KiB，静置12样本已分配稳定仍不证明容量或归因，资源门欠。新25795原ShiftRight快x123/12秒262137B首过；原保存快底本服务准备后6753 Agent首次点击一次J/262130B首过，正常保存关闭→新7339四段全文精确，旧3B差异变体另分列。thermo5125原同gesture两静止57/69滚动、反向/UP旧tick0/原ACK/免点击X/其他字段0，15.960秒470帧连续电影有效；后续只读原件补原RPC/native同锁时钟238.892–290.430ms、真实字形及几何，电影76/90/115扩选0–15/29/55、205/228/240反向0–43/21/9、290原UP/request3 ACK后A、350一次X、405键盘收起、469原request4 ACK重进均同源；六负控拒错来源/字形/越时钟，原thermo连续画面通过，旧全局帧门RED原件不改。Back后外部64A首次focus3未挂载便到4，active0丢reconcile，原request5截止失败；拒绝/后继均0，依赖精确升级无猜改/重投。自有正常窗口/字体归零、SDK53477期限内按原stopfile结束，两个自有转发已无、Pura90/15447和17858转发保持；八项暂存/index/stash相同，无顾问或Git写。许可/容量/文件安全和无关旧矩阵复用，旧727.5ms保持FAIL。[当前正常包、启动、原数及空间账](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/README.md)、[精确新反例和待区分](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/STRUCTURE_SDK_REMAINING.md)。这是实际结果，不替代下方原指导。 本次独立SDK资源同PID3669/worker3762，原20真实D/319与333宽/18字号、两臂各三轮240次排版绘制/原活排版稳定/原结果184940B完整；正常Destroy约145MB退休释放，Clear只前移同一释放，未采用生产修复。裁剪CPU实验不代正常GL/原20唯一分配归因，100ms/RSS仍FAIL。单次正常22→23/53帧/drop0仅核采集出口，未重送旧手势。新增净60.60MiB含VM39.71MiB，留存上界6.837GiB/宿主161.15GiB，实际清本轮构建5.03MiB、仍有句柄日志1.18MiB保留；自有SDK/转发/诊断包终态，新增正常控制关闭资源0，八项保护/四H源/双HAP相同。 控制采集的首命名收尾拒绝原件保留；31＋11个本轮远端文件按原PID/精确时钟/SHA核后退役，1,149,564B逻辑字节，四图搬运别名退役后宿主本次释放合计6.13MiB，无应用启动或输入重送，两个收尾SDK按准确stop终结。 本次密度有限对照同3655／worker3804，原D与8生产函数、1→3.5→1三臂240次排版，每臂4代字体销毁／活0／拒绝0，净已分配+1238752／721280／82256B；CPU位图／受控节点顶原点，不含正常GL／完整style runs／caret／hit，不支持密度或清缓存修复，原100ms／RSS仍FAIL。完整255385B／76块齐全，诊断卸载与SDK52134准确stop、原诊断源码还原／finally新构建释放5.89MiB；当前净新增约15.84MiB（VM12.63），留存上界6.852GiB／宿主161.58GiB、八项保护／四H源／双normal相同。原thermo电影已绿；同一Ctrl+A普通安装与未挂载新焦点两SDK新边界连续三轮仍阻塞，已精确升级，仅暂停其契约依赖、不再猜修，无新正常包或GiB副本。 **新指导已接续、goal active（2026-10-12，未算整包通过）：** 已按普通安装期选择命令／首次焦点未挂载的方向推进，保留451双normal。共同native焦点入口在异步通知前登记非mount来源，原生产工厂RED→GREEN／撤回RED、实际sync与通知输出、共同模板及双Page24受控对照成立；模型构造与真实onAppear另区分，实际native op1误授mounted反例翻红后预登记／op8入场正控通过，原代理20项仍通过，NDK语法和八项保护相同。两Page实际按键producer的一次Ctrl+A普通安装待办反例已保留RED；命令准入／执行、程序回声隔离、owner全文范围接线尚未完成。目标在预登记模型之后继续推进、真实A→预登记B→C及原恢复请求／截止跨未绑定目标仍须闭合，不将request0通知或受控挂载算原SDKrequest5。未新建正常包／SDK／GiB夹具，不重开密度或缓存实验，旧100ms／RSS失败不改绿。[本次候选与准确边界](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/selection-command-pending-focus-current/README.md)。
+**本轮实际执行结果（2026-10-11，不作为新裁决）：** 同源503冻结ca8072bc，正式串行normal Pharos ecf20748/thermo05681de1实际消费，498/427编译输入匹配；共同真实factory/观察/选择/Will-Change及80终结新根回收、固定B原请求/截止和mirrorRevision2反例/撤回通过。正常Pharos原一次ShiftRight→快x123、Agent改版首次点击→一次J均全文精确且不重投；原64MiB20笔及首次UndoRedo/Agent→人续写/保存关闭新PID全文、正常固定导出与后继Agent隔离已实际完成。内部完整反馈111–180ms、中位146.5、0/20≤100ms，RSS+529.117MiB，native已分配增长、owner18..21采样间隙明确，仍FAIL。原1GiB加入“首”3B后保存/正常关闭/新PID固定16385段全文精确；原中部一次拖动97窗口交接、96 operation0、ctx2→99未恢复，不能把固定B对照当连续目标成功。thermo同手势两静止57/72 accepted滚动、反向/UP停止/原ACK/一次X及键盘字段0成立，但原严格画面及录像出口FAIL；另一次Back→外部改版64A→首次点击恢复失败、拒绝/后继字符0。两个新的共同结构反例按AGENTS仅暂停其依赖，不再猜改或重投；许可不阻塞。macOS同冻结真实service/file权限I/O失败→保旧→新写/保存通过，明确不能代OHOS原ACK/真人续写。资源归零/VM句柄0/八项保护相同；旧原件、暂存/stash和用户资源保留，无顾问/stage/commit/push。[实际正常包、启动、原数、证据与空间账](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/README.md)、[连续目标新反例](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/GIB_CHANGING_TARGET_HANDOFF_COUNTEREXAMPLE.md)、[thermo Back后首次恢复](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/THERMO_AFTER_BACK_EXTERNAL_FIRST_FOCUS_COUNTEREXAMPLE.md)。原包和100ms仍未完成；下方A/B/C指导已落实的有效部分保留，未覆盖的新时序具名交指导，旧失败累计不清零。
+
+**同目标重申实际修复接续（2026-10-11，不作为新指导）：** 沿顶部原指导落实同eligible目标普通焦点重申幂等，真实工厂五对照/关键撤回、新手势一次、错源/Back/后台门通过。正式串行双normal Pharos e975ceb2/thermo d15ac1f7，508冻结273da1c9，501/429实际编译输入匹配；旧ca/83 RED包和并行E源码保持。GiB同4412真实Documents原1073741824B→源1一笔“首”→保存正常关闭→新17188固定16385段1073741827B/SHAe59f1224精确。原中部12秒仍FAIL，但98交接operation全部非零，原重申清票消失；实际mount2注册99前native已到100，后old99通知不再指向2。thermo原同gesture两静止56/69滚动、反向/UP停止/原request2 ACK/免点击X及其他字段0；16.332s/476帧连续电影实际变化，但严格frame tuple0仍FAIL。Back外部64A后4→5重挂尚未完成又到6/active0，首次点击ctx59/req4原截止失败，拒绝/后继字符均0。只暂停这两处共同挂载依赖，精确原票升级，不继续猜改。原64MiB20笔同17188/owner2→22全部字节精确；首次UndoRedo/Agent25/免点击人26、保存正常关闭→新21085固定1025段67109147B/SHAfe24fd3e通过。完整反馈113–245ms/中位153.5、0/20≤100ms；同票accepted结算和反馈均观测较晚日志113–246ms，原owner结果中位8ms、Measure队列/layout/paint中位30.706/52.5915/4.807ms，工具独立单列。RSS+592.71875MiB；73样本70同PID/resource/owner、64同时同accepted，覆盖owner2..22，native已分配136905→478087KiB，资源未达标/无分配栈不猜归因。原SDK27572和正常应用/自有转发已收尾、21085资源0；508受影响原x123新7005/262137B和Agent首次点击→J新10086/262130B均首过，保存正常关闭→新11873四段全文精确；原UUID短生命周期只消费这些独立分支，不重投两个失败链。原100ms/严格画面/完整GiB和OHOS真实拒绝恢复门均欠，旧727.5ms及其他FAIL保留；不咨询、不stage/commit/push。[当前正常包、原数/证据及空间账](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/README.md)、[具体SDK首次分歧](../../artifacts/h-bounded-large-20261008/continuation/focus-window-handoff-current/REASSERT_SDK_REMAINING.md)。 最终当前输出相对前序实测+207.59MiB、VM相此次开工+1.113GiB，留存保守上界5.467GiB/宿主约166.66GiB，新增退役61.828MiB（前序210.594另列）。短SDK3742在12分钟守卫到期exit1收尾，之前11873真实正常关闭/资源0；标记晚到、设备df不可用和forward已不存在如实保留，宿主listener/两自有SDK/VM句柄无，Pura90/15447未操作仍在。508逐SHA及501/429输入一致，四份E并行源码采用原H快照、活动文件未回滚；八项暂存/index/stash身份保持。此条为实际执行结果，不是新指导。
+
+**本次复核边界。** 已读正常包/诊断原件及当前host、共同ArkTS、Pharos薄壳源码：新焦点反例的诊断PID28689确证原choice focus1与新Will focus2冲突；真实工厂在新代生成了新choice，但coverage为空。1GiB原PID20187证明中部已到source536870913、mirrorStart536862721后原恢复不完成，并出现ctx39→52；其首个ctx退役原因未捕获，不能套用首焦唯一原因。最新同PID5608的20笔完整字节正确，内部完整反馈115–235ms/中位152、0/20≤100ms，RSS384116→935288KiB（+538.25MiB）；这不是物理呈现时延，也不是资源通过。三组原件分别见[首焦](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/agent-first-focus-diagnostic/AGENT_FIRST_FOCUS_GENERATION_COUNTEREXAMPLE.md)、[原1GiB切窗](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/GIB_SOURCE_WINDOW_RESTORE_COUNTEREXAMPLE.md)、[最新成本与范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/typed-input-redraw/normal/after-space-recovery/unicode64-cost-and-scope.json)。旧原件不回填原因。
+
+### A．一次操作的焦点先于选择来源冻结，正文事实不继承旧焦点授权
+
+当前`ohos_renderer.cpp::synthesizeEventsFromRawTouch`在活编辑器BEGIN安排caret hit；`executePendingTapLocked`在UP又调用`focusAuthority.issue`，长按也有issue入口。`issue`可保同mount却推进generation；`cjguiOhosQualifyObservationLocked`正确拒绝旧qualified coverage，导致同次操作后半段没有新来源。不能用删focus门、修改旧choice generation或全局重置`qualified`修复。
+
+1. **在现有GestureKey/selection operation内统一取得本次焦点代。** 对会立即安排编辑命中的BEGIN，先取得本操作焦点资格再安排hit；对尚未胜出的触摸不提前抢其他字段焦点，待tap/长按真正进入编辑动作时再取得。UP、长按、后续extent和同次焦点通知复用该操作取得的代，不二次issue。旧pending命中在换代时按原operation失效；Back/Home、取消、失焦、换绑仍撤销，重复事件幂等。手柄/已有拖选延续用原手势资格，不为每次MOVE签代。已有合法在飞输入先按原FIFO/完成责任结算；不能因新操作签代把已准入输入静默丢掉，也不能把旧Will改贴新代。
+2. **把不可变正文/排版事实与观察资格分开使用。** 当前`CjguiOhosTextCoverage`已有原body、正文/窗口origin、owner版本及坐标索引；保留原body和旧choice不变。新观察只能从仍实际accepted、仍实际绘制的正文/排版票，加本次真实hit或平台观察，在产生点核当前目标、两层binding、真实mount/focus、owner版本、源窗口、平台正文及原publication prefix，构造属于新操作的新observation。不能仅复制旧coverage后替换focus，也不能只凭同字节、同ctx或同屏幕位置授权。原`cjguiOhosCoverageCurrent`与qualify的旧票拒绝仍成立；新增路径须显式区别“当前正文可供一次新观察”与“旧观察仍有效”。有未发布输入时只用原固定依赖，不事后拼最新receipt。
+3. **同值落点也需要本操作的事实，不能等偶然回声。** 一次真实hit确认落点后接回现有selection producer/共同采纳与普通安装通道；平台确需安装时仍等真实安装/确认，不能手造SDK observation或ACK。平台因坐标相同不发回调时，已有真实命中事实可以产生新的窗口选择意图，不能继续把旧恢复choice当新输入唯一来源。`acceptNativeFocus`更新薄壳mount执行代，与该操作有明确顺序；新Will仍需真实当前choice及安装资格。
+
+主落点为上述三个native入口、`cjguiOhosQualifyObservationLocked`/`editorEnqueueSelectionChanged`/`editorEnqueueLayoutChoiceLocked`及共同proxy的`acceptNativeFocus`；修改共用接缝，产品只薄接线。先用实际factory→hit/producer→采纳→Will链复现，再验同mount同值/异值点击、首次挂载、长按、旧hit完成晚到、Back后旧回调、同字段真换绑、同文新owner以及已有输入前缀。正常门仍是原一次Agent→第一次点击→一次J，不准补点击/ShiftRight/延时/重投。撤回关键接线必须恢复原失败。
+
+### B．源窗口改变是结构交接，不是又一次外部正文编辑
+
+**裁定：** 同owner版本内从窗口A移到B，旧已完成输入root不能继续要求B保留A的局部后像；但它的已完成结果也不能被抹掉当成未执行。B应走现有共同结构交接和原恢复票，不能每次Present另造ctx、再以新2500ms重试。`cjguiOhosPreserveOwnedInputSurfaceLocked`返回false只表示该保全分支不适用，不能直接推出“外部owner改版”。先在`syncEditingBufferAfterAcceptedSceneLocked`区分同body几何刷新、仍有原输入后缀、同owner不同源窗口、真实外部owner推进；尤其核原source basis的窗口origin/范围，不能仅比文本相等或projectionVersion。
+
+1. **A→B只登记一次结构操作。** 复用`FocusAuthority::prepareTransfer/registerTransfer`、窗口原恢复请求及ArkTS `pendingReconcile`。从真实accepted B冻结目标正文/owner版本/源窗口、有向选择、绑定和原执行资格；保留A的原mount、已完成结果与尚未完成FIFO前缀。A只有已完成输入时，停止用该root判B的局部保全，按真实结算释放其发送权/活引用，结果与必要拒旧凭据按原有界生命周期保留；有未完成前缀则仍按现有transfer冻结并结算，不能clear全队列换通过。
+2. **B目标与恢复等待不互相依赖。** 对同一个B重复Present/Redraw只推进原operation，不再分配新ctx。结构退休/真实旧组件disappear→真实新mount/attach→B正文落定→唯一setter→跨帧确认→原ACK/窗口采纳，是允许前进的顺序。restore可等待目标mount，不能让restore占有执行权反过来禁止该目标的结构挂载/attach。目标context/edit先由原结构操作确定，真实mount到达后仅绑定一次；不得把已绑定/已发送请求改贴另一个mount。`pendingReconcile`现有“取最新context”路径需核它是否仍属于同一原结构操作，不能给旧恢复重签目标。
+3. **一次操作一份截止与结局。** 冻结B时即保留原请求和绝对截止，不在重绘、reconcile、目标出现时重开。真正的新导航意图可按既有取消规则终结A→B，再有独立新请求；不能把连续重绘误算新意图。Back/换字段/owner改版/关闭/超时按原资格终结，迟到setter结果、旧A回声与旧ACK零副作用。成功只由真实挂载/正文帧/安装/确认形成；不能为节省耗时把attach成功当选择已采纳。
+
+**实施前的区分实验与落点已明确：** 用两个实际有界镜像、同owner版本且不同origin构造生产链（无需先复制GiB文件），包含A一笔已完成输入、B重复发布、旧组件晚disappear、restore先到mount后到、一次真实新导航/Back。通过原函数记录首次使同B再次分配ctx的分支、旧root终态、原operation/request/deadline、注册transfer结果、真实mount/attach、setter次数及ACK；若某段现有实现已经正确则复用，不平行写第二套reconcile。因果不成立时保留原结论unknown，不据历史日志补首因。正控要求B一次交接收敛、setter一次、后继原字节精确；负控逐项换owner版本/源origin/绑定/focus/旧mount和迟到ACK均拒绝。随后立即在原1GiB正常文件执行原中部一次手势、原票恢复及单次输入，再续尾段与原链，不停在小夹具绿色。
+
+### C．成本、画面和整包汇合一起收口
+
+上两项成组反例通过后冻结一次正式双normal，先在该版本完成两条短反例及thermo共同消费，再持续完成原20笔/1GiB链。不要每捕获一个日志差异便重建整套源码副本或重跑历史矩阵。
+
+- **100ms与RSS继续是本包工作。** 复用下文已给的排版输入键、字体资源/租约和真实组件帧确认方案。对同一原输入关联producer→owner回执→Measure等待/执行→Present/Redraw→attach/正文帧/确认→完整反馈，原始慢样本全部保留。既有队列证据是两个不同Redraw挡Measure约28ms、Measure约45ms；没有相邻同身份Redraw，且measure319/paint333宽不同，不能按“重复”猜合并或强行共用Typography。先消除已证冗余/串行固定等待，必要不同宽度工作如实计费；不能缩输入、改排版、慢打或只算首文字帧来通过。
+- **资源对同一实例、同一有限循环核。** 区分申请中/活布局/退休队列/字体集合及分配器已分配/空闲，与同期RSS关联；+538.25MiB不能由`liveSlots=1`或正常关闭归零解释掉，也不能未经分配证据定性为泄漏/系统缓存。真实确认释放后应证明容量与增长受控；不加无界全局缓存。沿既有资源探针复用采集，不再只追加RSS端点而没有下一步区分。
+- **动态画面只用实际可配对出口。** 先以一次正常可见变化核录像/截图捕获的是同一设备、surface和时段；当前录像末帧仍是持按高亮而后来截图是X，不能把两者拼成逐帧连续通过。修采集时钟/目标/收尾后再做原驻留手势；无严格关联就是证据不足，不能要求截图前后全局帧号永不变来制造不可执行的门，也不能用最新owner填旧帧。生产Flush不当物理呈现证明。
+- 最终同源正常Pharos完成原首中尾/跨窗替换/首次UndoRedo/公开Agent→人续写/保存/正常关闭/新PID固定版本流式全文比对；thermo核同一focus/transfer/恢复/正反驻留、其他字段零污染与关闭。许可、容量、已验non-CoW/安全、旧有效回归按影响复用；真实文件事务失败不能用`SAVE_AS unauthorized_action`替代。旧727.5ms和各版失败保持原范围，不扩大为GiB全删、全篇visual解析或真机性能。
+
+**参考与边界。** 本次只读核本地Zed `1a28cff4b409`：`element/mouse.rs`从冻结PositionMap产生选择，`selection.rs::begin_selection`只在未聚焦时请求焦点，GPUI `Window::dispatch_action`在defer前冻结focus。这支持“一次操作持有原来源、幂等重申不另造操作”的方向，不证明CJGUI/ArkTS已有相同生命周期，也不直接照搬Zed焦点规则。按[本地参考导航](DESIGN_INTENT_INDEX.md#本地开源实现参考)只借鉴，不引入依赖。CodeLattice本次未能把共享host路由到具体项目，已用直接源码核对，未把索引不足当实现阻塞。
+
+**容量与执行。** 严格执行[产物容量与收尾](../../AGENTS.md#artifact-space-budget)：本线新增默认10GiB，一个复用构建区/消费者，当前候选和最近可用交付，必要RED/GREEN原件另保真；不动既有存量。当前宿主约198GiB只是本次只读时点，启动/写盘前复查；现有SDK/VM实际要求33.6GiB则取高于20GiB的更严余量。复用原UUID/userdata与只读GiB基准，破坏性工作副本/历史/保存/导出按同时峰值计，不硬链接可变正文。实际入口已有64/512MiB与finally收尾继续验证复用，结尾给新增/保留/释放/余量。E/W、用户文件、原包/原件、暂存/stash保持，不stage/commit/push。上述方案已解决本次方向等待；若出现新的、能推翻方案的实质反例，按原累计失败规则只暂停其依赖并带原票差异升级，不以“未咨询/未再次批准某文件”为阻塞。
+
+**产物空间约束（2026-10-11，后续执行必须落实）：** 遵循[共同容量与收尾规则](../../AGENTS.md#artifact-space-budget)。本次不追溯清理旧存量；新HAP/源码装配/构建中间产物/夹具/设备截图与录像须复用并有保留上限，录制结束即停，主机与模拟器搬运副本核对后只留必要实物。下一次继续前先给本轮峰值与VM实际余量，并把成功/失败/取消收尾接入实际驱动；不再每次冻结留下整套新目录。必要原件、旧包和用户资源保护不变，收尾报告新增/保留/释放/可用空间。此条不自动恢复目标，不以缩小1GiB门规避磁盘预算。
+
+**H R37空间恢复后实际接续（2026-10-11，整包未完成）：** 同UUID/userdata正常启动，复用ee42c787冻结双normal e5fedf25/b36e57db，无新HAP/GiB夹具。Pharos5608原Documents64MiB、真实service/file准备及原20笔单投owner2→22/ctx3，1025段全文67109137B/SHAa699ecf1精确；完整反馈115–235ms/中位152、0/20≤100ms，RSS384116→935288KiB/+538.25MiB，727.5旧FAIL不变。驱动误投一次CtrlZ拒绝/owner22，随后首次真正工具栏Undo23成功，误投原件及非干净连续链范围明确保留。中断区间SDK/5608终态，未确定唯一原因；Redo/Agent/续写/保存未完成。只恢复同userdata一次重开5771，实际读回已保存底本67108990B，正常关闭归零，不重播20笔。thermo5975原单手势两静止56/68 accepted滚动、UP旧tick0、原ACK/reveal/一次X及字段0/关闭归零；严格驻留画面仍仅1因果配对FAIL。新27.74s/815帧/丢帧0录像有效，但末帧旧高亮与后来SDK X静态帧有出口/时间差异，不能代连续替换/键盘画面通过。实际入口空间准入、64/512MiB日志上限、子进程finally、录制结束停止及唯一截图清理已运行；241远端原件逐SHA核对后退役，成功/超限/取消收尾通过。AST/shell/diff检查通过；skip-script首次并行targetIds编译失败保留，他线修为targetResourceIds后第二次通过且1078输入前后一致，H未改该源码。H native/包未变；规范500中499匹配，产品external.cj并行变化，已保留实际OHOS消费的原5b8e18f4/66,613B必要快照，不回滚E/W。自有两个应用、SDK91709及38991/38993已收尾，5555/18848保持；八项暂存/index/stash相同，无Git写/顾问。新增证据约174MiB、复用target约+0.76MiB、VM实际约+161.62MiB，准确释放25份本轮重复约69.12MiB，宿主约183.9GiB；旧存量未删，33.6GiB预留/10GiB新增预算满足。原新focus/1GiB源窗口恢复、动态配对、100ms/RSS、完整GB链及真实file拒绝仍欠，许可/容量/安全按影响复用；只暂停具名新依赖猜修，整包未完成。[正常包、启动、原数/原件与范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/typed-input-redraw/README.md)。本条替换旧空间blocked当前说明，不改下方已下发具体指导。 后续同包显示出口有限对照只正常A一次/字段0，导航目标942而驱动误等25，原失败保留；无补点击，独立双出口8秒无START/B0/图0/movie0，仅工具时钟/隔离模式编译，不计画面通过。5543正常关闭资源0、自有38993移除；63971准确AX退出一次未终态，只按完整命令核实后SIGTERM自有PID，镜像无句柄。前轮他线18848/5555在该区间消失且原因未知，不把前轮保持扩大到此轮，不再界面退出/操作他线/重启。native/normal身份和八项暂存stash仍相同；对照新增约2.36MiB，整轮证据约174.84MiB、VM净增约289.76MiB、宿主约199.7GiB，旧存量未删。[本次精确失败/收尾范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/typed-input-redraw/normal/after-space-recovery/capture-outlet-control/SCOPE.md)。
+
+**R37文件失败验收入口与原成本边界补充（2026-10-11，生产未改）：** 正常40961616/PID3776一次Documents新导入262128B、原首次request1/ctx2 ACK后，一次公开SAVE_AS被正常OHOS授权集合拒绝为unauthorized_action，未进入file事务，不能当保存失败或原生拒绝恢复成功；原请求保留、后续字符0、前后四段固定全文SHA89db9ceb相同。正常关闭同实例资源归零、自有38991移除，500/双425/两包/暂存stash保持。原5473/ctx7/20输入票及owner与accepted身份的只读成本拆分：owner回执中位9ms，回执后完整反馈中位140.5ms；产品EDIT日志位于pumpOneTurn之后，不能当owner写入耗时。原100ms仍0/20，整包与既有具体依赖欠项不变。[原件、范围和实际原数](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/normal/pharos-public-save-failure-once/SCOPE.md)。
+
+2026-10-08原阶段及下方历史接续保留；2026-10-11当前先执行顶部“新焦点观察来源、原票切窗与完整反馈”。R36/R37已实现部分及下方未冲突要求继续适用。这是指导交接，不自动恢复已暂停/blocked的执行任务。既有正常包及失败原件保留，不逐补丁请示，不自动调用顾问。
+
+**R37原驻留工具边界实际补证（2026-10-11，不改变指导/完成门）：** 同源normal thermo c535abb6新7914，一个原gesture4/两个3000ms静止57/68次accepted滚动、真实UP后旧tick0、原request2/ctx1 ACK及有向reveal成立。只将截图前后帧身份读取移至同次设备执行、回传置后、持按按原完整BEGIN/UP与设备时钟核验；原scene/source/范围及动作节奏不变。28张全屏图仅1个严格终点tuple，备注visible高1vp，不算可见扩展；变化截图仍跨票，原结果FAIL，不补X/慢打。静态出口实测63–114ms，半尺寸只作工具核对，实际手势仍原全分辨率；SurfaceFlush的SDK“提交GPU”定义不当物理屏幕完成证明。其他字段实际零污染、正常关闭资源归零，311自有远端文件保存及SHA核对后准确清理，5555与暂存/stash保持。原500/正常包和性能/新焦点/1GiB欠项不变。[实际原件、负样本与采样责任](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/normal/thermo-device-bracket-once/SAMPLING_BOUNDARY.md)。
+
+**R37原包资源接续实际补证（2026-10-11，不替代原完成门）：** 生产500/双normal未改。当前字体池及十个排版函数真实SDK19908有限24次layout，2集合全部释放、已分配近基线，但RSS留驻与空闲页仍高；该受控结果不归因原20笔。一次正式产品入口只读隔离包dd00eedd、正常27995 Documents导入67109147B→一次13B公开service/file事务→固定1025段全文独立预期SHA103057a5精确→保存/正常关闭宿主归零。34条同渲染线程真实分配器样本：319宽measure约+15.97MB、Typography释放约2.98MB，最后字体集合释放36,348,392B/live0；整个进程计数不能当独占栈或把全部RSS归空闲页。原609.90MiB尚未唯一归因、100ms中位150.5/0笔达标保持FAIL；新焦点代/动态驻留/文件拒绝/1GiB完整链依赖未改判。规范425与已验normal恢复，自有诊断bundle卸载及38991移除，5555保持。无生产猜修/顾问/stage/commit/push；调用参数导致的安装前闭包拒绝与早期定位错误按原件保留。[两组原数、关闭、恢复和明确范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/RESOURCE_ATTRIBUTION_SCOPE.md)。
+
+**R37最新实际汇合（2026-10-11，整包未完成）：** 新共享choice计费4c4a6ee4保持原32/1Mi预算，真实工厂/撤回及真实service/file绿；正式双normal40961616/c535abb6已实际验收，500/425最终无漂移。原ShiftRight快x123一次/12s首过；原64MiB20笔全文、首次UndoRedo、公开Agent后免点击续写、保存/正常关闭/新PID1025段/正常冻结导出一致。完整反馈中位150.5ms/0笔≤100ms，RSS+609.90MiB，仍RED且匿名归属未知。thermo原拒绝→原ACK→免点击X首过；同gesture58/68次驻留滚动、UP停止及有向reveal/未发X续接有证，动态严格画面配对0及movie欠项保持。新正常Agent首焦失败经一次只读SDK进一步核原已采纳恢复choice focus1与新Will focus2不匹配，key/正文/两层绑定相同；真实工厂新producer也coverage0，旧focus输入正确拒绝。此新焦点代/新事件来源边界按AGENTS具体升级，不给旧票补代、不猜语义修复，只暂停依赖。原1GiB源窗口恢复/完整链及Pharos真实文件拒绝仍欠，许可/容量/文件安全不重跑；无咨询/Git写。详见[正常交付与原数](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/normal/README.md)及[新具体反例](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/agent-first-focus-diagnostic/AGENT_FIRST_FOCUS_GENERATION_COUNTEREXAMPLE.md)。本条记录事实，不改变下方已下发实施依据，不将局部绿色改称整包完成。
+
+<a id="h-large-publication-dependency-active-end-20261010"></a>
+## 正文发布依赖与有向活动端（2026-10-10，当前具体接续）
+
+**指导复核：RED87/89与RED88均成立，下面给出接线责任和可区分验证，继续原整包。** 已直接核对[R36原件](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/README.md)、[首次快链](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/SDK_FAST_SUCCESSOR_COUNTEREXAMPLE.md)、[两次有限SDK补证](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/SDK_FIRST_REFUSAL_DIAGNOSTIC.md)和[反向UP](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/THERMO_UP_ACTIVE_END_COUNTEREXAMPLE.md)。renderer仍为`5f86168b…`，并非旧源码未部署。原PID13904的Will唯一首拒没有捕获；RED87是真实生产函数分叉，PID32063则直接捕获了pending choice导致保全拒绝，不能把不同PID拼成一个唯一原因。
+
+本阶段推进**owner提交、正文发布、选择采纳之间的共同依赖，以及方向选择的同票画面几何**。R36的真实D、Frozen正文/runs整体准入、已采纳新根保全、弱引用回收保留；首次安装/原恢复ACK、FIFO、同票显示、原资源上限继续复用。不能继续在Pharos/thermo补点击、setter、延时或输入重投。修改限H共同实现和必要工具，主树E/W不得直接镜像这些平台私有字段。
+
+### 1．选择producer冻结“尚未被正文发布覆盖”的原依赖
+
+当前`cjgui_ohos_edit_ticket.h::unresolvedPrefix`在owner完成时就排除票；`editorEnqueueSelectionChanged`先得到空prefix，再qualify旧body。RED87中T1已经owner完成、折叠观察也已在T1后像上，但body2尚未发布，于是原choice成为旧body1/prefix0/predecessor1，发布后只能被`choice_owner_version_moved`拒绝。**owner完成不等于对应正文已发布，不能丢掉这一段依赖。**
+
+- 在producer的同一锁内、qualify之前，一次冻结以原accepted正文为起点的有界依赖：原未完成票，以及真实owner结果已完成、但仍未被该正文覆盖的原票。使用原registry/typed receipt及真实平台Change进度，固定ID、key/focus、目标/field/两层binding、before/after、范围及已有结果的版本/postOrigin/basis；不能仅凭`predecessor`数值或正文相等签发来源。当前函数两次取prefix应收束为同一次冻结，后续禁止追加未来票或补最新receipt。
+- 不直接全局改变`unresolvedPrefix`含义，它还有Transfer等调用者；为选择生产/解析提供窄的发布依赖查询，并核相关调用。原真实freeze/qualify及安装来源仍成立，不能把未发布候选直接当accepted coverage。
+- 明确观察坐标位于原依赖的哪一成员、其before还是已经真实发生的平台after；冻结时用原事件、平台进度和依赖身份决定，不在消费时猜。自动折叠已在T1.after上，固定依赖仅T1时，用其原结果版本/postOrigin与严格UTF-16/UTF-8换算，不能重复映射T1；若依赖还含已Will但尚未Change的T2，后来T2推进，观察必须只经既有owner ChangeMap映射T2，而不是零映射或重走T1。**已处于最终后像则零重基，处于中间状态只映射其后尚未作用的变更，各变化最多一次。** 原坐标版本由对应原typed结果证明，不用最新body补贴。相同文本的语义写也有真实版本因果，不能用字符串相等省掉这一责任。
+- `cjguiOhosDescribeChoiceLocked`只等待并核原固定依赖对应的真实结果与发布：尚未到达为pending，原前缀拒绝/失配/过原截止为具名终态；依赖满足才给原choice解析来源，由既有仓颉采纳完成。无关外部正文推进不得伪装成这条链。已ready的choice不因后来读到新body获得另一来源。
+- 资源仍有界：不能把新的completed receipt/Ticket强引用永久串进Choice，形成`Ticket→Choice→旧Ticket`祖先链。可冻结不含choice/祖先指针的原依赖事实，未完成项短期持留必要原票，终态释放；所有新增载荷计入原32票/既有1Mi UTF-16预算。这是原真实事实的快照，不是第二份授权账本；不能为回收提前取消合法输入，也不能提高预算。
+
+### 2．pending choice可保护已准入输入，但不能冒充已采纳选择
+
+`input_will/input_change`已允许原pending Q上的新根并记录真实Change，`cjguiOhosPreserveOwnedInputSurfaceLocked`却只接受Q已采纳。RED89中Q恰在等待前驱正文，前驱正文发布又拆掉Q/新根的ctx，造成循环依赖。**不能改成“等Q采纳才允许Present”，也不能只删`settled/accepted`门。**
+
+把保全判决明确分为三种内部结果（名称可沿现有类型）：Invalid、已采纳连续性、PendingProtected。已采纳路径原严格证明保留；PendingProtected须同时证明：
+
+1. 原Q仍pending、未拒绝、未过原绝对截止；原key/focus/目标/field/两层binding与当前平台和本候选一致，Back/失焦/退役/dirty拒绝恢复不被绕过。
+2. 候选typed receipt确属**Q产生时固定依赖的一个已接受成员**，从原来源到该成员的前段结果、版本、后像和起点逐项相接；本候选正文/basis/owner版本精确对应它，不允许任意旧回执保ctx。原固定依赖有多笔时，中间正文先发布也必须安全保全，不能只认可`prefix.back()`；Q ready仍等待原固定依赖末端。
+3. head确由原Will准入且实际Change形成，平台文本等于其真实后像；同根后继原ID和before/after逐笔相接，新选择的新根仍`predecessor=0`。普通Will-only不提供未发生after的保全权；已有同值语义命令无需Change的生产分支单列正控，不误当Will-only。
+
+此结果**只保留ctx、平台输入载荷与原待办**，不提升Q为accepted，不把head.after当owner/画面正文，不伪造安装ACK；实际画面仍只发布本票真实前驱正文。正确顺序是：前驱正文真实发布→保全原pending Q/新根→原Q可解析→仓颉采纳并完成原Q→原root沿FIFO恰一次排水。`input_ticket_fact`与上层range准入继续要求Q真正采纳，不能用PendingProtected开写入旁路。真实发布/原回执到达应唤醒原待办，不重发用户意图或setter，不重开截止。
+
+前缀拒绝、发布失败、超时、换绑和外部不相干改版分别沿原终态/恢复责任处理：发布失败保旧accepted与原待办直到原截止；实际拒绝只终结原请求一次，已完成owner正文不能被回滚，dirty只能由原恢复ACK解除。纯采纳失败不得悄悄换ctx丢掉仍有合法归属的载荷。
+
+### 3．反向UP：源活动端决定reveal，平台ACK核规范范围
+
+RED88中源anchor2/focus1，平台真实安装规范范围1:2、`caretUtf16=2`。draw按源focus1形成正确活动端几何，但`ohos_renderer_accepted_active_caret_rect`强求`rect.caret==caretUtf16`，因此拒绝。`cjgui_internal_renderer_publish_owned_selection_feedback`的重复反馈快路也有同样比较，必须一起核对，避免修getter后不停重绘。
+
+- 在**实际绘制**时，随AcceptedCaretRect冻结该票的完整有向source basis（含选择revision、anchor/focus）、正文/coverage、排版及目标/安装身份；已有accepted choice时可复用`choiceId`，但不能在getter里贴当前choice。owned查询核同票已采纳源focus经同一coverage得到的几何，而不是规范范围的max端。正向、反向、折叠分别保持方向。
+- 平台selection ACK继续核原规范min/max区间，不修改其caret语义。非owned仍使用原native caret门；scene/ticket/context/binding/正文/几何/coverage和旧票拒绝均保留。`sameBody`只比正文部分，不足以判断选择同一性；相同min/max但方向或选择revision不同必须拒旧矩形。
+- **首次真实installed coverage可能没有input ownerAcceptance，也可能没有后继choiceId。** 以其原完整basis和真实安装事实证明，不把新字段非空变成全部合法首次安装的硬门。新pending/refused选择不得借旧published矩形救绿。ACK前后必须各有反例：旧ctx/旧安装的矩形拒绝，原ACK及原选择采纳后按同票重绘才可查询。
+- 沿用窗口现有UP原票、原2500ms截止及paint-progress重驱；不新增reveal状态机，不在消费者交换端点或补setter。UP后caret进入实际clip可见带，旧驻留tick停止，再单次免点击续写。
+
+本轮已核本地Flutter `TextSelection`的base/extent与min/max分工、`EditableText`用extent做reveal，以及`updateEditingValue`/remote值分离。它们供职责参考，不是CJGUI异步owner证明，也不引入依赖；直接实现落点仍是上述CJGUI原producer、FIFO、typed receipt、draw/getter和窗口UP机制。
+
+### 4．一次成组反例，随后同源正常消费继续原包
+
+先冻结现有RED87/88/89，有限自验至少覆盖：
+
+- completion→折叠→publish与publish→折叠两序，含同值/插入/删除、before/after坐标；另验T1完成未发布+T2已Will未Change+观察在T1.after，随后T2推进只映射T2，不漏/重映射。真实producer链走通，不手填正确proof。
+- Q pending→新根Change→前驱body发布，ctx保留、Q不提前采纳、原root最终恰一次；多票依赖的中间发布、Will-only、同值命令、陌生/未来回执、错版本/起点/key均有判别。
+- 前缀拒绝/失败Present/超时/Back/换绑与原ACK恢复；80个completion早于publish的新根释放有界，32在飞原容量不变。新增关键门各撤回翻红。
+- 实际draw/发布/getter/反馈去重贯通：2→1和1→2、同范围新revision、折叠、非零源起点+CJK/emoji、真实installed无acceptance、旧ctx/旧票/旧几何/失败Flush拒绝；越出覆盖具名等待/转移，不钳边界成功。不是只手填一个rect测getter。R36真实D与runs、PENDING和交互重绘按影响回归，不重开旧矩阵。
+
+随后一次冻结，经正式入口串行双normal。Pharos继续原单次click/ShiftRight/快`x123`、原全文版本与12s门，再做原拒绝恢复及Agent首焦；thermo继续原单手势正反驻留→UP真实ACK/同票reveal→免点击一字，其他字段零污染。采首拒只记真实原票字段，不再以多轮诊断代替正常链。原SDK13904未知首拒保留其边界，修复生产反例不追认它已唯一归因。
+
+驻留工具还须区分滚动发布与随后选择发布：原脚本强求两个scene相等会漏配，但不能直接去掉scene门。若已有gesture/源selection revision/滚动结果/后续画面票的明确因果关系，就按这条关系配对；截图仍核其真实帧/票。若原件缺关系，只补有限只读事实并正常采一次，不用时间邻近或任意最新状态拼图，不把滚动计数当高亮连续性。旧false、动态同帧0仍保留。
+
+两条短链通过后，**持续完成原64MiB复杂Unicode20笔+同期RSS+100ms完整反馈，以及原1GiB首中尾/跨窗编辑/首次UndoRedo/公开Agent后续写/保存/正常关闭/新PID固定版本流式全文核验**。20笔原文档/节奏/指标不换，完整反馈与owner/画面各段分开，所有慢样本保留；旧727.5ms不改绿。已验许可、容量、non-CoW和文件安全复用，不扩GiB全删或全篇visual解析。只读模型审查不能代替自验；不咨询外部模型，不按每个反例停工，真正新矛盾只暂停其依赖并继续独立必要工作。
+
+本次指导仅核源码/原件和本地参考并更新原任务及ACTIVE H段，未实施生产、测试/构建/设备、恢复goal或调用外部顾问。CodeLattice目标符号0命中且索引旧，已用真实调用者补核影响；不将图结果当成功。旧原件、E/W、用户资源、暂存/stash保持，无stage/commit/push。
+
+<a id="h-large-r36-choice-root-display-20261010"></a>
+<a id="h-large-r37-execution-20261011"></a>
+## R37 执行与当前实际剩余（2026-10-11，原整包未完成）
+
+**原选择预算的具体接续（2026-10-11，正常构建/消费仍在推进）：** 新的一次有限只读SDK7951按原动作/12s仅x1，但补齐原出口后捕获Q4在ticket3首owner拒绝前已choice_coverage_budget终结，未超时/换ctx，后Q5/Q6 prefix_refused不倒置因果。实际安装ACK/consume/freeze与原快producer/FIFO补正控，12K链复现相同预算族的较晚Q6失败；旧小夹具未持留consumedRestoreChoice范围保留。共享body被重复递归收费，已仅修共同私有账目按实际共享身份计整个证明图，独立同值分配仍计，32票/1048576单位不变。四组native正控含真实超量、33票及80终结12K新根/关闭归零通过，隔离撤回相应翻红；真实bridge/service/file四笔与固定262137B公共8段全文通过。新5004c4a6ee4仅私有头1f82f9f0，renderer/window保持，正式双normal串行推进，未先算SDK、100ms、RSS或1GiB整链通过。旧包/原件和保护身份保留；这落实共享资源原容量要求，不等待重复裁决、不补产品输入绕行。[具体原件、差异与门](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/choice-budget-fix/README.md)。
+
+**原新根反例的进一步补证（2026-10-11，未作生产语义猜修）：** 真实native factory/producer/FIFO、共同仓颉选择/范围准入与真实Pharos bridge/service/file四笔日志接通；连续两个新根仍pred0，原Q采纳后T3/T4准入，owner1→5，固定262137B分8段公共service全文精确。75份相关输入全部匹配冻结；之前两份对照误取主树shared-operation的2份源，73/75范围及原结果保留，纠正夹具来源后在新目录重验，不将旧对照扩大。正式入口仅增加两段原票只读日志的隔离诊断HAP`c9fcfe7c…`7/7，正常导入/单一6B service准备/保存关闭后新6251，原一次click/ShiftRight/快x123/12s仍只x1/owner3。原PendingProtected保ctx1成功；原ticket3/observation4 metadata=true、origin=false，part4无原采纳basis而落到原描述串，choiceVersion/Origin=-1。已将第一owner拒绝收窄到原选择来源，不能推断choice4仍pending而非先被拒绝；其首completion返回未记。随后choice5的prefix_refused是后果，不能倒置因果或给13904/7539回填唯一首因。失败私有正文单次保存/正常关闭，6251归零；原normal重新安装，425生成共同源恢复，500仍`55f78b65…`，暂存/index/stash与原身份一致。原20日志62条managed Current allocated为41683200–94887600B，未显示与630016KiB RSS同样的单调增长；仅进程活动范围、无owner字段，不当分配栈/泄漏排除或成本改判。原100ms、动态连续画面及1GiB剩余不改绿。[接续原件与正常包](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/README.md)、[具体缺失出口及建议验证](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/continuous-choice-provenance/SDK_ORIGINAL_CHOICE_COMPLETION_COUNTEREXAMPLE.md)。只暂停原choice实际完成的具体来源/恢复依赖，独立资源取证继续；不是等待重复裁决R36/R37设计。
+
+**同包后续实际接续（2026-10-11，下面原R37冻结/成本记录继续按原时点保留）：** 自有23563真实单字系统分类将增长收窄到native allocator，但不能推断调用点/泄漏；有界CPU采样实际出现共同字素查询反复ICU装卸。已实施成功符号提供者租约、原查询独立UTF16/迭代器和强租约、失败重试及确认关闭回收；833次真实查询由833次装卸变成一次加载，833迭代器均关闭。并发、缺符号、失败重试、在途回收、正式关闭生产函数及隔离撤回RED通过，原字素语义和实际draw/Flush/getter受影响对照通过；旧几何脚本缺声明的修复前后同编译冲突具名保留。未改输入/来源/排版宽度/容量/恢复策略，66导出定义签名不变，cjpm/NDK通过。新500`55f78b65…`仅共同renderer变化，正式入口串行normal Pharos`efb0cc04…`/thermo`b2679dc1…`及实际425+73/2源码/清单匹配；首次thermo错误调用默认消费者的闭包FAIL保留，随后原正式包装7/7通过，未改生产掩盖工具错误。[完整接续、正常包及范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/README.md)。
+
+新thermo1965原三行同手势正反静止各5帧严格配对、UP规范0:1/原有向1→0、原ACK、共同reveal及一次免点击X首过/其他字段0；录像零帧结束失败，Mac锁屏只读确认，不解锁/改设置，不计连续画面通过。Pharos7539正常系统导入、单一6B service/file准备原262134B基线、保存/正常关闭/新PID后，原一次click→ShiftRight→快x123/12s仅到x1/owner3。真实native`PendingProtected ticket2 head4 ctx1`先成功，ticket3/pred0/observation4与ticket4/pred0/observation5随后被共同owner`frozen_admission/input_source_ticket_stale`拒绝；ctx1未退役，唯一来源子条件/ICU因果仍未证明，原R37快链成功不改判。依AGENTS仅暂停该新契约依赖，不再猜修来源/重投。[精确新反例及建议区分](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/FAST_SOURCE_ADMISSION_COUNTEREXAMPLE.md)。原1GiB中部源窗口恢复反例及依赖完整链仍欠，不合并症状或重跑。
+
+独立原64MiB Unicode20使用另一正常导入私有副本和原有界公开service/file准备；PID7539 ctx5/owner2→22逐笔+1，40RSS及全部输入/owner/accepted身份匹配，原基线和全67109137B/SHA`a699ecf1…`分别1025段精确。保存/正常关闭→新13493/v1同SHA全读及Documents正常冻结流式导出实际readback_exact通过，工作绑定不变。完整反馈108–156ms/中位143、0/20≤100ms仍RED，工具中位858.022ms另列；RSS382220→1012236KiB，匿名+628036/文件+1980KiB，当前字体最多2代/3refs，累计工作不当存活量。租约修复未消除615.25MiB（630016KiB）增长，旧727.5ms失败保留；CPU样本不作分配栈，设备heap profiler命令不可用，不root/强制GC/清缓存/改sysctl。[全部成本原数](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/icu-symbol-lease/unicode64-original20-once/full-feedback-resource-result.json)。
+
+所有本轮自有实例正常关闭/PID归零，38991/38993准确移除，5555他线保持。Pharos关闭资源计数0；thermo1965关闭计数未及时保留，关闭后的有限日志无行，不推认计数。旧受控draw驱动本次写固定current.json导致该单一旧结果文件被覆盖，已具名记录、未重建旧原件；源/包/其他SDK和撤回原件保留。新500/HAP最终核验通过，两仓暂存raw/index条目/标志/stash与原保护身份完全一致，无外部顾问、子代理、stage/commit/push。新normal候选可启动，原整包仍未过，具体剩余见接续README；下面的源/HAP“不漂移”描述是此前冻结轮，并不声称旧500等于新源码。
+
+本节是顶部具体指导的实施事实，不改变完成门。共同producer冻结未被accepted正文覆盖的原依赖（含owner完成未发布），固定真实after成员坐标，只映射后续变更一次；PendingProtected保原ctx/缓冲/已准入后继，Q采纳与FIFO仍独立，不展示future after。真实draw完整有向basis与活动端、getter和反馈去重共同接通；SDK ACK仍规范min/max、首次installed无acceptance/choice正控保留。原D/runs、交互失败早返、弱回收、32票/原载荷预算和原截止保持。生产仅OHOS renderer、choice/input私有头及snapshot window的只读因果事实，E/W不镜像。真实工厂/qualify/producer/settle/Will/Change/owner/PENDING/保全、80终结根、12K布局与真实12289坐标、方向/安装/失败/重绘和关键撤回RED通过；原ACK函数链的受控安装边界仍具名。[实现、自验和原件](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/README.md)。
+
+冻结500份输入`4c60b13c…`，正式入口串行dual normal：Pharos`58190531…`、thermo`bbe2e61a…`，7/7及实际consumer/manifest全匹配，最终源码/HAP未漂移。Pharos16167原一次click/ShiftRight/快x123、12秒门首过，全262137B/owner1→5、ctx1不换；Agent首焦/普通click立即界通过。thermo28197真实同手势正反/驻留/原UP ACK/共同reveal与原一次X、其他字段零污染；脚本规范方向误判及动态截屏false原件保留，补原未投X属于诊断补续，不能追认首过连续门。两静止区58/71 accepted滚动，严格动态同帧配对0仍RED，不用滚动计数代替画面。[截屏边界](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/THERMO_SAMPLER_BOUNDARY.md)。
+
+原64MiB复杂Unicode基线完整SHA验证后，同PID13750二十笔一次投递，owner2→22逐笔+1、ctx5不换、全67109137B精确；40笔同期RSS逐输入/owner/accepted身份关联。完整反馈122–215ms、中位152.5ms、0/20≤100ms，**100ms仍RED，旧727.5ms不改绿**。工具中位868.108ms另列；measure日志ownerBase是场景基准，不能当文档owner；布局/字节计数累计，字体最多2当前代/3refs、editable1槽/12288units不解释全部RSS404896→1033816KiB。[原成本及资源范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/PERFORMANCE_CURRENT_BOUNDARY.md)。后续首次Undo/Redo、公开Agent后免click续写、保存→正常关闭→新PID20187固定67109147B全文SHA`e95a4521…`及正常冻结导出Documents均通过。
+
+原1GiB Documents正常导入1073741824B，16384段固定全文SHA`9d9a329c…`与独立旧原件精确一致；一次头窗口实际首输入byte60，增长1073741827B，保存7.179s→正常关闭20187→新PID24599正常打开→16385段固定全文SHA`79c5a37d…`精确，通过正常31.205s冻结导出Documents且工作绑定不变。独立预期仅引用不可变旧底本片段+实际小编辑回执，没有全文数组或逐笔复制GiB，也没有私有注入冒充导入。**完整1GiB写作门仍未通过**：原一次中部导航已到536870913/mirror536862721，但旧输入后源窗口转移伴随ctx连续更换；SDK旧2→51→52 reconcile待办未完成，原request3/context52到原绝对截止失败，后继重签亦失败。12秒false保留，没有中/尾输入、跨窗、第二click或重投。依AGENTS仅暂停这条源窗口转移/共同恢复依赖，不再猜修改focus/延时/强制重挂。[具体新反例、精确原件和待区分责任](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/GIB_SOURCE_WINDOW_RESTORE_COUNTEREXAMPLE.md)。独立容量保存/重开/全文/导出已完成，不冒充整链。
+
+thermo17636另以既有64字符业务限制形成真实单票拒绝：源25:26上一次两字中文ticket60被note_out_of_range拒绝，owner61保旧，原ctx2/request5 SDK ACK→dirty完成→原一次免click X ticket61/owner62、完整64字符精确，其他字段零污染。首脚本误按UTF8解码UTF16片段，false保留；只读核原X成功，零重投，不追认脚本首过。前65ASCII试验实际触发原32票容量门，未到业务拒绝，其false/59实际接受/范围更正保留。[原票恢复和只读复核范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/thermo-real-single-owner-refusal-first/ORIGINAL_SCOPE_AND_QUALIFICATION.md)。Pharos文件事务拒绝的正常设备分支仍欠，原PID13904唯一首拒仍unknown，不能从thermo或生产函数反推。
+
+原成本进一步只读核对：20笔真实native owner回执2–18ms/中位6.5，之后到原完整反馈109–209ms/中位146.5；事后EDIT日志不当函数耗时，原122–215ms/0达标不变。40份status中总RSS增长628920KiB、匿名628900、文件20、共享0，尚不能识别具体分配者。自有同normal新8013只读maps/smaps均Permission denied，status可读；未输入/导入/改文件、未重投20笔，随后一次正常关闭归零。[新逐笔事实与能力范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/PERFORMANCE_CURRENT_BOUNDARY.md)。
+
+Pharos文件拒绝独立能力核对：新PID3560正常Documents导入自有262128B夹具后，按公开service准确工作路径和SDK声明的两种相对形式作三次有限只读读取，均Error opening file且本地无文件，CLI exit0不当成功；当前debug应用目录与工作命名空间尚未接通。未写设备文件、改权限、注入失败或输入拒绝/续写字符，不猜物理Documents路径，不用root。该分支仍未验，[准确路径、原响应与范围](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/pharos-file-refusal-namespace/SCOPE.md)保留。
+
+自有Pharos24599/只读文件实例3560/最后只读内存实例8013/thermo17636均正常关闭并资源归零，临时38991/38993准确移除；5555他线三个端口保持。500源码、两个HAP、66既有导出定义签名、两仓库逻辑暂存/flags/stash原格式均匹配；格式校准产生的false保留并具名纠正，未恢复/写index。许可、容量、non-CoW、文件安全、Back/Home及run10/r31/final6不受影响证据复用；不咨询、不stage/commit/push，不删旧原件/用户文件/并行进程。本包当前剩余为上述新恢复依赖、100ms/RSS、驻留严格动态画面及Pharos实际文件拒绝分支；[正常包、启动与冻结身份/证据/明确剩余](../../artifacts/h-bounded-large-20261008/continuation/r37-publication-dependency-active-end/README.md)集中交付。
+
+## 新选择输入根保全与真实显示正文（2026-10-10，已实施的前轮指导）
+
+**复核结论：两处共同框架缺口成立，按下面方案成组落实，原包目标不变。** [R34/R35原反例](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/FIRST_NORMAL_ATTACH_AND_HELD_PAINT_COUNTEREXAMPLE.md)的实际生产函数结果分别为：合法新choice后原Will建立新根、Change推进head2，旧owner回执ticket1仍有效，却因choice不同而保全返回0；相同背景run配真实D准入、配当前preserve分支的空D拒绝。二者不能冒充原SDK退役的唯一因果，正常消费仍需核首拒字段。thermo三行持按/UP/一字、驻留和正常回收的已验范围保持，旧727.5ms与原1GiB欠项不改绿。
+
+本阶段增加的是**同一已接受正文上跨选择的新输入根连续性，以及平台缓冲保全与画面正文分离**，不是再做样例专用恢复。复用`CjguiOhosChoiceSources`、原Will/Change registry、typed owner receipt、coverage、staged/present/accepted和原恢复ACK；不另造全局票据账本，不放宽公共POD。仅在H共同实现与必要验证中落实，主树E/W不能直接套用平台私有方案。
+
+### 1．新选择可以开新输入根，已接受正文回执不因此失效
+
+断点为`host/ohos_renderer.cpp::cjguiOhosPreserveOwnedInputSurfaceLocked`（当前10467起）中的`head->choice == r->origin->choice`。保留同根快路，增加**原已采纳choice关联本候选真实正文回执**的证明分支，不能只删指针比较或改比较selectionRevision。
+
+- 首选现有`CjguiOhosTextCoverage::acceptance`：`cjguiOhosFreezeCoverageLocked`已经在真实工厂冻结原typed回执、原票after和绝对`postOrigin`；普通choice producer经`cjguiOhosQualifyObservationLocked`冻结/持留它。核原choice确已采纳、原或已依法解析的coverage与本候选回执同源、owner结果版本/绝对起点/正文basis一致、完整key/focus/node/resource/kind/field/两层binding有效。根的`before`必须是该原平台正文，源选择与映射仍核原覆盖，不用文本相等或哈希单独授予来源。
+- 新选择后的Will仍是**新根，`predecessor=0`**；不要冒充旧票的连续坐标。真实点击会先清`lastCompletedInputTicket`，choice自己的predecessor也可为0，不能把“数值前驱必须等于旧回执ID”设成全局门。非零前驱必须有原事实。后几笔沿现有Will的同key/focus/choice、`before==前笔after`和真实前驱逐笔继承；不遍历已释放历史，也不新增强引用整条祖先链。
+- 这条分支只授权保全原ctx、平台缓冲和已准入的后继，不给未完成owner的`head.after`签发accepted正文、命中或画面资格。当前平台文本仍须等于真实Change形成的head.after；Will未Change时不能提前采用after。marked/preview、dirty拒绝恢复、Back/Home、换绑和失焦按原责任处理。
+- 未结算choice保持原ID、固定前缀和原截止，沿现有FIFO等待原依赖，不能用后来最新body补来源；已拒绝choice不能进入新证明分支。原请求的失败/取消只结算一次，owner拒绝后只有原恢复ACK可解除dirty，迟到旧回执不改变新挂载。
+- **不是所有合法choice都有`coverage.acceptance`。** 首次完整镜像和真实restore/install分支已有独立证明，继续保留；不把新分支字段变成全局必填门，不允许从任意当前r补写旧coverage。sourceKind3未安装的布局选择也不能借此直接取得输入权。
+- 引用和容量沿原32票/既有载荷预算。新根终结、旧候选和画面释放后，其不再需要的证明必须可回收；不以提高预算解决祖先引用保活。仅仍有原待办依赖的事实可持留，不能为回收取消合法未结算输入。
+
+**夹具范围要补齐。** R35的人工`proof()`未填`acceptance`且未穿真实freeze/qualify，它证明旧predicate的分叉，却不是新typed关联的完整正控。保留旧RED和范围说明，新增真实工厂→producer→settle→Will/Change→owner completion→preserve的正控；缺证明/错证明样本仍拒绝，不能手填一个正确引用来宣称接线完成。
+
+### 2．保留输入缓冲不再意味着owned编辑节点的D为空
+
+两个实际暂存点是snapshot `src/composable_ui_window.cj`的完整刷新和`stageComposableSceneNode`（当前4148/5612附近）。**本票owned editable节点传真实冻结`node.value`，与同票背景/样式runs整体准入。** 以现有owned目标身份判定，不硬编码node107。非owned的legacy输入延续此次保留原行为；非editable presentation已有真实D修复也保留。两条路径使用同一规则，不能只改普通Present。
+
+- `preservesActiveLocalText`只表达连续性意图，实际保留平台缓冲仍由上节typed证明及原sync仲裁决定。stage只写candidate.value，不直接写`editingText`；但接受后sync可能重建缓冲，因此两项修复必须一起验证，不能宣称“传D绝不会影响输入”。
+- 在owned editable的Frozen绘制分支核**本票D、实际冻结mirror/coverage.layout及runs同源且正文精确一致**。当前`cjguiOhosOwnedFrameTextSource`只核票据/绑定，`declaredOwnedChoice`失配会降为false而仍画Frozen mirror，单改传值会留下混文风险；应在实际Flush前拒绝失配候选并保旧，不能用更新的composedBuffer补位，也不能只隐藏高亮。此强等限定直接映射的owned editable，不套到合法转换映射的presentation片段。
+- 背景范围仍按真实D的UTF-8标量边界准入；不删run、不放宽endBytes、不拿前帧value准入新run。声明为空须清除旧背景，而不是借平台旧选择叠画。绘制仍消费冻结owner状态；平台未接受后继只持留在输入面，不冒充已接受画面。
+- `stageComposableSceneNode`当前记录runStatus错误后仍继续，可能被后续stage成功覆盖；与完整刷新一致，立即返回原run失败，留独立反例。它不是已证SDK退役原因，但必须关闭，才能证明同票失败保旧。Frozen正文同源门放在两条实际绘制路径共用入口，沿现有`textFailureReason`在Flush前拒绝；同长度异文也要抓红，不能仅在stage比较长度。
+- 正文/映射/runs/选择revision/typed事实随同步Present、PENDING结算和交互重绘同票晋升；失败整组保旧。纯选择刷新不得因此每MOVE执行setter、重建挂载或重排不变字形。保留A2原有工作量计费和渲染线程释放。
+
+参考已实际核对本地Flutter `editable_text.dart::updateEditingValue/_updateRemoteEditingValueIfNeeded`：remote已知输入值、应用值、选择变化及batch完成回写分开。它只支持职责拆分，不替代CJGUI异步owner证明；不引入依赖。已有CJGUI typed coverage和冻结画面才是本轮直接接线依据，不重复另开参考工程。
+
+### 3．两处成组自验后，持续完成原正常整链与性能
+
+先用有限反例确定接线，后一次冻结双normal，禁止为了一个小改动重复跑完整GiB或旧65腿：
+
+1. 同根、新已采纳choice→新根→Change但owner晚到、同根后继两笔、Will未Change、同值意图、真实install→新choice→首笔均有正控；假coverage/错回执、错版本/起点/挂载、拒绝choice和未安装布局选择不得救绿。根被owner拒绝→原挂载恢复→一次免点击新输入，保留原预算与ACK。
+2. 原空D/run反例经真实两条stage均转绿；错D/旧run/错票/失败Flush仍拒绝保旧，非owned和presentation正控保留。新选择+未完成后继+真实D必须在同一反例组合运行，不能两个helper各绿便结束。PENDING和交互重绘不能漏运任何一份事实。
+3. 逐一终结并释放旧候选后的连续超过32个新根仍能准入，真正32个在飞时守原容量、满载不丢原件；该项只验新增持留的回收边界，不重开无关资源工程。关键证明门及真实D修复分别撤回翻红。
+4. 原Pharos正常service/file首次焦点→一次ShiftRight→原快`x123`，原全文/版本/12s边界不变，不慢打、不重投、不第二点击或强制重挂；保留原同值x的业务语义。沿原ctx/ticket/choice记录首次实际保全判决及平台Change、owner接受、候选画面，不再用一个reconcile结果反推唯一原因。随后原选择/一字、拒绝恢复和Agent首焦SDK分支继续闭合。thermo同源消费原短链/驻留/UP免点击续写，其他字段零污染。
+
+短链通过后继续本包原64MiB复杂Unicode20笔及同期RSS/100ms完整反馈、原1GiB首中尾/跨窗编辑/首次Undo-Redo/公开Agent后续写/保存/正常关闭/新PID固定版本流式全文核验。预算不放宽，已验许可、容量、non-CoW和文件安全按影响复用；本包未要求GiB全删或全篇visual解析，不扩入。成本必须分开平台输入、owner接受、真实画面及可继续交互；旧727.5ms保持失败，修正确性不预宣称变快。整包连续推进，不能以两个反例变绿就交回停工；真正新矛盾只暂停其依赖，已给出的接续不再等待同一裁决。
+
+本次为指导复核与文档更新，未实施生产修改、运行测试/构建/设备或恢复goal。CodeLattice自动路由到不相关macOS模板且0命中，不能作为影响范围结论；已用实际H源码/原件补核。未调用外部顾问、未stage/commit/push；E/W、用户资源、旧原件、暂存与stash保持。
+
+<a id="h-large-r36-choice-root-display-execution-20261010"></a>
+### 具体方案执行结果（2026-10-10，原整包未完成）
+
+**上述两处共同修复已实施，不再等待原R36裁决。** 生产增量仅OHOS renderer、coverage私有头及snapshot window：新choice通过真实coverage/typed回执保全新根，首笔仍predecessor0；weak回执及独立不可变平台正文避免保活祖先。两stage传本票owned editable真实D，共同Frozen入口核D/mirror/coverage，失配在Flush前拒绝保旧，交互run失败立即返回。真实工厂/qualify/producer/settle/Will/Change/owner/保全、两stage和draw/PENDING/重绘对照通过；80个已终结新根回收、32在飞原容量及关键撤回翻红保留。原ACK恢复反例穿实际native链后一次新根输入通过，平台安装/发起仍受控，不冒充SDK拒绝恢复。公共window声明未改，产品无输入补丁。[实现、自验范围及原件](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/README.md)。
+
+500份输入冻结后正式入口串行构建并实际使用双normal，Pharos `7aa4857e…`、thermo `521b02b5…`，共同425/产品73/thermo2及消费者manifest匹配。thermo首次llc exit139原件保留，完全同源重试正式构建成功，未把构建重试当应用意图重投。Pharos PID13904仅一次原点击→ShiftRight→快x123，12秒仍只有owner2/262134B原全文；ctx1在body2发布时保全成功，后三次Will unavailable，未第二点击或重投。实际同票顺序是owner完成2→平台折叠选择1:1产生→body2发布；新增真实producer生产分叉RED87，原choice仍body1/prefix0/predecessor1，发布后`choice_owner_version_moved`，而正文先发布正控新根通过。**这是新前驱发布顺序反例，不是旧choice指针修复未执行；SDK Will首return字段仍欠，不能宣称唯一因果。** [精确来源顺序差异与建议验证](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/SDK_FAST_SUCCESSOR_COUNTEREXAMPLE.md)。
+
+独立正常新PID15076继续公开Agent/service-file首焦分支：一次prefix修改owner1→2，一次点击/原request1 ctx1实际ACK，再单次J免点击得到owner3/262127B精确全文；初次安装先观察，不冒充点击立即输入间隙。thermo PID14481三行一次持按、正反静止、UP/request2 ctx1 ACK及单次X首过，严格身份配对1→8五帧、1→0四帧，实际背景B/CD/EF→仅A，其他字段零污染；原连续60.1256秒画面保留。
+
+同PID原驻留门只运行一次：两静止3011/3007ms有62/69次accepted滚动及固定源锚扩展、反向、UP旧tick0，但原strict scene sampler仅两组范围配对、动态严格画面对0，原false保持。UP原request4 ctx2真实ACK1:2后，同scene630/progress696仍拒`active_end_stale`：有向源focus1，规范平台安装selEnd2；实际getter生产对照RED88，匹配活动端正控及旧票负控保留。**仅暂停该活动端契约依赖，不删native caret/来源/版本门、不夹offset或补setter。** [实际SDK与共同getter的精确反例](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/THERMO_UP_ACTIVE_END_COUNTEREXAMPLE.md)。原未投递的诊断后缀单次X、Back/普通refocus及字段核验完成，不替代失败连续门或原UP reveal。
+
+三个自有正常实例均正常关闭，字体live0、lease0、宿主sessions/unacked/pending/refsUnclosed/activeSurfaces0；44张自有远端图同SHA后准确删除、38991/38993准确移除，其他forward保持。最终冻结/包/暂存和stash终核见交付目录。按照AGENTS只暂停新反例的相关依赖，必要独立工作继续至此完成；原SDK拒绝后恢复、快后继及完整连续门仍欠，新64MiB Unicode20/同期RSS/100ms和原1GiB完整写作链未运行，旧727.5ms仍失败，已验容量/许可/文件安全按原范围复用。无外部顾问/子代理/stage/commit/push，保护E/W、用户实例/资源、剪贴板、旧原件与暂存/stash。
+
+**同轮后续有限SDK补证（2026-10-10，实际进展，生产源码未改）：** 原500输入及双normal保留，仅隔离副本增加首拒诊断，经原正式入口normal两次有界新实例，每实例一次原点击/ShiftRight/快x123/12秒。PID24651（b57395d9…）x及1准入，已采纳choice3的新根ticket2在paint5/body2首次被`new_choice_body_link`拒绝，随后同票ctx1退役；具体子条件未记录。第二且最后一次PID32063（df6c36da…）ticket3已准入新根0、choice4尚pending，paint6/body3/receipt2发布时条件mask3131521首拒为choice未采纳，随后换ctx并owner拒ticket3。两次都只到owner3/262135B精确x1，原门仍RED；没有进入Will首拒记录，**不能替原PID13904的唯一因果**。新增穿原factory/producer/FIFO/Will/Change/owner/保全的RED89证明“已准入新根、原choice待办、前驱body先发布”顺序未覆盖；平台/owner存储受控，不宣称service成功或choice最终应被接受。首版四字节正文仍用旧mirrorEnd3的夹具失败保留，仅修其真实边界后到达保全。按AGENTS不再语义猜改，仅暂停相关依赖；两诊断实例正常关闭全0、仅准确恢复本次生成cpp及原已验Pharos包、自有端口删除，E/W/原生产/原件/暂存/stash保持。目标active/原包未完成。[精确SDK顺序、条件、RED89与清理](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/SDK_FIRST_REFUSAL_DIAGNOSTIC.md)。原20/RSS/100ms、1GiB完整链与thermo反向UP欠项不变，旧727.5ms仍失败。
+
+<a id="h-large-normal30-first-mount-paint-20261010"></a>
+
+**上述R36执行后的当前阻塞状态（2026-10-10）：** 原两处方案及独立SDK补证已执行，原500输入与生产SHA不变；本次恢复后连续三goal轮的共同来源/正文发布依赖仍未闭合，RED87保持、SDK/RED89补证未解决它，本轮无新语义接续，反向UP RED88也仍有效。当前自有实例与构建终态均已结束、无可验证等待，必要独立工作已完成；按AGENTS停止该依赖猜改及goal三轮规则，工具返回blocked，整包未完成。诊断和此复核不算追加语义修复次数，不重投输入、改指标或缩小目标。原100ms失败及20/RSS、1GiB完整链欠项不变。新的具体契约问题及原件见[SDK升级材料](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/SDK_FIRST_REFUSAL_DIAGNOSTIC.md)、[当前实际核验](../../artifacts/h-bounded-large-20261008/continuation/r36-choice-root-display/current-blocked-audit.json)；保护E/W、原正常包、用户资源、暂存/stash，无顾问或stage/commit/push。下方“R36阻塞复核”是上述具体指导实施前的历史记录。
+
+**R36阻塞复核（2026-10-10，最新状态）：** 上轮R35为实际进展：生产新根保全反例与thermo修正验证器首过短链均有原件。本轮核当前指导、500冻结源码、实际native predicate及两个stage传值路径；无源码漂移、无新的窄修复指导，自有正常实例/forward均已结束，不存在可验证等待。快速后继同一条件已连续第三个goal轮次，原失败累计不清零：旧owner正文回执仍有效，新accepted choice的pending head与其origin choice不同而保全拒绝；保留输入的editable stage传空D使同票背景run准入失败。两个生产分叉均RED，设备唯一退役原因仍未证，不删来源门、不重投输入、不放宽指标。依据[AGENTS](../../AGENTS.md)“核心并发、FFI/GPU 生命周期、状态归属、公共契约第一次实质修复失败后，停止继续猜改”，独立thermo画面/驻留/UP续写、正常双包及资源回收已完成；新64MiB20/RSS/100ms和1GiB完整链依赖原共同来源/恢复链，旧727.5ms仍RED。具体接续需闭合旧typed正文回执与新choice/head的有界来源衔接、display D/平台buffer/runs整体发布，继续原拒绝恢复及Agent首焦SDK原截止；不重开已绿首次coverage/选择绘制、许可/文件安全或旧矩阵。[精确反例与建议验证](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/FIRST_NORMAL_ATTACH_AND_HELD_PAINT_COUNTEREXAMPLE.md)，[当前审计](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/current-blocked-audit.json)。goal工具已返回blocked，整包保持未完成。无顾问/子代理/生产猜修/stage/commit/push；保护E/W、用户资源与原件。
+
+**R35修正验证器首过短链（2026-10-10，最新实际结果）：** 生产源码与正式双normal未改，500冻结记录无漂移。只修本14B完整origin0 ASCII夹具的sorted-local范围比对，有向源方向门仍独立保留，方向/scene/owner/范围四负控拒绝；旧PID9395 false、原帧/视频及诊断X未覆盖。修正驱动第一次实际运行在新PID23733通过：一次正常首焦，一次650ms DOWN、跨三行1→8静止1810ms六帧、反向1→0静止1785ms五帧严格身份配对，B/CD/EF背景变成仅A；持按setter0/滚动0。原UP request2同ctx1一次安装0:1/真实ACK，随后仅一次免点击X精确得14B XB…/owner2，实际画面及其他字段不变。连续60.548169s/1774帧/丢帧0覆盖该短链，正常关闭字体5/5/live0、租约与宿主会话/待办/引用0，20张同SHA远端图及38993准确清理，另一设备不变。[实际首过、帧与负控、关闭](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/same-guidance-wiring/thermo-three-line-first-pass-summary.json)。它只闭合thermo三行正反持按/UP/一字短链；原驻留证据按影响保留，Pharos快速后继/拒绝恢复、Agent首焦SDK、新64MiB20/RSS/100ms和原1GiB全链仍欠，旧727.5ms不改绿。快速后继新根反例仍RED，按AGENTS仅暂停该高风险依赖的第二语义猜修；目标active/未完成，同一条件第2轮。源/包、暂存条目/用户标志、同格式raw和stash对象身份保持，无顾问/子代理/stage/commit/push。[正常交付与明确剩余](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/same-guidance-wiring/README.md)。
+
+**R35前段补证（2026-10-10，原件保留）：** 未改生产源码或R34同源normal。窄反例穿实际Will/Change、owner completion及保全函数；actual Cj session同owner选择basis前六项不变、receipt仍在，同根后继与仅选择推进keep1。已采纳新choice后的actual Will产生新根/predecessor0，Change推进head2但owner未完成，旧receipt ticket1/bodySame1/choiceSame0，保全keep0/exit86；四对照通过，不当SDK唯一因果或service/file成功，[精确分叉](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/FIRST_NORMAL_ATTACH_AND_HELD_PAINT_COUNTEREXAMPLE.md)。thermo同规范包新PID9395同一原手势三行1→8五帧、反向1→0六帧严格前后身份配对，实际背景从B/CD/EF变成仅A，平台仍旧5:5、持按setter0，原UP request2同ctx1一次安装0:1/真实ACK。原脚本false是把sorted局部selection16的0:1与有向源1:0直接比；只按此完整origin0 ASCII14B夹具的真实语义离线重判，保留旧result/samples，方向门未排序，四负控仍拒绝；不推广成Unicode/非零窗口换算。随后仅投递原先未发出的一次X，同PID/ctx1得到XB…/14B/owner2、实际画面及其他字段不变。诊断纠正后的X不冒充原单次完整连续门，修正验证器未在设备重跑。旧两次导航失败件保留，38vp安全带不变；新实例正常关闭字体/租约/宿主资源0，38993和21张同SHA远端图清理，其他设备保持。[全部原件、正常包及启动、成本和剩余](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/same-guidance-wiring/README.md)。快速后继/原拒绝恢复、Agent原SDK首焦、首过完整连续腿、新64MiB20/RSS/100ms与1GiB完整链仍欠，旧727.5ms不改绿；目标active且未完成，同一快速后继条件第2轮，旧失败累计保持，无顾问/子代理/stage/commit/push。
+
+**R34实际接续（2026-10-10，最新事实，原包未完成）：** 按本节既定接线完成共同窗口普通选择完成6/6与选择只变调度5/5，关键隔离撤回分别2/6、4/5翻红。Pharos一次首次原request1同ctx1真实ACK、ShiftRight原observation2 accepted1/okay1闭合旧C；后一次x123仍只到x1/owner3、原ctx退役，保留精确全字节/12s反例。实际保留本地输入的stage空显示正文拒绝同票背景run已运行RED，不能据此把SDK退役的唯一原因说成已证明；按AGENTS仅停止该新高风险依赖第二语义猜修。空白规范源码已正式串行双normal，500记录无漂移，Pharos1cef832f…实际新PID22652读回原保存全文，thermo1dc0aff3…/1293实际消费共同能力。thermo同一650ms DOWN/跨字MOVE/静止2992ms中，源0:2与scene288/owner1/choiceRevision3九帧严格括号配对画AB背景，平台仍5:5、持按setter0；UP原票一次安装/真实ACK并免点击X精确。独立同手势驻留两静止阶段57/77次accepted滚动、反向、UP后旧tick0/一次X精确、正常Back/refocus字段不变；动态跨行截图严格配对未过，另三行静止补验两次定位安全前置失败，实际选择及X均未投递，原失败未覆盖。三个自有实例正常关闭资源0，另一设备forward与用户资源保护。旧Agent-before-first-focus、快速后继/拒绝恢复、跨三行反向持按画面、新64MiB20笔/RSS/100ms及原1GiB完整链仍欠，旧727.5ms不改绿。旧C/D条件已改变，不照旧累计成同一阻塞；新快速后继条件本轮首次，原goal active/未完成。[实际包、启动、冻结、全部原件、成本与剩余](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/same-guidance-wiring/README.md)，[精确新反例](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/FIRST_NORMAL_ATTACH_AND_HELD_PAINT_COUNTEREXAMPLE.md)。本条只记录实际结果，不把指导或机制实现当原完成门通过；无顾问/子代理/stage/commit/push，E/W、用户资源、旧原件、暂存/stash保护。
+
+## 首次挂载来源与持按选择反馈（2026-10-10，当前补充接续）
+
+**复核两条缺口成立，但不推翻已实施的后像覆盖/FIFO。** [首次挂载及持按反例](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/FIRST_MOUNT_CHOICE_COUNTEREXAMPLE.md)证明：声明先于mounted时coverage为空，首次hit仍走等值镜像正控成功；真实choice随后复制空来源，`ChoiceReady`返回1但`choice_fact(part2)`为空。窗口拒绝该choice正确，缺的是生产端首次来源接线。另一个RED82是owner已采纳2:59、平台仍3:3时presentation不画高亮；capture期间延后安装本身合法，画面不能等平台setter才跟随。normal中的`interactionCurrent=1`不能单独证明owner已采纳本次选择，脚本驻留/UP/X通过也不证明持按每帧高亮通过。
+
+前序normal30方案已要求初始完整镜像和同票选择绘制，但当前实现只在声明点尝试签mounted覆盖，未覆盖“先正文、后首次挂载”的正常顺序；presentation仍读平台旧sel。下面明确两个实际接线点，修共同机制，不新增thermo特判，不回退逐字重挂，不为这两个缺口重做资源工程。
+
+### 1．拆开已接受正文事实与本次挂载执行资格
+
+- **沿现有coverage拆两阶段，不另造平行来源系统。** 原候选冻结的正文/排版事实包含owner版本、mirror basis/context/revision、绝对源起点、真实显示正文及映射、目标绑定；随同步/PENDING/重绘及实际Typography/Flush一起发布。此部分不要求mounted存在，也不代表输入已安装或选择已采纳。正文来源只由原present成功晋升，不能在`focus_authority(op1)`、bind或getter里晋升。
+- **首次原观察的资格在产生点冻结。** `beginEditingOnNodeLocked`已经从accepted镜像初始化正文/owner版本/basis，之后ArkTS注册实际mount；在`editorEnqueueSelectionChanged`调用`choiceSources.observe()`之前，以该同一accepted正文引用＋当次live context/key/focus、node/resource/kind/field/两层binding、真实平台正文和原选择构造原始观察。初始完整镜像分支核正文、版本、basis及绑定确实一致，且没有dirty、marked/preview或未接受前缀；仅文本相等不能通过。这里是创建**当前真实事件的来源**，不是以后给已存在choice追贴最新basis。已有typed owner后像和固定前缀分支保留严格条件。
+- 命中可能早于mount，humanAnchor必须保留其原paint票、body/lease及坐标来源；观察生成时核仍为同一正文/几何依据。期间owner同字节推进、换绑定/focus均不得套新body解释旧命中。原选择的方向、标量边界和容量准入不放宽。
+- **不要只在bind给`decl.coverage`换一个新指针。** 当前命中还核`painted->coverage==job->coverage`，这样会让已画画面与新查询再次失配。拆分后，画面与查询核同一不可变body/lease身份；挂载资格在自己的层核对。保留原排版正文、scene、geometry、字体及Flush门，不通过删指针/text门救绿，也不强制额外present才允许首次点击。
+- 非owned继续走原无choice的严格选择/输入路径，不制造owner版本；owned已经产生的畸形`Some(choice)`不得降成`None`走legacy。restore来源继续按原request及安装/采纳契约，不借“首次完整镜像”绕过恢复。
+
+**ready与fact必须成为一个契约。** 共用一个纯来源描述/映射检查：同一原ID返回ready=1时，`fact2=(version,origin,anchor,focus)`必须完整、可解析、合法；getter只读，不修状态。pending只允许等待原来源已冻结的合法固定前缀及其所属同票发布，包括owner回执已到但该回执对应的accepted正文发布仍在途；等待固定原ID、原候选和原截止，不因回执早于Present误拒，也不等任意未来body补来源。原始来源缺失且没有可结算依赖则具名唯一终结，不能ready空事实、无限等待新帧或后来补造旧choice。窗口按原ID完成，依赖首笔仍待这张选择结果，不丢字符或重投点击。
+
+### 2．选择画面读已采纳源选择，平台安装只管输入面
+
+复用已存在的`CjguiComposableUiTextStyleRun.selectionBackground`（snapshot `composable_ui.cj`）：它声明**节点实际显示正文的UTF-8字节跨度**，OHOS run准入转换成UTF-16，`drawNodeText`用同一Typography画背景，`layoutTextStyled`跳过此背景装饰而不改变字形。无需AppKit、平台setter或另建排版。
+
+1. 在原候选中冻结owner版本、selection revision、有向源anchor/focus、实际D及其同版本映射；与正文/runs同票提交。选择只变、正文不变时也必须更新声明；render不读取最新live owner或平台旧sel。**绘制声明不依赖输入mounted coverage存在**，它只证明当前画面应显示哪个选择，不授予新输入权。
+2. 通用owned presentation的直接映射`D==mirror.text`由框架默认生成声明：冻结源区间与该D的绝对覆盖求交，合法换算为该节点显示字节。thermo node25走这个共同默认能力，不在样例里画专用矩形。显示裁剪不改全局源锚；没有可见交集就发空声明，不钳位伪造caret。
+3. Markdown、显示前缀或多fragment不能用上述直接映射。Pharos复用现成[`PharosBoundedVisualBinding.projectSelection`](</Users/jiangxuanyang/Desktop/Pharos Mark/packages/editor_surface/src/bounded_visual_binding.cj>)，保持原owner端点、只裁剪显示投影，再交现有[`surface.cj`](</Users/jiangxuanyang/Desktop/Pharos Mark/packages/editor_surface/src/surface.cj>)逐fragment求交、减`displayStart`并声明背景。OHOS controller的`visualDrawStateFromSession`目前逐端点`displayOffsetForSource`，端点出窗口就丢整段高亮，改接现成投影结果；不复制另一套算法。转换/隐藏段内部不唯一仍具名拒绝，不把mirror局部UTF-16加前缀字节数当映射。
+4. **同节点只有一套选择绘制来源。** 当前同票owner声明存在时优先读声明，**已声明的空选择也占有绘制权**；不能用背景run数量>0判断声明存在。沿同票paint-choice身份/直接映射资格区分“无声明”和“声明为空”，不为此扩公共POD。旧`presentFeedback`不得再用平台3:3或后来安装的旧选择覆盖/叠画它。空声明沿原runTable空数组发布语义清除旧背景；一个平台代理不得清掉其他fragment的声明。caret也须经同一来源合法映射，不能用`min(sess.caretUtf16, displayedLength)`制造位置。普通非owned原生选择行为保留，不能全局关闭caret/highlight。
+5. 候选失败保持旧正文/映射/选择声明整组，旧候选不覆盖较新选择；发布/退役/缓存计费沿原生命周期。持按期间选择可以先有正确画面，UP后仍完成原一次平台安装及输入资格确认，二者各自验收；不为显示高亮每MOVE调用setter，也不把画面声明当安装回执。画面可见、owner采纳、平台安装/新根可用分别留事实，不能用一个`interactionCurrent`代替三者。
+
+参考主树macOS已有共同实现：`cjgui_internal_renderer.m`的声明矩形生成随候选发布，以及`CjguiEffectiveDeclaredSelectionDecorations`只让精确本节点/场景的输入代理覆盖其自身声明、保留其他片段。此处复用归属与发布原则，不搬AppKit后端、不改E写集；本地Zed同快照位置映射的前序结论继续适用，不重复另开参考工程。
+
+### 3．本次完成门：先验真实首次时序与持按画面，再收原包
+
+**先校正测试事实，不能校正成假绿。** 原RED81原件保留，它足以证明ready/fact不一致；但其Session副本的声明`ownerContentVersion`仍默认1，正文basis/`editingMirrorOwnerVersion`为2，basis内selectionVersion又为1，不能原样当新工厂正控。另建字段完整一致、从真实声明→present→begin→mount→producer生成的正控，原版本矛盾保留为必须拒绝的负控。ProxyKey聚合顺序`app/session/edit/mount/context`已核，原`{7,1,3,1,10}`本身没有错位。不要为了正控补公共API或放宽版本门。
+
+固定以下必要门，先生产反例、撤回翻红，再一次同源normal汇合：
+
+- 首次两种合法顺序：先声明/画面后mount，以及已有mount再声明；第一次原点击→非空坐标fact→owner选择采纳→立即首笔全文/版本精确。固定原ctx，不第二次点击、不靠强制新present。不只测`ready()`，穿过窗口准入和输入根。
+- 原choice生成后才出现新body/coverage不得复活；hit与mount之间同字节新owner/换绑定/换focus、半代理对、缺来源均不得救绿；dirty/未接受Will拒绝首次完整镜像捷径，原来源与固定前缀合法时仍须pending并排水，不能把整张choice直接终结。补回执先到、同票发布后到的正控；非owned原路径正控。撤回首次来源冻结和版本门分别翻红。
+- 原RED82：owner2:59、平台全程3:3，持按帧画**精确2:59**且setter零次；再2:17、反向59:2，正文版本不变/selection revision推进，背景不残留、不叠深。不能把“draw被调用一次”当跨度精确。原RED82直接从native redraw起步、未经过仓颉候选投影；GREEN必须穿真实默认投影→run运输→draw链（可抽取实际helper），不能在夹具手填背景run当修复，也不为迁就旧夹具硬把映射搬到native。
+- 两个以上fragment、非零sourceBase、显示前缀、CJK/emoji；全局端点在窗口外仍画可见交集，owner锚不裁剪，活动端不可见不伪造caret。候选失败、清空选择与旧帧迟到验证同组生命周期。
+- UP后原一次安装→免点击精确替换，证明渲染接线没偷做平台选择/正文提交。撤回源选择投影或恢复旧平台高亮来源分别抓红。
+
+短链通过后正式入口串行冻结双normal，Pharos原首次一次点击→快`x123`→下一选择/一字及原挂载存续拒绝恢复，thermo原驻留/反转并补**持按中**选择画面。画面按同PID、候选/scene、owner/choice版本配对实际帧，原“先读状态再截图”的松配对不能声称逐帧同源；复用现有帧证据通道，补最少有界标识，不另造遥测工程。
+
+随后继续原64MiB Unicode20笔/同期RSS/100ms与原1GiB完整链，旧中位727.5ms保持RED直到新同版完整反馈实测达标。原容量、许可、文件安全、资源关闭等按影响复用，不重跑无关旧矩阵。两条缺口与原包作为一次接续持续推进，不每个补丁停工；本节是所请求的具体指导，不再等同一裁决。新实证若推翻具体前提，按AGENTS仅暂停其依赖并说明差异，独立工作继续。
+
+本次指导仅复核源码/原件与已有共同实现、更新任务及ACTIVE H段；CodeLattice live路径仍`path_denied`，由实际源码补核。未运行反例/构建/设备或外部咨询，方案不是GREEN声明。不改生产源码，不恢复goal，不stage/commit/push；E/W、用户资源、旧证据、暂存/stash保持。
+
+**R33实施与正常消费结果（2026-10-10，最新C/D）：** 本窄接续已实施，有限工厂/FIFO/绘制及隔离撤回、SDK snapshot和正式串行同源双normal已运行，500源码无漂移。旧Agent-before-first-focus的真实SDK detached/原截止失败保持；本次干净新PID14622首次一击原request1同ctx1真实ACK通过，随后一次ShiftRight原observation2已采纳0:1却completion accepted0，x123/J零投递。实际窗口completion块反例2/3对照GREEN、待安装已采纳票1/3 RED，owner采纳与平台安装被合并。thermo新PID23567一次有向跨字MOVE后源0:2已采纳，静止2999ms/AB可视，same-scene282 frozenpaint仍5:5/revision2；UP原request2一次安装/真实ACK成功，X零投递。旧短词kind3的共同400ms stream实际打开，纠正错误word/timer预期，旧原件不覆盖；共同semantic-only/samePaint早退在默认run安装前，具体gate因果尚待完整窗口反例，不当已修结论。六自有实例正常关闭字体/租约/票据0，自有262134B正常保存/新PID全文及本次关闭前读回保持。按AGENTS停止实际共同归属依赖的冻结后猜修，独立生产反例、正确可见手势、错误解释纠正与关闭回收已继续完成；原20笔/100ms/RSS及1GiB完整链仍欠，旧727.5ms不改绿。[最新C/D精确差异、源码与待区分接续](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/FIRST_NORMAL_ATTACH_AND_HELD_PAINT_COUNTEREXAMPLE.md)，[实际normal包/启动/原件与剩余](../../artifacts/h-bounded-large-20261008/continuation/normal30-first-mount-paint/README.md)。无顾问、无stage/commit/push；E/W与用户资源保护，stash未变，当前index字节不同已保留exact快照/暂存raw，不擅自恢复。本条记录实施事实，顶部指导未改写为运行结论。
+
+<a id="h-large-normal30-layout-coverage-20261010"></a>
+## normal30 排版覆盖、选择与新输入根共同接续（2026-10-10，前序主体，按顶部补漏）
+
+**复核结论：新反例成立，责任在共同框架的两个正文范围尚未接通。** [反例原件](../../artifacts/h-bounded-large-20261008/continuation/normal30-guidance-resume/ACCEPTED_BODY_POSTIMAGE_LAYOUT_COUNTEREXAMPLE.md)中normal b的`x123`四票/owner2→6/ctx1/全文精确成立，不能退回逐字重挂来换命中通过。`range_text.cj::refresh()`按32768B读取预算和12288 UTF-16展示预算重新物化，而`ohosVerifyPostimage()`可在32768B内证明12291单位的已接受平台后像；两者长度不同本身合法。native保留后像后，绘制仍取冻结mirror，caret/hit却要求它与平台整串相同。普通选择的`eventText==mirror.text`、choice发布的`decl.text==observation.text`和新根的`before==session.mirrorText()`也有相同前提。仅删第一处text门会把拒绝推到下游。
+
+normal原件已经证明`interactionCurrent=0`；SDK一次真实点击进一步得到`painted_layout_stale`，新JKL根本未投递。原日志尚未逐字段排除所有几何/版本失配，本次先补首个拒绝字段作区分，不把组合错误码说成已独立实证每一项原因。[最新双normal](../../artifacts/h-bounded-large-20261008/continuation/normal30-guidance-resume/frozen-normal-consumer-candidate/README.md)的Pharos仅证明已保存262138B新进程读回/关闭，thermo证明共同驻留、反转、reveal和续写；不能合并成Pharos这条点击链已通过。SDK旧ctx退役后新request3的成功仍不代替原挂载存续恢复。
+
+**本次明确选择：维持有界展示与平台输入面分离，补同票的有界交互覆盖证明。** 复用typed owner receipt、owned声明的staged/present/accepted、实际绘制租约、choice原始观察/采纳回执和原输入registry；不增加产品侧镜像或Pharos特判，不抬12288/32768预算，不以公共前缀、文本哈希或一个Bool授予身份。允许为本方案补齐OHOS私有值记录/FFI运输及其窗口消费，公共Node/Event POD不扩；主树/E/W不照抄平台专用路径。本节是具体实施依据，不再把“是否允许补覆盖接缝”列为待裁决。
+
+### A．一次冻结三份不同事实，随原候选结算
+
+1. **owner已接受的平台后像**来自原票的typed接受回执：完整ProxyKey/focus、node/resource/kind/field、两层binding、原票/前驱、owner结果版本、已核绝对`postOrigin`及原票after。`lastCompletedInputTicket`只代表平台Change完成，不是owner接受；不能拿它较新的after直接授予accepted资格。当前平台缓冲与尚未接受后继保持独立，只保留原FIFO权利。
+2. **本候选实际排版窗口**保存原mirror的source/owner版本、revision/context、绝对起点、真实正文及样式/约束；与原候选scene、present票、实际Typography租约和几何共同运输，Flush成功后才可查询。`PresentJob`、同步提交、`PendingSettlement`、Redraw缓存须同运，不能只补直接Present。证明在窗口拥有一致owner版本时生成，跨FFI前后及晋升时复核必要身份；不在render/query时临时读取最新owner拼补。失败候选不更新可交互覆盖，旧租约按原有效性规则保留。
+3. **覆盖关系**只描述这两个同版本绝对源区间的有效交集，以及排版局部UTF-16↔绝对UTF-8字节↔平台局部UTF-16的映射。交集内容在共同owner有界读取/现成后像证明中精确核验，两端须满足真实标量/字素边界；不能只用数字偏移、`startsWith`或哈希替代。删除后mirror会补入后文而平台after更短，也必须成立；源起点不同、重定位和非ASCII不能靠“两个局部坐标恰好一样”通过。重复读取/持有正文均计入现有容量与生命周期，优先共享不可变有界事实，不引入全文分配。
+4. 初始安装/无新本地输入的普通状态复用既有安装与owner镜像事实形成同形覆盖，不强求每个窗口都有新的编辑回执。带未接受平台后继的状态不能借初始/旧回执冒充当前。外部同字节新版本、换focus/绑定、退役、失败回执及marked/preview不能借普通已提交后像证明；沿各自原共同仲裁，组合态不冒充已提交正文。
+
+### B．绘制、caret、handles和命中消费同一覆盖
+
+实际绘制仍使用本帧冻结正文和样式，命中仍查这份已Flush的Typography；保留scene/epoch/租约/geometry/style门及`painted.text==job.layoutText`的精确核对。把“整份平台缓冲必须等于整份排版”替换成上述可核的覆盖关系，**不是直接删除相等判断**。`TextPaintFrame`、`PaintedTextLayout`、`AcceptedCaretRect`和查询job要携同一来源，禁止请求先取平台全文、查询后再用另一镜像解释结果。
+
+caret和有向选择先转同版本绝对源位置，再投影到真实排版局部位置；handles保存的局部范围不得再与平台局部范围直接相等比较。活动端不在覆盖中不能钳到窗口末尾或发布旧caret，也不能为改日志而置`interactionCurrent=1`；应请求原共同reveal/Transfer使其可达。完整反馈要求同owner结果、同次选择、实际本帧几何且该位置可继续交互；正文Flush、后像owner正确或有边框都不是完整反馈。含临时平台后继的帧须诚实区分owner正文与尚未结算的交互状态。
+
+重点成组检查`cjguiOhosOwnedFrameTextSource`/绘制选择分支、`publishPaintedLayout`、`executeCaretHitTest`、活动caret/handles消费和drag边界检查；presentation路径已有冻结来源与场景门，保持其身份要求，避免新增只适用于node107的例外。既有A2工作量计费和渲染线程释放不改口。
+
+### C．命中后的choice和新根一起接通
+
+1. 真实命中/平台观察在产生时冻结原observation ID、原挂载/focus、实际平台正文、原局部选区、命中租约/覆盖引用及前驱；观察与回执分开。共同窗口按该引用把平台局部范围转成同版本绝对源选择，经现有`setDirectedSourceSelection(version, anchorByte, focusByte)`形成owner采纳结果；必要时带镜像局部结果。`resolvePlatformSelectionEvent`、`ohos_renderer_publish_choice`和`CjguiOhosChoiceSources::settle`共同消费这个已核转换，不能把本地start/end相等继续当成跨坐标域证明，不能给旧观察贴当前basis。新增typed证明保持原十二字段basis的旧含义，不暗改字符串协议。
+2. `admitOhosRangeInput`的新根除了既有完整镜像正控，应接受**该次已采纳choice引用的有界平台后像证明**：真实before必须匹配原观察/后像，owner版本/源起点/绑定仍有效，实际Will范围在可核范围内。复用`ohosVerifyPostimage`和`ohosContinueRange16`的原before＋绝对postOrigin换算及共同owner事务；执行消费admission自身的冻结ownerVersion/postOrigin，不能继续从全局`lastAcceptedOhosPostVersion`借版本，不得把平台局部数字送进当前mirror的`replaceRange16`。删除/Backspace按真实Will范围核验，不能额外要求它等于折叠选区。
+3. **有未接受后继时不能提前授新根。** 一次点击/选择保留其产生时的不可变来源和有限前驱引用，沿原输入/choice FIFO处理。只等在该观察之前已准入的固定前缀，Will已准入而Change未到也计入；该前缀接受后可按原引用核同一平台后像，不能从“现在最新buffer”重造来源。其间owner确有推进时，只能经已有ChangeMap/原票转换证明所冻结源锚的接续；不能证明则进入具名共同恢复/Transfer，不能把旧坐标解释成新版本。后继Will绑定该未决choice引用并有界保留，choice失败则依赖票唯一终结/脏责任恢复，不事后补发字符。待依赖choice保存在已有有界账本，**继续排水它等待的原Will/Change前缀**，不能把pending choice堵在前驱Change之前自锁；后来的输入不扩展这个前缀或原截止。
+4. 点击或活动端超出平台已接受覆盖、输入面达到现有容量或确需结构移交时，走现有FocusAuthority.Transfer＋固定前缀＋共同attach/install/confirm。保留原一次点击/手势和有向源锚，完成后继续原动作，不重投、不等待队列永久为空、不延长原截止、不每输入一字重挂。旧票不改key/scene，旧ACK不清新脏责任，Back/Home不能被恢复抢焦。覆盖内的12291/12288正常点击不应被无条件赶到重挂慢路径。
+
+5. **新choice是输入根的真实分界。** `input_will`当前先取`lastCompletedInputTicket`，只要before等于旧head.after就会沿旧choice；捕获时已有新choice（包括pending）时，首笔必须冻结该choice引用，后续才接这笔新前驱。不能清掉尚需结算的旧票、不能给旧票换choice。延迟choice完成按原ID/Receipt精确寻址，不依赖易被覆盖的`lastEventChoice`槽；窗口不得忽略`internalRendererPublishObservedChoice`失败而宣称已采纳。owner选择已采纳、仅完成回执暂未收妥时，只补原ID的确认，不再执行源选择；身份/来源已失效的确定拒绝则按原ID具名终结并处理依赖票/脏责任，不反复补确认、不复活旧choice。
+
+**参考已按具体机制核对。** 本地Zed的[`PositionMap`](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/editor/src/element.rs>)把可见行排版和EditorSnapshot一起保存；[`character_index_for_point`](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/editor/src/input.rs>)沿该快照把显示点转源锚/UTF-16。复用“部分排版有同源映射”的思路，不能把OHOS独立TextArea代理当成Zed可直接读owner的输入handler。原typed后像、未接受后继、容量和安装责任仍由CJGUI证明，不引入外部依赖。
+
+### D．先用成组反例关闭接缝，再进入原正常消费
+
+以当前生产函数/真实调用接线构造可区分的RED，固定以下七组；原失败原件不覆盖：
+
+- **增长正控**：12288镜像→平台12291全部owner接受，保ctx；完整反馈、一次真实0:0命中、普通choice采纳、紧接的一次新根写入贯穿成功。分别标明布局局部/绝对源/平台局部，全文/版本精确，不能只测hit函数。
+- **未接受后继**：相同画面下平台又有后继，当前head不是owner回执；不得提前签发accepted caret/新根，有限原前缀结算后一次点击与紧随输入按序生效。前驱失败、超时、外部改版、Back各有一次明确结局，不能靠重投走成功路径。
+- **choice归属**：新choice后正文恰等旧head.after，首笔仍属于新选择；延迟结算时`lastEventChoice`已经换人，只结算原ID；Will已准入/Change未到不自锁，观察后新增输入不得扩前缀。该组应直接穿过真实`input_will`和窗口执行版本选择，不手填正确root绕过它们。
+- **删除和移窗**：删除后mirror补尾、平台更短；覆盖内正常命中/编辑，覆盖外走原Transfer，零硬夹；非零postOrigin与窗口移位必须核全局位置。
+- **字符边界**：CJK、代理对、ZWJ/组合字符位于窗口边界，映射合法且命中来自实际排版；原ASCII通过不代替Unicode。
+- **失败保旧及假同源**：外部同字节新版本、旧mount/旧choice、错owner结果/源起点/映射、Flush失败或陈旧场景均不得借覆盖救绿；旧候选不能覆盖新choice。
+- **撤回判别**：分别撤去覆盖核验、owner接受依据、未接受后继隔离，指定反例翻红；原完整镜像、短输入、非owned及thermo消费者正控保留。诊断仅补首拒字段与同票有界事实，默认关闭，不新开日志工程。
+
+小链过后冻结一次源码，经正式入口串行双normal。Pharos先完成原真实service/file单次`x123`→一次点击→立即一笔及原挂载存续的拒绝恢复→免点击新输入；thermo覆盖共同选择/输入及其他字段零污染。再接回原64MiB复杂Unicode20笔（同期RSS、owner→完整反馈、100ms原预算）和原始1GiB完整链：首/中/尾、跨窗替换、首次Undo/Redo、公开Agent→人续写、保存、正常关闭、新PID固定版本流式全文核验。缺哪腿保持未完成，不用SDK专用包代替normal、不用二次重跑掩盖竞态。
+
+原20笔97–1018ms/中位727.5ms仍为RED；本方案先消除可证明的交互覆盖失配，不预宣称100ms或一般16ms通过。原许可已执行，资源/容量/文件安全/成功回收按影响复用，不重开旧65腿矩阵、不新增GiB全删或全篇visual解析。快输入、覆盖/choice/新根、拒绝恢复和原正常消费作为一个接续包持续完成，不做完一个符号就停；新反例若推翻本节具体前提，按AGENTS仅暂停该依赖并提交精确差异。
+
+本次指导只读了当前源码、原件和本地参考，CodeLattice live路径返回`path_denied`后用实际源码补核；未构建/测试/操作设备，不把方案当运行结论。仅更新本任务和ACTIVE的H指导段，不启动执行、不调用顾问、不stage/commit/push；E/W、用户资源、旧失败原件、暂存/stash保持。
+
+### R32执行与首次普通挂载反例（2026-10-10，不改上方裁决优先级）
+
+共同覆盖、实际坐标映射、原choice ID/新输入根、固定前缀排水、admission冻结执行版本及新增引用的ACK/destroy释放已实施，有限生产函数和关键撤回见[本轮原件](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/README.md)。ICU字素核验真实，帧/命中函数的Typography受控；窗口测试的FakeTextOwner不冒充service/file。正式串行normal Pharos d7b4b8a1…/13232、thermo904c90d5…/26917，425共同输入4195c373…与两应用副本/manifest全部匹配。
+
+**首次完整镜像正控未闭合：** 正常service/file公开Agent一次owner1→2，原全文+4B精确；原SDK一次点击命中0:0且同owner2/ctx1完整反馈就绪，choice1却拒绝，owner仍4:4/needsRestore。x123/J未投递，失败原件未覆盖。实际producer→ChoiceReady→choice_fact补反例得`ready=1`但坐标fact2为空，RED81：decl在首次mounted之前没有覆盖，后续等值旧hit正控可成功，观察却未取得原typed坐标。按AGENTS共同状态归属首次实质修复失败规则，仅暂停该依赖的猜修及Pharos连续写作/原20/1GiB受影响链，交[精确差异与待区分问题](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/FIRST_MOUNT_CHOICE_COUNTEREXAMPLE.md)；不得二次点击救绿或给旧choice贴当前basis，不自动调用顾问。
+
+后续独立只读补证：原thermo脚本没有检查按住期间完整选择高亮；真实presentation绘制函数在accepted源选区2:59、平台旧3:3时高亮计数0，后来安装2:59正控计数1，RED82。[原绘制反例](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/presentation-held-source-range-third.log)及[原状态/截图配对](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/thermo-held-selection-original-pairing.json)补入同一升级材料。Typography/Drawing受控、覆盖工厂和ICU真实，配对读取先于截图，不冒充SDK逐帧scene stamp或成本样本。非editable owned presentation仍取平台旧sel，而capture合法延后平台安装；需沿同候选SourceMap/租约投影已采纳选择，不能重发setter或直接借新无版本缓存。没有改冻结生产源码、重建或重投手势，已有驻留/UP/X成功仍按原范围保留，按住期间完整选择反馈欠项现在有可区分反例。
+
+独立thermo原一次BEGIN/UP、双静止3005/3008ms内74/130次accepted滚动、源锚2跨端61→1、UP停步、共同reveal及免点击X精确/其他字段零污染通过，Back/正常聚焦正文未变；连续画面60.365秒1772帧丢帧0，完整选择高亮未纳入该脚本判据，不改名为100ms完整反馈通过。Pharos自有失败夹具一次正常Save、正常关闭、新PID28327固定版本1全字节读回262142B/4392086e…并再次关闭，明确只是小文件腿。两个正常消费者与新Pharos原PID均字体live0/lease0/input-choice-pending0；持有新增引用的释放由实际ACK/destroy撤回另补，不扩为设备20峰值。原挂载存续SDK拒绝恢复、当前64MiB20/RSS/100ms和原1GiB完整写作仍未完成；旧成本RED、已验容量/许可/文件安全及R31成果保留。无stage/commit/push，暂存/stash两个仓库哈希不变，E/W与用户资源保护。
+
+**本次具体阻塞审计（R32，2026-10-10）：** 首次挂载原来源缺口连续三个goal轮次仍存在；上一轮真实presentation绘制RED82及原状态配对是有效独立进展，没有改变RED81的依赖。现任务顶部仍为同一normal30覆盖裁决，没有针对decl先于mount、随后原观察无typed坐标的新增接续。425冻结源码逐项无漂移，两个自有normal应用已关闭；本轮build/test/driver均已终态，没有在途句柄可作等待，保留的Emulator不算进展任务。[当前审计](../../artifacts/h-bounded-large-20261008/continuation/normal30-layout-coverage/current-blocked-audit.json)列出已完成的独立工作与剩余依赖。按AGENTS状态归属首次实质修复失败规则停止该依赖猜改；当前满足goal blocked条件，目标不缩减，不把原20/RSS/100ms或1GiB完整门改成完成。需要针对升级材料的首次正常观察来源及presentation同候选选择投影给出具体接续；旧FIFO/覆盖主体指导不重新等待。无重投、顾问或stage/commit/push。
 
 <a id="h-large-normal30-upper-fifo-20261010"></a>
-## normal30 上层FIFO、发布交接与拒绝恢复（2026-10-10，当前优先）
+## normal30 上层FIFO、发布交接与拒绝恢复（2026-10-10，前序依据，未冲突要求保留）
 
 **复核结论：票据回收可收口，快速输入仍是真实框架缺陷。** [资源回收双normal](../../artifacts/h-bounded-large-20261008/delivery-normal30-candidate-20261009/resource-close-normal-20261010/README.md)的424份共同输入匹配、各一笔Z和正常关闭终值成立；设备关闭前票据已被Home清空，持有载荷的释放由真实destroy函数RED21→GREEN0→撤回RED21补证，不扩大为峰值RSS或原完整链通过。沿用这些成果，不重新开资源工程。
 

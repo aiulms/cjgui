@@ -633,10 +633,41 @@ public class CjguiTextSession {
                         "selection_projection_unavailable")
                 }
             } else {
+                // A source that cannot map the old choice keeps the original
+                // contract: name the gap and let the owner/source policy decide
+                // the new selection. The session must not invent a local caret
+                // clamp for every source that simply lacks a selection owner.
                 this.invalidateSourceSelection("selection_rebase_unavailable")
             }
         }
         return changed
+    }
+
+    /// Refresh the mirror for one accepted scene only while the source still
+    /// publishes exactly the bytes that frame shows. The accepted text is not
+    /// proof by itself: the source may have advanced again after that frame was
+    /// sealed. Comparing it with the current source slice (and taking that
+    /// slice's version) prevents adopting newer text as the old frame's basis,
+    /// while a same-bytes/version-advanced write still refreshes the base.
+    public func refreshMirrorForAcceptedScene(acceptedText: String): Bool {
+        if (!this.bound || this.compositionActive || this.awaitingCalibration()) {
+            return false
+        }
+        let snapshot = this.mirrorSnapshot()
+        if (acceptedText == snapshot.text && snapshot.contentVersion == snapshot.sourceVersion) {
+            return false
+        }
+        let start = this.window.windowStartByte()
+        let candidate = this.window.peekSource(start, this.window.materializeLimitBytes())
+        let currentSourceVersion = this.window.sourceVersion()
+        if (candidate.actualStart != start || candidate.content != acceptedText ||
+            candidate.contentVersion != currentSourceVersion) {
+            // The accepted frame is older than the source. Wait for the scene
+            // that publishes the newer bytes; never use the latest source as
+            // evidence for this frame.
+            return false
+        }
+        return this.refreshMirror()
     }
 
     private func invalidateSourceSelection(reason: String): Unit {
@@ -867,6 +898,34 @@ public class CjguiTextSession {
         if (changed) { this.selectionNeedsNativeRestore = true }
     }
 
+    // Reading-position transport only: no selection write or native callback.
+    // Identity reads stay outside the owner's short version-confirmation lock.
+    func rebaseReadingAnchorPoint(fromVersion: Int64, sourceByte: Int64, targetVersion: Int64):
+        ?(CjguiSourceSelectionSnapshot, Int64) {
+        if (!this.bound || sourceByte < 0 || targetVersion <= fromVersion) { return None }
+        let epoch = this.contextEpoch
+        let before = match (this.sourceSelectionSnapshot()) { case Some(value) => value; case None => return None }
+        let mapped = match (this.window.rebaseSelection(fromVersion, sourceByte, sourceByte)) {
+            case Some(value) => value; case None => return None
+        }
+        let after = match (this.sourceSelectionSnapshot()) { case Some(value) => value; case None => return None }
+        if (mapped[0] != targetVersion || mapped[1] < 0 || mapped[1] != mapped[2] ||
+            after.version != targetVersion || after.documentId.size == 0 || after.sessionEpoch <= 0 ||
+            before.documentId != after.documentId || before.sessionEpoch != after.sessionEpoch ||
+            before.viewGeneration != after.viewGeneration) { return None }
+        let confirmed = this.window.confirmSourceVersion(targetVersion,
+            { => this.bound && this.contextEpoch == epoch })
+        return if (confirmed) { Some((after, mapped[1])) } else { None }
+    }
+
+    func readingAnchorOwnerIsCurrent(expected: CjguiSourceSelectionSnapshot, epoch: Int64): Bool {
+        if (!this.bound || this.contextEpoch != epoch) { return false }
+        let current = match (this.sourceSelectionSnapshot()) { case Some(value) => value; case None => return false }
+        if (current.documentId != expected.documentId || current.sessionEpoch != expected.sessionEpoch ||
+            current.viewGeneration != expected.viewGeneration || current.version != expected.version) { return false }
+        return this.window.confirmSourceVersion(expected.version, { => this.bound && this.contextEpoch == epoch })
+    }
+
     public func sourceSelectionSnapshot(): ?CjguiSourceSelectionSnapshot {
         if (let Some(owner) <- this.window.selectionOwner()) { return Some(owner.sourceSelectionSnapshot()) }
         return None
@@ -936,6 +995,11 @@ public class CjguiTextSession {
         return out
     }
 
+    func directedSelection16(): (Int64, Int64) {
+        this.refreshOwnerSelectionProjection()
+        return (this.selectionAnchor16, this.selectionFocus16)
+    }
+
     public func selection16(): (Int64, Int64) {
         this.refreshOwnerSelectionProjection()
         return (this.selStart16, this.selEnd16)
@@ -987,22 +1051,71 @@ public class CjguiTextSession {
     // Global source endpoints do not require materializing the interior. The
     // owner validates both byte boundaries and the frozen version/revision;
     // the same native decision still commits the bounded input surface.
-    func commitReservedSourceSelectionTicket(ticket: CjguiTextSelectionTicket, anchorByte: Int64,
-        focusByte: Int64, decision: CjguiSelectionDecision, installAndSettle: (Int64) -> Unit): Bool {
-        let owner = match (this.window.selectionOwner()) { case Some(value) => value; case None => return false }
-        if (anchorByte < 0 || focusByte < 0 || !this.selectionTicketMatches(ticket)) { return false }
-        let reservedRevision = owner.reserveSourceSelection(ticket.contentVersion, ticket.selectionRevision,
+    func reserveSourceSelectionTicket(ticket: CjguiTextSelectionTicket, anchorByte: Int64,
+        focusByte: Int64, decision: CjguiSelectionDecision): ?CjguiSourceSelectionReservation {
+        let owner = match (this.window.selectionOwner()) { case Some(value) => value; case None => return None }
+        if (anchorByte < 0 || focusByte < 0 || !this.selectionTicketMatches(ticket)) { return None }
+        let revision = owner.reserveSourceSelection(ticket.contentVersion, ticket.selectionRevision,
             anchorByte, focusByte, decision)
-        if (reservedRevision < 0) { return false }
-        installAndSettle(reservedRevision)
-        let committed = decision.state() == 3
-        owner.settleSourceSelection(reservedRevision)
+        return if (revision >= 0) {
+            Some(CjguiSourceSelectionReservation(owner, ticket, anchorByte, focusByte, revision, decision))
+        } else { None }
+    }
+
+    func settleSourceSelectionReservation(reservation: CjguiSourceSelectionReservation): Bool {
+        let committed = reservation.settle()
         this.refreshOwnerSelectionProjection()
-        if (committed && this.selectionRevision == reservedRevision &&
-            this.selectionVersion == ticket.contentVersion) {
+        if (committed && this.selectionRevision == reservation.revision &&
+            this.selectionVersion == reservation.semantic.contentVersion) {
             this.selectionNeedsNativeRestore = false
         }
         return committed
+    }
+
+    func commitReservedSourceSelectionTicket(ticket: CjguiTextSelectionTicket, anchorByte: Int64,
+        focusByte: Int64, decision: CjguiSelectionDecision, installAndSettle: (Int64) -> Unit): Bool {
+        let reservation = match (this.reserveSourceSelectionTicket(ticket, anchorByte, focusByte, decision)) {
+            case Some(value) => value; case None => return false
+        }
+        installAndSettle(reservation.revision)
+        return this.settleSourceSelectionReservation(reservation)
+    }
+
+    /// Convert directed document bytes only in the mirror named by this ticket.
+    /// Display-proxy coordinates remain the installer's independent arguments.
+    func commitSourceSelectionInMirrorTicket(ticket: CjguiTextSelectionTicket,
+        anchorByte: Int64, focusByte: Int64, install: () -> Bool): Bool {
+        if (!this.selectionTicketMatches(ticket)) {
+            this.lastReason = "source_selection_ticket_stale"
+            return false
+        }
+        let mirror = this.mirrorSnapshot()
+        if (!mirror.prepared || mirror.contextEpoch != ticket.contextEpoch ||
+            mirror.mirrorRevision != ticket.mirrorRevision ||
+            mirror.contentVersion != ticket.contentVersion ||
+            mirror.sourceVersion != ticket.sourceVersion || mirror.sourceVersion != mirror.contentVersion) {
+            this.lastReason = "source_selection_mirror_stale"
+            return false
+        }
+        if (mirror.startByte < 0 || anchorByte < mirror.startByte || focusByte < mirror.startByte) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW
+            return false
+        }
+        let anchorLocal = anchorByte - mirror.startByte
+        let focusLocal = focusByte - mirror.startByte
+        if (anchorLocal > Int64(mirror.text.size) || focusLocal > Int64(mirror.text.size)) {
+            this.lastReason = CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW
+            return false
+        }
+        let anchor16 = match (cjguiUtf8OffsetToUtf16(mirror.text, anchorLocal)) {
+            case Some(value) => value
+            case None => this.lastReason = CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY; return false
+        }
+        let focus16 = match (cjguiUtf8OffsetToUtf16(mirror.text, focusLocal)) {
+            case Some(value) => value
+            case None => this.lastReason = CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY; return false
+        }
+        return this.commitSelectionTicket(ticket, anchor16, focus16, install)
     }
 
     /// Owner guards contain only pure session work. Native installation may
@@ -1147,7 +1260,8 @@ public class CjguiTextSession {
             // Left、[1,4) 在文尾按 Right 都必须折叠成功，不因端点贴边被拒），
             // 折叠是零事务且不做边界判断；已折叠才判移动边界。
             if (hi > lo) {
-                let target = if (match (intent) { case MoveLeft => true case _ => false }) { lo } else { hi }
+                let target = cjguiNonemptySelectionCollapseEndpoint(lo, hi,
+                    match (intent) { case MoveRight => true case _ => false }).getOrThrow()
                 return this.applyPlainSelection(target, target)
             }
             if (match (intent) { case MoveLeft => true case _ => false }) {

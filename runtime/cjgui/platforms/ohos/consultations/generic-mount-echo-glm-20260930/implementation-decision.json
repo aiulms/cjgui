@@ -1,0 +1,6 @@
+{
+  "adopted": "Same UTF16 text/no live preview/no marked guard before ownership. Generic different text and real composition remain explicit-submit draft.",
+  "production_red": "actual generic preview callback return31 false-preview flag plus guarded entry return17; original source retained",
+  "green": "26 affected native tests, 5 mount echo tests including 3 mutation controls; actual consumer still pending new HAP",
+  "public_abi_changed": false
+}

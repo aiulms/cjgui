@@ -6,8 +6,14 @@ package cjgui
 import std.unittest.*
 import std.unittest.testmacro.*
 import std.time.*
+import std.collection.*
 
 foreign {
+    func cjgui_internal_renderer_test_fault_actual_activation_pair(session: UInt64, fault: UInt32): Int32
+    func cjgui_internal_renderer_test_caret_confirmation_pending_once(session: UInt64, command: UInt32): Int32
+    func cjgui_internal_renderer_test_selection_finalizing_pending_once(session: UInt64, command: UInt32): Int32
+    func cjgui_internal_renderer_test_insert_actual_composable_proxy(session: UInt64, text: CString): Int32
+    func cjgui_internal_renderer_test_readonly_proxy_mutations(session: UInt64): Int32
     func cjgui_internal_renderer_test_queue_composable_selection(
         session: UInt64, nodeIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32): Int32
     func cjgui_internal_renderer_test_set_composable_selection(
@@ -33,6 +39,8 @@ private class SourceHandoffController <: CjguiComposableUiController &
     CjguiComposableUiSelectionCompletionProvider & CjguiComposableUiPointerCaptureVersionProvider {
     let owner: FakeTextOwner
     var completionCount: Int64 = 0
+    var holdFirstPresentForLifecycle = false
+    var lifecyclePresentHeld = false
     var completion: ?CjguiInstalledSelectionCompletion = None
     var firstCompletion: ?CjguiInstalledSelectionCompletion = None
     var requireCompletion = false
@@ -48,6 +56,8 @@ private class SourceHandoffController <: CjguiComposableUiController &
             if (let Some(host) <- window) { completionInsertStatus = sourceHandoffInsert(host, 1u32, text) }
         }
     }
+    var retainOriginalArrow = false
+    var originalArrowSequence: UInt64 = 0u64
     var revision: Int64 = 1
     var window: ?CjguiComposableUiWindow = None
     var session: ?CjguiTextSession = None
@@ -62,8 +72,22 @@ private class SourceHandoffController <: CjguiComposableUiController &
     var useSelectionSubmissionForPointer = false
     var useSourceSelectionSubmissionForPointer = false
     var scrollFixture = false
+    var omitPreviewForResident = false
+    var residentAnchorPreview = false
+    var previewHeight: Int64 = 70
+    var previewContentClips: Bool = true
     let sourceViewport = CjguiComposableUiScrollViewport()
+    var exerciseDeclaredActivation = false
+    var declaredActivationCount: Int64 = 0
+    var declaredSourceAdmissions: Int64 = 0
+    var declaredSelectionAdmissions: Int64 = 0
+    var declaredSelectionPublishes: Int64 = 0
     var includeUndoAction = false
+    var includeOwnerTextInput = true
+    var previewReadOnly = false
+    var previewEnabled = true
+    var previewPointerInteractive = true
+    var useBoundMirrorBody = false
     var previewDragActive = false
     var previewDragAnchor16: Int64 = -1
     var pointerBeginAdmissions: Int64 = 0
@@ -89,21 +113,37 @@ private class SourceHandoffController <: CjguiComposableUiController &
     }
     public func uiSceneVersion(): Int64 { return revision + owner.ver }
     public func buildUi(): CjguiComposableUiNode {
+        if (holdFirstPresentForLifecycle) {
+            if (let Some(host) <- window) {
+                holdFirstPresentForLifecycle = false
+                lifecyclePresentHeld = host.testHoldNextComposablePresent()
+            }
+        }
         let root = cjguiComposableVertical(8001, "source-handoff-root",
             CjguiComposableUiStyle(fixedWidth: 360, fixedHeight: 300,
                 background: if (revision % 2 == 0) { CjguiComposableUiColor(0.96, 0.96, 0.96, 1.0) }
                     else { CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0) }))
-        root.add(cjguiComposableMultilineTextInput(8002, "source-body", "Source", owner.text(), 8802,
-            CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 150), fieldId: "source-body"))
-        let preview = cjguiComposableText(8003, "source-preview", owner.text(),
-            CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 70, pointerInteractive: true),
-            resourceId: 8803, fieldId: "source-preview")
+        let presentedBody = if (useBoundMirrorBody && session.isSome()) {
+            session.getOrThrow().mirrorSnapshot().text
+        } else { owner.text() }
+        if (includeOwnerTextInput) {
+            root.add(cjguiComposableMultilineTextInput(8002, "source-body", "Source", presentedBody, 8802,
+                CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 150), fieldId: "source-body"))
+        }
+        let preview = CjguiComposableUiNode(8003, "source-preview", CJGUI_COMPOSABLE_UI_TEXT,
+            "", presentedBody, "", 8803,
+            CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: previewHeight, pointerInteractive: previewPointerInteractive),
+            fieldId: "source-preview", readOnly: previewReadOnly, enabled: previewEnabled)
         if (scrollFixture) {
             let scroll = cjguiComposableScrollArea(8005, "source-preview-scroll", sourceViewport,
                 CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 120))
             let content = cjguiComposableVertical(8006, "source-preview-content",
-                CjguiComposableUiStyle(gap: 0, clipsContent: true))
-            content.add(preview)
+                CjguiComposableUiStyle(gap: 0, clipsContent: previewContentClips))
+            if (!omitPreviewForResident) { content.add(preview) }
+            if (residentAnchorPreview) {
+                content.add(cjguiComposableText(8008, "resident-anchor-preview", presentedBody,
+                    CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 70)))
+            }
             content.add(cjguiComposableVertical(8007, "source-preview-tail",
                 CjguiComposableUiStyle(fixedHeight: 240)))
             scroll.add(content)
@@ -138,6 +178,37 @@ private class SourceHandoffController <: CjguiComposableUiController &
             mirror.startByte + start, mirror.startByte + end))
     }
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 27 && event.node.nodeId == 8004) {
+            declaredActivationCount += 1
+            let host = window.getOrThrow()
+            let sourceAdmitted = host.testAdmittedTextCommandSerial() != 0u64
+            if (sourceAdmitted) { declaredSourceAdmissions += 1 }
+            // A trusted controller can explicitly navigate via its public
+            // selection API without a declared command. That separate ability
+            // is not evidence of this queued action's editing source.
+            if (!exerciseDeclaredActivation || !sourceAdmitted) { return CjguiComposableUiDispatchResult(true) }
+            let ticket = match (host.freezeAcceptedSelection(8003)) {
+                case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false)
+            }
+            let result = host.submitAcceptedSelection(ticket, 1, 4, 1, 4,
+                { => declaredSelectionPublishes += 1 })
+            let admitted = match (result) {
+                case CjguiSelectionSubmission.Committed => true
+                case CjguiSelectionSubmission.Retained(_) => true
+                case CjguiSelectionSubmission.NotAdmitted(_) => false
+            }
+            if (admitted) { declaredSelectionAdmissions += 1 }
+            return CjguiComposableUiDispatchResult(admitted)
+        }
+        if (retainOriginalArrow && event.eventKind == 35 && (event.text == "left" || event.text == "right")) {
+            let host = window.getOrThrow()
+            let ticket = host.freezeAcceptedSelection(event.node.nodeId).getOrThrow()
+            let retained = host.retainVisualInputIntent(event.inputSequence, event.inputPreviousSequence,
+                event.inputSessionGeneration, ticket, event.text, false, -1.0, 0u64)
+            if (retained) { originalArrowSequence = event.inputSequence }
+            return CjguiComposableUiDispatchResult(retained)
+        }
+
         if (event.node.nodeId == 8003 && event.node.nodeKind == CJGUI_COMPOSABLE_UI_TEXT &&
             (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN ||
              event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
@@ -232,6 +303,10 @@ private class SourceHandoffController <: CjguiComposableUiController &
             choice.selectionRevision == ticket.selectionRevision &&
             choice.anchorByte == selectionChoiceAnchorByte && choice.focusByte == selectionChoiceFocusByte
     }
+}
+
+private class SourceHandoffBoolBox {
+    var value = false
 }
 
 private func sourceHandoffInsert(window: CjguiComposableUiWindow, nodeIndex: UInt32,
@@ -496,7 +571,7 @@ func pendingSelectionUnsupportedInstallAndChangedTicketAreNotRetained(): Unit {
         }
         @Assert(unsafe { cjgui_internal_renderer_test_selection_geometry_rejection_consumed(
             window.testSessionToken()) }, 1)
-        @Assert(window.selectionRestoreState(sourceRestore + 1), "superseded")
+        @Assert(window.selectionRestoreState(sourceRestore + 1), "native_refused_32")
         @Assert(controller.previewSelectionCommits, 0)
         @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
         @Assert(owner.body.text(), body)
@@ -512,7 +587,7 @@ func pendingSelectionUnsupportedInstallAndChangedTicketAreNotRetained(): Unit {
             case CjguiSelectionSubmission.NotAdmitted(_) => ()
             case _ => @Assert(false, true)
         }
-        @Assert(window.selectionRestoreState(sourceRestore + 1), "superseded")
+        @Assert(window.selectionRestoreState(sourceRestore + 1), "native_refused_32")
         @Assert(controller.previewSelectionCommits, 0)
         @Assert(owner.body.text(), body)
         @Assert(owner.body.writeCalls, 0)
@@ -573,7 +648,8 @@ func pendingSelectionStatus33RestoreAttemptsAreBoundedPerScene(): Unit {
         @Assert(controller.previewSelectionCommits, 0)
         let before = owner.sourceSelectionSnapshot()
 
-        for (_ in 0..8) {
+        // The short submit now consumes the first of the same eight attempts.
+        for (_ in 0..7) {
             @Assert(unsafe { cjgui_internal_renderer_test_arm_pending_selection_pointer_update(
                 window.testSessionToken(), endPoint[1], endPoint[2]) }, CJGUI_INTERNAL_RENDERER_OK)
             window.pumpPendingSelectionRestore()
@@ -595,7 +671,7 @@ func pendingSelectionStatus33RestoreAttemptsAreBoundedPerScene(): Unit {
         window.pumpPendingSelectionRestore()
         @Assert(unsafe { cjgui_internal_renderer_test_pending_selection_pointer_update_consumed(
             window.testSessionToken()) }, 0)
-        @Assert(window.selectionRestoreState(id), "need_prepare_installation")
+        @Assert(window.selectionRestoreState(id), "attempt_limit_exhausted")
     } finally { window.close() }
 }
 
@@ -840,6 +916,16 @@ func longSelectionSubmissionSameValueAuthorityCancelsRunningWorkerAndKeepsAUsabl
 
 @Test
 func sourceHandoffVerticalInputRetainsExactAfterChainAndBoundsSuffix(): Unit {
+    sourceHandoffArrowInputRetainsExactAfterChainAndBoundsSuffix("down", "down")
+}
+
+@Test
+func sourceHandoffHorizontalInputRetainsExactAfterChainAndBoundsSuffix(): Unit {
+    sourceHandoffArrowInputRetainsExactAfterChainAndBoundsSuffix("left", "right")
+}
+
+private func sourceHandoffArrowInputRetainsExactAfterChainAndBoundsSuffix(firstDirection: String,
+    secondDirection: String): Unit {
     let owner = FakeTextOwner("ABCDE🙂\n")
     let controller = SourceHandoffController(owner)
     let window = sourceHandoffWindow(controller)
@@ -853,12 +939,13 @@ func sourceHandoffVerticalInputRetainsExactAfterChainAndBoundsSuffix(): Unit {
         let (generation, _) = internalRendererCoordinateLifetime(window.testSessionToken())
         @Assert(generation != 0u64, true)
         @Assert(window.retainVisualInputIntent(1u64, 0u64, generation, source,
-            "down", false, -1.0, 0u64), true)
+            firstDirection, false, -1.0, 0u64), true)
         @Assert(window.retainVisualInputIntent(2u64, 1u64, generation, source,
-            "down", true, -1.0, 0u64), true)
+            secondDirection, true, -1.0, 0u64), true)
         @Assert(window.visualInputIntentHeadIsCurrent(), true)
         @Assert(window.settleVisualInputIntent(2u64, CjguiVisualInputIntentOutcome.AtBoundary), false)
         let first = window.pendingVisualInputIntent().getOrThrow()
+        @Assert(first.direction, firstDirection)
         @Assert(first.sequence, 1u64)
         @Assert(first.previousSequence, 0u64)
         @Assert(first.sourceTicket.nodeId, 8002)
@@ -868,6 +955,7 @@ func sourceHandoffVerticalInputRetainsExactAfterChainAndBoundsSuffix(): Unit {
         @Assert(window.settleVisualInputIntent(1u64, CjguiVisualInputIntentOutcome.Committed,
             acceptedSource: Some(source), acceptedPreferredX: 37.0), true)
         let rebased = window.pendingVisualInputIntent().getOrThrow()
+        @Assert(rebased.direction, secondDirection)
         @Assert(rebased.sequence, 2u64)
         @Assert(rebased.previousSequence, 1u64)
         @Assert(rebased.preferredX, 37.0)
@@ -1356,6 +1444,118 @@ func sourceHandoffNonBudgetRestoreSettlesSameRequestWithActualReceipt(): Unit {
     } finally { window.close() }
 }
 
+private func sourceHandoffDirectionScenario(mode: Int64): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    var body = ""
+    for (_ in 0..8) { body += "alpha bravo charlie delta echo fox\n" }
+    authority.body.data = body.toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.scrollFixture = true
+    // Keep the existing small text target; overflowing hit routing is a separate original counter.
+    controller.previewHeight = 70
+    // This direction control has only the accepted scroll clip. The original
+    // moving nested-clip counter remains independently RED.
+    controller.previewContentClips = false
+    controller.selectionDocumentId = "test-authority"
+    controller.requireCompletion = true
+    controller.useSelectionSubmissionForPointer = true
+    controller.useSourceSelectionSubmissionForPointer = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "source-direction-interleaving", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let (left, top, width, height) = window.nodeRect(8005).getOrThrow()
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == 8003 || node.nodeId == 8005) {
+                println("SOURCE_DIRECTION_SETUP node=${node.nodeId} kind=${node.nodeKind} " +
+                    "resource=${node.resourceId} x=${node.bounds.x} y=${node.bounds.y} " +
+                    "width=${node.bounds.width} height=${node.bounds.height}")
+            }
+        }
+        let x = Float64(left + 24)
+        let inside = Float64(top + 30)
+        let below = Float64(top + height + 20)
+        let above = Float64(top - 20)
+        @Assert(unsafe { cjgui_internal_renderer_test_begin_composable_pointer(window.testSessionToken(),
+            8003u64, x, inside) }, CJGUI_INTERNAL_RENDERER_OK)
+        var beginTurns = 0
+        while (controller.completionCount == 0 && beginTurns < 12) {
+            sourceHandoffPump(window)
+            beginTurns += 1
+        }
+        @Assert(controller.pointerBeginAdmissions, 1)
+        @Assert(controller.completionCount > 0, true)
+        let gesture = sourceHandoffNativeGesture(window)
+        let before = controller.sourceViewport.acceptedOffset()
+        if (mode != 2) {
+            @Assert(unsafe { cjgui_internal_renderer_test_captured_pointer_phase(window.testSessionToken(),
+                2u32, x, below) }, CJGUI_INTERNAL_RENDERER_OK)
+            let _ = window.pumpEventsWithoutRefresh(0u32)
+        }
+        let forward = controller.sourceViewport.offset()
+        @Assert(if (mode == 2) { forward == before } else { forward > before }, true)
+        @Assert(controller.sourceViewport.acceptedOffset(), before)
+        let forwardGeneration = controller.sourceViewport.requestGeneration()
+        if (mode == 3) {
+            @Assert(window.refresh(), true)
+            @Assert(controller.sourceViewport.acceptedOffset(), forward)
+            // Finish the actual accepted-scene capture continuation before a
+            // new original UPDATE. This emits no extra pointer or text input.
+            sourceHandoffPump(window)
+            @Assert(sourceHandoffNativeGesture(window), gesture)
+        }
+        let phase: UInt32 = if (mode == 4) { 3u32 } else if (mode == 5) { 4u32 } else { 2u32 }
+        let nextPoint = if (mode == 1 || mode >= 4) { below } else { above }
+        @Assert(unsafe { cjgui_internal_renderer_test_captured_pointer_phase(window.testSessionToken(),
+            phase, x, nextPoint) }, CJGUI_INTERNAL_RENDERER_OK)
+        let _ = window.pumpEventsWithoutRefresh(0u32)
+        let choice = authority.sourceSelectionSnapshot()
+        println("SOURCE_DIRECTION_COUNTER mode=${mode} phase=reverse_before_present gesture=${gesture} " +
+            "generation=${forwardGeneration} forward=${forward} accepted=${controller.sourceViewport.acceptedOffset()} " +
+            "choice=${choice.anchorByte}:${choice.focusByte} updates=${controller.pointerUpdateAdmissions}")
+        @Assert(sourceHandoffNativeGesture(window), if (mode >= 4) { 0u64 } else { gesture })
+        @Assert(owner.writeCalls, 0)
+        @Assert(window.testHoldNextComposablePresent(), true)
+        @Assert(window.refresh(), false)
+        @Assert(controller.sourceViewport.acceptedOffset(), if (mode == 3) { forward } else { before })
+        @Assert(window.testResolvePendingComposablePresent(), true)
+        let _ = window.refreshIfNeeded()
+        println("SOURCE_DIRECTION_COUNTER mode=${mode} phase=after_original_candidate accepted=${controller.sourceViewport.acceptedOffset()} " +
+            "forward=${forward} before=${before} source=${choice.anchorByte}:${choice.focusByte}")
+        // A request whose unpresented direction was overtaken by a real
+        // reverse UPDATE must not publish that old positive displacement.
+        if (mode == 0 || mode == 2) {
+            @Assert(controller.sourceViewport.acceptedOffset() <= before, true)
+        } else if (mode == 1) {
+            @Assert(controller.sourceViewport.acceptedOffset(), forward)
+        } else if (mode == 3) {
+            // An already presented displacement remains real. The next
+            // original point is hit against that accepted viewport.
+            @Assert(controller.sourceViewport.acceptedOffset() <= forward, true)
+        } else {
+            @Assert(window.pointerCaptureActiveForTest(), false)
+            @Assert(owner.writeCalls, 0)
+        }
+    } finally { window.close() }
+}
+
+@Test
+func sourceHandoffReverseBeforeForwardViewportPresentation(): Unit { sourceHandoffDirectionScenario(0) }
+@Test
+func sourceHandoffDirectionSameSideKeepsOriginalRequest(): Unit { sourceHandoffDirectionScenario(1) }
+@Test
+func sourceHandoffDirectionReverseWithoutPendingRequest(): Unit { sourceHandoffDirectionScenario(2) }
+@Test
+func sourceHandoffDirectionReverseAfterActualPresentation(): Unit { sourceHandoffDirectionScenario(3) }
+@Test
+func sourceHandoffDirectionOriginalUpStopsCapture(): Unit { sourceHandoffDirectionScenario(4) }
+@Test
+func sourceHandoffDirectionOriginalCancelStopsCapture(): Unit { sourceHandoffDirectionScenario(5) }
+
 @Test
 func sourceHandoffRepeatMappedRestoreAfterPassiveOriginKeepsRealBeginGesture(): Unit {
     let authority = SelectionAuthorityTestOwner()
@@ -1736,4 +1936,1752 @@ func sourceHandoffCompletionCrossTurnPreparationPublishesBeforeFirstInput(): Uni
         sourceHandoffPump(window)
         @Assert(owner.writeCalls, 1)
     } finally { window.close() }
+}
+
+@Test
+func initialTextFocusRetainsPreSceneIntentUntilActualInstallReceipt(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "initial-focus-before-scene", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.testInitialTextFocusIntentPending(), true)
+        @Assert(window.pendingSelectionRestoreId(), -1)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(sourceHandoffMonotonicMicros() < deadline, true)
+        @Assert(controller.completionCount, 1)
+        @Assert(controller.completion.getOrThrow().requestId > 0, true)
+        @Assert(controller.completion.getOrThrow().targetNodeId, 8002)
+        @Assert(controller.completion.getOrThrow().sourceSelection.version, owner.ver)
+        @Assert(window.installedSelectionCompletion().isSome(), true)
+        @Assert(window.testInitialTextFocusIntentPending(), false)
+        @Assert(owner.writeCalls, 0)
+    } finally { window.close() }
+}
+
+@Test
+func ownerWriteAdmissionRetainsOriginalFirstInstallationBeforeHistoryPublication(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.includeOwnerTextInput = false
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "history-first-install", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.testInitialTextFocusIntentPending(), true)
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+        let original = window.admitTextOwnerWrite(None)
+        @Assert(original.isReady, false)
+        @Assert(original.isWaiting, true)
+        @Assert(original.predecessor, 0u64)
+        @Assert(window.performTextOwnerSelectionChange({=>
+            controller.deferredSelectionPublishes += 1
+            return (true, 1, 22)
+        }), false)
+        @Assert(controller.deferredSelectionPublishes, 0)
+        @Assert(window.testInitialTextFocusIntentPending(), true)
+        controller.includeOwnerTextInput = true
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 1)
+        @Assert(window.installedSelectionCompletion().getOrThrow().sourceSelection.version, 1)
+        @Assert(window.admitTextOwnerWrite(Some(original)).isReady, true)
+        @Assert(owner.writeCalls, 0)
+        @Assert(controller.deferredSelectionPublishes, 0)
+    } finally { window.close() }
+}
+
+@Test
+func ownerWriteAdmissionVersionJumpUsesActualAAndSameBodyB(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "same saved bytes🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "history-version-jump", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let initialDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < initialDeadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 1)
+        let original = window.installedSelectionCompletion().getOrThrow()
+        @Assert(original.sourceSelection.version, 1)
+        @Assert(window.admitTextOwnerWrite(None).isReady, true)
+        // Component owner callback advances history identity without editing its saved bytes.
+        // Actual file recovery is verified separately through the production service/open path.
+        @Assert(window.performTextOwnerSelectionChange({=>
+            controller.deferredSelectionPublishes += 1
+            let before = owner.ver
+            owner.ver = 22
+            return (true, before, owner.ver)
+        }), true)
+        let pending = window.admitTextOwnerWrite(None)
+        @Assert(pending.isWaiting, true)
+        @Assert(pending.predecessor > 0u64, true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount < 2 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 2)
+        let successor = window.installedSelectionCompletion().getOrThrow()
+        @Assert(successor.sourceSelection.version, 22)
+        @Assert(successor.transferId != original.transferId, true)
+        @Assert(window.admitTextOwnerWrite(Some(pending)).isReady, true)
+        @Assert(controller.deferredSelectionPublishes, 1)
+        @Assert(owner.writeCalls, 0)
+        @Assert(owner.text(), "same saved bytes🙂\n")
+        sourceHandoffPump(window)
+        @Assert(controller.deferredSelectionPublishes, 1)
+    } finally { window.close() }
+}
+
+@Test
+func ownerWriteAdmissionExpiredActualInstallationCannotBecomeBootstrap(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "old installed choice🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "history-expired-A", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 1)
+        @Assert(window.installedSelectionCompletion().isSome(), true)
+        // The old failure advanced the owner outside this window's common boundary.
+        owner.ver = 22
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+        @Assert(window.admitTextOwnerWrite(None).isTerminal, true)
+        @Assert(window.performTextOwnerSelectionChange({=>
+            controller.deferredSelectionPublishes += 1
+            return (true, 22, 23)
+        }), false)
+        @Assert(controller.deferredSelectionPublishes, 0)
+        @Assert(owner.ver, 22)
+        @Assert(owner.writeCalls, 0)
+    } finally { window.close() }
+}
+
+@Test
+func initialTextFocusWaitsWhileWindowIsInactiveThenUsesSameIntent(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "initial-focus-inactive", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(false, false, false, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        var turn: Int64 = 0
+        while (turn < 12) {
+            sourceHandoffPump(window)
+            turn += 1
+        }
+        @Assert(window.testInitialTextFocusIntentPending(), true)
+        @Assert(window.pendingSelectionRestoreId(), -1)
+        @Assert(window.testSelectionRestoreAttemptCount(), 0)
+        @Assert(controller.completionCount, 0)
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(sourceHandoffMonotonicMicros() < deadline, true)
+        @Assert(controller.completionCount, 1)
+        @Assert(controller.completion.getOrThrow().sourceSelection.version, owner.ver)
+        @Assert(window.testInitialTextFocusIntentPending(), false)
+    } finally { window.close() }
+}
+
+@Test
+func initialTextFocusKeepsOneIntentAcrossMissingAcceptedTarget(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.includeOwnerTextInput = false
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "initial-focus-target-late", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        var turn: Int64 = 0
+        while (turn < 12) {
+            sourceHandoffPump(window)
+            turn += 1
+        }
+        @Assert(window.testInitialTextFocusIntentPending(), true)
+        @Assert(window.pendingSelectionRestoreId(), -1)
+        @Assert(window.testSelectionRestoreAttemptCount(), 0)
+        @Assert(controller.completionCount, 0)
+        controller.includeOwnerTextInput = true
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(sourceHandoffMonotonicMicros() < deadline, true)
+        @Assert(controller.completionCount, 1)
+        @Assert(controller.completion.getOrThrow().targetNodeId, 8002)
+        @Assert(window.testInitialTextFocusIntentPending(), false)
+    } finally { window.close() }
+}
+
+@Test
+func initialTextFocusYieldsToNewAcceptedUserFocus(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.includeUndoAction = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "initial-focus-user-wins", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(false, false, false, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8004), true)
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        sourceHandoffPump(window)
+        @Assert(window.testInitialTextFocusIntentPending(), false)
+        @Assert(window.pendingSelectionRestoreId(), -1)
+        @Assert(window.windowProjection().focusedControlId, "undo-action")
+        @Assert(controller.completionCount, 0)
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+    } finally { window.close() }
+}
+
+@Test
+func initialTextFocusExpiresWithOwnerIdentityAndClose(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "initial-focus-expired", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+    owner.data = "replacement".toArray()
+    owner.ver += 1
+    window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+    @Assert(window.start(), true)
+    @Assert(window.refresh(), true)
+    sourceHandoffPump(window)
+    @Assert(window.testInitialTextFocusIntentPending(), false)
+    @Assert(controller.completionCount, 0)
+    @Assert(window.installedSelectionCompletion().isNone(), true)
+    window.close()
+
+    let closedAuthority = SelectionAuthorityTestOwner()
+    closedAuthority.body.data = "close-before-first-scene".toArray()
+    let closedOwner = closedAuthority.body
+    let closedController = SourceHandoffController(closedOwner)
+    let closedWindow = sourceHandoffWindow(closedController)
+    let closedSession = closedWindow.bindRangeTextSession(8002, "initial-focus-close", closedAuthority,
+        closedAuthority, 8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    closedController.attach(closedWindow, closedSession)
+    @Assert(closedWindow.requestInitialOwnedTextFocusRestore(), true)
+    closedWindow.close()
+    @Assert(closedWindow.testInitialTextFocusIntentPending(), false)
+    @Assert(closedController.completionCount, 0)
+}
+
+@Test
+func foregroundOnlyAcceptedVisualOpeningRestoreWaitsForActiveWindow(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "visual-opening-focus-active", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        window.testSetInitialTextFocusWindowState(false, false, false, true, false)
+        let published = SourceHandoffBoolBox()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0,
+            { => published.value = true }, sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        @Assert(id > 0, true)
+        var turn: Int64 = 0
+        while (turn < 12) {
+            window.pumpPendingSelectionRestore()
+            turn += 1
+        }
+        @Assert(window.selectionRestoreState(id), "pending")
+        @Assert(window.testSelectionRestoreAttemptCount(), 0)
+        @Assert(published.value, false)
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(sourceHandoffMonotonicMicros() < deadline, true)
+        @Assert(window.selectionRestoreState(id), "installed")
+        @Assert(published.value, true)
+        @Assert(window.installedSelectionCompletion().isSome(), true)
+        @Assert(owner.writeCalls, 0)
+    } finally { window.close() }
+}
+
+@Test
+func foregroundOnlyAcceptedVisualOpeningRestoreYieldsToNewFocus(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.includeUndoAction = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "visual-opening-focus-user-wins", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        window.testSetInitialTextFocusWindowState(false, false, false, true, false)
+        let published = SourceHandoffBoolBox()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0,
+            { => published.value = true }, sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        @Assert(id > 0, true)
+        @Assert(window.focusAcceptedNodeById(8004), true)
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        window.pumpPendingSelectionRestore()
+        @Assert(window.selectionRestoreState(id), "human_selection_superseded")
+        @Assert(published.value, false)
+        @Assert(window.windowProjection().focusedControlId, "undo-action")
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+    } finally { window.close() }
+}
+
+@Test
+func liveWindowSessionIdentityExistsBeforeAcceptedFrameAndRetiresOnClose(): Unit {
+    let owner = FakeTextOwner("live-generation-before-frame🙂\n")
+    let controller = SourceHandoffController(owner)
+    controller.holdFirstPresentForLifecycle = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "live-session-before-first-frame", owner, owner,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    @Assert(window.liveWindowSessionIdentity().isNone(), true)
+    try {
+        @Assert(window.start(), true)
+        @Assert(controller.lifecyclePresentHeld, true)
+        @Assert(window.isOpen(), true)
+        @Assert(window.windowProgress().sessionIdentity, "")
+        @Assert(window.windowProjection().isActive, false)
+        @Assert(window.windowProjection().sessionIdentity, "unavailable")
+        let first = window.liveWindowSessionIdentity().getOrThrow()
+        @Assert(first != "", true)
+        let status = window.nativeStatus()
+        @Assert(window.liveWindowSessionIdentity().getOrThrow(), first)
+        @Assert(window.nativeStatus(), status)
+        @Assert(window.windowProjection().acceptedSceneVersion, 0)
+        @Assert(owner.writeCalls, 0)
+        @Assert(window.testResolvePendingComposablePresent(), true)
+        window.close()
+        @Assert(window.isOpen(), false)
+        @Assert(window.liveWindowSessionIdentity().isNone(), true)
+        @Assert(window.start(), true)
+        let second = window.liveWindowSessionIdentity().getOrThrow()
+        @Assert(second != first, true)
+        @Assert(owner.writeCalls, 0)
+    } finally {
+        let _ = window.testResolvePendingComposablePresent()
+        window.close()
+    }
+    @Assert(window.liveWindowSessionIdentity().isNone(), true)
+}
+
+@Test
+func ownerWriteAdmissionSameOwnerMirrorExpiryHasOriginalActualReceipt(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = Array<UInt8>(4096, repeat: 97)
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.useBoundMirrorBody = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "passive-mirror-diagnostic", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, materializeLimit: 512)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 1)
+        let actualA = window.installedSelectionCompletion().getOrThrow()
+        let original = session.sourceSelectionSnapshot().getOrThrow()
+        let originalSemantic = session.freezeSelectionTicket()
+        @Assert(window.admitTextOwnerWrite(None).isReady, true)
+        // A paint-only scene refresh must not retire the actual receipt.
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, actualA.transferId)
+        @Assert(session.freezeSelectionTicket().mirrorRevision, originalSemantic.mirrorRevision)
+        // Real bounded materialization changes the mirror, without editing owner/selection.
+        @Assert(session.revealByte(2048), true)
+        let moved = session.mirrorSnapshot()
+        @Assert(moved.startByte > 0, true)
+        @Assert(moved.text, actualA.targetBody)
+        let now = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(now.version, original.version)
+        @Assert(now.revision, original.revision)
+        @Assert(now.anchorByte, original.anchorByte)
+        @Assert(now.focusByte, original.focusByte)
+        @Assert(actualA.firstMismatch(now, session.freezeSelectionTicket(), actualA.targetBindingEpoch,
+            actualA.windowSession), "mirror")
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+        let refused = window.admitTextOwnerWrite(None)
+        @Assert(refused.isTerminal, true)
+        @Assert(refused.reason, "owner_installed_source_unavailable")
+        @Assert(owner.ver, 1)
+        @Assert(owner.writeCalls, 0)
+    } finally { window.close() }
+}
+
+
+@Test
+func readOnlyPresentationKeepsActualSelectionReceiptAcrossPermissionChange(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.previewReadOnly = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "readonly-presentation-lifetime", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        @Assert(controller.buildUi().children()[1].isReadOnly, true)
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let firstTicket = window.freezeAcceptedSelection(8003).getOrThrow()
+        @Assert(window.requestAcceptedSelectionRestore(firstTicket, 0, 0, 0, 0, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true) > 0, true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount, 1)
+        let a = window.installedSelectionCompletion().getOrThrow()
+        @Assert(a.targetNodeId, 8003)
+        @Assert(unsafe { cjgui_internal_renderer_test_readonly_proxy_mutations(window.testSessionToken()) }, 0)
+        @Assert(window.admitTextOwnerWrite(None).isReady, true)
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, a.transferId)
+        controller.previewReadOnly = false
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, a.transferId)
+        controller.previewReadOnly = true
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, a.transferId)
+        @Assert(unsafe { cjgui_internal_renderer_test_readonly_proxy_mutations(window.testSessionToken()) }, 0)
+        controller.previewReadOnly = false
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, a.transferId)
+        @Assert(owner.ver, 1)
+        @Assert(owner.writeCalls, 0)
+    } finally { window.close() }
+}
+
+
+@Test
+func readOnlyPresentationActualDisableStillRetiresSelectionReceipt(): Unit {
+    for (disable in [true, false]) {
+        let authority = SelectionAuthorityTestOwner()
+        authority.body.data = "ABCDE🙂\n".toArray()
+        let controller = SourceHandoffController(authority.body)
+        controller.previewReadOnly = true
+        let window = sourceHandoffWindow(controller)
+        let session = window.bindRangeTextSession(8002, "readonly-real-disable", authority, authority,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        try {
+            window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+                @Assert(window.start(), true)
+            @Assert(window.refresh(), true)
+            let firstTicket = window.freezeAcceptedSelection(8003).getOrThrow()
+            @Assert(window.requestAcceptedSelectionRestore(firstTicket, 0, 0, 0, 0, { => },
+                sourceCoordinatesAreBytes: true, foregroundOnly: true) > 0, true)
+            let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+            while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+                sourceHandoffPump(window)
+            }
+            @Assert(window.installedSelectionCompletion().isSome(), true)
+            if (disable) { controller.previewEnabled = false }
+            else { controller.previewPointerInteractive = false }
+            controller.revision += 1
+            @Assert(window.refresh(), true)
+            sourceHandoffPump(window)
+            @Assert(window.installedSelectionCompletion().isNone(), true)
+            @Assert(authority.body.ver, 1)
+            @Assert(authority.body.writeCalls, 0)
+        } finally { window.close() }
+        @Assert(window.installedSelectionCompletion().isNone(), true)
+    }
+}
+
+
+@Test
+func readOnlyPresentationFreshMutationsDoNotEnterFinalizingFifo(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE🙂\n".toArray()
+    let controller = SourceHandoffController(authority.body)
+    controller.previewReadOnly = true
+    controller.requireCompletion = true
+    controller.selectionDocumentId = "test-authority"
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "readonly-no-replay", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(id), "installed")
+        let actualA = window.installedSelectionCompletion().getOrThrow()
+        let original = window.freezeAcceptedSelection(8003).getOrThrow()
+        let transfer = window.prepareSelectionTransferFromInstalledSource(original, 1, 3).getOrThrow()
+        let token = window.testSessionToken()
+        @Assert(internalRendererBeginSelectionTransferFinalizing(token, transfer), 0)
+        @Assert(unsafe { cjgui_internal_renderer_test_readonly_proxy_mutations(token) }, 0)
+        let state = internalRendererSelectionTransferState(token, transfer)
+        @Assert(state[1], CJGUI_SELECTION_TRANSFER_FINALIZING)
+        @Assert(state[2], 0u8)
+        @Assert(internalRendererRestoreSelectionTransferA(token, transfer), 0)
+        @Assert(internalRendererFinishSelectionTransferAbort(token, transfer), 0)
+        @Assert(internalRendererReleaseSelectionTransfer(token, transfer), 0)
+        controller.previewReadOnly = false
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        sourceHandoffPump(window)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, actualA.transferId)
+        @Assert(authority.body.ver, 1)
+        @Assert(authority.body.writeCalls, 0)
+        @Assert(authority.body.text(), "ABCDE🙂\n")
+        // One new native input producer uses the same real A after permission returns.
+        // The earlier forbidden producers remain absent; do not re-send them.
+        let freshInput = unsafe { LibC.mallocCString("a") }
+        try (resource = freshInput.asResource()) {
+            @Assert(unsafe { cjgui_internal_renderer_test_insert_actual_composable_proxy(
+                token, resource.value) }, 0)
+        }
+        let inputDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (authority.body.writeCalls == 0 && sourceHandoffMonotonicMicros() < inputDeadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(authority.body.writeCalls, 1)
+        @Assert(authority.body.ver, 2)
+        @Assert(authority.body.text(), "aABCDE🙂\n")
+    } finally { window.close() }
+}
+
+@Test
+func readOnlyPresentationActualPointerSelectionRemainsInteractive(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n".toArray()
+    let controller = SourceHandoffController(authority.body)
+    controller.previewReadOnly = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "readonly-pointer-selection", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(id), "installed")
+        let (ready, x, y) = sourceHandoffTextPoint(window, 8003, 8803, 0.1)
+        @Assert(ready, true)
+        @Assert(sourceHandoffSendMouse(window, 1u32, x, y), 0)
+        sourceHandoffPump(window)
+        @Assert(controller.pointerBeginAdmissions, 1)
+        let (_, finishX, finishY) = sourceHandoffTextPoint(window, 8003, 8803, 0.3)
+        @Assert(sourceHandoffSendMouse(window, 2u32, finishX, finishY), 0)
+        sourceHandoffPump(window)
+        @Assert(controller.pointerUpdateAdmissions, 1)
+        @Assert(sourceHandoffSendMouse(window, 3u32, finishX, finishY), 0)
+        sourceHandoffPump(window)
+        @Assert(controller.pointerEndAdmissions, 1)
+        @Assert(controller.previewSelectionCommits, 3)
+        let selected = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(selected.anchorByte != selected.focusByte, true)
+        @Assert(authority.body.ver, 1)
+        @Assert(authority.body.writeCalls, 0)
+    } finally { window.close() }
+}
+
+// Admission must not create its own 4ms install budget after the common round
+// has no allowance. Pending keeps A and the original selection ticket.
+private class ShortSelectionAdmissionTestClock { var value: Int64 = 1000000 }
+
+@Test
+func shortSelectionSubmissionRetainsBeforeOwnerReservationAtBudgetBoundary(): Unit {
+    let owner = SelectionAuthorityTestOwner()
+    owner.body.data = "ABCDE\n".toArray()
+    let controller = SourceHandoffController(owner.body)
+    let window = sourceHandoffWindow(controller)
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        let session = window.bindRangeTextSession(8002, "short-original-budget", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8002), true)
+        let restore = window.requestTextSelectionRestore(8002, 8802,
+            CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.body.text(), 0, 0)
+        let until = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(restore) == "pending" && sourceHandoffMonotonicMicros() < until) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(restore), "installed")
+        let before = owner.sourceSelectionSnapshot()
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        window.useOwnerTurnBudget(budget)
+        let clock = ShortSelectionAdmissionTestClock()
+        budget.testUseClock({ => clock.value })
+        @Assert(budget.begin(), true)
+        clock.value += 16000000
+        let submission = window.submitAcceptedSourceSelection(ticket, 0, 6, 0, 6,
+            { => controller.previewSelectionCommits += 1 })
+        let id = match (submission) {
+            case CjguiSelectionSubmission.Retained(value) => value
+            case _ => -1
+        }
+        @Assert(id > 0, true)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(owner.body.writeCalls, 0)
+        budget.end()
+        let next = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) != "installed" && sourceHandoffMonotonicMicros() < next) {
+            window.pumpPendingSelectionRestore()
+        }
+        @Assert(window.selectionRestoreState(id), "installed")
+        @Assert(controller.previewSelectionCommits, 1)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, 0)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, 6)
+        @Assert(owner.body.writeCalls, 0)
+    } finally { budget.end(); window.close() }
+}
+
+@Test
+func selectionPendingDecisionRetainsOneOriginalOwnerReservation(): Unit {
+    let owner = SelectionAuthorityTestOwner()
+    owner.body.data = "ABCDE\n".toArray()
+    let controller = SourceHandoffController(owner.body)
+    let window = sourceHandoffWindow(controller)
+    try {
+        let session = window.bindRangeTextSession(8002, "pending-original-reservation", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8002), true)
+        let initial = window.requestTextSelectionRestore(8002, 8802,
+            CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.body.text(), 0, 0)
+        let until = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(initial) == "pending" && sourceHandoffMonotonicMicros() < until) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(initial), "installed")
+        let before = owner.sourceSelectionSnapshot()
+        let nextRevision = owner.nextRevision
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 1u32) }, 0)
+        let submission = window.submitAcceptedSourceSelection(ticket, 0, 6, 0, 6,
+            { => controller.previewSelectionCommits += 1 })
+        let id = match (submission) {
+            case CjguiSelectionSubmission.Retained(value) => value
+            case _ => -1
+        }
+        @Assert(id > 0, true)
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 2u32) }, 1)
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.port.getOrThrow().state(), 1)
+        @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.body.writeCalls, 0)
+        window.pumpPendingSelectionRestore()
+        @Assert(window.selectionRestoreState(id), "installed")
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.sourceSelectionSnapshot().revision, nextRevision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, 0)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, 6)
+        @Assert(controller.previewSelectionCommits, 1)
+        window.pumpPendingSelectionRestore()
+        @Assert(controller.previewSelectionCommits, 1)
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.body.writeCalls, 0)
+    } finally { window.close() }
+}
+
+@Test
+func selectionPendingDecisionSameValueNewChoiceRejectsOriginalReservation(): Unit {
+    let owner = SelectionAuthorityTestOwner()
+    owner.body.data = "ABCDE\n".toArray()
+    let controller = SourceHandoffController(owner.body)
+    let window = sourceHandoffWindow(controller)
+    try {
+        let session = window.bindRangeTextSession(8002, "pending-original-reservation", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8002), true)
+        let initial = window.requestTextSelectionRestore(8002, 8802,
+            CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.body.text(), 0, 0)
+        let until = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(initial) == "pending" && sourceHandoffMonotonicMicros() < until) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(initial), "installed")
+        let before = owner.sourceSelectionSnapshot()
+        let nextRevision = owner.nextRevision
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 1u32) }, 0)
+        let submission = window.submitAcceptedSourceSelection(ticket, 0, 6, 0, 6,
+            { => controller.previewSelectionCommits += 1 })
+        let id = match (submission) {
+            case CjguiSelectionSubmission.Retained(value) => value
+            case _ => -1
+        }
+        @Assert(id > 0, true)
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 2u32) }, 1)
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.port.getOrThrow().state(), 1)
+        @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.body.writeCalls, 0)
+        @Assert(owner.setSourceSelection(owner.rangeTextVersion(), before.anchorByte, before.focusByte), true)
+        window.pumpPendingSelectionRestore()
+        @Assert(window.selectionRestoreState(id), "identity_superseded")
+        @Assert(owner.port.isNone(), true)
+        @Assert(owner.nextRevision, nextRevision + 2)
+        @Assert(owner.sourceSelectionSnapshot().revision, nextRevision + 1)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.body.writeCalls, 0)
+    } finally { window.close() }
+}
+
+@Test
+func selectionPendingDecisionCloseFoldsOriginalReservationBeforeCellRelease(): Unit {
+    let owner = SelectionAuthorityTestOwner()
+    owner.body.data = "ABCDE\n".toArray()
+    let controller = SourceHandoffController(owner.body)
+    let window = sourceHandoffWindow(controller)
+    try {
+        let session = window.bindRangeTextSession(8002, "pending-original-reservation", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8002), true)
+        let initial = window.requestTextSelectionRestore(8002, 8802,
+            CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.body.text(), 0, 0)
+        let until = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(initial) == "pending" && sourceHandoffMonotonicMicros() < until) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(initial), "installed")
+        let before = owner.sourceSelectionSnapshot()
+        let nextRevision = owner.nextRevision
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 1u32) }, 0)
+        let submission = window.submitAcceptedSourceSelection(ticket, 0, 6, 0, 6,
+            { => controller.previewSelectionCommits += 1 })
+        let id = match (submission) {
+            case CjguiSelectionSubmission.Retained(value) => value
+            case _ => -1
+        }
+        @Assert(id > 0, true)
+        @Assert(unsafe { cjgui_internal_renderer_test_selection_finalizing_pending_once(
+            window.testSessionToken(), 2u32) }, 1)
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.port.getOrThrow().state(), 1)
+        @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.body.writeCalls, 0)
+        window.close()
+        @Assert(window.isOpen(), false)
+        @Assert(window.selectionRestoreState(id), "window_closed")
+        @Assert(owner.port.isNone(), true)
+        @Assert(owner.nextRevision, nextRevision + 1)
+        @Assert(owner.sourceSelectionSnapshot().revision, before.revision)
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, before.anchorByte)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, before.focusByte)
+        @Assert(controller.previewSelectionCommits, 0)
+        @Assert(owner.body.writeCalls, 0)
+    } finally { window.close() }
+}
+
+// A real presentation key leaves its dispatch, then another accepted UI pass
+// happens before the original source move. The following original text must
+// remain ordered behind this same key until its actual installed B confirms.
+@Test
+func sourceHandoffDeferredSourceArrowDrainsOriginalHeldTextExactlyOnce(): Unit {
+    sourceHandoffDeferredSourceArrow(false)
+}
+
+@Test
+func sourceHandoffDeferredSourceArrowAckPendingRetainsHeadAndOnlyConfirmsOnce(): Unit {
+    sourceHandoffDeferredSourceArrow(true)
+}
+
+@Test
+func sourceHandoffDeferredSourceArrowRightUsesLargerEndpoint(): Unit {
+    sourceHandoffDeferredSourceArrow(false, forward: true)
+}
+@Test
+func sourceHandoffDeferredSourceArrowReversedLeftUsesSmallerEndpoint(): Unit {
+    sourceHandoffDeferredSourceArrow(false, reverse: true)
+}
+@Test
+func sourceHandoffDeferredSourceArrowReversedRightUsesLargerEndpoint(): Unit {
+    sourceHandoffDeferredSourceArrow(false, forward: true, reverse: true)
+}
+@Test
+func sourceHandoffDeferredSourceArrowRejectsOldOwnerBeforeCommit(): Unit {
+    sourceHandoffDeferredSourceArrow(false, rejectOwner: true)
+}
+@Test
+func sourceHandoffDeferredSourceArrowClosesWithOutstandingAcceptedTargetPresent(): Unit {
+    sourceHandoffDeferredSourceArrow(false, closeBeforeTarget: true)
+}
+
+@Test
+func sourceHandoffDeferredSourceArrowRejectedAckRecoversWithoutResubmittingB(): Unit {
+    sourceHandoffDeferredSourceArrow(true, rejectAck: true)
+}
+
+private func sourceHandoffDeferredSourceArrow(holdAck: Bool, forward!: Bool = false,
+    reverse!: Bool = false, rejectOwner!: Bool = false, closeBeforeTarget!: Bool = false,
+    rejectAck!: Bool = false): Unit {
+    let sawPendingHead = SourceHandoffBoolBox()
+    let owner = SelectionAuthorityTestOwner()
+    let original = owner.body.text()
+    let controller = SourceHandoffController(owner.body)
+    controller.requireCompletion = true
+    controller.selectionDocumentId = "test-authority"
+    let window = sourceHandoffWindow(controller)
+    try {
+        let session = window.bindRangeTextSession(8002, "deferred-source-arrow", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let initial = window.freezeAcceptedSelection(8003).getOrThrow()
+        let initialAnchor = if (reverse) { Int64(original.size) } else { 0 }
+        let initialFocus = if (reverse) { 0 } else { Int64(original.size) }
+        let restore = window.requestAcceptedSelectionRestore(initial, initialAnchor, initialFocus,
+            0, cjguiUtf16Length(original), {=>}, sourceCoordinatesAreBytes: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(restore) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(restore), "installed")
+        @Assert(owner.sourceSelectionSnapshot().anchorByte, initialAnchor)
+        @Assert(owner.sourceSelectionSnapshot().focusByte, initialFocus)
+        controller.retainOriginalArrow = true
+        var focused = 0u64
+        @Assert(unsafe { cjgui_internal_renderer_test_send_composable_key(window.testSessionToken(),
+            if (forward) { 124u16 } else { 123u16 }, 0u64, inout focused) }, CJGUI_INTERNAL_RENDERER_OK)
+        sourceHandoffPump(window)
+        @Assert(controller.originalArrowSequence > 0u64, true)
+        @Assert(window.pendingVisualInputIntent().isSome(), true)
+        if (closeBeforeTarget) {
+            @Assert(window.testHoldNextComposablePresent(), true)
+            controller.revision += 1
+            @Assert(window.refreshIfNeeded(), false)
+            window.close()
+            @Assert(window.isOpen(), true)
+            let _ = window.testResolvePendingComposablePresent()
+            window.close()
+            @Assert(window.isOpen(), false)
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            return
+        }
+        controller.revision += 1
+        @Assert(window.refreshIfNeeded(), true)
+        if (rejectOwner) {
+            let stale = window.freezeAcceptedSelection(8003).getOrThrow()
+            let _ = owner.body.applyRangeTextEdit(owner.body.ver, 0, 0, "AGENT")
+            @Assert(owner.setSourceSelection(owner.body.ver, 1, 1), true)
+            @Assert(session.refreshMirror(), true)
+            @Assert(window.requestAcceptedSelectionRestore(stale, 0, 0, 0, 0, {=>},
+                sourceCoordinatesAreBytes: true, retainedInputSequence: controller.originalArrowSequence), -1)
+            @Assert(owner.body.text(), "AGENT" + original)
+            @Assert(owner.body.writeCalls, 1)
+            let _ = window.settleVisualInputIntent(controller.originalArrowSequence, CjguiVisualInputIntentOutcome.Aborted)
+            return
+        }
+        // Freeze the actual immutable origin before the original held scalar.
+        // Recovery names that origin, not the bindRangeTextSession label.
+        let originalInputBasis = controller.completion.getOrThrow()
+        let originalMirror = session.mirrorSnapshot()
+        @Assert(originalInputBasis.targetBody, original)
+        @Assert(originalMirror.text, original)
+        @Assert(originalMirror.contentVersion, 1)
+        let payload = if (forward) { "R" } else { "L" }
+        let text = unsafe { LibC.mallocCString(payload) }
+        try (resource = text.asResource()) {
+            @Assert(unsafe { cjgui_internal_renderer_test_insert_actual_composable_proxy(
+                window.testSessionToken(), resource.value) }, CJGUI_INTERNAL_RENDERER_OK)
+        }
+        @Assert(owner.body.writeCalls, 0)
+        let target = window.freezeAcceptedSelection(8003).getOrThrow()
+        let endpoint = if (forward) { Int64(original.size) } else { 0 }
+        let proxy = if (forward) { cjguiUtf16Length(original) } else { 0 }
+        let submission = window.submitAcceptedSourceSelection(target, endpoint, endpoint, proxy, proxy, {=>
+            controller.previewSelectionCommits += 1
+            let accepted = window.freezeAcceptedSelection(8003)
+            if (holdAck) {
+                @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                    window.testSessionToken(), if (rejectAck) { 3u32 } else { 1u32 }) }, CJGUI_INTERNAL_RENDERER_OK)
+            }
+            let settled = window.settleVisualInputIntent(controller.originalArrowSequence,
+                CjguiVisualInputIntentOutcome.Committed, acceptedSource: accepted)
+            if (holdAck) { sawPendingHead.value = !settled && window.pendingVisualInputIntent().isSome() }
+            if (rejectAck) {
+                @Assert(window.visualInputIntentConfirmationPending(controller.originalArrowSequence), false)
+                let _ = window.settleVisualInputIntent(controller.originalArrowSequence,
+                    CjguiVisualInputIntentOutcome.Aborted)
+            }
+        }, retainedInputSequence: controller.originalArrowSequence)
+        @Assert(match (submission) { case NotAdmitted(_) => false; case _ => true }, true)
+        if (rejectAck) {
+            for (_ in 0..8) { sourceHandoffPump(window) }
+            @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                window.testSessionToken(), 2u32) }, 1)
+            @Assert(controller.previewSelectionCommits, 1)
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            @Assert(owner.sourceSelectionSnapshot().anchorByte, 0)
+            @Assert(owner.sourceSelectionSnapshot().focusByte, 0)
+            let drafts = session.recoveryDraftsValue()
+            @Assert(drafts.size, 1)
+            @Assert(drafts[0].content, payload)
+            @Assert(drafts[0].sourceVersion, 1)
+            let expectedIdentity = "cjgui-input:${originalInputBasis.rendererSessionGeneration}:window:${originalInputBasis.windowInstanceToken}:binding:${originalInputBasis.targetBindingEpoch}:context:${originalInputBasis.sourceContextEpoch}:node:${originalInputBasis.targetNodeId}"
+            @Assert(drafts[0].bindingIdentity, expectedIdentity)
+            // Completion.source* describes A; the original scalar was captured
+            // after that B. Its full unchanged source mirror is frozen above.
+            @Assert(drafts[0].sourceStartByte, originalMirror.startByte)
+            @Assert(drafts[0].sourceEndByte, originalMirror.startByte + Int64(original.size))
+            let installed = sourceHandoffNativeSelection(window)
+            @Assert(installed[0], CJGUI_INTERNAL_RENDERER_OK)
+            @Assert(installed[1], 0u32)
+            @Assert(installed[2], 0u32)
+            // The test consumer owns this immutable complete draft before ACK.
+            println("CJGUI_TEST_REFUSED_ACK_RECOVERY id=${drafts[0].draftId} text=${drafts[0].content} version=${drafts[0].sourceVersion} binding=${drafts[0].bindingIdentity} owner_reapplied=false")
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(drafts[0].draftId), true)
+            @Assert(window.pendingVisualInputIntent().isNone(), true)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        let finish = sourceHandoffMonotonicMicros() + 5000000u64
+        while (owner.body.writeCalls == 0 && sourceHandoffMonotonicMicros() < finish) { sourceHandoffPump(window) }
+        if (holdAck) {
+            @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                window.testSessionToken(), 2u32) }, 1)
+            @Assert(sawPendingHead.value, true)
+        }
+        @Assert(controller.previewSelectionCommits, 1)
+        @Assert(owner.body.text(), if (forward) { original + payload } else { payload + original })
+        @Assert(owner.body.writeCalls, 1)
+        @Assert(window.pendingVisualInputIntent().isNone(), true)
+    } finally { window.close() }
+}
+
+// The candidate really commits a different local text/node while one original
+// source-global Left and its following scalar remain pending. No branch or
+// installed receipt is supplied by the test: both are produced by Present.
+private class SourceCarryController <: CjguiComposableUiController &
+    CjguiComposableUiCompositionRangeProvider & CjguiComposableUiInstalledSelectionInputProvider & CjguiComposableUiSelectionCompletionProvider &
+    CjguiComposableUiCandidateSelectionProvider {
+    let base: SourceHandoffController
+    var carry = false
+    let first = "alpha bravo\n\n"
+    let second = "charlie delta\n"
+    init(base: SourceHandoffController) { this.base = base }
+    public func uiSceneVersion(): Int64 { return base.uiSceneVersion() }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(8001, "carry-root",
+            CjguiComposableUiStyle(fixedWidth: 360, fixedHeight: 300))
+        root.add(cjguiComposableMultilineTextInput(8002, "source-body", "Source", base.owner.text(), 8802,
+            CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 100), fieldId: "source-body"))
+        root.add(CjguiComposableUiNode(8003, "source-preview", CJGUI_COMPOSABLE_UI_TEXT,
+            "", first, "", 8803, CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 65, pointerInteractive: true), fieldId: "source-preview"))
+        root.add(CjguiComposableUiNode(8009, "carry-preview", CJGUI_COMPOSABLE_UI_TEXT,
+            "", second, "", 8809, CjguiComposableUiStyle(fixedWidth: 340, fixedHeight: 65, pointerInteractive: true), fieldId: "carry-preview"))
+        return root
+    }
+    public func prepareCompositionSourceRange(node: CjguiComposableUiLayoutNode,
+        start16: Int64, end16: Int64, sceneVersion: Int64): CjguiMappedCompositionRange {
+        let offset: Int64 = if (node.nodeId == 8003 && node.value == first) { 0 }
+            else if (node.nodeId == 8009 && node.value == second) { Int64(first.size) } else { return CjguiMappedCompositionRange(None) }
+        if (sceneVersion != base.window.getOrThrow().windowProjection().acceptedSceneVersion) {
+            return CjguiMappedCompositionRange(None)
+        }
+        let lo = match (cjguiUtf16OffsetToUtf8(node.value, start16)) { case Some(v) => v; case None => return CjguiMappedCompositionRange(None) }
+        let hi = match (cjguiUtf16OffsetToUtf8(node.value, end16)) { case Some(v) => v; case None => return CjguiMappedCompositionRange(None) }
+        return CjguiMappedCompositionRange(base.session.getOrThrow().prepareSourceRange(base.owner.ver,
+            offset + lo, offset + hi))
+    }
+    public func candidateSelectionProjection(): ?CjguiComposableUiCandidateSelectionProjection {
+        if (!carry) { return None }
+        let session = base.session.getOrThrow()
+        let selected = session.sourceSelectionSnapshot().getOrThrow()
+        return Some(CjguiComposableUiCandidateSelectionProjection(base.completion, selected,
+            session.freezeSelectionTicket(), "source-handoff:owner1:bytes13-27", 8009, 8809,
+            CJGUI_COMPOSABLE_UI_TEXT, second, 0, cjguiUtf16Length(second), Int64(second.size)))
+    }
+    public func selectionInstallationCompleted(value: CjguiInstalledSelectionCompletion): Unit {
+        base.selectionInstallationCompleted(value)
+    }
+    public func authorizeInstalledSelectionInput(proof: CjguiInstalledSelectionInputProof): ?CjguiOwnerSelectionChoice {
+        return base.authorizeInstalledSelectionInput(proof)
+    }
+    public func installedSelectionChoiceIsCurrent(choice: CjguiOwnerSelectionChoice): Bool {
+        return base.installedSelectionChoiceIsCurrent(choice)
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return base.applyUiEvent(event)
+    }
+    public func rejectUiEvent(kind: Int64, node: Int64): CjguiComposableUiDispatchResult {
+        return base.rejectUiEvent(kind, node)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult { return base.requestWindowClose() }
+}
+
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryKeepsOriginalUntilFinalB(): Unit { sourceHandoffCandidateCarry("normal") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryAckPendingOnlyConfirms(): Unit { sourceHandoffCandidateCarry("ack_pending") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarrySameBytesNewRevisionRejects(): Unit { sourceHandoffCandidateCarry("choice_revision") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryExternalVersionRejects(): Unit { sourceHandoffCandidateCarry("external_version") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryPresentFailurePreservesA(): Unit { sourceHandoffCandidateCarry("present_failure") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryBindRejectionTerminatesAndRecovers(): Unit { sourceHandoffCandidateCarry("bind_rejection") }
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryCloseWithOriginalFollowingText(): Unit { sourceHandoffCandidateCarry("close") }
+
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryCancellationWithOriginalFollowingText(): Unit { sourceHandoffCandidateCarry("cancel_pending") }
+
+@Test
+func sourceHandoffDeferredSourceArrowCandidateCarryRebindSameBytesCannotInheritOriginal(): Unit { sourceHandoffCandidateCarry("rebind") }
+
+private func sourceHandoffCandidateCarry(mode: String): Unit {
+    let owner = SelectionAuthorityTestOwner()
+    let original = owner.body.text()
+    let base = SourceHandoffController(owner.body)
+    base.requireCompletion = true
+    base.selectionDocumentId = "test-authority"
+    let controller = SourceCarryController(base)
+    let window = CjguiComposableUiWindow(controller, configuration: CjguiMacosApplicationWindowConfiguration(
+        "CJGUI source carry", 980u32, 620u32, rangeTextEditDeltaDelivery: true))
+    try {
+        let session = window.bindRangeTextSession(8002, "source-carry", owner, owner,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        base.attach(window, session)
+        @Assert(original, controller.first + controller.second)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let restore = window.requestAcceptedSelectionRestore(window.freezeAcceptedSelection(8003).getOrThrow(),
+            0, Int64(original.size), 0, cjguiUtf16Length(controller.first), {=>}, sourceCoordinatesAreBytes: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(restore) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(restore), "installed")
+        let a = base.completion.getOrThrow()
+        @Assert(a.targetBody, controller.first)
+        base.retainOriginalArrow = true
+        var focused = 0u64
+        @Assert(unsafe { cjgui_internal_renderer_test_send_composable_key(window.testSessionToken(),
+            123u16, 0u64, inout focused) }, CJGUI_INTERNAL_RENDERER_OK)
+        sourceHandoffPump(window)
+        let head = window.pendingVisualInputIntent().getOrThrow()
+        @Assert(head.sequence, base.originalArrowSequence)
+        if (mode == "cancel_pending") { @Assert(window.testHoldNextComposablePresent(), true) }
+        if (mode == "present_failure") {
+            @Assert(unsafe { cjgui_internal_renderer_test_set_composable_present_failures(
+                window.testSessionToken(), 1u32) }, CJGUI_INTERNAL_RENDERER_OK)
+        }
+        controller.carry = true
+        base.revision += 1
+        let _ = window.refreshIfNeeded()
+        let carryDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+        if (mode == "cancel_pending") {
+            while (window.windowProgress().pendingRefreshReason != "refresh_present_pending" &&
+                sourceHandoffMonotonicMicros() < carryDeadline) { sourceHandoffPump(window) }
+            @Assert(window.windowProgress().pendingRefreshReason, "refresh_present_pending")
+            @Assert(base.completion.getOrThrow().transferId, a.transferId)
+            let pendingText = unsafe { LibC.mallocCString("L") }
+            try (resource = pendingText.asResource()) {
+                @Assert(unsafe { cjgui_internal_renderer_test_insert_actual_composable_proxy(
+                    window.testSessionToken(), resource.value) }, CJGUI_INTERNAL_RENDERER_OK)
+            }
+            @Assert(owner.body.writeCalls, 0)
+            window.close()
+            @Assert(window.isOpen(), true)
+            let drafts = session.recoveryDraftsValue()
+            @Assert(drafts.size, 1)
+            @Assert(drafts[0].content, "L")
+            let expectedOrigin = "cjgui-input:${a.rendererSessionGeneration}:window:${a.windowInstanceToken}:binding:${a.targetBindingEpoch}:context:${a.sourceContextEpoch}:node:${a.targetNodeId}"
+            @Assert(drafts[0].bindingIdentity, expectedOrigin)
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(drafts[0].draftId), true)
+            // The original input has been cancelled, so this old proposal must
+            // reject. A pending receipt is not permission to install its B.
+            @Assert(window.testResolvePendingComposablePresent(), false)
+            @Assert(base.completion.getOrThrow().transferId, a.transferId)
+            let nativeA = sourceHandoffNativeSelection(window)
+            @Assert(nativeA[0], CJGUI_INTERNAL_RENDERER_OK)
+            @Assert(nativeA[1], 0u32)
+            @Assert(nativeA[2], UInt32(cjguiUtf16Length(controller.first)))
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        while (base.completion.getOrThrow().targetNodeId != 8009 &&
+            sourceHandoffMonotonicMicros() < carryDeadline &&
+            !(mode == "present_failure" && window.windowProgress().lastNativeFailure != "none")) {
+            @Assert(owner.body.writeCalls, 0)
+            sourceHandoffPump(window)
+        }
+        println("CJGUI_TEST_CARRY_PROGRESS failure=${window.windowProgress().lastNativeFailure}")
+        let carry = base.completion.getOrThrow()
+        if (mode == "present_failure") {
+            @Assert(window.windowProgress().lastNativeFailure != "none", true)
+            @Assert(carry.transferId, a.transferId)
+            @Assert(carry.targetNodeId, a.targetNodeId)
+            @Assert(carry.targetBody, controller.first)
+        } else {
+            @Assert(carry.transferId != a.transferId, true)
+            @Assert(carry.targetNodeId, 8009)
+            @Assert(carry.targetBody, controller.second)
+        }
+        @Assert(cjguiSameSourceChoice(carry.sourceSelection, a.sourceSelection), true)
+        let originalPayloadBinding = "cjgui-input:${carry.rendererSessionGeneration}:window:${carry.windowInstanceToken}:binding:${carry.targetBindingEpoch}:context:${carry.sourceContextEpoch}:node:${carry.targetNodeId}"
+
+        @Assert(window.pendingVisualInputIntent().getOrThrow().sequence, head.sequence)
+        @Assert(owner.body.text(), original)
+        @Assert(owner.body.writeCalls, 0)
+        let text = unsafe { LibC.mallocCString("L") }
+        try (resource = text.asResource()) {
+            @Assert(unsafe { cjgui_internal_renderer_test_insert_actual_composable_proxy(
+                window.testSessionToken(), resource.value) }, CJGUI_INTERNAL_RENDERER_OK)
+        }
+        @Assert(owner.body.writeCalls, 0)
+        if (mode == "rebind") {
+            let stale = window.freezeAcceptedSelection(8002).getOrThrow()
+            let sameBytesDifferentOwner = SelectionAuthorityTestOwner()
+            @Assert(sameBytesDifferentOwner.setSourceSelection(1, 0, Int64(original.size)), true)
+            @Assert(cjguiSameSourceChoice(sameBytesDifferentOwner.sourceSelectionSnapshot(), carry.sourceSelection), true)
+            controller.carry = false
+            let rebound = window.bindRangeTextSession(8002, "source-carry-rebound", sameBytesDifferentOwner,
+                sameBytesDifferentOwner, 8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+            base.attach(window, rebound)
+            @Assert(session.isBound(), false)
+            @Assert(rebound.isBound(), true)
+            let oldDrafts = window.retiredTextSessionRecoveryDrafts()
+            @Assert(oldDrafts.size, 1)
+            @Assert(oldDrafts[0].content, "L")
+            @Assert(oldDrafts[0].bindingIdentity, originalPayloadBinding)
+            @Assert(window.requestAcceptedSelectionRestore(stale, 0, 0, 0, 0, {=>},
+                sourceCoordinatesAreBytes: true, retainedInputSequence: head.sequence), -1)
+            let _ = window.settleVisualInputIntent(head.sequence, CjguiVisualInputIntentOutcome.Aborted)
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(oldDrafts[0].draftId), true)
+            for (_ in 0..8) { sourceHandoffPump(window) }
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            @Assert(sameBytesDifferentOwner.body.text(), original)
+            @Assert(sameBytesDifferentOwner.body.writeCalls, 0)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        if (mode == "choice_revision" || mode == "external_version") {
+            let stale = window.freezeAcceptedSelection(8002).getOrThrow()
+            if (mode == "external_version") {
+                let _ = owner.body.applyRangeTextEdit(owner.body.ver, 0, 0, "AGENT")
+            }
+            @Assert(owner.setSourceSelection(owner.body.ver, 0, Int64(owner.body.data.size)), true)
+            let _ = session.refreshMirror()
+            @Assert(owner.sourceSelectionSnapshot().revision != a.sourceSelection.revision, true)
+            let ticket = if (mode == "choice_revision") { window.freezeAcceptedSelection(8002).getOrThrow() } else { stale }
+            @Assert(window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0, {=>},
+                sourceCoordinatesAreBytes: true, retainedInputSequence: head.sequence), -1)
+            let _ = window.settleVisualInputIntent(head.sequence, CjguiVisualInputIntentOutcome.Aborted)
+            for (_ in 0..8) { sourceHandoffPump(window) }
+            let drafts = session.recoveryDraftsValue()
+            @Assert(drafts.size, 1)
+            @Assert(drafts[0].content, "L")
+            @Assert(drafts[0].bindingIdentity, originalPayloadBinding)
+
+            @Assert(drafts[0].sourceVersion, 1)
+            @Assert(owner.body.text(), if (mode == "external_version") { "AGENT" + original } else { original })
+            @Assert(owner.body.writeCalls, if (mode == "external_version") { 1 } else { 0 })
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(drafts[0].draftId), true)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        if (mode == "close") {
+            window.close()
+            let drafts = session.recoveryDraftsValue()
+            @Assert(drafts.size, 1)
+            @Assert(drafts[0].content, "L")
+            @Assert(drafts[0].bindingIdentity, originalPayloadBinding)
+
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(drafts[0].draftId), true)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        if (mode == "bind_rejection") {
+            @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                window.testSessionToken(), 4u32) }, CJGUI_INTERNAL_RENDERER_OK)
+        }
+        // Merely carrying A is not the requested Left outcome. Its full native
+        // original remains pending until the real collapsed target B commits.
+        controller.carry = false
+        let request = window.submitAcceptedSourceSelection(window.freezeAcceptedSelection(8002).getOrThrow(),
+            0, 0, 0, 0, {=>
+                base.previewSelectionCommits += 1
+                if (mode == "ack_pending") {
+                    @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                        window.testSessionToken(), 1u32) }, CJGUI_INTERNAL_RENDERER_OK)
+                }
+                let settled = window.settleVisualInputIntent(head.sequence, CjguiVisualInputIntentOutcome.Committed,
+                    acceptedSource: window.freezeAcceptedSelection(8002))
+                @Assert(settled, mode != "ack_pending")
+                if (mode == "ack_pending") { @Assert(window.visualInputIntentConfirmationPending(head.sequence), true) }
+            }, retainedInputSequence: head.sequence)
+        if (mode == "bind_rejection") {
+            @Assert(match (request) {
+                case NotAdmitted(reason) => reason == "source_preparation_rejected:selection_transfer_caret_bind:33"
+                case _ => false
+            }, true)
+        } else { @Assert(match (request) { case NotAdmitted(_) => false; case _ => true }, true) }
+        if (mode == "bind_rejection") {
+            for (_ in 0..8) { sourceHandoffPump(window) }
+            @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                window.testSessionToken(), 2u32) }, 1)
+            @Assert(base.previewSelectionCommits, 0)
+            @Assert(window.pendingSelectionRestoreId(), -1)
+            @Assert(window.pendingVisualInputIntent().isNone(), true)
+            @Assert(owner.body.text(), original)
+            @Assert(owner.body.writeCalls, 0)
+            let drafts = session.recoveryDraftsValue()
+            @Assert(drafts.size, 1)
+            @Assert(drafts[0].content, "L")
+            @Assert(drafts[0].bindingIdentity, originalPayloadBinding)
+
+            @Assert(window.acknowledgeTextSessionRecoveryDraftOwnership(drafts[0].draftId), true)
+            window.close()
+            @Assert(window.isOpen(), false)
+            return
+        }
+        let finish = sourceHandoffMonotonicMicros() + 5000000u64
+        while (owner.body.writeCalls == 0 && sourceHandoffMonotonicMicros() < finish) { sourceHandoffPump(window) }
+        @Assert(base.previewSelectionCommits, 1)
+        if (mode == "ack_pending") {
+            @Assert(unsafe { cjgui_internal_renderer_test_caret_confirmation_pending_once(
+                window.testSessionToken(), 2u32) }, 1)
+        }
+        @Assert(owner.body.text(), "L" + original)
+        @Assert(owner.body.writeCalls, 1)
+        @Assert(window.pendingVisualInputIntent().isNone(), true)
+        window.close()
+        @Assert(window.isOpen(), false)
+    } finally { window.close() }
+}
+
+// Same original capture and unchanged directed range: UPDATE must publish its
+// callback once without another owner choice or native proxy installation.
+@Test
+func sourceHandoffSameGestureUnchangedUpdateReusesActualInstall(): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n".toArray()
+    let controller = SourceHandoffController(authority.body)
+    controller.selectionDocumentId = "test-authority"
+    controller.requireCompletion = true
+    controller.useSelectionSubmissionForPointer = true
+    controller.useSourceSelectionSubmissionForPointer = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "same-gesture-unchanged-selection", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(id), "installed")
+        let (ready, x, y) = sourceHandoffTextPoint(window, 8003, 8803, 0.1)
+        @Assert(ready, true)
+        @Assert(sourceHandoffSendMouse(window, 1u32, x, y), 0)
+        sourceHandoffPump(window)
+        let (_, finishX, finishY) = sourceHandoffTextPoint(window, 8003, 8803, 0.3)
+        @Assert(sourceHandoffSendMouse(window, 2u32, finishX, finishY), 0)
+        sourceHandoffPump(window)
+        let before = session.sourceSelectionSnapshot().getOrThrow()
+        let installed = window.installedSelectionCompletion().getOrThrow()
+        let callbacks = controller.previewSelectionCommits
+        let completions = controller.completionCount
+        let updates = controller.pointerUpdateAdmissions
+        let gesture = sourceHandoffNativeGesture(window)
+        @Assert(before.anchorByte != before.focusByte, true)
+        @Assert(sourceHandoffSendMouse(window, 2u32, finishX + 0.05f32, finishY), 0)
+        sourceHandoffPump(window)
+        let after = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(after.anchorByte, before.anchorByte)
+        @Assert(after.focusByte, before.focusByte)
+        @Assert(controller.pointerUpdateAdmissions, updates + 1)
+        @Assert(controller.previewSelectionCommits, callbacks + 1)
+        @Assert(sourceHandoffNativeGesture(window), gesture)
+        @Assert(after.revision, before.revision)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, installed.transferId)
+        @Assert(controller.completionCount, completions)
+        let resident = internalRendererActiveInstalledRangeReceipt(window.testSessionToken(),
+            installed.transferId).getOrThrow()
+        @Assert(resident.proxyGeneration, installed.targetProxyGeneration)
+        @Assert(resident.installedSceneVersion, UInt64(installed.targetSceneVersion))
+        @Assert(window.freezeAcceptedSelection(8003).getOrThrow().sceneVersion > installed.targetSceneVersion, true)
+        // An explicit passive projection must also keep the historical install.
+        @Assert(window.refresh(), true)
+        @Assert(sourceHandoffSendMouse(window, 2u32, finishX + 0.07f32, finishY), 0)
+        sourceHandoffPump(window)
+        @Assert(session.sourceSelectionSnapshot().getOrThrow().revision, before.revision)
+        @Assert(controller.previewSelectionCommits, callbacks + 2)
+        @Assert(controller.pointerUpdateAdmissions, updates + 2)
+        @Assert(controller.completionCount, completions)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId, installed.transferId)
+        // A real changed range still reserves and installs a fresh choice.
+        let nextX = x - 30.0f32
+        let nextY = y - 25.0f32
+        @Assert(sourceHandoffSendMouse(window, 2u32, nextX, nextY), 0)
+        sourceHandoffPump(window)
+        let changed = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(changed.focusByte != after.focusByte, true)
+        @Assert(changed.revision > after.revision, true)
+        @Assert(window.installedSelectionCompletion().getOrThrow().transferId != installed.transferId, true)
+        @Assert(sourceHandoffSendMouse(window, 3u32, nextX, nextY), 0)
+        sourceHandoffPump(window)
+        // An explicit mapped selection outside a pointer UPDATE remains a new
+        // owner choice even if its directed coordinates are identical.
+        let explicitBefore = session.sourceSelectionSnapshot().getOrThrow()
+        let actual = window.installedSelectionCompletion().getOrThrow()
+        let current = window.freezeAcceptedSelection(8003).getOrThrow()
+        let submission = window.submitAcceptedSourceSelection(current, explicitBefore.anchorByte,
+            explicitBefore.focusByte, actual.targetSelectionStart16, actual.targetSelectionEnd16, {=>})
+        let explicitDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.pendingSelectionRestoreId() >= 0 && sourceHandoffMonotonicMicros() < explicitDeadline) {
+            sourceHandoffPump(window)
+        }
+        let explicitAfter = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(explicitAfter.anchorByte, explicitBefore.anchorByte)
+        @Assert(explicitAfter.focusByte, explicitBefore.focusByte)
+        @Assert(explicitAfter.revision > explicitBefore.revision, true)
+        @Assert(authority.body.writeCalls, 0)
+    } finally { window.close() }
+}
+
+// Native production tests cover the actual input proxy/receipt. This common
+// test distinguishes real passive-origin authority from an ordinary deletion.
+@When[os == "macOS"]
+func sourceHandoffResidentProjectionFixture(qualified: Bool): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "ABCDE\nFGHIJ\n".toArray()
+    let original = authority.body.text()
+    let controller = SourceHandoffController(authority.body)
+    controller.scrollFixture = true
+    controller.residentAnchorPreview = true
+    controller.selectionDocumentId = "test-authority"
+    controller.requireCompletion = true
+    let bindingA = CjguiComposableUiScrollOriginBinding("resident-test-owner", authority.body.ver,
+        "resident-map-A", "resident-origin-A")
+    @Assert(controller.sourceViewport.stageCoordinateOrigin(bindingA), "scroll_origin_initial")
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "resident-source-common", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let choice = window.freezeAcceptedSelection(8003).getOrThrow()
+        let restore = window.requestAcceptedSelectionRestore(choice, 2, 2, 2, 2, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(restore) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(restore), "installed")
+        let completed = window.installedSelectionCompletion().getOrThrow()
+        let before = session.sourceSelectionSnapshot().getOrThrow()
+        if (qualified) {
+            let anchor = window.freezeScrollOriginAnchor(controller.sourceViewport, 8008, 0,
+                "0", bindingA).getOrThrow()
+            let bindingB = CjguiComposableUiScrollOriginBinding("resident-test-owner", authority.body.ver,
+                "resident-map-A", "resident-origin-B")
+            @Assert(controller.sourceViewport.stageCoordinateOrigin(bindingB, anchor: Some(anchor),
+                targetNodeId: 8008, targetLocalByte: 0), "scroll_origin_anchor_staged")
+        }
+        let budget = CjguiOwnerTurnBudget()
+        window.useOwnerTurnBudget(budget)
+        controller.omitPreviewForResident = true
+        controller.revision += 1
+        window.requestRefresh()
+        let sceneDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.inputSceneNodeValue(8003, 8803).isSome() &&
+            sourceHandoffMonotonicMicros() < sceneDeadline) {
+            @Assert(budget.begin(), true)
+            let _ = window.refreshIfNeeded()
+            sourceHandoffPump(window)
+            budget.end()
+        }
+        @Assert(window.inputSceneNodeValue(8003, 8803).isNone(), true)
+        @Assert(authority.body.text(), original)
+        @Assert(authority.body.writeCalls, 0)
+        let parked = internalRendererHasParkedTextFocus(window.testSessionToken(),
+            Int64(completed.windowInstanceToken), completed.semantic.contextEpoch,
+            completed.targetNodeId, completed.targetResourceId, completed.targetNodeKind)
+        @Assert(parked, qualified)
+        if (qualified) {
+            @Assert(controller.sourceViewport.acceptedCoordinateOrigin().getOrThrow().layoutOrigin,
+                "resident-origin-B")
+            @Assert(window.installedSelectionCompletion().getOrThrow().transferId, completed.transferId)
+            @Assert(session.sourceSelectionSnapshot().getOrThrow().revision, before.revision)
+            let nativeText = unsafe { LibC.mallocCString("中") }
+            try (resource = nativeText.asResource()) {
+                @Assert(unsafe { cjgui_internal_renderer_test_insert_actual_composable_proxy(
+                    window.testSessionToken(), resource.value) }, CJGUI_INTERNAL_RENDERER_OK)
+            }
+            let inputDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+            while (authority.body.writeCalls == 0 && sourceHandoffMonotonicMicros() < inputDeadline) {
+                @Assert(budget.begin(), true)
+                sourceHandoffPump(window)
+                let _ = window.refreshIfNeeded()
+                budget.end()
+            }
+            @Assert(authority.body.text(), "AB中CDE\nFGHIJ\n")
+            @Assert(authority.body.writeCalls, 1)
+            @Assert(authority.body.ver, 2)
+        }
+    } finally { window.close() }
+}
+
+@When[os == "macOS"]
+@Test
+func sourceHandoffResidentPassiveOriginKeepsInstalledFirstInputWithoutFakeOwnerOperation(): Unit {
+    sourceHandoffResidentProjectionFixture(true)
+}
+
+@When[os == "macOS"]
+@Test
+func sourceHandoffResidentMissingPaintWithoutOriginTicketRetiresSource(): Unit {
+    sourceHandoffResidentProjectionFixture(false)
+}
+
+// Actual production AX action -> original FIFO -> the real window command
+// admission -> owner selection -> native B. Faults alter only those already
+// queued members; they are not another event producer.
+private func runActualAXCommandDispatch(fault: UInt32, declared!: Bool = true,
+    revoke!: Bool = false, physical!: Bool = false, restoreAfterDeclaration!: Bool = false): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "abcdef\n".toArray()
+    let owner = authority.body
+    let controller = SourceHandoffController(owner)
+    controller.selectionDocumentId = "test-authority"
+    controller.requireCompletion = true
+    controller.includeUndoAction = true
+    controller.exerciseDeclaredActivation = declared
+    let window = sourceHandoffWindow(controller)
+    try {
+        let session = window.bindRangeTextSession(8002, "ax-command", authority, authority,
+            8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.attach(window, session)
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        @Assert(window.focusAcceptedNodeById(8002), true)
+        session.setSelection16(1, 4)
+        let initial = window.requestTextSelectionRestore(8002, 8802,
+            CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.text(), 1, 4)
+        @Assert(initial > 0, true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (controller.completionCount == 0 && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(controller.completionCount > 0, true)
+        if (declared) {
+            let commands = ArrayList<CjguiComposableUiCommand>()
+            commands.add(CjguiComposableUiCommand("actual-ax-selection", CjguiComposableUiNodeReference.manual(8004),
+                "Select", "", 0, true, false))
+            @Assert(window.replaceCommands(commands), true)
+        }
+        if (restoreAfterDeclaration) {
+            // Declarations precede this genuine, same-owner native B install.
+            // Replacing commands after it would mask the missing publication.
+            let before = controller.completionCount
+            session.setSelection16(4, 1)
+            let restore = window.requestTextSelectionRestore(8002, 8802,
+                CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, owner.text(), 1, 4)
+            @Assert(restore > initial, true)
+            let restoredDeadline = sourceHandoffMonotonicMicros() + 5000000u64
+            while (controller.completionCount == before && sourceHandoffMonotonicMicros() < restoredDeadline) {
+                sourceHandoffPump(window)
+            }
+            @Assert(controller.completionCount, before + 1)
+            let installed = window.installedSelectionCompletion().getOrThrow()
+            @Assert(installed.sourceSelection.anchorByte, 4)
+            @Assert(installed.sourceSelection.focusByte, 1)
+        }
+        if (physical) {
+            let point = sourceHandoffAcceptedPoint(window, 8004, 8804)
+            @Assert(point[0], true)
+            @Assert(sourceHandoffSendMouse(window, 1u32, point[1], point[2]), CJGUI_INTERNAL_RENDERER_OK)
+            @Assert(sourceHandoffSendMouse(window, 3u32, point[1], point[2]), CJGUI_INTERNAL_RENDERER_OK)
+        } else {
+            @Assert(unsafe { cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(
+                window.testSessionToken(), 8004u64) }, CJGUI_INTERNAL_RENDERER_OK)
+            @Assert(unsafe { cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(
+                window.testSessionToken()) }, CJGUI_INTERNAL_RENDERER_OK)
+            if (fault > 0u32) {
+                @Assert(unsafe { cjgui_internal_renderer_test_fault_actual_activation_pair(
+                    window.testSessionToken(), fault) }, CJGUI_INTERNAL_RENDERER_OK)
+            }
+        }
+        if (revoke) { @Assert(window.revokeCommand("actual-ax-selection"), true) }
+        // Drain a finite FIFO and the retained real selection completion. No
+        // retry action, fabricated focus or replacement input is submitted.
+        let finish = sourceHandoffMonotonicMicros() + 3000000u64
+        while (sourceHandoffMonotonicMicros() < finish &&
+            (controller.declaredActivationCount == 0 ||
+                (controller.declaredSelectionAdmissions > 0 && controller.declaredSelectionPublishes == 0))) {
+            sourceHandoffPump(window)
+        }
+        for (_ in 0..4) { sourceHandoffPump(window) }
+        let accepted = fault == 0u32 || fault == 3u32
+        if (accepted) { @Assert(controller.declaredActivationCount, 1) }
+        else { @Assert(controller.declaredActivationCount, 0) }
+        if (accepted && declared && !revoke) {
+            @Assert(controller.declaredSourceAdmissions, 1)
+            @Assert(controller.declaredSelectionAdmissions, 1)
+            @Assert(controller.declaredSelectionPublishes, 1)
+            @Assert(window.installedSelectionCompletion().getOrThrow().targetNodeId, 8003)
+        } else {
+            @Assert(controller.declaredSourceAdmissions, 0)
+            @Assert(controller.declaredSelectionAdmissions, 0)
+            @Assert(controller.declaredSelectionPublishes, 0)
+        }
+        @Assert(owner.text(), "abcdef\n")
+        @Assert(owner.ver, 1)
+    } finally { window.close() }
+}
+
+@Test
+func axCommandActualCommonDispatchAndPhysicalPressEachCommitOnce(): Unit {
+    runActualAXCommandDispatch(0u32)
+    runActualAXCommandDispatch(0u32, physical: true)
+}
+@Test
+func axCommandActualCommonDispatchRejectsMissingFocusAndOutOfOrderTerminal(): Unit {
+    runActualAXCommandDispatch(1u32)
+    runActualAXCommandDispatch(2u32)
+}
+@Test
+func axCommandActualCommonDispatchRejectsDuplicateAndWrongBindingGenerationTarget(): Unit {
+    runActualAXCommandDispatch(3u32)
+    runActualAXCommandDispatch(4u32)
+    runActualAXCommandDispatch(5u32)
+    runActualAXCommandDispatch(6u32)
+    runActualAXCommandDispatch(7u32)
+}
+@Test
+func axCommandActualCommonDispatchWithdrawnDeclarationAndOrdinaryAXButton(): Unit {
+    runActualAXCommandDispatch(0u32, revoke: true)
+    runActualAXCommandDispatch(0u32, declared: false)
+}
+
+@Test
+func axCommandAfterInstalledRestoreRepublishesDeclarationForActualSource(): Unit {
+    runActualAXCommandDispatch(0u32, restoreAfterDeclaration: true)
+    runActualAXCommandDispatch(0u32, physical: true, restoreAfterDeclaration: true)
+}
+@Test
+func axCommandAfterInstalledRestoreStillRejectsWithdrawnAndWrongBinding(): Unit {
+    runActualAXCommandDispatch(0u32, revoke: true, restoreAfterDeclaration: true)
+    runActualAXCommandDispatch(4u32, restoreAfterDeclaration: true)
+}
+
+// A real system micro-drag may deliver DOWN/MOVE/UP before the owner pumps
+// even its first member. No intermediate pump or delayed/resubmitted key may
+// be required to keep the original directed choice.
+private func queuedSourceDragScenario(reverse: Bool): Unit {
+    let authority = SelectionAuthorityTestOwner()
+    authority.body.data = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n".toArray()
+    let controller = SourceHandoffController(authority.body)
+    controller.selectionDocumentId = "test-authority"
+    controller.requireCompletion = true
+    controller.useSelectionSubmissionForPointer = true
+    controller.useSourceSelectionSubmissionForPointer = true
+    let window = sourceHandoffWindow(controller)
+    let session = window.bindRangeTextSession(8002, "queued-source-drag", authority, authority,
+        8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    controller.attach(window, session)
+    try {
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.start(), true)
+        let ticket = window.freezeAcceptedSelection(8003).getOrThrow()
+        let id = window.requestAcceptedSelectionRestore(ticket, 0, 0, 0, 0, { => },
+            sourceCoordinatesAreBytes: true, foregroundOnly: true)
+        let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+        while (window.selectionRestoreState(id) == "pending" && sourceHandoffMonotonicMicros() < deadline) {
+            sourceHandoffPump(window)
+        }
+        @Assert(window.selectionRestoreState(id), "installed")
+        let anchor: Int64 = if (reverse) { 4 } else { 2 }
+        let focus: Int64 = if (reverse) { 2 } else { 4 }
+        let start = window.acceptedTextPosition(8003, anchor)
+        let finish = window.acceptedTextPosition(8003, focus)
+        @Assert(start.status, CJGUI_INTERNAL_RENDERER_OK)
+        @Assert(finish.status, CJGUI_INTERNAL_RENDERER_OK)
+        @Assert(sourceHandoffSendMouse(window, 1u32, Float32(start.x + 0.05),
+            Float32(start.y + start.height / 2.0)), CJGUI_INTERNAL_RENDERER_OK)
+        @Assert(sourceHandoffSendMouse(window, 2u32, Float32(finish.x + 0.05),
+            Float32(finish.y + finish.height / 2.0)), CJGUI_INTERNAL_RENDERER_OK)
+        @Assert(sourceHandoffSendMouse(window, 3u32, Float32(finish.x + 0.05),
+            Float32(finish.y + finish.height / 2.0)), CJGUI_INTERNAL_RENDERER_OK)
+        for (_ in 0..64) { sourceHandoffPump(window) }
+        let selected = session.sourceSelectionSnapshot().getOrThrow()
+        @Assert(controller.pointerBeginAdmissions, 1)
+        @Assert(controller.pointerUpdateAdmissions >= 1, true)
+        @Assert(controller.pointerEndAdmissions, 1)
+        @Assert(selected.anchorByte, anchor)
+        @Assert(selected.focusByte, focus)
+        @Assert(authority.body.text(), "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n")
+        @Assert(authority.body.ver, 1)
+    } finally { window.close() }
+}
+
+@Test
+func sourceHandoffQueuedDownMoveUpKeepsFullDirectedChoice(): Unit {
+    queuedSourceDragScenario(false)
+    queuedSourceDragScenario(true)
 }

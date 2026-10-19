@@ -10,6 +10,8 @@ class CjguiMacTextPointerSelectionDispatch {
     let sequence: UInt64
     let eventKind: Int64
     let previousChoice: CjguiSourceSelectionSnapshot
+    let originFifo: CjguiMacSliderPointerFifo
+    let nativeIdentity: UInt64
     // A mapped reinstall may retain this dispatch only by freezing the actual
     // predecessor installation at request admission. It is not a new input.
     let reinstallationSource: ?CjguiInstalledSelectionCompletion
@@ -18,9 +20,12 @@ class CjguiMacTextPointerSelectionDispatch {
     let installedCapture: ?CjguiMacTextCaptureFacts
     init(capture: CjguiMacTextCaptureFacts, sequence: UInt64, eventKind: Int64,
         choice: CjguiSourceSelectionSnapshot,
+        originFifo!: CjguiMacSliderPointerFifo = CjguiMacSliderPointerFifo(0u64, 0u64, 0u64, 0u64, 0u64, 0u32),
+        nativeIdentity!: UInt64 = 0u64,
         reinstallationSource!: ?CjguiInstalledSelectionCompletion = None,
         installedCapture!: ?CjguiMacTextCaptureFacts = None) {
         this.capture = capture; this.sequence = sequence; this.eventKind = eventKind; this.previousChoice = choice
+        this.originFifo = originFifo; this.nativeIdentity = nativeIdentity
         this.reinstallationSource = reinstallationSource
         this.installedCapture = installedCapture
     }

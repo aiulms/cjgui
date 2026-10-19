@@ -1,0 +1,18 @@
+# 2026-10-18 Linux IME/clipboard round
+# Evidence files (host, this directory)
+4996ec9e3d4146a9f3d8a2d9742288f751564f344055d4e0bee5abbe25f9dea4  chain.log
+d2ddd7925fcc8d4f45693b2ef291d8ccdb65e47bf36b243af6d765b35a9da9ba  paste_composition_diag.txt
+6b645e90486975852eb27b40e7a68a4cd9537c4f2937ccb21a9d265e50d0f498  ime_spot.log
+4d3b6871dd21fa1799b54356283fc8e45c2f8e15f6486714045dc65553a6b75b  native_session_harness.log
+9407ddc6b7c6e222e6c96bf2ae5e50f5e07a5cdd13c9e65fda8537896e2abdee  range_short_app.log
+3dcb29b9fc8a2a668abed7060d94bf45308c872844522f69fca92f713997d613  range_short_result.txt
+# Final guest binaries and sidecar (built 2026-10-18 18:32)
+4f9283fcb1982cc0e1c6d95f1e71258b438f68b449baeb724b3932b519d1171d  ~/cjgui-linux/runtime/cjgui/examples/notification_threshold_window_app/target/release/bin/main
+08bebe3a22a4cfafb713b7f3879d66bcb1dbfcc5b7351624e74447ffdd413496  ~/cjgui-linux/runtime/cjgui/examples/range_text_window_app/target/release/bin/main
+2cc670f2d908ddf9094baa97ae2a2ad5825fd0170424dcaa55a0f7c51cc783b2  ~/cjgui-linux/runtime/cjgui/native/lib/libcjgui_internal_renderer.a
+# Native sources that produced the sidecar (identical on host and guest)
+81bac5d84efedcdc7b2adfa3b985d74ec94017447fe65f6492700ef01adedefe  cjgui/platforms/linux/native/cjgui_linux_session.c
+14ff2ddb36b17b1a41101133b1b4f2a559b5216258cf48de48c5851059c6baba  cjgui/platforms/linux/native/cjgui_linux_window.c
+e80b0893608f5cba0fd934696c55d0cf97f5d6ae9a0c3277e4035e546807d14b  cjgui/platforms/linux/tests/linux_session_harness_test.c
+# Shared-layer file this round touched (host working tree; not committed)
+20e2363a99d0e0e0d4599ad28a0d21ef386ad44d1f4599a486298bcdd0fd6a69  cjgui/src/text_session.cj

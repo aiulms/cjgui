@@ -100,6 +100,25 @@ static CjguiInternalRendererStatus fillCold(uint64_t token, uint64_t preparation
 
 static uint64_t nowNs(void) { return cjgui_internal_renderer_owner_clock_ns(); }
 
+static BOOL awaitCandidatePipelines(CJGuiInternalSession *ctx) {
+    // Actual compiler completions publish on AppKit's main queue. A standalone
+    // synchronous test must service that queue before asserting final Ready;
+    // cursor completion alone is not a shader-resource receipt.
+    CjguiComposablePreparation *p = ctx.composablePreparation;
+    uint64_t deadline = nowNs() + 5000000000ull;
+    while (nowNs() < deadline) {
+        for (CjguiPreparedFramePipelines *set in gCjguiPreparedFramePipelines) {
+            if (set.device != p.frameResourceDevice || set.sampleCount != p.frameResourceSamples ||
+                set.pixelFormat != p.frameResourceFormat) continue;
+            if (set.failedRoles & p.frameResourceRoles) return NO;
+            if (p.frameResourceRoles && (set.completedRoles & p.frameResourceRoles) == p.frameResourceRoles)
+                return set.scene && set.scene.device == p.frameResourceDevice;
+        }
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.002]];
+    }
+    return NO;
+}
+
 static uint32_t countPreparationUnitTraces(uint64_t firstSequence, uint64_t afterSequence,
     uint64_t preparationId, uint32_t wantedKind) {
     uint32_t count = 0;
@@ -185,6 +204,7 @@ int main(void) { @autoreleasepool {
         "one_call_obeys_256_unit_hard_cap");
     CHECK(firstBegins == firstCursor && firstEnds == firstCursor,
         "phase79_unit_trace_count_matches_first_call_progress");
+    CHECK(awaitCandidatePipelines(ctx), "same_candidate_actual_gpu_completion_before_successor");
     traceBefore = traceAfter;
     status = cjgui_internal_renderer_advance_composable_preparation(token, 15, nowNs() + 5000000000ull, &ready);
     traceAfter = atomic_load_explicit(&gCjguiOwnerTraceNextSequence, memory_order_acquire);
@@ -250,6 +270,7 @@ int main(void) { @autoreleasepool {
         "live_worker_no_progress_yields_promptly");
     CjguiTextPreparationTestOpenWorkerGate();
     CHECK(CjguiTextPreparationTestWaitForFinished(15000), "cold_worker_finishes_after_gate_release");
+    CHECK(awaitCandidatePipelines(cold), "same_cold_candidate_actual_gpu_completion_before_adoption");
     for (NSUInteger attempt = 0; attempt < 256 && !ready; ++attempt) {
         status = cjgui_internal_renderer_advance_composable_preparation(coldToken, 20,
             nowNs() + 250000000ull, &ready);

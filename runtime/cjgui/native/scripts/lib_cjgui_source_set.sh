@@ -30,6 +30,7 @@ text_session.cj
   composable_ui_platform_accent.cj
   macos_application_host.cj
   windows_application_host.cj
+  linux_application_host.cj
   application_host.cj
   macos_application_cleanup.cj
   runtime_renderer_text_geometry_query.cj
@@ -47,6 +48,17 @@ text_session.cj
   composable_ui_mac_text_continuation.cj
   composable_ui_mac_retirement.cj
   composable_ui_mac_caret_edit.cj
+  # 2026-10-18 Linux 接入补齐：共同窗口在这些文件里新增了跨文件类型/提供者声明，
+  # 命名集合当时未同步，standalone 闭包编译会报 undeclared type name。用
+  # platforms/linux/scripts/resolve_source_closure.py 迭代得到，缺一即编译不过。
+  composable_ui_scroll_owner_rebase.cj
+  composable_ui_command_completion.cj
+  composable_ui_candidate_selection.cj
+  composable_ui_selection_observation.cj
+  composable_ui_installed_text_intent.cj
+  composable_ui_preparation_dependency.cj
+  composable_ui_windows_selection_gesture.cj
+  composable_ui_mac_resident_source.cj
 )
 typeset -ga CJGUI_GENERATED_SOURCE_NAMES
 CJGUI_GENERATED_SOURCE_NAMES=(composable_ui_composite_component.cj composable_ui_generated.cj)

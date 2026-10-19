@@ -316,6 +316,171 @@ public class CjguiComposableUiClipConstraint {
     }
 }
 
+/// 外阴影（逻辑点）。纯绘制效果：不参与布局、测量、命中。
+/// 与主树 `src/composable_ui.cj` 的同名类保持同一字段与同一拒收区间
+/// （offset [-4096,4096]、blur [0,256]、spread [0,128]），越界或非有限值
+/// 一律按名字拒收，不做钳制后当成合法值。
+/// 稳定性：实验。
+/// 线性渐变的一个色标。position 归一化到节点自身盒子：0 起点、1 终点。
+/// 与主树同名类保持同一字段与同一拒收规则；越界/非有限值按名字拒收，不钳制。
+public class CjguiComposableUiGradientStop {
+    public let position: Float64
+    public let color: CjguiComposableUiColor
+    public init(position!: Float64, color!: CjguiComposableUiColor) {
+        this.position = position
+        this.color = color
+    }
+    public func rejectionReason(): ?String {
+        // NaN 会让两个比较都为 false，因此 !(>=0 && <=1) 同时拦住 NaN。
+        if (!(position >= 0.0 && position <= 1.0)) {
+            return Some("gradient_stop_position_out_of_range")
+        }
+        if (color.red < 0.0 || color.red > 1.0 || color.green < 0.0 || color.green > 1.0 ||
+            color.blue < 0.0 || color.blue > 1.0 || color.alpha < 0.0 || color.alpha > 1.0) {
+            return Some("gradient_stop_color_out_of_range")
+        }
+        return None
+    }
+}
+
+/// 线性渐变（节点自身归一化坐标，0,0 左上、1,1 右下）。
+/// 合法声明带 2..4 个色标，且**必须按 position 升序声明**：乱序按名字拒收，
+/// 不做隐式重排 —— 静默重排会让"我写了两段色阶"和"屏幕上看到两段色阶"之间
+/// 多一层看不见的改写，排查时无从对账。主树允许乱序并在准入后排序，
+/// 快照这里取更窄的契约，代价是调用方要自己写对顺序。
+public class CjguiComposableUiLinearGradient {
+    public let startX: Float64
+    public let startY: Float64
+    public let endX: Float64
+    public let endY: Float64
+    public let stops: Array<CjguiComposableUiGradientStop>
+    public init(startX!: Float64 = 0.0, startY!: Float64 = 0.5, endX!: Float64 = 1.0, endY!: Float64 = 0.5,
+        stops!: Array<CjguiComposableUiGradientStop> = Array<CjguiComposableUiGradientStop>()) {
+        this.startX = startX
+        this.startY = startY
+        this.endX = endX
+        this.endY = endY
+        this.stops = stops
+    }
+    public func rejectionReason(): ?String {
+        if (!(startX >= 0.0 && startX <= 1.0) || !(startY >= 0.0 && startY <= 1.0) ||
+            !(endX >= 0.0 && endX <= 1.0) || !(endY >= 0.0 && endY <= 1.0)) {
+            return Some("gradient_coordinate_out_of_range")
+        }
+        if (stops.size < 2) {
+            return Some("gradient_stop_count_below_minimum")
+        }
+        if (stops.size > 4) {
+            return Some("gradient_stop_count_above_maximum")
+        }
+        var index: Int64 = 0
+        while (index < stops.size) {
+            match (stops[index].rejectionReason()) {
+                case Some(reason) => return Some(reason)
+                case None => ()
+            }
+            if (index > 0 && stops[index].position < stops[index - 1].position) {
+                return Some("gradient_stop_order_not_ascending")
+            }
+            index += 1
+        }
+        return None
+    }
+    public func isValid(): Bool {
+        return rejectionReason().isNone()
+    }
+}
+
+/// 四角独立圆角（逻辑点）。顺序按视觉顺时针：左上、右上、右下、左下。
+/// 只影响填充与描边；裁剪链仍取统一的 cornerRadius —— 裁剪是祖先继承的几何，
+/// 让子节点跟着四角走会出现越界与缝隙。负值在构造期收到 0，不静默取绝对值。
+public class CjguiComposableUiCornerRadii {
+    public let topLeft: Int64
+    public let topRight: Int64
+    public let bottomRight: Int64
+    public let bottomLeft: Int64
+    public init(topLeft!: Int64 = 0, topRight!: Int64 = 0, bottomRight!: Int64 = 0, bottomLeft!: Int64 = 0) {
+        this.topLeft = if (topLeft < 0) { 0 } else { topLeft }
+        this.topRight = if (topRight < 0) { 0 } else { topRight }
+        this.bottomRight = if (bottomRight < 0) { 0 } else { bottomRight }
+        this.bottomLeft = if (bottomLeft < 0) { 0 } else { bottomLeft }
+    }
+}
+
+public class CjguiComposableUiShadowStyle {
+    public let color: CjguiComposableUiColor
+    public let offsetX: Int64
+    public let offsetY: Int64
+    public let blurRadius: Int64
+    public let spread: Int64
+    public init(color!: CjguiComposableUiColor = CjguiComposableUiColor(0.0, 0.0, 0.0, 0.35), offsetX!: Int64 = 0,
+        offsetY!: Int64 = 2, blurRadius!: Int64 = 8, spread!: Int64 = 0) {
+        this.color = color
+        this.offsetX = offsetX
+        this.offsetY = offsetY
+        this.blurRadius = blurRadius
+        this.spread = spread
+    }
+    /// 合法返回 None；否则返回稳定可读的原因。
+    public func rejectionReason(): ?String {
+        if (color.red < 0.0 || color.red > 1.0 || color.green < 0.0 || color.green > 1.0 ||
+            color.blue < 0.0 || color.blue > 1.0 || color.alpha < 0.0 || color.alpha > 1.0) {
+            return Some("shadow_color_out_of_range")
+        }
+        if (offsetX < -4096 || offsetX > 4096 || offsetY < -4096 || offsetY > 4096) {
+            return Some("shadow_offset_out_of_range")
+        }
+        if (blurRadius < 0 || blurRadius > 256) {
+            return Some("shadow_blur_out_of_range")
+        }
+        if (spread < 0 || spread > 128) {
+            return Some("shadow_spread_out_of_range")
+        }
+        return None
+    }
+    public func isVisible(): Bool {
+        return color.alpha > 0.0
+    }
+}
+
+/// 整棵子树一次性合成的透明度组；backdrop 模糊半径随组声明。
+/// 非法声明在样式构造期丢弃（None），与主树拒收规则一致。
+/// OHOS 渲染器不消费线性 alpha mask，故此处不暴露 mask。
+public class CjguiComposableUiEffectGroup {
+    public let opacity: Float64
+    public let blendMode: String
+    public let backdropBlurRadiusPoints: Int64
+    public let backdropBlurFallback: String
+    public init(opacity!: Float64 = 1.0, blendMode!: String = "normal",
+        backdropBlurRadiusPoints!: Int64 = 0, backdropBlurFallback!: String = "unblurred") {
+        this.opacity = opacity
+        this.blendMode = blendMode
+        this.backdropBlurRadiusPoints = backdropBlurRadiusPoints
+        this.backdropBlurFallback = backdropBlurFallback
+    }
+    public func rejectionReason(): ?String {
+        if (opacity.isNaN() || opacity.isInf()) {
+            return Some("effect_group_opacity_not_finite")
+        }
+        if (opacity < 0.0 || opacity > 1.0) {
+            return Some("effect_group_opacity_out_of_range")
+        }
+        if (blendMode != "normal" && blendMode != "multiply") {
+            return Some("effect_group_blend_mode_unsupported")
+        }
+        if (backdropBlurRadiusPoints < 0 || backdropBlurRadiusPoints > 16) {
+            return Some("effect_group_backdrop_blur_radius_out_of_range")
+        }
+        if (backdropBlurFallback != "unblurred") {
+            return Some("effect_group_backdrop_blur_fallback_unsupported")
+        }
+        return None
+    }
+    public func isValid(): Bool {
+        return rejectionReason().isNone()
+    }
+}
+
 private let CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS: Int64 = 4
 
 public class CjguiComposableUiStyle {
@@ -337,6 +502,44 @@ public class CjguiComposableUiStyle {
     /// scene carries both the rectangular bounds and its corner radius so
     /// Metal, hit testing and accessibility resolve one projection.
     public let clipsContent: Bool
+    /// 单个外阴影；None 表示不画。非法值在构造期被丢弃（等同于 None），
+    /// 与主树"拒收而非钳制"的约定一致。
+    public let shadow: ?CjguiComposableUiShadowStyle
+    /// 线性渐变填充；None 表示按 background 纯色填充。非法声明在构造期丢弃。
+    public let gradient: ?CjguiComposableUiLinearGradient
+    /// 整棵子树一次性合成的透明度组；None 表示走直接绘制路径。
+    /// 非法声明在构造期丢弃。OHOS 渲染器支持 opacity/multiply/backdrop blur；
+    /// 线性 alpha mask 尚未接通，因此不在 fork 模型中暴露。
+    public let effectGroup: ?CjguiComposableUiEffectGroup
+    /// 字间距（逻辑点，可负）。0 = 交给字体原生间距。
+    public let letterSpacing: Float64
+    /// 行高（逻辑点）。<= 0 = 用原生文字测量的行高；正值直接作为行距基准。
+    public let lineHeight: Float64
+    /// 最多行数。0 = 不限；> 0 时配合 ellipsis 决定溢出怎么收。
+    public let maxLines: Int64
+    /// 溢出显示省略号（仅 maxLines > 0 有意义）。框架没有多行截断以外的手段，
+    /// 单行省略就是 maxLines=1 + 这个开关。
+    public let ellipsis: Bool
+    /// 四角独立圆角；None 表示四角都用 cornerRadius。
+    public let cornerRadii: ?CjguiComposableUiCornerRadii
+    /// 兄弟节点绘制次序；布局阶段稳定排序，几何不变。0 = 保持书写顺序。
+    public let zIndex: Int64
+    /// 仅绘制的旋转角度，绕节点自身中心。布局、祖先裁剪与命中保持未旋转矩形；
+    /// 只旋转本节点自身绘制，不旋转子节点。非有限值按 0 处理。
+    public let rotateDegrees: Float64
+    /// 仅绘制位移（逻辑点）。布局与裁剪矩形保持原位；绘制使用本节点与祖先
+    /// 的累计平移，命中同样按累计平移换算。默认 0。
+    public let translateX: Float64
+    public let translateY: Float64
+    /// 仅绘制缩放，绕节点自身中心；子节点不继承。默认 1；非有限、<= 0 或
+    /// > 16 归一为 1。
+    public let scaleX: Float64
+    public let scaleY: Float64
+    /// 单色图标着色。None（默认）保持源像素不变；Some 时采样 RGB 乘以
+    /// (r,g,b)、alpha 乘以 a。各分量必须有限，RGB 在 [0,1]、alpha 在 (0,1]，
+    /// 否则整条声明按 None 处理。只有图片节点读取，文字与形状忽略。
+    /// 源图必须是透明底单色字形，否则不透明背景也会被染色。
+    public let iconTint: ?CjguiComposableUiColor
     /// Opt a non-input node into pointer delivery. A read-only presentation
     /// surface (the editor's visual mode) needs click coordinates but must not be
     /// an editable text target; without this a plain TEXT node receives no
@@ -381,7 +584,22 @@ public class CjguiComposableUiStyle {
         alignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         cornerRadius!: Int64 = 0,
         clipsContent!: Bool = false,
-        pointerInteractive!: Bool = false
+        pointerInteractive!: Bool = false,
+        shadow!: ?CjguiComposableUiShadowStyle = None,
+        gradient!: ?CjguiComposableUiLinearGradient = None,
+        effectGroup!: ?CjguiComposableUiEffectGroup = None,
+        letterSpacing!: Float64 = 0.0,
+        lineHeight!: Float64 = 0.0,
+        maxLines!: Int64 = 0,
+        ellipsis!: Bool = false,
+        cornerRadii!: ?CjguiComposableUiCornerRadii = None,
+        zIndex!: Int64 = 0,
+        rotateDegrees!: Float64 = 0.0,
+        iconTint!: ?CjguiComposableUiColor = None,
+        translateX!: Float64 = 0.0,
+        translateY!: Float64 = 0.0,
+        scaleX!: Float64 = 1.0,
+        scaleY!: Float64 = 1.0
     ) {
         this.background = background
         this.border = border
@@ -503,6 +721,48 @@ public class CjguiComposableUiStyle {
             alignX
         } else {
             CJGUI_COMPOSABLE_UI_ALIGN_START
+        }
+        // 字间距允许负值（收紧），但不接受非有限值；行高与行数只接受非负。
+        this.letterSpacing = if (letterSpacing > -1000.0 && letterSpacing < 1000.0) { letterSpacing } else { 0.0 }
+        this.lineHeight = if (lineHeight > 0.0 && lineHeight < 1000.0) { lineHeight } else { 0.0 }
+        this.maxLines = if (maxLines < 0) { 0 } else { maxLines }
+        this.ellipsis = ellipsis
+        this.cornerRadii = cornerRadii
+        this.zIndex = zIndex
+        this.rotateDegrees = if (rotateDegrees.isNaN() || rotateDegrees.isInf()) { 0.0 } else { rotateDegrees }
+        this.translateX = translateX
+        this.translateY = translateY
+        this.scaleX = if (scaleX.isNaN() || scaleX.isInf() || scaleX <= 0.0 || scaleX > 16.0) { 1.0 } else { scaleX }
+        this.scaleY = if (scaleY.isNaN() || scaleY.isInf() || scaleY <= 0.0 || scaleY > 16.0) { 1.0 } else { scaleY }
+        // 乘法型绘制值越界没有可夹取的语义（alpha=0 画不出、>1 会提亮源图），
+        // 因此整条声明拒绝为 None，而不是夹取后宣称合法。
+        this.iconTint = if (let Some(tint) <- iconTint) {
+            if (!tint.red.isNaN() && !tint.red.isInf() && !tint.green.isNaN() && !tint.green.isInf() &&
+                !tint.blue.isNaN() && !tint.blue.isInf() && !tint.alpha.isNaN() && !tint.alpha.isInf() &&
+                tint.red >= 0.0 && tint.red <= 1.0 && tint.green >= 0.0 && tint.green <= 1.0 &&
+                tint.blue >= 0.0 && tint.blue <= 1.0 && tint.alpha > 0.0 && tint.alpha <= 1.0) {
+                Some(tint)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+        this.gradient = match (gradient) {
+            case Some(candidate) => if (candidate.isValid()) { gradient } else { None }
+            case None => None
+        }
+        this.effectGroup = match (effectGroup) {
+            case Some(candidate) => if (candidate.isValid()) { effectGroup } else { None }
+            case None => None
+        }
+        this.shadow = match (shadow) {
+            case Some(candidate) =>
+                match (candidate.rejectionReason()) {
+                    case Some(_) => None
+                    case None => if (candidate.isVisible()) { shadow } else { None }
+                }
+            case None => None
         }
         this.alignY = if (alignY == CJGUI_COMPOSABLE_UI_ALIGN_START || alignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
             alignY == CJGUI_COMPOSABLE_UI_ALIGN_END || alignY == CJGUI_COMPOSABLE_UI_ALIGN_STRETCH) {
@@ -633,7 +893,22 @@ public class CjguiComposableUiInteractionStyle {
             alignX: base.alignX,
             alignY: base.alignY,
             cornerRadius: base.cornerRadius,
+            cornerRadii: base.cornerRadii,
             clipsContent: base.clipsContent,
+            letterSpacing: base.letterSpacing,
+            lineHeight: base.lineHeight,
+            maxLines: base.maxLines,
+            ellipsis: base.ellipsis,
+            zIndex: base.zIndex,
+            rotateDegrees: base.rotateDegrees,
+            iconTint: base.iconTint,
+            shadow: base.shadow,
+            gradient: base.gradient,
+            effectGroup: base.effectGroup,
+            translateX: base.translateX,
+            translateY: base.translateY,
+            scaleX: base.scaleX,
+            scaleY: base.scaleY,
             // 交互旗标不是 paint：交互解析重建样式时必须原样携带，否则
             // resolved 场景（nativeInputScene/pod 来源之一）丢失
             // pointerInteractive——IME 上下文门、owned 锚点豁免与命中投递
@@ -3406,7 +3681,8 @@ public class CjguiComposableUiNode {
             0
         }
         this.isEnabled = enabled
-        this.isReadOnly = readOnly && (nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind ==
+        this.isReadOnly = readOnly && (nodeKind == CJGUI_COMPOSABLE_UI_TEXT ||
+            nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind ==
             CJGUI_COMPOSABLE_UI_INTEGER_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
         this.tabInsertsText = tabInsertsText && nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
         this.pointerControlRole = pointerControlRole
@@ -4431,12 +4707,14 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
     operationActionName!: String = "", interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
     identity!: ?CjguiComposableUiIdentity = None,
-    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>()): CjguiComposableUiNode {
+    textStyleRuns!: Array<CjguiComposableUiTextStyleRun> = Array<CjguiComposableUiTextStyleRun>(),
+    readOnly!: Bool = false): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_TEXT, "", value, "", resourceId, style,
         textStyleRuns: textStyleRuns,
         fieldId: fieldId, operationActionName: operationActionName, operationResourceId: operationResourceId,
         displayValueRole: displayValueRole,
-        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity)
+        interactionStyle: interactionStyle, ownerInteractionState: ownerInteractionState, identity: identity,
+        readOnly: readOnly)
 }
 
 /// Whole-group binding for a static text node (same one-argument contract as
@@ -4446,12 +4724,14 @@ public func cjguiComposableText(nodeId: Int64, semanticId: String, value: String
     displayValueRole!: String = "", operationResourceId!: Int64 = -1,
     operationActionName!: String = "",
     ownerInteractionState!: Int64 = CjguiComposableUiInteractionState.NONE,
-    identity!: ?CjguiComposableUiIdentity = None): CjguiComposableUiNode {
+    identity!: ?CjguiComposableUiIdentity = None,
+    readOnly!: Bool = false): CjguiComposableUiNode {
     return cjguiComposableText(nodeId, semanticId, value, boundStyle.style,
         resourceId: resourceId, fieldId: fieldId, displayValueRole: displayValueRole,
         operationResourceId: operationResourceId, operationActionName: operationActionName,
         interactionStyle: boundStyle.interaction,
-        ownerInteractionState: ownerInteractionState, identity: identity)
+        ownerInteractionState: ownerInteractionState, identity: identity,
+        readOnly: readOnly)
 }
 
 /// Whole-group binding: the component receives ONE bound value carrying both
@@ -4870,6 +5150,10 @@ public class CjguiComposableUiLayoutNode {
     /// accepted scene. Consumers use it to resolve a real ancestor chain (for
     /// example the clip owners of a reveal) without comparing geometry.
     public let identityKey: String
+    /// Preorder extent of this node's own subtree, backfilled by the layout
+    /// engine after every child path returns. It is a local count with no
+    /// parent offset; consumers use it to walk ancestors without geometry.
+    public var subtreeNodeCount: Int64 = 1
     private let scopedIdentityValue: ?CjguiComposableUiIdentity
     public init(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect, clip: CjguiComposableUiRect,
         inputScopeId!: String = "", clipCornerRadius!: Int64 = 0,
@@ -5045,10 +5329,35 @@ public class CjguiComposableUiLayoutNode {
     }
 }
 
+/// 一个节点的累计绘制位移、自身缩放与各裁剪属主的平移。布局整数矩形不因
+/// 这些值改变；绘制与命中消费同一份快照。与主树共享同一语义。
+public class CjguiComposableUiVisualGeometry {
+    public let translateX: Float64
+    public let translateY: Float64
+    /// 仅绘制缩放，绕节点自身中心；子节点不继承。
+    public let scaleX: Float64
+    public let scaleY: Float64
+    private let clipOwnerXs: ArrayList<Float64>
+    private let clipOwnerYs: ArrayList<Float64>
+    public init(translateX: Float64, translateY: Float64, clipOwnerXs: ArrayList<Float64>,
+        clipOwnerYs: ArrayList<Float64>, scaleX!: Float64 = 1.0, scaleY!: Float64 = 1.0) {
+        this.translateX = translateX
+        this.translateY = translateY
+        this.scaleX = scaleX
+        this.scaleY = scaleY
+        this.clipOwnerXs = ArrayList<Float64>(clipOwnerXs)
+        this.clipOwnerYs = ArrayList<Float64>(clipOwnerYs)
+    }
+    public func clipCount(): Int64 { return clipOwnerXs.size }
+    public func clipTranslateX(index: Int64): Float64 { return clipOwnerXs[index] }
+    public func clipTranslateY(index: Int64): Float64 { return clipOwnerYs[index] }
+}
+
 public class CjguiComposableUiScene {
     public let version: Int64
     public let viewport: CjguiComposableUiRect
     private let resolvedNodes: ArrayList<CjguiComposableUiLayoutNode>
+    private let resolvedVisualGeometry: ArrayList<CjguiComposableUiVisualGeometry>
     private let validValue: Bool
     private let layoutErrorValue: String
     public init(version: Int64, viewport: CjguiComposableUiRect, nodes: ArrayList<CjguiComposableUiLayoutNode>,
@@ -5063,8 +5372,74 @@ public class CjguiComposableUiScene {
                 break
             }
         }
-        this.validValue = valid && decorationError.isEmpty()
-        this.layoutErrorValue = if (decorationError.isEmpty()) { layoutError } else { decorationError }
+        // 绘制几何与主树使用同一规则：累计位移、各裁剪属主位移与自身缩放
+        // 都在场景构造时冻结；布局整数矩形不因这些值改变。
+        let geometries = ArrayList<CjguiComposableUiVisualGeometry>()
+        let ancestry = ArrayList<Int64>()
+        var depth: Int64 = 0
+        var geometryError = ""
+        var geometryIndex: Int64 = 0
+        while (geometryIndex < nodes.size) {
+            let node = nodes[geometryIndex]
+            while (depth > 0 && ancestry[depth - 1] + nodes[ancestry[depth - 1]].subtreeNodeCount <= geometryIndex) {
+                depth -= 1
+            }
+            let localX = node.style.translateX
+            let localY = node.style.translateY
+            let parentX = if (depth > 0) { geometries[ancestry[depth - 1]].translateX } else { 0.0 }
+            let parentY = if (depth > 0) { geometries[ancestry[depth - 1]].translateY } else { 0.0 }
+            let x = parentX + localX
+            let y = parentY + localY
+            if (node.subtreeNodeCount < 1 || geometryIndex + node.subtreeNodeCount > nodes.size) {
+                geometryError = "translation_subtree_span_invalid"
+            } else if (localX.isNaN() || localX.isInf() || localY.isNaN() || localY.isInf() ||
+                localX < -1024.0 || localX > 1024.0 || localY < -1024.0 || localY > 1024.0) {
+                geometryError = "translation_value_invalid"
+            } else if (x.isNaN() || x.isInf() || y.isNaN() || y.isInf() ||
+                x < -4096.0 || x > 4096.0 || y < -4096.0 || y > 4096.0 ||
+                Float64(node.bounds.x) + x < -1000000000.0 ||
+                Float64(node.bounds.x) + Float64(node.bounds.width) + x > 1000000000.0 ||
+                Float64(node.bounds.y) + y < -1000000000.0 ||
+                Float64(node.bounds.y) + Float64(node.bounds.height) + y > 1000000000.0) {
+                geometryError = "translation_cumulative_invalid"
+            }
+            let clipXs = ArrayList<Float64>()
+            let clipYs = ArrayList<Float64>()
+            for (clip in node.clipConstraints()) {
+                var ownerX = 0.0
+                var ownerY = 0.0
+                if (clip.ownerIdentity.size > 0) {
+                    var found = false
+                    var ancestor: Int64 = 0
+                    while (ancestor < depth) {
+                        let ancestorIndex = ancestry[ancestor]
+                        if (nodes[ancestorIndex].identityKey == clip.ownerIdentity) {
+                            ownerX = geometries[ancestorIndex].translateX
+                            ownerY = geometries[ancestorIndex].translateY
+                            found = true
+                        }
+                        ancestor += 1
+                    }
+                    if (!found) { geometryError = "translation_clip_owner_invalid" }
+                }
+                clipXs.add(ownerX)
+                clipYs.add(ownerY)
+            }
+            geometries.add(CjguiComposableUiVisualGeometry(x, y, clipXs, clipYs,
+                scaleX: node.style.scaleX, scaleY: node.style.scaleY))
+            if (depth < ancestry.size) { ancestry[depth] = geometryIndex } else { ancestry.add(geometryIndex) }
+            depth += 1
+            geometryIndex += 1
+        }
+        this.resolvedVisualGeometry = geometries
+        this.validValue = valid && decorationError.isEmpty() && geometryError.isEmpty()
+        this.layoutErrorValue = if (!decorationError.isEmpty()) {
+            decorationError
+        } else if (!geometryError.isEmpty()) {
+            geometryError
+        } else {
+            layoutError
+        }
     }
     public func nodes(): ArrayList<CjguiComposableUiLayoutNode> {
         return ArrayList<CjguiComposableUiLayoutNode>(resolvedNodes)
@@ -5074,6 +5449,17 @@ public class CjguiComposableUiScene {
     }
     public func layoutError(): String {
         return layoutErrorValue
+    }
+    public func visualGeometryAt(index: Int64): CjguiComposableUiVisualGeometry {
+        return resolvedVisualGeometry[index]
+    }
+    public func visualGeometryForId(nodeId: Int64): ?CjguiComposableUiVisualGeometry {
+        var index: Int64 = 0
+        while (index < resolvedNodes.size) {
+            if (resolvedNodes[index].nodeId == nodeId) { return Some(resolvedVisualGeometry[index]) }
+            index += 1
+        }
+        return None
     }
     public func nodeForId(nodeId: Int64): CjguiComposableUiLayoutNode {
         for (node in resolvedNodes) {
@@ -6196,7 +6582,22 @@ public class CjguiComposableUiLayoutEngine {
             viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
     }
 
+    /// Records this node's preorder subtree extent after every child path has
+    /// returned. Recursive child calls re-enter this wrapper, so nesting,
+    /// scrolling, tabs and caching all get the same local span.
     private static func layoutNode(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect,
+        parentClipConstraints: ArrayList<CjguiComposableUiClipConstraint>,
+        output: ArrayList<CjguiComposableUiLayoutNode>, measurer: CjguiComposableUiTextMeasurer,
+        inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
+        reuseCache!: ?CjguiComposableUiLayoutReuseCache = None, reuseDepth!: Int64 = 0,
+        identityRegistry!: ?CjguiComposableUiIdentityRegistry = None): Unit {
+        let subtreeStart = output.size
+        layoutNodeImpl(node, bounds, parentClipConstraints, output, measurer, inheritedInputScope, work,
+            reuseCache: reuseCache, reuseDepth: reuseDepth, identityRegistry: identityRegistry)
+        output[subtreeStart].subtreeNodeCount = output.size - subtreeStart
+    }
+
+    private static func layoutNodeImpl(node: CjguiComposableUiNode, bounds: CjguiComposableUiRect,
         parentClipConstraints: ArrayList<CjguiComposableUiClipConstraint>,
         output: ArrayList<CjguiComposableUiLayoutNode>, measurer: CjguiComposableUiTextMeasurer,
         inheritedInputScope: String, work: CjguiComposableUiLayoutWorkCounter,
@@ -6895,6 +7296,9 @@ public class CjguiComposableUiLayoutEngine {
             }, false)
         }
         var cursor = inner.y + owner.virtualVerticalOrigin()
+        let paintBase = output.size
+        let paintStarts = ArrayList<Int64>()
+        let paintZIndexes = ArrayList<Int64>()
         index = 0
         while (index < children.size) {
             let child = children[index];
@@ -6904,11 +7308,14 @@ public class CjguiComposableUiLayoutEngine {
             let rowY = if (owner.virtualContentHeight() > 0 && child.variableRowOffset() >= 0) {
                 inner.y + child.variableRowOffset()
             } else { cursor }
+            paintStarts.add(output.size)
+            paintZIndexes.add(child.style.zIndex)
             layoutNodeOrReuse(child, CjguiComposableUiRect(x, rowY, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += height + gap
             index += 1
         }
+        orderSiblingPaintBlocks(output, paintBase, paintStarts, paintZIndexes)
     }
 
     private static func layoutHorizontal(children: ArrayList<CjguiComposableUiNode>, inner: CjguiComposableUiRect,
@@ -6919,6 +7326,9 @@ public class CjguiComposableUiLayoutEngine {
         work.horizontalContainerSolveCount += 1
         let widths = resolvedHorizontalWidths(children, inner.width, gap, measurer)
         var cursor = inner.x
+        let paintBase = output.size
+        let paintStarts = ArrayList<Int64>()
+        let paintZIndexes = ArrayList<Int64>()
         var index: Int64 = 0
         while (index < children.size) {
             let child = children[index];
@@ -6930,11 +7340,70 @@ public class CjguiComposableUiLayoutEngine {
             // high in a taller row.
             let height = crossAxisLength(child, inner.height, width, false, measurer)
             let y = alignedOrigin(inner.y, inner.height, height, child.style.alignY)
+            paintStarts.add(output.size)
+            paintZIndexes.add(child.style.zIndex)
             layoutNodeOrReuse(child, CjguiComposableUiRect(cursor, y, width, height), clipConstraints, output, measurer,
                 inputScope, work, reuseCache, reuseDepth + 1, identityRegistry)
             cursor += width + gap
             index += 1
         }
+        orderSiblingPaintBlocks(output, paintBase, paintStarts, paintZIndexes)
+    }
+
+    /// 纯绘制次序：每个兄弟已作为一个连续的前序子树写入，整块移动不会改变几何。
+    /// 同值保持书写顺序；全部为 0 时不触碰数组。自定义布局容器保持书写顺序。
+    private static func orderSiblingPaintBlocks(output: ArrayList<CjguiComposableUiLayoutNode>, base: Int64,
+        starts: ArrayList<Int64>, zIndexes: ArrayList<Int64>): Unit {
+        if (starts.size < 2) {
+            return
+        }
+        var sorted = true
+        var index: Int64 = 1
+        while (index < starts.size) {
+            if (zIndexes[index] < zIndexes[index - 1]) {
+                sorted = false
+                break
+            }
+            index += 1
+        }
+        if (sorted) {
+            return
+        }
+        let order = ArrayList<Int64>()
+        index = 0
+        while (index < starts.size) {
+            order.add(index)
+            index += 1
+        }
+        index = 1
+        while (index < order.size) {
+            let current = order[index]
+            var position = index - 1
+            while (position >= 0 && zIndexes[order[position]] > zIndexes[current]) {
+                order[position + 1] = order[position]
+                position -= 1
+            }
+            order[position + 1] = current
+            index += 1
+        }
+        let staged = ArrayList<CjguiComposableUiLayoutNode>()
+        for (position in order) {
+            let start = starts[position]
+            let end = if (position + 1 < starts.size) {
+                starts[position + 1]
+            } else {
+                output.size
+            }
+            var cursor = start
+            while (cursor < end) {
+                staged.add(output[cursor])
+                cursor += 1
+            }
+        }
+        while (output.size > base) {
+            let _ = output.remove(at: output.size - 1)
+        }
+        output.add(all: staged)
     }
 
     /// Allocate the two panes and handle from one bounded track. The handle

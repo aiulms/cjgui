@@ -1,0 +1,321 @@
+package ordinary_restore_paint
+
+import std.collection.*
+import std.env.*
+
+// @PRODUCTION_CONSTANTS@
+// @PRODUCTION_PAINT_TYPES@
+public type CjguiSourceSelectionSnapshot = Choice
+type CjguiPendingSelectionRestore = Request
+type CjguiTextSession = Owner
+type CjguiComposableUiLayoutNode = Node
+let CJGUI_INTERNAL_RENDERER_OK: Int32 = 0
+let CJGUI_INTERNAL_RENDERER_PRESENT_PENDING: Int32 = 20
+var nativeRestoreCalls: Int64 = 0
+var nativeDeclarationCalls: Int64 = 0
+var paintStageCalls: Int64 = 0
+var completionNotifications: Int64 = 0
+var publishCalls: Int64 = 0
+var failures: Int64 = 0
+var nativeFactMode: Int64 = 0
+var declarationAccepted: Bool = true
+var nativePaintVisible: Bool = false
+var nativeClearCalls: Int64 = 0
+var nativeClearStatus: Int32 = 0
+var fixtureResourceId: Int64 = 8
+var nativeResourceBits: UInt64 = 8u64
+func reset(): Unit {
+    nativeRestoreCalls=0;nativeDeclarationCalls=0;paintStageCalls=0;publishCalls=0
+    nativeFactMode=0;declarationAccepted=true
+    nativePaintVisible=false;nativeClearCalls=0
+    nativeClearStatus=0
+    fixtureResourceId=8;nativeResourceBits=8u64
+}
+class CjguiInstalledSelectionCompletion {
+    let windowSession: UInt64 = 55u64;let targetBindingEpoch: UInt64 = 4u64
+    let targetNodeKind: Int64 = CJGUI_COMPOSABLE_UI_TEXT
+    let sourceSelection=Choice();let sourceOwnerVersion: Int64=1
+}
+interface CjguiComposableUiSelectionDecorationProvider {
+    func acceptedSelectionDecoration(c: CjguiInstalledSelectionCompletion): ?CjguiComposableUiSelectionDecoration
+}
+public class CjguiComposableUiSelectionDecoration {}
+class Provider <: CjguiComposableUiSelectionPaintProvider & CjguiComposableUiSelectionDecorationProvider {
+    var ready: Bool = true
+    var calls: Int64 = 0
+    var onRead: () -> Unit = {=>}
+    public func acceptedSelectionPaint(b: CjguiAcceptedSelectionPaintBasis): ?CjguiComposableUiSelectionDecoration {
+        calls += 1
+        onRead()
+        return if(ready){Some(CjguiComposableUiSelectionDecoration())}else{None}
+    }
+    public func acceptedSelectionDecoration(c: CjguiInstalledSelectionCompletion): ?CjguiComposableUiSelectionDecoration { None }
+}
+func internalRendererSupportsStagedPreviewSelectionPaint(): Bool { true }
+func internalRendererClearPreviewSelectionDecoration(s: UInt64): Int32 {
+    nativeClearCalls+=1
+    if(nativeClearStatus==0){nativePaintVisible=false}
+    return nativeClearStatus
+}
+func internalRendererStagePreviewSelectionPaint(s: UInt64,b: CjguiAcceptedSelectionPaintBasis,
+    d: CjguiComposableUiSelectionDecoration,v: Int64,n: ArrayList<Node>): Int32 { paintStageCalls+=1;nativePaintVisible=true;return 0 }
+func internalRendererStagePreviewSelectionDecorationForCurrentOwner(s: UInt64,c: CjguiInstalledSelectionCompletion,
+    b: Choice,d: CjguiComposableUiSelectionDecoration,v: Int64,n: ArrayList<Node>): Int32 { return 0 }
+
+func check(name: String, ok: Bool): Unit {
+    println("ORDINARY_RESTORE_CASE ${name} pass=${ok}")
+    if (!ok) { failures += 1 }
+}
+func cjguiUtf16Length(value: String): Int64 { return 8 }
+func cjgui_internal_renderer_owner_clock_ns(): UInt64 { return 1u64 }
+func internalRendererSetComposableOwnedTextSession(s: UInt64, n: UInt64, r: Int64,
+    k: UInt32, b: UInt64, enabled: Bool): Int32 {
+    nativeDeclarationCalls += 1; return if(declarationAccepted){0}else{14}
+}
+func internalRendererRestoreComposableSelection(s: UInt64, n: Int64, r: Int64, k: Int64,
+    scene: Int64, value: String, a: Int64, b: Int64): (Int32, Int64, Int64) {
+    nativeRestoreCalls += 1; return (0, a, b)
+}
+func internalRendererRestoreComposableSelectionForPaint(s: UInt64,n: Int64,r: Int64,k: Int64,
+    scene: Int64,value: String,a: Int64,b: Int64,binding: UInt64,id: Int64):
+    (Int32,Int64,Int64,?CjguiSelectionPaintNativeRestore) {
+    nativeRestoreCalls+=1
+    let facts=[UInt64(id),23u64,5u64,binding,UInt64(scene),UInt64(n),nativeResourceBits,UInt64(k),UInt64(a),UInt64(b)]
+    if (nativeFactMode==1) { facts[0]+=1u64 }
+    if (nativeFactMode==2) { facts[2]=0u64 }
+    if (nativeFactMode==3) { facts[3]+=1u64 }
+    if (nativeFactMode==4) { facts[4]+=1u64 }
+    if (nativeFactMode==5) { facts[5]+=1u64 }
+    if (nativeFactMode==6) { return (14,0,0,None) }
+    return (0,a,b,Some(CjguiSelectionPaintNativeRestore(facts)))
+}
+func internalRendererInstallOwnedSourceSelection(s: UInt64, n: Int64, r: Int64,
+    scene: Int64, binding: UInt64, id: Int64, deadline: UInt64,
+    value: String, a: Int64, b: Int64): (Int32, Int64, Int64, Bool) { return (0,a,b,false) }
+func internalRendererCancelInstalledRange(s: UInt64, nonce: UInt64): Unit {}
+func internalRendererArmInstalledRange(s: UInt64, b: Basis, scene: UInt64, n: UInt64, r: Int64): Int32 { 0 }
+
+class Ticket {
+    let contentVersion: Int64 = 1
+    let sourceVersion: Int64 = 1
+    let selectionRevision: Int64 = 1
+}
+public class Choice {
+    var documentId: String = "doc";var sessionEpoch: Int64 = 1;var viewGeneration: Int64 = 1
+    var version: Int64 = 1
+    var revision: Int64 = 1
+    var anchorByte: Int64 = 0
+    var focusByte: Int64 = 0
+}
+class Basis { let nonce: UInt64 = 1u64; let text: String = "A中😀B" }
+type CjguiInstalledRangeBasis = Basis
+class OwnerBudget {
+    func deadlineNs(): UInt64 { 100000u64 }
+    func retainPreparedOwner(id: UInt64): Bool { true }
+}
+class Owner {
+    let choice = Choice()
+    var commits: Int64 = 0
+    var reject: Bool = false
+    func selectionTicketMatches(t: Ticket): Bool { t.contentVersion == choice.version }
+    func sourceSelectionSnapshot(): ?Choice {
+        let frozen=Choice();frozen.version=choice.version;frozen.revision=choice.revision
+        frozen.documentId=choice.documentId;frozen.sessionEpoch=choice.sessionEpoch;frozen.viewGeneration=choice.viewGeneration
+        frozen.anchorByte=choice.anchorByte;frozen.focusByte=choice.focusByte;return Some(frozen)
+    }
+    func isBound(): Bool { true }
+    func contentVersion(): Int64 { choice.version }
+    func selectionRevisionValue(): Int64 { choice.revision }
+    func needsNativeSelectionRestore(): Bool { false }
+    func confirmNativeSelectionRestored(v: Int64, a: Int64, b: Int64): Bool { true }
+    func lastRejectReason(): String { "fixture_owner_reject" }
+    func freezeInstalledRangeBasis(nonce: UInt64, window: UInt64, binding: UInt64): ?Basis { Some(Basis()) }
+    func commitSourceSelectionInMirrorTicket(t: Ticket, a: Int64, b: Int64, install: () -> Bool): Bool {
+        if (!install() || reject) { return false }
+        commits += 1; choice.revision += 1; choice.anchorByte=a;choice.focusByte=b;return true
+    }
+    func commitSelectionTicket(t: Ticket, a: Int64, b: Int64, install: () -> Bool): Bool {
+        commitSourceSelectionInMirrorTicket(t,a,b,install)
+    }
+}
+class Node {
+    let nodeId: Int64 = 1001;let resourceId: Int64 = fixtureResourceId
+    let nodeKind: Int64 = CJGUI_COMPOSABLE_UI_TEXT;var value: String = "A中😀B"
+}
+class Scene {
+    let version: Int64 = 7
+    let node=Node()
+    func nodeForId(id: Int64): Node { node }
+}
+class CjguiAcceptedSelectionTicket {
+    let bindingEpoch: UInt64 = 4u64;let semantic = Ticket()
+    let sceneVersion: Int64 = 7;let nodeId: Int64 = 1001;let resourceId: Int64 = fixtureResourceId
+    let nodeKind: Int64 = CJGUI_COMPOSABLE_UI_TEXT;let value: String = "A中😀B"
+}
+enum CjguiSelectionSubmission { Committed | Retained(Int64) | NotAdmitted(String) }
+class Request {
+    let foregroundOnly: Bool = false
+    let id: Int64 = 9;let bindingEpoch: UInt64 = 4u64;let semantic = Ticket()
+    let nodeId: Int64 = 1001;let resourceId: Int64 = fixtureResourceId;let nodeKind: Int64 = CJGUI_COMPOSABLE_UI_TEXT
+    let value: String = "A中😀B";let anchor16: Int64 = 1;let focus16: Int64 = 4
+    let commitSourceSelection: Bool = true;let targetCaptureRevision: Int64 = 1
+    let sourceCoordinatesAreBytes: Bool = true;let sourceAnchor16: Int64 = 8;let sourceFocus16: Int64 = 1
+    let publish: () -> Unit
+    init(publish: () -> Unit) { this.publish=publish }
+}
+class Window {
+    var closing: Bool = false
+    let initialTextFocusRestoreId: Int64 = -1
+    let focusedNodeId: Int64 = 1001;let focusedResourceId: Int64 = 8
+    let focusedNodeKind: Int64 = CJGUI_COMPOSABLE_UI_TEXT
+    let ownedTextSessionNodeKind: Int64 = CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+    var lastNativeFailure: String = "none"
+    var selectionPaintPublication: ?CjguiPreviewSelectionPaintPublication = None
+    var selectionPaintPublicationSequence: UInt64 = 0u64
+    let controller = Provider()
+    let acceptedSceneVersion: Int64 = 7
+    let owner = Owner()
+    let ownedTextSession: ?Owner
+    let nativeInputScene=Scene()
+    let sessionToken: UInt64 = 55u64;let instanceToken: Int64 = 1
+    var textSessionBindingEpoch: UInt64 = 4u64
+    var selectionCommitActive: Bool = false
+    var pendingSelectionRestore: ?Request = None
+    var pendingSelectionRestoreScene: Int64 = -1
+    var pendingSelectionRestoreAttempts: Int64 = 0
+    var ownerTurnBudget: ?OwnerBudget = None
+    let ownedTextSessionNodeId: Int64 = 107;let ownedTextSessionResourceId: Int64 = 1
+    let textRangeEditDeltaDeliveryEnabled: Bool = true
+    var installedRangeCandidateRequest: Int64 = -1;var installedRangeCandidateScene: Int64 = -1
+    var installedRangeCandidate: ?Basis = None;var installedRangeNonceSequence: UInt64 = 0u64
+    var presentationTextSessionNodeId: Int64 = -1;var presentationTextSessionResourceId: Int64 = -1
+    var presentationTextSessionSceneVersion: Int64 = -1
+    var focusedSelectionStart: Int64 = 0;var focusedSelectionEnd: Int64 = 0;var interactionVersion: Int64 = 0
+    var terminal: String = "pending"
+    init() { ownedTextSession=Some(owner) }
+    func pendingCaretSourceChoiceMatches(t: CjguiAcceptedSelectionTicket,a: Int64,b: Int64): Bool { false }
+    func requestAcceptedSelectionRestore(t: CjguiAcceptedSelectionTicket,a: Int64,b: Int64,
+        x: Int64,y: Int64,p: () -> Unit,sourceCoordinatesAreBytes!: Bool=false,
+        proxyOnlyPaint!: Bool=false,retainedInputSequence!: UInt64=0u64): Int64 {
+        pendingSelectionRestore=Some(Request(p));return 9
+    }
+    func selectionRestoreState(id: Int64): String { terminal }
+    func pendingSelectionRestoreId(): Int64 { if(pendingSelectionRestore.isSome()){9}else{-1} }
+    func validateOwnerSelectionHandoff(): Unit {}
+    func pumpInitialTextFocusIntent(): Unit {}
+    func initialTextFocusWindowIsEligible(): Bool { true }
+    func ownerPhaseStarted(): UInt64 { 1u64 }
+    func traceOwnerPhase(name: String,start: UInt64): Unit {}
+    func closeStopsNewOwnerWork(): Bool { closing }
+    func finishSelectionRestore(id: Int64,reason: String): Unit { terminal=reason;pendingSelectionRestore=None }
+    func pointerCaptureVersionFor(n: Node): Int64 { 1 }
+    func ownerBudgetAdmits(n: Int64,name: String): Bool { true }
+    func revealAcceptedNodeIfNeeded(id: Int64): Bool { false }
+    func requestRefresh(): Unit {}
+    func cancelPreparedCandidate(reason: String): Unit {}
+    func focusAcceptedNodeById(id: Int64): Bool { true }
+    func traceSelectionRestoreWait(id: Int64,reason: String): Unit {}
+    func declareOwnedTextSession(): Bool { true }
+    func finishInstalledRangeBasis(o: Owner,b: Basis,scene: Int64,n: Int64,r: Int64): Bool { true }
+    func recordProjectedFocus(n: Node,rememberBookmark!: Bool,installedRange!: ?(Int64,Int64)): Unit {}
+    func refreshPageFocusBookmark(n: Node): Unit {}
+    func invalidatePlainPositionBranch(): Unit {}
+    func preparePendingSourceHandoff(): Bool { true }
+    func acceptedSceneNodes(): ArrayList<Node> { let nodes=ArrayList<Node>();nodes.add(Node());return nodes }
+    // @PRODUCTION_WINDOW_METHODS@
+}
+
+main(): Int64 {
+    let w=Window()
+    let result=w.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    check("windows_capability_gates_false",!internalRendererSelectionTransferSupported() && !internalRendererInstalledRangeSupported())
+    check("public_submission_retained",match(result){case Retained(id)=>id==9;case _=>false})
+    w.pumpPendingSelectionRestore()
+    check("actual_ordinary_native_restore_once",nativeRestoreCalls==1)
+    check("owner_commit_once",w.owner.commits==1)
+    check("owned_declaration_and_final_binding",nativeDeclarationCalls==1 && w.textSessionBindingEpoch==5u64)
+    check("publish_once",publishCalls==1)
+    check("no_transfer_completion_notification",completionNotifications==0)
+    check("ordinary_restore_stages_selection_decoration",paintStageCalls==1)
+    w.pumpPendingSelectionRestore()
+    check("duplicate_terminal_does_not_repeat",nativeRestoreCalls==1 && publishCalls==1 && w.owner.commits==1)
+    let basis: ?CjguiAcceptedSelectionPaintBasis = match(w.selectionPaintPublication) {
+        case Some(CjguiPreviewSelectionPaintPublication.Restore(value, _))=>Some(value);case _=>None
+    }
+    check("reverse_unicode_source_direction_retained",basis.isSome() &&
+        basis.getOrThrow().sourceSelection.anchorByte==8 && basis.getOrThrow().sourceSelection.focusByte==1 &&
+        basis.getOrThrow().targetStart16==1 && basis.getOrThrow().targetEnd16==4)
+
+    reset()
+    let reject=Window();reject.owner.reject=true
+    let _=reject.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    reject.pumpPendingSelectionRestore()
+    check("native_success_owner_reject_no_paint",nativeRestoreCalls==1 && reject.owner.commits==0 && publishCalls==0 && paintStageCalls==0)
+
+    for (mode in 1..=6) {
+        reset();nativeFactMode=mode;let stale=Window()
+        let _=stale.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+        stale.pumpPendingSelectionRestore()
+        check("stale_native_fact_${mode}_no_paint",paintStageCalls==0 && stale.selectionPaintPublication.isNone())
+    }
+    reset();declarationAccepted=false;let refused=Window()
+    let _=refused.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    refused.pumpPendingSelectionRestore()
+    check("declaration_reject_no_basis",refused.owner.commits==0 && paintStageCalls==0 && publishCalls==0)
+
+    for (mode in 1..=6) {
+        reset();let changed=Window()
+        let callback = {=>
+            publishCalls+=1
+            if(mode==1){changed.owner.choice.revision+=1}
+            if(mode==2){changed.owner.choice.version+=1}
+            if(mode==3){changed.textSessionBindingEpoch+=1u64}
+            if(mode==4){changed.closing=true}
+            if(mode==5){changed.owner.choice.documentId="newdoc"}
+            if(mode==6){changed.owner.choice.viewGeneration+=1}
+        }
+        let _=changed.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,callback)
+        changed.pumpPendingSelectionRestore()
+        check("publish_identity_change_${mode}_invalidates",paintStageCalls==0 && changed.selectionPaintPublication.isNone() &&
+            publishCalls==1 && changed.owner.commits==1 && nativeRestoreCalls==1 && changed.controller.calls==0)
+    }
+    reset();nativePaintVisible=true;let pending=Window();pending.controller.ready=false
+    let _=pending.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    pending.pumpPendingSelectionRestore()
+    check("unready_mapping_retains_logical_publication",pending.selectionPaintPublication.isSome() && paintStageCalls==0)
+    check("new_owner_choice_retires_old_native_paint_before_mapping_ready",!nativePaintVisible && nativeClearCalls==1)
+    // An ordinary accepted scene/preparation turn calls this existing seam.
+    pending.restageAcceptedPreviewSelectionDecoration()
+    check("ordinary_scene_is_not_paint_ack",pending.selectionPaintPublication.isSome() && paintStageCalls==0)
+    pending.controller.ready=true
+    pending.restageAcceptedPreviewSelectionDecoration()
+    check("ready_without_move_click_or_restore",paintStageCalls==1 && nativeRestoreCalls==1 && publishCalls==1 && pending.owner.commits==1)
+    reset();let providerChanged=Window()
+    providerChanged.controller.onRead={=>providerChanged.owner.choice.revision+=1}
+    let _=providerChanged.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    providerChanged.pumpPendingSelectionRestore()
+    check("provider_callback_cannot_refresh_frozen_basis",paintStageCalls==0 && providerChanged.selectionPaintPublication.isNone())
+    reset();nativePaintVisible=true;nativeClearStatus=14;let clearWait=Window()
+    let _=clearWait.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+    clearWait.pumpPendingSelectionRestore()
+    check("clear_failure_retains_paint_without_false_stage",clearWait.selectionPaintPublication.isSome() &&
+        paintStageCalls==0 && clearWait.owner.commits==1 && publishCalls==1 && nativeRestoreCalls==1)
+    nativeClearStatus=0
+    clearWait.restageAcceptedPreviewSelectionDecoration()
+    check("clear_recovery_does_not_replay_restore_or_owner",paintStageCalls==1 &&
+        clearWait.owner.commits==1 && publishCalls==1 && nativeRestoreCalls==1)
+    for ((resourceId, bits) in [(-1, UInt64.Max), (Int64.Min, 0x8000000000000000u64)]) {
+        reset();fixtureResourceId=resourceId;nativeResourceBits=bits
+        let signed=Window()
+        let _=signed.submitAcceptedSourceSelection(CjguiAcceptedSelectionTicket(),8,1,1,4,{=>publishCalls+=1})
+        signed.pumpPendingSelectionRestore()
+        let returned: Int64 = match(signed.selectionPaintPublication) {
+            case Some(CjguiPreviewSelectionPaintPublication.Restore(value, _))=>value.targetResourceId
+            case _=>0
+        }
+        check("signed_resource_${resourceId}_exact",returned==resourceId && paintStageCalls==1 &&
+            nativeRestoreCalls==1 && signed.owner.commits==1 && publishCalls==1)
+    }
+    println("ORDINARY_RESTORE_RESULT failures=${failures} native=${nativeRestoreCalls} paint=${paintStageCalls}")
+    return if(failures==0){0}else{1}
+}

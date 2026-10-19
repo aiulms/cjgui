@@ -1,6 +1,6 @@
 # 正常尺寸窗口的有界文字渲染与完整键盘接续
 
-建立：2026-09-23。此完整阶段包含上一包必要返工和新的通用渲染能力，最初由 Sol/Luna 实施；用户现已暂停原任务，改由 DeepSeek 4.1 Flash 接续、GPT-5.6 Sol 聚焦咨询，目标和验收不缩减。唯一执行状态见 [ACTIVE](../../runtime/cjgui/ACTIVE_DIRECTION.md)；操作规则见 [AGENTS](../../AGENTS.md)，接手提示见[外部执行交接](2026-09-19-external-executor-handoff-prompt.md)。旧生成式阶段的接受范围及原始证据见[最新复核](2026-09-19-runtime-generated-ui-milestone.md#2026-09-23-sol-luna-交付指导复核)。
+建立：2026-09-23。此历史阶段包含上一包必要返工和新的通用渲染能力，当时由 Sol/Luna 转为 DeepSeek 4.1 Flash 接续，并安排过 GPT-5.6 Sol 聚焦咨询。旧执行安排及下方已发生的咨询只作历史记录，不是重新调用或恢复任务的授权。唯一执行状态见 [ACTIVE](../../runtime/cjgui/ACTIVE_DIRECTION.md)；操作与咨询规则见 [AGENTS](../../AGENTS.md#independent-model-consultation)，历史接手提示见[外部执行交接](2026-09-19-external-executor-handoff-prompt.md)。旧生成式阶段的接受范围及原始证据见[当时复核](2026-09-19-runtime-generated-ui-milestone.md#2026-09-23-sol-luna-交付指导复核)。
 
 ## 目标与优先级
 
@@ -12,9 +12,9 @@
 
 ## 执行组织
 
-- 主执行为外部 DeepSeek 4.1 Flash，在原目录 `/Users/jiangxuanyang/Desktop/cangjie` 接续全部 A–E。原 GPT-6 Sol 任务 `01a0cc16-e3e3-7d30-bbbb-1c23dc2a1bed` 已被用户中断；不恢复它、Luna 委派、旧 Terra 任务或定时。先接收已有源码与原始证据，不重写已完成实现。
-- 复杂问题通过 Codex CLI 的 `gpt-5.6-sol` 聚焦只读咨询，通常 high；核心并发、FFI/GPU 生命周期、状态归属或公共契约需连续判断时 xhigh，不默认 max/ultra。DS 负责实现、自验与整包报告，咨询方分析具体问题和方案反例，不同时写代码、操作桌面或重复整套验证。所有同 target 构建串行，桌面同一时刻一个操作者。
-- 普通问题两次实质修复无进展就咨询；核心归属/生命周期方案不清先咨询，第一次修复失败不盲猜第二方案。提供同次复现、必要源码/diff、假设与原始结果，要求可区分检查、方案和验收；答复不当运行证据。首次咨询及一次有新证据的追问仍无方案，或触及 AGENTS 跨模型失败上限，向指导任务 `01a08f0f-e1ce-71c1-9a6e-4eee08308d61` 升级，其余独立工作继续。不因换执行者清零失败累计；CLI 不可用时保留具体阻塞，不擅自换型号。
+- 当时主执行为外部 DeepSeek 4.1 Flash，在原目录 `/Users/jiangxuanyang/Desktop/cangjie` 接续全部 A–E；原 GPT-6 Sol 任务 `01a0cc16-e3e3-7d30-bbbb-1c23dc2a1bed` 已被用户中断。当前执行对象以 ACTIVE 和用户最新指令为准，不恢复旧任务、委派或定时；复用已有源码与原始证据，不重写已完成实现。
+- 当前执行者负责归因、实现、自验与整包报告；先查共同框架、正常消费者和相关参考实现。撤销本页原 Codex CLI/Sol 默认咨询安排；只有用户当前明确授权才依 [AGENTS](../../AGENTS.md#independent-model-consultation) 调用顾问。所有同 target 构建串行，桌面同一时刻一个操作者。
+- 达到 AGENTS 的失败升级条件时，把同次复现、必要源码/diff、假设与原始结果及待区分问题交当前指导线程，不继续猜修，也不自动调用外部模型。只暂停该依赖，其他独立工作继续；不因换执行者清零失败累计。
 - 开始前保全本包相关 dirty diff、未跟踪文件与源码指纹，确认实际写入竞争。不建 worktree、不切分支、不 stage/commit/push，不改并行鸿蒙、用户实例和历史证据。桌面按已有授权使用，锁屏跳过并继续独立项，不反复解锁或改设置。
 
 ## A. 必要返工：真实可达、完整可见
@@ -157,4 +157,4 @@ native `nextFocusableNodeFrom` 当前只列文本/button/boolean；页签标题�
 3. **配色补齐没有消除公共接入缺口。** `beaconDark().primaryAction` 基础前景仍为默认近黑，浅字只在 interaction.normal；任务消费者、两个模板漏接 interaction。知识目录页签 hover/pressed 与树行 pressed 又取该基础前景，当前正常态截图不能覆盖这些状态。新增 `titleStyle/titleInteraction` 只有手写 Tabs，生成 builder 未接通。下一包复用已有 NamedStyle 的 base+interaction 做一次选择、整组消费，并补生成入口、组合消费及事务，不能只继续逐个示例写颜色。
 4. **开发者入口一并接通。** 默认目录重复文本是显式夹具构造而非本次证明的 renderer 重复绘制；应让默认数据与“可见”用词对应，保留长文本测试模式。导出 README 主要接入链接 `MACOS_APPLICATION_HOST.md` 当前未随包携带，两个模板仍采用不完整主题接法；这些与公共样式一起修正，从导出包创建普通应用验证。
 
-[接续阶段：文字渲染响应与统一样式消费](2026-09-23-text-resource-response-style-milestone.md) 合并上述返工与新的框架能力，继续由用户选择的 DeepSeek 4.1 Flash 执行、GPT-5.6 Sol 聚焦咨询。旧任务与定时保持暂停。保留本页历史日志，不要求换执行会话重跑已接受且未受影响的全部验证。
+[当时接续阶段：文字渲染响应与统一样式消费](2026-09-23-text-resource-response-style-milestone.md) 合并上述返工与新的框架能力，当时由用户选择的 DeepSeek 4.1 Flash 执行，并安排过 GPT-5.6 Sol 聚焦咨询。此处保留历史，不恢复旧任务、定时或咨询；当前授权遵循 AGENTS。保留本页历史日志，不要求换执行会话重跑已接受且未受影响的全部验证。

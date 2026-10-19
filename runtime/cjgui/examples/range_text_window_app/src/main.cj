@@ -1148,9 +1148,12 @@ class RangeTextPreviewCaptureRevision {
     }
 }
 
-// 预览选区样式是跨平台的语义投影（同一份 range 用同一份背景色），所以 macOS 与
-// Windows 共用真实实现；没有该投影能力的平台才返回空，而不是让消费者自己分叉。
-@When[os == "macOS" || os == "Windows"]
+// 预览选区样式是跨平台的语义投影（同一份 range 用同一份背景色），所以 macOS、
+// Windows 与 Linux 共用真实实现；没有该投影能力的平台才返回空，而不是让消费者
+// 自己分叉。Linux 的落点依赖框架的选区背景能力版本为 1（显式选区色）：
+// runtime_renderer_session.cj 的 internalRendererSelectionBackgroundVersion()，
+// 版本不受支持时 composable_ui_window.cj 会具名拒绝整个候选场景。
+@When[os == "macOS" || os == "Windows" || os == "Linux"]
 func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
     if (end <= start) {
         return Array<CjguiComposableUiTextStyleRun>()
@@ -1158,7 +1161,9 @@ func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposa
     return [CjguiComposableUiTextStyleRun.selectionBackground(start, end, CjguiComposableUiColor(0.25, 0.50, 0.85, 0.42))]
 }
 
-@When[os != "macOS" && os != "Windows"]
+// 其余（当前主树不产出的）平台：没有选区背景投影，显式返回空数组。
+// 这条不再是 Linux 的落点。
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func rangeTextPreviewSelectionRuns(start: Int64, end: Int64): Array<CjguiComposableUiTextStyleRun> {
     return Array<CjguiComposableUiTextStyleRun>()
 }
@@ -1240,6 +1245,30 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     private var candidateSourceSelection: ?CjguiComposableUiCandidateSelectionProjection = None
     private var previewPaneOrderReversed: Bool = false
     private var previewSourceShifted: Bool = false
+    // Optional ordinary public-API consumer of coordinate-origin handoff.
+    // It changes only the local layout prefix; the source/body stay authoritative.
+    private let originDemo: Bool = getVariable("RANGE_TEXT_ORIGIN_DEMO") == Some("1")
+    private let originViewport = CjguiComposableUiScrollViewport()
+    private var originExpanded: Bool = false
+    private var originAnchor: ?CjguiComposableUiScrollOriginAnchor = None
+    // Durable ordinary visual scene: translate, zIndex hit order, effect groups
+    // and paint-only tint/scale/rotate toggles. State is plain app state; the
+    // framework owns geometry, painting and hit routing.
+    private var visualLabRevision: Int64 = 0
+    private var visualLabShifted: Bool = false
+    private var visualLabTinted: Bool = false
+    private var visualLabScaled: Bool = false
+    private var visualLabRotated: Bool = false
+    private var visualLabTopClicks: Int64 = 0
+    private var visualLabEqualClicks: Int64 = 0
+    private var visualLabLastHit: String = "-"
+
+    private func originBinding(): CjguiComposableUiScrollOriginBinding {
+        let choice = this.store.sourceSelectionSnapshot()
+        return CjguiComposableUiScrollOriginBinding(choice.documentId, choice.version,
+            "plain-preview", if (this.originExpanded) { "prefix70" } else { "prefix50" })
+    }
+
 
     init(initialText: String, capacityBytes!: Int64 = 65536, refuseFirstEdit!: Bool = false, filePath!: String = "",
         timingDiagnostics!: Bool = false, twoPaneFixture!: Bool = false, previewByteLimit!: Int64 = 24) {
@@ -1250,6 +1279,7 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         this.fileBacked = filePath != ""
         this.twoPaneFixture = twoPaneFixture && filePath == ""
         this.previewByteLimit = previewByteLimit
+        if (this.originDemo) { this.originViewport.requestInitialOffset(40) }
     }
 
     /// 由窗口建立并拥有会话;返回值只供消费方做只读查询(选区/组合/校准状态)。
@@ -1268,7 +1298,7 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         // Public selection, Undo and native input all project the same owner
         // choice. A selection-only change must also refresh the declaration.
         return 1 + this.recoveryRevision + this.store.appliedEditCount() + this.store.sourceSelectionSnapshot().revision + this.themeRevision + this
-            .previewDecorationRevision
+            .previewDecorationRevision + this.visualLabRevision
     }
 
     public func uiBusinessOwnerRevision(): Int64 {
@@ -1288,6 +1318,25 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     }
     private func freezeCandidatePreviewSelection(): Unit {
         this.candidateSourceSelection = None
+        // Literal source input owns the complete bounded mirror. Navigation
+        // seals its true source choice before this candidate is constructed;
+        // the common handoff supplies actual A, never an expired receipt.
+        if (this.installedPreviewNode < 0) {
+            let bound = match (this.session) { case Some(value) => value; case None => return }
+            let mirror = bound.mirrorSnapshot()
+            let selected = this.store.sourceSelectionSnapshot()
+            if (!mirror.prepared || mirror.contentVersion != selected.version ||
+                mirror.contextEpoch != bound.contextEpochValue()) { return }
+            let anchor = selected.anchorByte - mirror.startByte
+            let focus = selected.focusByte - mirror.startByte
+            let a16 = match (cjguiUtf8OffsetToUtf16(mirror.text, anchor)) { case Some(value) => value; case None => return }
+            let f16 = match (cjguiUtf8OffsetToUtf16(mirror.text, focus)) { case Some(value) => value; case None => return }
+            this.candidateSourceSelection = Some(CjguiComposableUiCandidateSelectionProjection(
+                None, selected, bound.freezeSelectionTicket(),
+                "source:${mirror.contextEpoch}:${mirror.contentVersion}:${mirror.startByte}:${mirror.text.size}",
+                4, 102, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, mirror.text, a16, f16, focus))
+            return
+        }
         if (let Some(source) <- this.candidateSourceCompletion) {
             if (source.targetNodeKind != CJGUI_COMPOSABLE_UI_TEXT ||
                 (source.targetNodeId != 9 && source.targetNodeId != 11)) { return }
@@ -1322,18 +1371,38 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             String.fromUtf8(bytes.slice(firstBytes, Int64(bytes.size) - firstBytes)))
     }
     public func prepareSceneRefresh(): Bool {
-        return true
+        if (!this.originDemo) { return true }
+        let staged = this.originViewport.stageCoordinateOrigin(this.originBinding(),
+            anchor: this.originAnchor, targetNodeId: 9, targetLocalByte: 4)
+        getStdOut().writeln("RANGE_TEXT_ORIGIN_STAGE result=${staged} expanded=${this.originExpanded}")
+        getStdOut().flush()
+        return staged != "scroll_origin_handoff_required" && staged != "scroll_origin_anchor_stale" &&
+            staged != "scroll_origin_binding_invalid"
     }
     public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
         let commands = ArrayList<CjguiComposableUiCommand>()
+        if (this.fileBacked) {
+            commands.add(CjguiComposableUiCommand("range-text-tail-selection", 4, CjguiComposableUiShortcut("l", usesShift: true)))
+            for ((nodeId, commandId, label) in [(5, "range-text-first", "首"),
+                (6, "range-text-middle", "中"), (7, "range-text-last", "尾")]) {
+                commands.add(CjguiComposableUiCommand(commandId,
+                    CjguiComposableUiNodeReference.manual(nodeId), label, "", 0, true, false))
+            }
+        }
         if (this.twoPaneFixture) {
             commands.add(CjguiComposableUiCommand("range-text-undo", 14, CjguiComposableUiShortcut("z")))
             commands.add(CjguiComposableUiCommand("range-text-redo", 15,
                 CjguiComposableUiShortcut("z", usesShift: true)))
+        }
+        if (this.twoPaneFixture) {
             commands.add(CjguiComposableUiCommand("range-text-swap-panes", 16,
                 CjguiComposableUiShortcut("m", usesShift: true)))
             commands.add(CjguiComposableUiCommand("range-text-shift-source", 17,
                 CjguiComposableUiShortcut("n", usesShift: true)))
+        }
+        if (this.originDemo) {
+            commands.add(CjguiComposableUiCommand("range-text-origin-move", 904,
+                CjguiComposableUiShortcut("p", usesShift: true)))
         }
         return commands
     }
@@ -1352,19 +1421,40 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             this.previewDragActive = false
             this.previewDragRevision = -1
         }
+        if (this.originDemo) {
+            getStdOut().writeln("RANGE_TEXT_ORIGIN_COMMIT origin=${this.originBinding().layoutOrigin} " +
+                "owner=${this.store.rangeTextVersion()} accepted_offset=${this.originViewport.acceptedOffset()}")
+            getStdOut().flush()
+            this.originAnchor = None
+        }
         this.acceptedPreview = this.candidatePreview
         this.acceptedSecondPreview = this.candidateSecondPreview
         this.candidatePreview = None
         this.candidateSecondPreview = None
         if (this.previewDragActive) {
             if (let Some(bound) <- this.session) {
-                this.previewDragRevision = this.previewCaptureRevision.observe(this.acceptedPreview,
-                    bound.contextEpochValue(), this.store.rangeTextVersion(), bound.mirrorSnapshot().startByte)
+                this.previewDragRevision = this
+                    .previewCaptureRevision
+                    .observe(this.acceptedPreview, bound.contextEpochValue(), this.store.rangeTextVersion(),
+                        bound.mirrorSnapshot().startByte)
             }
         }
-        // Owner edits still use their original restore path. Same-choice
-        // mapping migration was already installed by the common candidate.
-        if ((this as CjguiComposableUiCandidateSelectionProvider).isNone() || this.candidateSourceCompletion.isNone()) {
+        // The common candidate can install an owner after-image while its
+        // source completion is already expired. Consume that actual current
+        // receipt instead of starting a second restore from the old source
+        // query; a second installation would replace the FIFO predecessor.
+        var candidateInstalled = false
+        if (let Some(projected) <- this.candidateSourceSelection) {
+            if (let Some(window) <- this.hostWindow) {
+                if (let Some(completed) <- window.installedSelectionCompletion()) {
+                    candidateInstalled = completed.targetNodeId == projected.targetNodeId &&
+                        completed.targetResourceId == projected.targetResourceId && completed.targetNodeKind == projected
+                        .targetNodeKind && completed.targetBody == projected.targetBody
+                }
+            }
+        }
+        if (!candidateInstalled && ((this as CjguiComposableUiCandidateSelectionProvider).isNone() ||
+            this.candidateSourceCompletion.isNone())) {
             this.restoreAcceptedPreviewChoice()
         }
         this.candidateSourceSelection = None
@@ -1387,6 +1477,25 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
                 "proxy_end16=${completion.targetSelectionEnd16}")
             getStdOut().flush()
         }
+    }
+
+    private var observedCaretTransfer: UInt64 = 0u64
+    public func observeAcceptedPreviewCaret(window: CjguiComposableUiWindow): Unit {
+        if (!twoPaneFixture) { return }
+        let completion = match (candidateSourceCompletion) { case Some(v) => v; case None => return }
+        if (completion.transferId == observedCaretTransfer || installedPreviewNode < 0) { return }
+        let preview = match (previewForNode(installedPreviewNode)) { case Some(v) => v; case None => return }
+        let selected = store.sourceSelectionSnapshot()
+        let local = selected.focusByte - preview.sourceStart
+        if (local < 0 || local > preview.text.toArray().size) { return }
+        let geometry = window.acceptedInputCaret(installedPreviewNode, local,
+            window.contentVersionForGeometry(), window.layoutVersionForGeometry())
+        if (!geometry.available) { return }
+        observedCaretTransfer = completion.transferId
+        getStdOut().writeln("RANGE_TEXT_PREVIEW_CARET_VALUE transfer=${completion.transferId} " +
+            "node=${installedPreviewNode} available=${geometry.available} x=${geometry.xPt} " +
+            "y=${geometry.yPt} h=${geometry.heightPt} scene=${window.inputSceneVersion()}")
+        getStdOut().flush()
     }
 
     // This consumer owns its two plain byte-span maps. After native accepts
@@ -1422,6 +1531,7 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         let _ = window.requestOwnedSelectionRestore()
     }
     public func rollbackSceneRefresh(): Unit {
+        this.originAnchor = None
         this.candidatePreview = None; this.candidateSecondPreview = None
         this.candidateSourceSelection = None; this.candidateSourceCompletion = None
     }
@@ -1699,6 +1809,275 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         return CjguiWindowBackgroundPolicy.SYSTEM_CONTENT_AREA
     }
 
+    /// Durable ordinary visual scene. It uses only public style declarations:
+    /// translate/zIndex are layout-owned sibling effects, effect groups are
+    /// isolated composites, and tint/scale/rotate are paint-only declarations.
+    private func visualLabScene(): CjguiComposableUiNode {
+        let dark = this.usesDarkAppearance
+        let surface = if (dark) { CjguiComposableUiColor(0.15, 0.16, 0.18, 1.0) } else { CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0) }
+        let surface2 = if (dark) { CjguiComposableUiColor(0.11, 0.12, 0.14, 1.0) } else { CjguiComposableUiColor(0.98, 0.98, 0.984, 1.0) }
+        let ink = if (dark) { CjguiComposableUiColor(0.94, 0.95, 0.96, 1.0) } else { CjguiComposableUiColor(0.09, 0.098, 0.122, 1.0) }
+        let secondary = if (dark) { CjguiComposableUiColor(0.68, 0.70, 0.74, 1.0) } else { CjguiComposableUiColor(0.373, 0.396, 0.447, 1.0) }
+        let tertiary = if (dark) { CjguiComposableUiColor(0.48, 0.50, 0.55, 1.0) } else { CjguiComposableUiColor(0.545, 0.569, 0.616, 1.0) }
+        let line = if (dark) { CjguiComposableUiColor(0.23, 0.24, 0.26, 1.0) } else { CjguiComposableUiColor(0.89, 0.894, 0.914, 1.0) }
+        let lineStrong = if (dark) { CjguiComposableUiColor(0.30, 0.31, 0.34, 1.0) } else { CjguiComposableUiColor(0.827, 0.835, 0.863, 1.0) }
+        let accent = if (dark) { CjguiComposableUiColor(0.43, 0.58, 1.0, 1.0) } else { CjguiComposableUiColor(0.169, 0.349, 0.847, 1.0) }
+        let accentSoft = if (dark) { CjguiComposableUiColor(0.16, 0.20, 0.32, 1.0) } else { CjguiComposableUiColor(0.914, 0.933, 0.988, 1.0) }
+        let stage = if (dark) { CjguiComposableUiColor(0.07, 0.075, 0.09, 1.0) } else { CjguiComposableUiColor(0.137, 0.149, 0.18, 1.0) }
+        let mutedButton = if (dark) { CjguiComposableUiColor(0.18, 0.19, 0.22, 1.0) } else { CjguiComposableUiColor(0.933, 0.941, 0.957, 1.0) }
+        let softGreen = if (dark) { CjguiComposableUiColor(0.16, 0.26, 0.21, 1.0) } else { CjguiComposableUiColor(0.918, 0.945, 0.925, 1.0) }
+        let greenInk = if (dark) { CjguiComposableUiColor(0.56, 0.82, 0.67, 1.0) } else { CjguiComposableUiColor(0.212, 0.376, 0.29, 1.0) }
+        let onStage = CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)
+        let onAccent = CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)
+        let red = CjguiComposableUiColor(0.847, 0.345, 0.247, 1.0)
+        let orange = CjguiComposableUiColor(1.0, 0.549, 0.149, 1.0)
+
+        let lab = cjguiComposableVertical(950, "visual-lab",
+            CjguiComposableUiStyle(gap: 0, fixedHeight: 317, clipsContent: true))
+        let header = cjguiComposableHorizontal(980, "visual-lab-header",
+            CjguiComposableUiStyle(fixedHeight: 22, gap: 8))
+        header.add(cjguiComposableText(981, "visual-lab-header-title", "视觉语义",
+            CjguiComposableUiStyle(fixedHeight: 18, fontSize: 11.0, fontWeight: 600, textColor: secondary)))
+        header.add(cjguiComposableVertical(982, "visual-lab-header-spacer",
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 1)))
+        header.add(cjguiComposableText(983, "visual-lab-header-note", "仅绘制 · 命中随可见位置",
+            CjguiComposableUiStyle(fixedHeight: 18, fontSize: 9.5, textColor: tertiary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        lab.add(header)
+        lab.add(cjguiComposableVertical(984, "visual-lab-divider-984",
+            CjguiComposableUiStyle(fixedHeight: 1, background: lineStrong)))
+
+        let translateRow = cjguiComposableHorizontal(971, "visual-lab-translate-row",
+            CjguiComposableUiStyle(fixedHeight: 66, gap: 18))
+        let translateCopy = cjguiComposableVertical(9711, "visual-lab-translate-copy",
+            CjguiComposableUiStyle(fixedWidth: 242, gap: 3))
+        translateCopy.add(cjguiComposableText(9712, "visual-lab-translate-title", "Translate",
+            CjguiComposableUiStyle(fixedHeight: 17, fontSize: 13.0, fontWeight: 600, textColor: ink)))
+        translateCopy.add(cjguiComposableText(9713, "visual-lab-translate-detail", "绘制右移 24 pt，命中随可见位置。",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, textColor: secondary)))
+        translateCopy.add(cjguiComposableText(9714, "visual-lab-translate-boundary", "原位置不再响应",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary)))
+        translateRow.add(translateCopy)
+        let translateStage = cjguiComposableHorizontal(9715, "visual-lab-translate-stage",
+            CjguiComposableUiStyle(fixedHeight: 48, growX: 1, padding: 9, gap: 0, background: surface2,
+                border: line, borderWidth: 1, cornerRadius: 8, clipsContent: true,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        translateStage.add(cjguiComposableVertical(9716, "visual-lab-origin-line",
+            CjguiComposableUiStyle(fixedWidth: 1, fixedHeight: 28, background: lineStrong)))
+        translateStage.add(cjguiComposableVertical(9717, "visual-lab-origin-gap",
+            CjguiComposableUiStyle(fixedWidth: 20, fixedHeight: 1)))
+        translateStage.add(cjguiComposableButton(953, "visual-lab-translate", "点击 · 24 pt", "VISUAL_LAB_TRANSLATE", 0,
+            CjguiComposableUiStyle(fixedWidth: 108, fixedHeight: 28, background: accent, textColor: onAccent,
+                cornerRadius: 6, fontSize: 10.5,
+                translateX: if (this.visualLabShifted) { 24.0 } else { 0.0 })))
+        translateRow.add(translateStage)
+        let translateRead = cjguiComposableVertical(9718, "visual-lab-translate-read",
+            CjguiComposableUiStyle(fixedWidth: 142, gap: 2, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END))
+        translateRead.add(cjguiComposableText(9719, "visual-lab-translate-dx",
+            "dx ${if (this.visualLabShifted) { 24 } else { 0 }}",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: secondary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        translateRead.add(cjguiComposableText(9720, "visual-lab-translate-hit", "last hit ${this.visualLabLastHit}",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        translateRow.add(translateRead)
+        lab.add(translateRow)
+        lab.add(cjguiComposableVertical(985, "visual-lab-divider-985",
+            CjguiComposableUiStyle(fixedHeight: 1, background: line)))
+
+        let zRow = cjguiComposableHorizontal(957, "visual-lab-zindex-row",
+            CjguiComposableUiStyle(fixedHeight: 66, gap: 18))
+        let zCopy = cjguiComposableVertical(9571, "visual-lab-zindex-copy",
+            CjguiComposableUiStyle(fixedWidth: 242, gap: 3))
+        zCopy.add(cjguiComposableText(9572, "visual-lab-zindex-title", "zIndex",
+            CjguiComposableUiStyle(fixedHeight: 17, fontSize: 13.0, fontWeight: 600, textColor: ink)))
+        zCopy.add(cjguiComposableText(9573, "visual-lab-zindex-detail", "上层接收点击，同值保持书写顺序。",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, textColor: secondary)))
+        zCopy.add(cjguiComposableText(9574, "visual-lab-zindex-boundary", "先写的在下，后写的在上",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary)))
+        zRow.add(zCopy)
+        let zStage = cjguiComposableHorizontal(9575, "visual-lab-zindex-stage",
+            CjguiComposableUiStyle(fixedHeight: 48, growX: 1, padding: 9, gap: 0, background: surface2,
+                border: line, borderWidth: 1, cornerRadius: 8, clipsContent: true,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        let zChips = cjguiComposableHorizontal(9576, "visual-lab-zindex-chips",
+            CjguiComposableUiStyle(fixedHeight: 30, gap: 0, alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        zChips.add(cjguiComposableButton(958, "visual-lab-under", "底", "VISUAL_LAB_UNDER", 0,
+            CjguiComposableUiStyle(fixedWidth: 46, fixedHeight: 28, background: mutedButton, textColor: secondary,
+                border: lineStrong, borderWidth: 1, cornerRadius: 6, fontSize: 10.0)))
+        zChips.add(cjguiComposableButton(959, "visual-lab-top", "顶", "VISUAL_LAB_TOP", 0,
+            CjguiComposableUiStyle(fixedWidth: 66, fixedHeight: 28, translateX: -18.0, zIndex: 1,
+                background: surface, textColor: ink, border: accent, borderWidth: 1,
+                cornerRadius: 6, fontSize: 10.0)))
+        zChips.add(cjguiComposableVertical(9577, "visual-lab-zindex-gap-left",
+            CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 1)))
+        zChips.add(cjguiComposableVertical(9578, "visual-lab-zindex-divider",
+            CjguiComposableUiStyle(fixedWidth: 1, fixedHeight: 24, background: lineStrong)))
+        zChips.add(cjguiComposableVertical(9579, "visual-lab-zindex-gap-right",
+            CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 1)))
+        zChips.add(cjguiComposableButton(961, "visual-lab-equal-first", "先", "VISUAL_LAB_EQUAL_FIRST", 0,
+            CjguiComposableUiStyle(fixedWidth: 42, fixedHeight: 28, zIndex: 1, background: softGreen,
+                textColor: greenInk, border: lineStrong, borderWidth: 1, cornerRadius: 6, fontSize: 10.0)))
+        zChips.add(cjguiComposableButton(962, "visual-lab-equal-second", "后", "VISUAL_LAB_EQUAL_SECOND", 0,
+            CjguiComposableUiStyle(fixedWidth: 42, fixedHeight: 28, translateX: -34.0, zIndex: 1,
+                background: surface, textColor: ink, border: lineStrong, borderWidth: 1,
+                cornerRadius: 6, fontSize: 10.0)))
+        zStage.add(zChips)
+        zRow.add(zStage)
+        let zRead = cjguiComposableVertical(9570, "visual-lab-zindex-read",
+            CjguiComposableUiStyle(fixedWidth: 142, gap: 2, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END))
+        zRead.add(cjguiComposableText(9569, "visual-lab-zindex-counts",
+            "top ${this.visualLabTopClicks} · equal ${this.visualLabEqualClicks}",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: secondary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        zRead.add(cjguiComposableText(9568, "visual-lab-zindex-hit", "last hit ${this.visualLabLastHit}",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        zRow.add(zRead)
+        lab.add(zRow)
+        lab.add(cjguiComposableVertical(986, "visual-lab-divider-986",
+            CjguiComposableUiStyle(fixedHeight: 1, background: line)))
+
+        let groupRow = cjguiComposableHorizontal(963, "visual-lab-groups-row",
+            CjguiComposableUiStyle(fixedHeight: 66, gap: 18))
+        let groupCopy = cjguiComposableVertical(9631, "visual-lab-groups-copy",
+            CjguiComposableUiStyle(fixedWidth: 242, gap: 3))
+        groupCopy.add(cjguiComposableText(9632, "visual-lab-groups-title", "EffectGroup",
+            CjguiComposableUiStyle(fixedHeight: 17, fontSize: 13.0, fontWeight: 600, textColor: ink)))
+        groupCopy.add(cjguiComposableText(9633, "visual-lab-groups-detail", "透明度作用于整组，不逐节点叠加。",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, textColor: secondary)))
+        groupCopy.add(cjguiComposableText(9634, "visual-lab-groups-boundary", "单节点组与裁剪组",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary)))
+        groupRow.add(groupCopy)
+        let groupStage = cjguiComposableHorizontal(9635, "visual-lab-groups-stage",
+            CjguiComposableUiStyle(fixedHeight: 48, growX: 1, padding: 7, gap: 9, background: surface2,
+                border: line, borderWidth: 1, cornerRadius: 8, clipsContent: true,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        let singleGroup = cjguiComposableVertical(964, "visual-lab-single-group",
+            CjguiComposableUiStyle(fixedWidth: 196, fixedHeight: 34, growX: 1, padding: 9,
+                background: if (dark) { CjguiComposableUiColor(0.12, 0.14, 0.18, 1.0) } else { CjguiComposableUiColor(0.933, 0.945, 0.969, 1.0) },
+                border: line, borderWidth: 1, cornerRadius: 6,
+                effectGroup: CjguiComposableUiEffectGroup(opacity: 0.45)))
+        singleGroup.add(cjguiComposableText(965, "visual-lab-single-label", "单节点组",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, fontWeight: 600,
+                textColor: if (dark) { CjguiComposableUiColor(0.72, 0.78, 0.88, 1.0) } else { CjguiComposableUiColor(0.243, 0.278, 0.341, 1.0) })))
+        groupStage.add(singleGroup)
+        let multiGroup = cjguiComposableVertical(966, "visual-lab-multi-group",
+            CjguiComposableUiStyle(fixedWidth: 196, fixedHeight: 34, growX: 1, padding: 6,
+                background: stage, cornerRadius: 6, clipsContent: true,
+                effectGroup: CjguiComposableUiEffectGroup(opacity: 0.65)))
+        let artRow = cjguiComposableHorizontal(967, "visual-lab-art-row",
+            CjguiComposableUiStyle(fixedHeight: 22, gap: 6, alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        artRow.add(cjguiComposableImage(968, "visual-lab-glyph", "assets/tint_glyph_white.png",
+            CjguiComposableUiStyle(fixedWidth: 22, fixedHeight: 22,
+                scaleX: if (this.visualLabScaled) { 1.5 } else { 1.0 },
+                scaleY: if (this.visualLabScaled) { 1.5 } else { 1.0 },
+                rotateDegrees: if (this.visualLabRotated) { 20.0 } else { 0.0 },
+                iconTint: if (this.visualLabTinted) { Some(orange) } else { None }),
+            imageResourceId: "visual-lab-glyph-white", imageResourceVersion: 1))
+        artRow.add(cjguiComposableText(970, "visual-lab-multi-label", "重叠子内容",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, fontWeight: 600, textColor: onStage)))
+        artRow.add(cjguiComposableText(969, "visual-lab-overlay", "z1",
+            CjguiComposableUiStyle(fixedWidth: 22, fixedHeight: 14, translateX: -8.0, zIndex: 1,
+                background: red, textColor: onStage, fontSize: 8.0, cornerRadius: 3,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)))
+        multiGroup.add(artRow)
+        groupStage.add(multiGroup)
+        groupRow.add(groupStage)
+        let groupRead = cjguiComposableVertical(9636, "visual-lab-groups-read",
+            CjguiComposableUiStyle(fixedWidth: 142, gap: 2, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END))
+        groupRead.add(cjguiComposableText(9637, "visual-lab-groups-isolated", "isolated 2",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: secondary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        groupRead.add(cjguiComposableText(9638, "visual-lab-groups-opacity", "0.45 / 0.65",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        groupRow.add(groupRead)
+        lab.add(groupRow)
+        lab.add(cjguiComposableVertical(987, "visual-lab-divider-987",
+            CjguiComposableUiStyle(fixedHeight: 1, background: line)))
+
+        let tintRow = cjguiComposableHorizontal(952, "visual-lab-tint-row",
+            CjguiComposableUiStyle(fixedHeight: 66, gap: 18))
+        let tintCopy = cjguiComposableVertical(9521, "visual-lab-tint-copy",
+            CjguiComposableUiStyle(fixedWidth: 242, gap: 3))
+        tintCopy.add(cjguiComposableText(9522, "visual-lab-tint-title", "Tint & transform",
+            CjguiComposableUiStyle(fixedHeight: 17, fontSize: 13.0, fontWeight: 600, textColor: ink)))
+        tintCopy.add(cjguiComposableText(9523, "visual-lab-tint-detail", "RGB 与 alpha 相乘，缩放后旋转。",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 10.5, textColor: secondary)))
+        tintCopy.add(cjguiComposableText(9524, "visual-lab-tint-boundary", "绕节点中心，不改命中矩形",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: tertiary)))
+        tintRow.add(tintCopy)
+        let tintStage = cjguiComposableHorizontal(9525, "visual-lab-tint-stage",
+            CjguiComposableUiStyle(fixedHeight: 48, growX: 1, padding: 7, gap: 12, background: surface2,
+                border: line, borderWidth: 1, cornerRadius: 8, clipsContent: true,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        let tintTile = cjguiComposableHorizontal(9526, "visual-lab-tint-tile",
+            CjguiComposableUiStyle(fixedWidth: 36, fixedHeight: 36, background: stage, cornerRadius: 6,
+                clipsContent: true, alignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        tintTile.add(cjguiComposableImage(9527, "visual-lab-tint-glyph", "assets/tint_glyph_red.png",
+            CjguiComposableUiStyle(fixedWidth: 28, fixedHeight: 28,
+                scaleX: if (this.visualLabScaled) { 1.5 } else { 1.0 },
+                scaleY: if (this.visualLabScaled) { 1.5 } else { 1.0 },
+                rotateDegrees: if (this.visualLabRotated) { 20.0 } else { 0.0 },
+                iconTint: if (this.visualLabTinted) { Some(orange) } else { None }),
+            imageResourceId: "visual-lab-glyph-red", imageResourceVersion: 1))
+        tintStage.add(tintTile)
+        let tintRead = cjguiComposableVertical(9528, "visual-lab-tint-read",
+            CjguiComposableUiStyle(growX: 1, gap: 2))
+        tintRead.add(cjguiComposableText(9529, "visual-lab-tint-rgb",
+            "tint ${if (this.visualLabTinted) { "#ff8c26" } else { "source" }} · " +
+                "scale ${if (this.visualLabScaled) { "1.50" } else { "1.00" }} · " +
+                "rotate ${if (this.visualLabRotated) { "20°" } else { "0°" }}",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5, textColor: secondary)))
+        tintRead.add(cjguiComposableText(9530, "visual-lab-tint-note", "source alpha 0.50 · multiplied, not replaced",
+            CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.0, textColor: tertiary)))
+        tintStage.add(tintRead)
+        tintRow.add(tintStage)
+        let tintControls = cjguiComposableHorizontal(9531, "visual-lab-tint-controls",
+            CjguiComposableUiStyle(fixedWidth: 142, fixedHeight: 30, gap: 4))
+        tintControls.add(cjguiComposableButton(954, "visual-lab-tint", "着色", "VISUAL_LAB_TINT", 0,
+            CjguiComposableUiStyle(fixedWidth: 44, fixedHeight: 28,
+                background: if (this.visualLabTinted) { accentSoft } else { surface },
+                textColor: if (this.visualLabTinted) { accent } else { ink },
+                border: if (this.visualLabTinted) { accentSoft } else { lineStrong }, borderWidth: 1,
+                cornerRadius: 6, fontSize: 10.0)))
+        tintControls.add(cjguiComposableButton(955, "visual-lab-scale", "缩放", "VISUAL_LAB_SCALE", 0,
+            CjguiComposableUiStyle(fixedWidth: 44, fixedHeight: 28,
+                background: if (this.visualLabScaled) { accentSoft } else { surface },
+                textColor: if (this.visualLabScaled) { accent } else { ink },
+                border: if (this.visualLabScaled) { accentSoft } else { lineStrong }, borderWidth: 1,
+                cornerRadius: 6, fontSize: 10.0)))
+        tintControls.add(cjguiComposableButton(956, "visual-lab-rotate", "旋转", "VISUAL_LAB_ROTATE", 0,
+            CjguiComposableUiStyle(fixedWidth: 44, fixedHeight: 28,
+                background: if (this.visualLabRotated) { accentSoft } else { surface },
+                textColor: if (this.visualLabRotated) { accent } else { ink },
+                border: if (this.visualLabRotated) { accentSoft } else { lineStrong }, borderWidth: 1,
+                cornerRadius: 6, fontSize: 10.0)))
+        tintRow.add(tintControls)
+        lab.add(tintRow)
+        lab.add(cjguiComposableVertical(988, "visual-lab-divider-988",
+            CjguiComposableUiStyle(fixedHeight: 1, background: lineStrong)))
+
+        let strip = cjguiComposableHorizontal(951, "visual-lab-status",
+            CjguiComposableUiStyle(fixedHeight: 26, gap: 8, alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+        strip.add(cjguiComposableText(9511, "visual-lab-status-text",
+            "last hit ${this.visualLabLastHit} · top ${this.visualLabTopClicks} · equal ${this.visualLabEqualClicks} · " +
+                "dx ${if (this.visualLabShifted) { 24 } else { 0 }} · " +
+                "tint ${if (this.visualLabTinted) { 1 } else { 0 }} · " +
+                "scale ${if (this.visualLabScaled) { 1 } else { 0 }} · " +
+                "rotate ${if (this.visualLabRotated) { 1 } else { 0 }}",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 9.5, textColor: tertiary)))
+        strip.add(cjguiComposableVertical(9512, "visual-lab-status-spacer",
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 1)))
+        strip.add(cjguiComposableText(9513, "visual-lab-status-note", "点击控件验证命中与重绘",
+            CjguiComposableUiStyle(fixedHeight: 16, fontSize: 9.5, textColor: tertiary,
+                alignX: CJGUI_COMPOSABLE_UI_ALIGN_END)))
+        lab.add(strip)
+        return lab
+    }
+
     public func buildUi(): CjguiComposableUiNode {
         let ink = if (this.usesDarkAppearance) {
             CjguiComposableUiColor(0.92, 0.95, 0.97, 1.0)
@@ -1710,13 +2089,35 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         } else {
             CjguiComposableUiColor(0.88, 0.91, 0.94, 1.0)
         }
-        let root = cjguiComposableVertical(1, "range-text-root", CjguiComposableUiStyle(padding: 16, gap: 10))
+        let root = cjguiComposableVertical(1, "range-text-root", CjguiComposableUiStyle(padding: 16, gap: 7))
+        let originContent = cjguiComposableVertical(902, "range-text-origin-content", CjguiComposableUiStyle())
+        if (this.originDemo) {
+            originContent.add(cjguiComposableVertical(903, "range-text-origin-prefix",
+                CjguiComposableUiStyle(fixedHeight: if (this.originExpanded) { 70 } else { 50 })))
+            root.add(cjguiComposableButton(904, "range-text-origin-move", "移动阅读原点 ⇧⌘P",
+                "RANGE_TEXT_ORIGIN_MOVE", 0, CjguiComposableUiStyle(fixedHeight: 30,
+                    background: buttonBackground, textColor: ink)))
+        }
         root.add(
-            cjguiComposableText(2, "range-text-heading", "Range text consumer (public seam only)",
-                CjguiComposableUiStyle(fixedHeight: 24, fontSize: 16.0, textColor: ink)))
+            cjguiComposableText(2, "range-text-heading", "Range text consumer",
+                CjguiComposableUiStyle(fixedHeight: 26, fontSize: 21.0, fontWeight: 600, textColor: ink)))
+        root.add(
+            cjguiComposableText(301, "range-text-subtitle", "公开 API 消费者，内存持有字节区间",
+                CjguiComposableUiStyle(fixedHeight: 15, fontSize: 11.5,
+                    textColor: if (this.usesDarkAppearance) {
+                        CjguiComposableUiColor(0.68, 0.70, 0.74, 1.0)
+                    } else {
+                        CjguiComposableUiColor(0.373, 0.396, 0.447, 1.0)
+                    })))
         root.add(
             cjguiComposableText(3, "range-text-status", this.statusLine(),
-                CjguiComposableUiStyle(fixedHeight: 20, fontSize: 11.0, textColor: ink)))
+                CjguiComposableUiStyle(fixedHeight: 15, fontSize: 9.5,
+                    textColor: if (this.usesDarkAppearance) {
+                        CjguiComposableUiColor(0.48, 0.50, 0.55, 1.0)
+                    } else {
+                        CjguiComposableUiColor(0.545, 0.569, 0.616, 1.0)
+                    })))
+        root.add(this.visualLabScene())
         if (let Some(window) <- this.hostWindow) {
             let drafts = window.textSessionRecoveryDrafts()
             if (drafts.size > 0) {
@@ -1797,7 +2198,8 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             } else {
                 (0, 0)
             }
-            root.add(rangeTextPreviewNode(this.candidatePreview, ink, selectionStart: local[0], selectionEnd: local[1]))
+            let previewNode = rangeTextPreviewNode(this.candidatePreview, ink, selectionStart: local[0], selectionEnd: local[1])
+            if (this.originDemo) { originContent.add(previewNode) } else { root.add(previewNode) }
         }
         root.add(
             cjguiComposableText(10, "range-text-preview-selection",
@@ -1821,9 +2223,21 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
         // 正文节点的值 = 窗口拥有的会话镜像。投影与镜像同源 ⇒ 平台代理不会再拿着一份
         // 会话没见过的旧值去表达范围(那正是 native 按旧长度 clamp 的根源)。恢复回执由
         // 窗口在回滚代理之后自己交回会话,消费方不轮询、不自签自认。
-        root.add(
-            cjguiComposableMultilineTextInput(4, "range-text-body", "", this.mirrorText(), 102,
-                CjguiComposableUiStyle(fixedHeight: 360, textColor: ink), tabInsertsText: true))
+        let displayedBody = this.mirrorText()
+        if (displayedBody.size <= 32 && getVariable("CJGUI_WINDOWS_TRACE_TIMING") == Some("1")) {
+            if (let Some(bound) <- this.session) {
+                getStdOut().writeln("CJGUI_WINDOWS_DISPLAY_CONTROLLER scene=${this.uiSceneVersion()} owner=${this.store.rangeTextVersion()} context=${bound.contextEpochValue()} mirror=${bound.mirrorRevisionValue()} node=4 resource=102 bytes=${displayedBody.size} value_hex=${rangeTextHexPrefix(displayedBody.toArray(), 32)}")
+                getStdOut().flush()
+            }
+        }
+        let bodyNode = cjguiComposableMultilineTextInput(4, "range-text-body", "", displayedBody, 102,
+            rangeTextBodyStyle(ink), tabInsertsText: true)
+        if (this.originDemo) {
+            originContent.add(bodyNode)
+            let scroll = cjguiComposableScrollArea(901, "range-text-origin-scroll", this.originViewport,
+                CjguiComposableUiStyle(fixedHeight: 240, growX: 1))
+            scroll.add(originContent); root.add(scroll)
+        } else { root.add(bodyNode) }
         let host = cjguiComposableLayerHost(900, "range-text-layer-host", CjguiComposableUiStyle(growX: 1, growY: 1))
         host.add(root)
         if (contextMenuVisible) {
@@ -1877,6 +2291,47 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 27 && event.node.actionName.startsWith("VISUAL_LAB_")) {
+            let action = event.node.actionName
+            if (action == "VISUAL_LAB_TRANSLATE") {
+                this.visualLabShifted = !this.visualLabShifted
+                this.visualLabLastHit = "translate"
+            }
+            if (action == "VISUAL_LAB_TINT") {
+                this.visualLabTinted = !this.visualLabTinted
+                this.visualLabLastHit = "tint"
+            }
+            if (action == "VISUAL_LAB_SCALE") {
+                this.visualLabScaled = !this.visualLabScaled
+                this.visualLabLastHit = "scale"
+            }
+            if (action == "VISUAL_LAB_ROTATE") {
+                this.visualLabRotated = !this.visualLabRotated
+                this.visualLabLastHit = "rotate"
+            }
+            if (action == "VISUAL_LAB_UNDER") { this.visualLabLastHit = "under" }
+            if (action == "VISUAL_LAB_TOP") {
+                this.visualLabTopClicks += 1
+                this.visualLabLastHit = "top"
+            }
+            if (action == "VISUAL_LAB_EQUAL_FIRST") { this.visualLabLastHit = "equal-first" }
+            if (action == "VISUAL_LAB_EQUAL_SECOND") {
+                this.visualLabEqualClicks += 1
+                this.visualLabLastHit = "equal-second"
+            }
+            this.visualLabRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && this.originDemo && event.node.actionName == "RANGE_TEXT_ORIGIN_MOVE") {
+            let window = match (this.hostWindow) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
+            let preview = match (this.acceptedPreview) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
+            this.originAnchor = window.freezeScrollOriginAnchor(this.originViewport, 9, 4,
+                "${preview.sourceStart + 4}", this.originBinding())
+            if (this.originAnchor.isNone()) { return CjguiComposableUiDispatchResult(false) }
+            this.originExpanded = !this.originExpanded
+            this.previewDecorationRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.eventKind == 27 && (event.node.actionName == "RANGE_RECOVERY_RETRIEVE" ||
             event.node.actionName == "RANGE_RECOVERY_DISCARD")) {
             let window = match (this.hostWindow) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
@@ -1976,7 +2431,7 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             return CjguiComposableUiDispatchResult(changed)
         }
         if (event.eventKind == 27 && (event.node.actionName == "RANGE_TEXT_FIRST" || event.node.actionName ==
-            "RANGE_TEXT_MIDDLE" || event.node.actionName == "RANGE_TEXT_LAST")) {
+            "RANGE_TEXT_MIDDLE" || event.node.actionName == "RANGE_TEXT_LAST" || event.node.nodeId == 4)) {
             if (!this.fileBacked) {
                 return CjguiComposableUiDispatchResult(false)
             }
@@ -1989,39 +2444,35 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             if (event.node.actionName == "RANGE_TEXT_MIDDLE") {
                 target = length / 2
             }
-            if (event.node.actionName == "RANGE_TEXT_LAST") {
+            if (event.node.actionName == "RANGE_TEXT_LAST" || event.node.nodeId == 4) {
                 target = length - this.capacityBytes / 2
                 if (target < 0) {
                     target = 0
                 }
             }
-            let moved = bound.revealByte(target)
-            let mirror = bound.mirrorSnapshot()
-            let bytes = mirror.text.toArray()
-            var local = target - mirror.startByte
-            // A document proportion can land inside a UTF-8 scalar. Choose
-            // the next exact boundary in this already bounded mirror.
-            while (local >= 0 && local < Int64(bytes.size) && bytes[local] >= 0x80 && bytes[local] <= 0xBF) {
-                local += 1
+            let window = match (this.hostWindow) { case Some(value) => value; case None => return CjguiComposableUiDispatchResult(false) }
+            let requestedTarget = target
+            let change = { =>
+                let _ = bound.revealByte(requestedTarget)
+                let mirror = bound.mirrorSnapshot()
+                let bytes = mirror.text.toArray()
+                var local = requestedTarget - mirror.startByte
+                // The owner may only choose an exact scalar boundary.
+                while (local >= 0 && local < Int64(bytes.size) && bytes[local] >= 0x80 && bytes[local] <= 0xBF) { local += 1 }
+                if (!mirror.prepared || local < 0 || local > Int64(bytes.size)) { return false }
+                let caret = match (cjguiUtf8OffsetToUtf16(mirror.text, local)) { case Some(value) => value; case None => return false }
+                bound.setSelection16(caret, caret)
+                let choice = this.store.sourceSelectionSnapshot()
+                return choice.version == mirror.contentVersion && choice.anchorByte == mirror.startByte + local &&
+                    choice.focusByte == choice.anchorByte
             }
-            var restoreRequested = false
-            match (this.hostWindow) {
-                case Some(window) =>
-                    if (mirror.prepared && local >= 0 && local <= Int64(bytes.size)) {
-                        if (let Some(caret) <- cjguiUtf8OffsetToUtf16(mirror.text, local)) {
-                            bound.setSelection16(caret, caret)
-                            restoreRequested = window.requestOwnedSelectionRestore()
-                        }
-                    }
-                    window.requestRefresh()
-                case None => ()
-            }
+            let restoreRequested = rangeTextOwnerSelectionMove(window, change)
             getStdOut().writeln(
                 "RANGE_TEXT_PREPARE action=${event.node.actionName} target=${target} " +
-                    "window_start=${bound.mirrorSnapshot().startByte} window_bytes=${bound.mirrorSnapshot().text.toArray().size} moved=${moved} " +
+                    "window_start=${bound.mirrorSnapshot().startByte} window_bytes=${bound.mirrorSnapshot().text.toArray().size} admitted=${restoreRequested} " +
                     "restore_requested=${restoreRequested} " + this.store.timingSummary())
             getStdOut().flush()
-            return CjguiComposableUiDispatchResult(true)
+            return CjguiComposableUiDispatchResult(restoreRequested)
         }
         if (event.eventKind == 27 && event.node.actionName == "RANGE_CONTEXT_SELECT_ALL") {
             let request = match (contextMenuRequest) {
@@ -2235,10 +2686,72 @@ func rangeTextOwnerSelectionTransaction(window: CjguiComposableUiWindow,
     return window.performTextOwnerSelectionChange(change)
 }
 
-@When[os != "macOS"]
+// Linux 显式并入 Windows 支：两者都没有 owner handoff 原生能力，
+// 走正典在同样条件下本来就走的那一步（直接执行事务）。见审计文档 §4.2。
+@When[os == "Windows" || os == "Linux"]
 func rangeTextOwnerSelectionTransaction(window: CjguiComposableUiWindow,
     change: () -> (Bool, Int64, Int64)): Bool {
     return change()[0]
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func rangeTextOwnerSelectionTransaction(window: CjguiComposableUiWindow,
+    change: () -> (Bool, Int64, Int64)): Bool {
+    return change()[0]
+}
+
+// Reuse the framework's retained normal-opening intent before any scene.
+// 正文样式接缝。Linux 上必须声明指针交付：框架的 isPointerCapturable 对 TEXT 系节点
+// 只看 style.pointerInteractive，缺了它点击会被共同层以 "pointer_interactive=false"
+// 拒掉，正文永远拿不到 POINTER_BEGIN，也就没有插入点、选择和替换。macOS/Windows
+// 保持原样式不动（两条线正在跑各自的验收，不在这里顺手改它们的行为）。
+@When[os == "Linux"]
+func rangeTextBodyStyle(ink: CjguiComposableUiColor): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(fixedHeight: 360, textColor: ink, pointerInteractive: true)
+}
+
+@When[os != "Linux"]
+func rangeTextBodyStyle(ink: CjguiComposableUiColor): CjguiComposableUiStyle {
+    return CjguiComposableUiStyle(fixedHeight: 360, textColor: ink)
+}
+
+// The common pump waits for a visible active window and returns a true A.
+@When[os == "macOS"]
+func rangeTextInitialFocus(window: CjguiComposableUiWindow): Unit {
+    let _ = window.requestInitialOwnedTextFocusRestore()
+}
+// Linux 与 macOS 同样使用框架的保留式初始焦点意图：Linux 的渲染器同样拥有
+// 窗口级文本会话（set_composable_owned_text_session 已声明 node 4），保留意图
+// 让共同层在首个已接受场景就绪后把焦点与选区推到原生代理，键盘输入才有去处。
+// Windows 保持空实现（该线现状不动）。
+@When[os == "Linux"]
+func rangeTextInitialFocus(window: CjguiComposableUiWindow): Unit {
+    let _ = window.requestInitialOwnedTextFocusRestore()
+}
+
+@When[os == "Windows"]
+func rangeTextInitialFocus(window: CjguiComposableUiWindow): Unit { }
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func rangeTextInitialFocus(window: CjguiComposableUiWindow): Unit { }
+
+// Selection-only navigation uses the same public common root as Pharos.
+@When[os == "macOS"]
+func rangeTextOwnerSelectionMove(window: CjguiComposableUiWindow, change: () -> Bool): Bool {
+    return window.performTextOwnerSelectionMove(change)
+}
+@When[os == "Windows" || os == "Linux"]
+func rangeTextOwnerSelectionMove(window: CjguiComposableUiWindow, change: () -> Bool): Bool {
+    let moved = change()
+    if (moved) { let _ = window.requestOwnedSelectionRestore(); window.requestRefresh() }
+    return moved
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func rangeTextOwnerSelectionMove(window: CjguiComposableUiWindow, change: () -> Bool): Bool {
+    let moved = change()
+    if (moved) { let _ = window.requestOwnedSelectionRestore(); window.requestRefresh() }
+    return moved
 }
 
 // owner 回合预算的调度收尾计量只在实现该计量的平台上存在；其余平台不伪造空步骤，
@@ -2248,7 +2761,15 @@ func finishRangeTextOwnerScheduling(budget: CjguiOwnerTurnBudget): Unit {
     let _ = budget.finishScheduling()
 }
 
-@When[os != "macOS"]
+// Linux 显式并入 Windows 支：框架侧没有该调度的计量通道（owner_turn_budget.cj
+// 的 cjguiSchedulingWorkRevision/cjguiWaitSchedulingWork 在 Linux 是显式 0），
+// 消费者不伪造空步骤。
+@When[os == "Windows" || os == "Linux"]
+func finishRangeTextOwnerScheduling(budget: CjguiOwnerTurnBudget): Unit {
+    return
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func finishRangeTextOwnerScheduling(budget: CjguiOwnerTurnBudget): Unit {
     return
 }
@@ -2271,6 +2792,69 @@ private func defaultTwoPaneFixtureText(): String {
     return "first pane: A😀B\nsecond pane: C中文D\n"
 }
 
+
+// An opt-in ordinary consumer of the experimental shared read-only seam. The
+// original request is retained through pending; it never supplies input authority.
+private class RangeTextSelectionGeometryObserver {
+    private var expected: ?CjguiSelectionGeometryRequest = None
+    private var completed = ""
+    private var lastReason = ""
+    private var lastOwnerChoice = ""
+    private let observationInstance = match (getVariable("RANGE_TEXT_SELECTION_OBSERVATION_INSTANCE")) {
+        case Some(value) => value; case None => "unscoped"
+    }
+    private func fields(r: CjguiSelectionGeometryRequest): String {
+        return "instance=${observationInstance} window=${r.window} binding=${r.binding} " +
+            "node=${r.nodeId} version=${r.semantic.contentVersion} revision=${r.semantic.selectionRevision} " +
+            "context=${r.semantic.contextEpoch} mirror=${r.semantic.mirrorRevision} sourceVersion=${r.semantic.sourceVersion} " +
+            "sourceStart=${r.mirror.startByte} sourceBytes=${r.mirror.text.size} " +
+            "anchor16=${r.anchor16} focus16=${r.focus16} anchorByte=${r.anchorByte} focusByte=${r.focusByte}"
+    }
+    private func stamp(r: CjguiSelectionGeometryRequest): String {
+        return "${r.nodeId}:${r.binding}:${r.semantic.contextEpoch}:${r.semantic.mirrorRevision}:" +
+            "${r.semantic.sourceVersion}:${r.semantic.contentVersion}:${r.semantic.selectionRevision}:" +
+            "${r.mirror.startByte}:${r.mirror.text.size}:${r.anchorByte}:${r.focusByte}"
+    }
+    public func observe(window: CjguiComposableUiWindow): Unit {
+        // Read-only owner-choice evidence is independent of an older pending
+        // geometry request. It does not refresh, scroll, install or edit.
+        if (let Some(current) <- window.freezeSelectionGeometryRequest()) {
+            if (stamp(current) != lastOwnerChoice) {
+                getStdOut().writeln("RANGE_TEXT_SELECTION_GEOMETRY reason=choice ${fields(current)}")
+                getStdOut().flush(); lastOwnerChoice = stamp(current)
+            }
+        }
+        if (expected.isNone()) {
+            let current = match (window.freezeSelectionGeometryRequest()) {
+                case Some(value) => value; case None => return
+            }
+            if (stamp(current) == completed) { return }
+            expected = Some(current); lastReason = ""
+        }
+        let original = expected.getOrThrow()
+        let result = window.readAcceptedSelectionGeometry(original, original.focusByte - original.mirror.startByte)
+        if (result.reason == "pending_selection_publication") {
+            if (lastReason != result.reason) {
+                getStdOut().writeln("RANGE_TEXT_SELECTION_GEOMETRY reason=pending_selection_publication ${fields(original)}")
+                getStdOut().flush(); lastReason = result.reason
+            }
+            return
+        }
+        if (result.reason == "ready") {
+            let p = result.position.getOrThrow()
+            getStdOut().writeln("RANGE_TEXT_SELECTION_GEOMETRY reason=ready ${fields(original)} " +
+                "scene=${p.sceneVersion} lease=${p.layoutLease} displayByte=${p.displayByte} " +
+                "screenX=${result.screenX} screenY=${result.screenY} dpi=${result.dpi} bodyHash=${result.bodyHash} " +
+                "x=${p.x} y=${p.y} height=${p.height} clipX=${result.visibleBounds[0]} clipY=${result.visibleBounds[1]} " +
+                "clipWidth=${result.visibleBounds[2]} clipHeight=${result.visibleBounds[3]}")
+            completed = stamp(original)
+        } else {
+            getStdOut().writeln("RANGE_TEXT_SELECTION_GEOMETRY reason=${result.reason} ${fields(original)}")
+        }
+        getStdOut().flush(); expected = None
+    }
+}
+
 main(args: Array<String>): Int64 {
     return cjguiRunMacosApplication({=> runRangeTextApplication(args)})
 }
@@ -2288,6 +2872,15 @@ private func rangeTextCreateHost(controller: CjguiComposableUiController, title:
 @When[os == "Windows"]
 private func rangeTextCreateHost(controller: CjguiComposableUiController, title: String): CjguiApplicationHost {
     return CjguiWindowsApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration(title, 900u32, 620u32,
+            rangeTextEditDeltaDelivery: true))
+}
+
+// Linux 与 Windows 同参数：窗口/事件泵/帧提交由渲染器（X11 + Vulkan）拥有，
+// 这个宿主只拥有已有的 CJGUI 窗口投影、共同操作泵与有序退出。
+@When[os == "Linux"]
+private func rangeTextCreateHost(controller: CjguiComposableUiController, title: String): CjguiApplicationHost {
+    return CjguiLinuxApplicationHost(controller,
         configuration: CjguiMacosApplicationWindowConfiguration(title, 900u32, 620u32,
             rangeTextEditDeltaDelivery: true))
 }
@@ -2349,6 +2942,7 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
     let host: CjguiApplicationHost = rangeTextCreateHost(controller, windowTitle)
     // 窗口拥有会话:必须在 start 之前绑定,首次投影发布的正文才是镜像。
     let session = controller.attach(host.window())
+    rangeTextInitialFocus(host.window())
     let window = host.window()
     let ownerTurnBudget = CjguiOwnerTurnBudget()
     window.useOwnerTurnBudget(ownerTurnBudget)
@@ -2386,12 +2980,16 @@ private func runRangeTextApplication(args: Array<String>): Int64 {
     // M4 逐类别成本采样：owner 已接受写入数每次前进时落一行 workload 快照
     // （raster/upload 计数/字节）——写入类别与纯选区/导航（edits 不变）可区分。
     var lastSnapshotEdits: Int64 = controller.ownerAppliedEditCount()
+    let selectionGeometryObserver = RangeTextSelectionGeometryObserver()
+    let observeSelectionGeometry = getVariable("RANGE_TEXT_SELECTION_GEOMETRY") == Some("1")
     while (host.isOpen()) {
         let _ = ownerTurnBudget.begin()
         let traceTurn = ownerTurnBudget.turnIdentity()
         let traceSpan = window.beginOwnerTraceTurn(traceTurn)
         try {
             let _ = host.pumpOneTurn()
+            controller.observeAcceptedPreviewCaret(window)
+            if (observeSelectionGeometry) { selectionGeometryObserver.observe(window) }
             turn += 1
             if (turn % 5 == 0) {
                 let live = window.diagnosticScalarSnapshot()

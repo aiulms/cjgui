@@ -1,0 +1,20 @@
+[
+  "/Users/jiangxuanyang/.local/bin/codex",
+  "-a",
+  "never",
+  "exec",
+  "-C",
+  "/Users/jiangxuanyang/Desktop/cangjie",
+  "-s",
+  "read-only",
+  "-m",
+  "gpt-6-astra",
+  "-c",
+  "model_reasoning_effort=\"max\"",
+  "--json",
+  "-o",
+  "/Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/platforms/ohos/consultations/caret-projection-astra-20260930/followup-answer.md",
+  "resume",
+  "01a0f099-9d34-7e71-9eaa-201ba7e108da",
+  "-"
+]

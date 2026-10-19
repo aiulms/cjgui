@@ -12,6 +12,38 @@ package cjgui
 
 import std.collection.ArrayList
 
+// Paint clipping changes only the bounded display projection, never owner anchors.
+func cjguiOhosDirectSelectionPaintRange(display: String, mirror: String, origin: Int64, ownerVersion: Int64,
+    selectionVersion: Int64, anchor: Int64, focus: Int64): ?(Int64, Int64, Int64) {
+    if (display != mirror || origin < 0 || ownerVersion < 0 || selectionVersion != ownerVersion || anchor < 0 || focus <
+        0) {
+        return None
+    }
+    let bytes = cjguiUtf8Length(display)
+    let lo = max(origin, min(anchor, focus))
+    let hi = min(origin + bytes, max(anchor, focus))
+    let start = if (hi > lo) {
+        lo - origin
+    } else {
+        0
+    }
+    let end = if (hi > lo) {
+        hi - origin
+    } else {
+        0
+    }
+    if (cjguiUtf8OffsetToUtf16(display, start).isNone() || cjguiUtf8OffsetToUtf16(display, end).isNone()) {
+        return None
+    }
+    let caret = if (focus >= origin && focus <= origin + bytes && cjguiUtf8OffsetToUtf16(display, focus - origin)
+        .isSome()) {
+        focus - origin
+    } else {
+        -1
+    }
+    return Some((start, end, caret))
+}
+
 /// 一次会话编辑的判决结果。`contextEpoch` + `ticket` 一起构成回执身份:代次不同的
 /// 回执不得校准任何当前状态(重绑后 nodeId 可能被复用,身份由代次区分)。
 public class CjguiTextSessionEdit {
@@ -30,8 +62,8 @@ public class CjguiTextSessionEdit {
     /// describe the current proxy. The window must leave that proxy untouched.
     public let proxyRecoveryRequired: Bool
 
-    init(seq: Int64, ticket: Int64, accepted: Bool, versionAfter: Int64, mirrorRevision: Int64,
-        contextEpoch: Int64, reason: String, proxyRecoveryRequired!: Bool = true) {
+    init(seq: Int64, ticket: Int64, accepted: Bool, versionAfter: Int64, mirrorRevision: Int64, contextEpoch: Int64,
+        reason: String, proxyRecoveryRequired!: Bool = true) {
         this.seq = seq
         this.ticket = ticket
         this.accepted = accepted
@@ -55,8 +87,8 @@ public class CjguiPreparedSourceRange {
     private let submitter: (String, Bool) -> CjguiTextSessionEdit
     private var consumed: Bool = false
 
-    init(contentVersion: Int64, startByte: Int64, endByte: Int64, contextEpoch: Int64,
-        mirrorRevision: Int64, submitter: (String, Bool) -> CjguiTextSessionEdit) {
+    init(contentVersion: Int64, startByte: Int64, endByte: Int64, contextEpoch: Int64, mirrorRevision: Int64,
+        submitter: (String, Bool) -> CjguiTextSessionEdit) {
         this.contentVersion = contentVersion
         this.startByte = startByte
         this.endByte = endByte
@@ -70,8 +102,8 @@ public class CjguiPreparedSourceRange {
     /// its edit does not mutate the source proxy before the Sink responds.
     public func replace(text: String, sourceProxyChanged!: Bool = false): CjguiTextSessionEdit {
         if (this.consumed) {
-            return CjguiTextSessionEdit(-1, -1, false, this.contentVersion,
-                this.mirrorRevision, this.contextEpoch, "prepared_range_consumed")
+            return CjguiTextSessionEdit(-1, -1, false, this.contentVersion, this.mirrorRevision, this.contextEpoch,
+                "prepared_range_consumed")
         }
         this.consumed = true
         return this.submitter(text, sourceProxyChanged)
@@ -86,8 +118,7 @@ class CjguiTextSessionPending {
     let edit: CjguiTextSessionEdit
     let sourceProxyChanged: Bool
 
-    init(ticket: Int64, baseMirrorRevision: Int64, edit: CjguiTextSessionEdit,
-        sourceProxyChanged!: Bool = true) {
+    init(ticket: Int64, baseMirrorRevision: Int64, edit: CjguiTextSessionEdit, sourceProxyChanged!: Bool = true) {
         this.ticket = ticket
         this.baseMirrorRevision = baseMirrorRevision
         this.edit = edit
@@ -110,9 +141,8 @@ public class CjguiTextSessionMirrorSnapshot {
     public let complete: Bool
     public let pendingReason: String
 
-    init(contextEpoch: Int64, mirrorRevision: Int64, contentVersion: Int64, sourceVersion: Int64,
-        startByte: Int64, sourceByteLength: Int64,
-        text: String, prepared: Bool, complete: Bool, pendingReason: String) {
+    init(contextEpoch: Int64, mirrorRevision: Int64, contentVersion: Int64, sourceVersion: Int64, startByte: Int64,
+        sourceByteLength: Int64, text: String, prepared: Bool, complete: Bool, pendingReason: String) {
         this.contextEpoch = contextEpoch
         this.mirrorRevision = mirrorRevision
         this.contentVersion = contentVersion
@@ -154,9 +184,9 @@ public class CjguiTextSessionRecoveryDraft {
     public let reason: String
     public let cause: String
 
-    init(draftId: Int64, content: String, sourceStartByte: Int64, sourceEndByte: Int64,
-        sourceVersion: Int64, contextEpoch: Int64, compositionId: Int64, token: Int64,
-        bindingIdentity: String, surface: Int64, reason: String, cause: String) {
+    init(draftId: Int64, content: String, sourceStartByte: Int64, sourceEndByte: Int64, sourceVersion: Int64,
+        contextEpoch: Int64, compositionId: Int64, token: Int64, bindingIdentity: String, surface: Int64,
+        reason: String, cause: String) {
         this.draftId = draftId
         this.content = content
         this.sourceStartByte = sourceStartByte
@@ -263,8 +293,7 @@ public class CjguiTextSession {
     /// 独立恢复草稿(见 `CjguiTextSessionRecoveryDraft`);生命周期与活动组合解耦。
     /// 有界队列:每份草稿有稳定身份,A 未处理时 B 的中断**追加**而不是覆盖;
     /// 容量在**接纳下一组合之前**检查(begin 具名拒绝),中断发生后绝不静默丢弃。
-    private var recoveryDrafts: ArrayList<CjguiTextSessionRecoveryDraft> =
-        ArrayList<CjguiTextSessionRecoveryDraft>()
+    private var recoveryDrafts: ArrayList<CjguiTextSessionRecoveryDraft> = ArrayList<CjguiTextSessionRecoveryDraft>()
     private var recoveryDraftSeq: Int64 = 0
     /// 防御性计账:begin 闸门使溢出不可达;若仍发生,最旧草稿被挤出的次数在此
     /// 如实计数(公开可读),绝不静默。
@@ -402,17 +431,9 @@ public class CjguiTextSession {
     /// Atomically capture the session-owned bounded mirror and the metadata used
     /// to interpret its text. This is a projection snapshot, not document truth.
     public func mirrorSnapshot(): CjguiTextSessionMirrorSnapshot {
-        return CjguiTextSessionMirrorSnapshot(
-            this.contextEpoch,
-            this.mirrorRevision,
-            this.window.contentVersion(),
-            this.window.sourceVersion(),
-            this.window.windowStartByte(),
-            this.window.sourceByteLength(),
-            this.window.text(),
-            this.window.isPrepared(),
-            this.window.isComplete(),
-            this.window.unpreparedReason())
+        return CjguiTextSessionMirrorSnapshot(this.contextEpoch, this.mirrorRevision, this.window.contentVersion(),
+            this.window.sourceVersion(), this.window.windowStartByte(), this.window.sourceByteLength(),
+            this.window.text(), this.window.isPrepared(), this.window.isComplete(), this.window.unpreparedReason())
     }
 
     /// 镜像覆盖的绝对文档字节范围;平台需要判断请求是否越出已准备上下文。
@@ -434,10 +455,9 @@ public class CjguiTextSession {
         let wasVersion = this.window.contentVersion()
         var rebased: ?(Int64, Int64, Int64) = None
         let externalChange = this.window.sourceVersion() != wasVersion
-        if (externalChange && this.selectionVersion == wasVersion &&
-            this.selectionStartByte >= 0 && !this.compositionActive) {
-            rebased = this.window.rebaseSelection(wasVersion, this.selectionStartByte,
-                this.selectionEndByte)
+        if (externalChange && this.selectionVersion == wasVersion && this.selectionStartByte >= 0 &&
+            !this.compositionActive) {
+            rebased = this.window.rebaseSelection(wasVersion, this.selectionStartByte, this.selectionEndByte)
         }
         let changed = this.window.refresh()
         if (changed) {
@@ -450,8 +470,7 @@ public class CjguiTextSession {
         }
         if (externalChange) {
             if (let Some(mapped) <- rebased) {
-                if (mapped[0] == this.window.contentVersion() &&
-                    this.projectSourceSelection(mapped[1], mapped[2])) {
+                if (mapped[0] == this.window.contentVersion() && this.projectSourceSelection(mapped[1], mapped[2])) {
                     this.selectionVersion = mapped[0]
                     this.selectionStartByte = mapped[1]
                     this.selectionEndByte = mapped[2]
@@ -468,7 +487,8 @@ public class CjguiTextSession {
 
     private func invalidateSourceSelection(reason: String): Unit {
         this.selectionRevision += 1
-        this.selectionAnchorByte = -1; this.selectionFocusByte = -1
+        this.selectionAnchorByte = -1
+        this.selectionFocusByte = -1
         this.selectionVersion = -1
         this.selectionStartByte = -1
         this.selectionEndByte = -1
@@ -518,16 +538,18 @@ public class CjguiTextSession {
     }
 
     public func confirmNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
-        if (!this.selectionNeedsNativeRestore || version != this.selectionVersion ||
-            version != this.window.contentVersion() || start16 != this.selStart16 ||
-            end16 != this.selEnd16) {
+        if (!this.selectionNeedsNativeRestore || version != this.selectionVersion || version !=
+            this.window.contentVersion() || start16 != this.selStart16 || end16 != this.selEnd16) {
             return false
         }
-        if (!this.window.confirmContentVersion({ =>
-            this.selectionNeedsNativeRestore = false
-            this.lastReason = ""
-            return true
-        })) {
+        if (!this.window.confirmContentVersion(
+            {
+                =>
+                    this.selectionNeedsNativeRestore = false
+                    this.lastReason = ""
+                    return true
+            }
+        )) {
             this.lastReason = "selection_restore_source_stale"
             return false
         }
@@ -545,25 +567,34 @@ public class CjguiTextSession {
     /// 安装值：写回选区、把 `selectionVersion` 对齐到该正文版本、清除待恢复位。
     public func adoptNativeSelectionRestored(version: Int64, start16: Int64, end16: Int64): Bool {
         if (version != this.window.contentVersion()) {
-            this.lastReason = "selection_restore_version_stale"; return false
+            this.lastReason = "selection_restore_version_stale"
+            return false
         }
         if (this.sourceChoiceOutsideMirror()) {
             if (!this.refreshSourceChoiceProjection(false) || start16 != this.selStart16 || end16 != this.selEnd16) {
-                this.lastReason = "selection_restore_choice_stale"; return false
+                this.lastReason = "selection_restore_choice_stale"
+                return false
             }
         } else {
             let installed = this.window.documentRangeForUtf16(start16, end16 - start16)
-            let sameChoice = installed.isSome() && this.selectionVersion == version &&
-                installed.getOrThrow()[0] == this.selectionStartByte && installed.getOrThrow()[1] == this.selectionEndByte
+            let sameChoice = installed.isSome() && this.selectionVersion == version && installed.getOrThrow()[0] == this
+                .selectionStartByte && installed.getOrThrow()[1] == this.selectionEndByte
             if (!sameChoice) {
                 // The selection writer is outside the owner's pure confirm callback.
                 this.setSelection16(start16, end16)
-                if (this.selectionVersion != version || this.selStart16 != start16 || this.selEnd16 != end16) { return false }
+                if (this.selectionVersion != version || this.selStart16 != start16 || this.selEnd16 != end16) {
+                    return false
+                }
             }
         }
-        return this.window.confirmContentVersion({ =>
-            this.selectionNeedsNativeRestore = false; this.lastReason = ""; return true
-        })
+        return this.window.confirmContentVersion(
+            {
+                =>
+                    this.selectionNeedsNativeRestore = false
+                    this.lastReason = ""
+                    return true
+            }
+        )
     }
 
     /// 人类锚（H1-R.a）：采纳 native 在**人亲手落点**时冻结的一次性锚，把它写成会话
@@ -592,23 +623,26 @@ public class CjguiTextSession {
         }
         let frozenMirror = this.mirrorRevision
         this.lastReason = "human_anchor_source_stale"
-        if (!this.window.confirmContentVersion({ =>
-            // owner 版本没动、但有界镜像被移动过（reveal/refresh）时，上面那份
-            // UTF-16→字节映射已不再描述当前镜像，照它提交会把选区钉到别处。
-            if (this.mirrorRevision != frozenMirror || !this.window.isPrepared()) {
-                this.lastReason = "human_anchor_mirror_stale"
-                return false
+        if (!this.window.confirmContentVersion(
+            {
+                =>
+                    // owner 版本没动、但有界镜像被移动过（reveal/refresh）时，上面那份
+                    // UTF-16→字节映射已不再描述当前镜像，照它提交会把选区钉到别处。
+                    if (this.mirrorRevision != frozenMirror || !this.window.isPrepared()) {
+                        this.lastReason = "human_anchor_mirror_stale"
+                        return false
+                    }
+                    this.adoptedHumanAnchorSeq = anchorSeq
+                    this.selStart16 = start16
+                    this.selEnd16 = end16
+                    this.selectionVersion = this.window.contentVersion()
+                    this.selectionStartByte = bytes[0]
+                    this.selectionEndByte = bytes[1]
+                    this.selectionNeedsNativeRestore = false
+                    this.lastReason = ""
+                    return true
             }
-            this.adoptedHumanAnchorSeq = anchorSeq
-            this.selStart16 = start16
-            this.selEnd16 = end16
-            this.selectionVersion = this.window.contentVersion()
-            this.selectionStartByte = bytes[0]
-            this.selectionEndByte = bytes[1]
-            this.selectionNeedsNativeRestore = false
-            this.lastReason = ""
-            return true
-        })) {
+        )) {
             return false
         }
         this.setSelection16(start16, end16)
@@ -656,8 +690,8 @@ public class CjguiTextSession {
     /// "要么完整采纳并解锁，要么一个字都不改、票据留给 native 按截止终结"。
     /// 没有这一步时，源区间映射或镜像换代可能在票据已结清之后才失败，留下
     /// "native 认为已采纳、会话仍拒绝输入"的无责任人状态。
-    public func canAdoptNativeRestore(contextEpoch: Int64, mirrorRevision: Int64, version: Int64,
-        start16: Int64, end16: Int64, refusalRecovery: Bool): Bool {
+    public func canAdoptNativeRestore(contextEpoch: Int64, mirrorRevision: Int64, version: Int64, start16: Int64,
+        end16: Int64, refusalRecovery: Bool): Bool {
         if (start16 < 0 || end16 < start16 || end16 > this.mirrorUtf16Length) {
             this.lastReason = "adopt_precheck_range"
             return false
@@ -668,12 +702,15 @@ public class CjguiTextSession {
         }
         if (this.sourceChoiceOutsideMirror()) {
             let owner = this.window.selectionOwner()
-            if (owner.isNone()) { return false }
+            if (owner.isNone()) {
+                return false
+            }
             let choice = owner.getOrThrow().sourceSelectionSnapshot()
-            if (start16 != this.selStart16 || end16 != this.selEnd16 ||
-                choice.version != version || choice.revision != this.selectionRevision ||
-                choice.anchorByte != this.selectionAnchorByte || choice.focusByte != this.selectionFocusByte) {
-                this.lastReason = "adopt_precheck_choice_stale"; return false
+            if (start16 != this.selStart16 || end16 != this.selEnd16 || choice.version != version || choice.revision != this
+                .selectionRevision || choice.anchorByte != this.selectionAnchorByte || choice.focusByte != this
+                .selectionFocusByte) {
+                this.lastReason = "adopt_precheck_choice_stale"
+                return false
             }
         }
         if (refusalRecovery && this.needsCalibration) {
@@ -687,7 +724,7 @@ public class CjguiTextSession {
             return false
         }
         // 与真正提交时同一个 owner 边界守卫，只是不做任何写入。
-        if (!this.window.confirmContentVersion({ => return true })) {
+        if (!this.window.confirmContentVersion({=> return true})) {
             this.lastReason = "adopt_precheck_source_stale"
             return false
         }
@@ -697,8 +734,8 @@ public class CjguiTextSession {
     /// 选区对齐的只读事实（诊断与确定性反例用）：(selectionVersion,
     /// window.contentVersion, selStart16, selEnd16, needsNativeSelectionRestore)。
     public func selectionAlignmentFacts(): (Int64, Int64, Int64, Int64, Bool) {
-        return (this.selectionVersion, this.window.contentVersion(), this.selStart16, this.selEnd16,
-            this.selectionNeedsNativeRestore)
+        return (this.selectionVersion, this.window.contentVersion(), this.selStart16, this.selEnd16, this
+                .selectionNeedsNativeRestore)
     }
 
     /// 是否仍在等待一次带完整身份的 native 恢复回执。为 true 时任何正文写入都被具名拒绝。
@@ -725,8 +762,8 @@ public class CjguiTextSession {
     /// 解除校准锁的**唯一**入口:平台在取到新镜像、重新投影并恢复输入代理(含选区)之后,
     /// 带它实际恢复到的上下文代次与镜像修订回来。身份不符即维持锁并具名报告 ——
     /// 用旧世代的恢复回执解开新世代的锁,正是原来"落字但正文没变"的那个形状。
-    public func confirmProxyRestored(contextEpoch: Int64, mirrorRevision: Int64,
-        selectionStart16!: Int64 = -1, selectionEnd16!: Int64 = -1): Bool {
+    public func confirmProxyRestored(contextEpoch: Int64, mirrorRevision: Int64, selectionStart16!: Int64 = -1,
+        selectionEnd16!: Int64 = -1): Bool {
         if (!this.needsCalibration) {
             return true
         }
@@ -739,21 +776,31 @@ public class CjguiTextSession {
             return false
         }
         if (!this.sourceChoiceOutsideMirror()) {
-            this.setSelection16(if (selectionStart16 >= 0) { selectionStart16 } else { this.selStart16 },
-                if (selectionEnd16 >= 0) { selectionEnd16 } else { this.selEnd16 })
+            this.setSelection16(if (selectionStart16 >= 0) {
+                selectionStart16
+            } else {
+                this.selStart16
+            }, if (selectionEnd16 >= 0) {
+                selectionEnd16
+            } else {
+                this.selEnd16
+            })
         }
-        if (!this.window.confirmContentVersion({ =>
-            // Source runs this tiny state change in the same boundary as its
-            // owner-version check. Native work and mirror reads are outside it.
-            this.needsCalibration = false
-            this.calibrationRecalibrated = false
-            // The platform has installed this exact mirror and its actual
-            // selection. The native result, when available, is authoritative;
-            // direct pure-session consumers keep their explicit local range.
-            this.selectionNeedsNativeRestore = false
-            this.lastReason = ""
-            return true
-        })) {
+        if (!this.window.confirmContentVersion(
+            {
+                =>
+                    // Source runs this tiny state change in the same boundary as its
+                    // owner-version check. Native work and mirror reads are outside it.
+                    this.needsCalibration = false
+                    this.calibrationRecalibrated = false
+                    // The platform has installed this exact mirror and its actual
+                    // selection. The native result, when available, is authoritative;
+                    // direct pure-session consumers keep their explicit local range.
+                    this.selectionNeedsNativeRestore = false
+                    this.lastReason = ""
+                    return true
+            }
+        )) {
             this.lastReason = "restore_source_stale"
             return false
         }
@@ -786,23 +833,30 @@ public class CjguiTextSession {
 
     /// 纯选区变化(平台选区导航/鼠标):只推进视图状态,不产生事务、不推进内容版本。
     public func setSelection16(start16: Int64, end16: Int64): Unit {
-        let a = this.clamp16(start16); let b = this.clamp16(end16)
+        let a = this.clamp16(start16);
+        let b = this.clamp16(end16)
         let mappedA = this.window.documentRangeForUtf16(a, 0)
         let mappedB = this.window.documentRangeForUtf16(b, 0)
         if (mappedA.isSome() && mappedB.isSome()) {
-            let _ = this.setDirectedSourceSelection(this.window.contentVersion(),
-                mappedA.getOrThrow()[0], mappedB.getOrThrow()[0])
-        } else { this.invalidateSourceSelection("selection_not_utf8_boundary") }
+            let _ = this.setDirectedSourceSelection(this.window.contentVersion(), mappedA.getOrThrow()[0],
+                mappedB.getOrThrow()[0])
+        } else {
+            this.invalidateSourceSelection("selection_not_utf8_boundary")
+        }
     }
 
     /// A precise proxy echo observes the already projected global choice. It must
     /// not turn its clipped endpoints into a new source selection or unlock restoration.
     public func nativeSelectionEchoMatches(start16: Int64, end16: Int64): Bool {
-        if (!this.bound || !this.window.isPrepared() || !this.sourceChoiceOutsideMirror() ||
-            start16 != this.selStart16 || end16 != this.selEnd16 ||
-            this.selectionVersion != this.window.contentVersion() ||
-            this.selectionVersion != this.window.sourceVersion()) { return false }
-        let owner = match (this.window.selectionOwner()) { case Some(value) => value case None => return false }
+        if (!this.bound || !this.window.isPrepared() || !this.sourceChoiceOutsideMirror() || start16 != this.selStart16 ||
+            end16 != this.selEnd16 || this.selectionVersion != this.window.contentVersion() || this.selectionVersion !=
+            this.window.sourceVersion()) {
+            return false
+        }
+        let owner = match (this.window.selectionOwner()) {
+            case Some(value) => value
+            case None => return false
+        }
         let choice = owner.sourceSelectionSnapshot()
         return choice.version == this.selectionVersion && choice.revision == this.selectionRevision &&
             choice.anchorByte == this.selectionAnchorByte && choice.focusByte == this.selectionFocusByte
@@ -810,62 +864,118 @@ public class CjguiTextSession {
 
     /// Same-version global choice; the owner validates UTF-8 endpoints and keeps direction.
     /// Paging only changes its local projection. It never creates a new body transaction.
-    public func setDirectedSourceSelection(expectedVersion: Int64, anchorByte: Int64,
-        focusByte: Int64): Bool {
-        if (!this.bound || expectedVersion != this.window.contentVersion() ||
-            expectedVersion != this.window.sourceVersion() || anchorByte < 0 || focusByte < 0 ||
-            anchorByte > this.window.sourceByteLength() || focusByte > this.window.sourceByteLength()) { return false }
+    public func setDirectedSourceSelection(expectedVersion: Int64, anchorByte: Int64, focusByte: Int64): Bool {
+        if (!this.bound || expectedVersion != this.window.contentVersion() || expectedVersion !=
+            this.window.sourceVersion() || anchorByte < 0 || focusByte < 0 || anchorByte > this
+            .window
+            .sourceByteLength() || focusByte > this.window.sourceByteLength()) {
+            return false
+        }
         if (let Some(owner) <- this.window.selectionOwner()) {
             if (!owner.setSourceSelection(expectedVersion, anchorByte, focusByte)) {
-                this.lastReason = "source_selection_stale"; return false
+                this.lastReason = "source_selection_stale"
+                return false
             }
             return this.refreshSourceChoiceProjection(false)
         }
-        let lo = if (anchorByte < focusByte) { anchorByte } else { focusByte }
-        let hi = if (anchorByte > focusByte) { anchorByte } else { focusByte }
-        if (lo < this.window.windowStartByte() || hi > this.window.windowStartByte() + cjguiUtf8Length(this.window.text())) { return false }
+        let lo = if (anchorByte < focusByte) {
+            anchorByte
+        } else {
+            focusByte
+        }
+        let hi = if (anchorByte > focusByte) {
+            anchorByte
+        } else {
+            focusByte
+        }
+        if (lo < this.window.windowStartByte() || hi > this.window.windowStartByte() + cjguiUtf8Length(
+            this.window.text())) {
+            return false
+        }
         this.selectionRevision += 1
         this.selectionVersion = expectedVersion
-        this.selectionAnchorByte = anchorByte; this.selectionFocusByte = focusByte
-        this.selectionStartByte = lo; this.selectionEndByte = hi
+        this.selectionAnchorByte = anchorByte
+        this.selectionFocusByte = focusByte
+        this.selectionStartByte = lo
+        this.selectionEndByte = hi
         return this.projectClippedSourceChoice()
     }
 
     private func sourceChoiceOutsideMirror(): Bool {
-        return this.selectionStartByte < this.window.windowStartByte() ||
-            this.selectionEndByte > this.window.windowStartByte() + cjguiUtf8Length(this.window.text())
+        return this.selectionStartByte < this.window.windowStartByte() || this.selectionEndByte >
+            this.window.windowStartByte() + cjguiUtf8Length(this.window.text())
     }
 
     private func clampSourceByte(value: Int64, lo: Int64, hi: Int64): Int64 {
-        return if (value < lo) { lo } else { if (value > hi) { hi } else { value } }
+        return if (value < lo) {
+            lo
+        } else {
+            if (value > hi) {
+                hi
+            } else {
+                value
+            }
+        }
     }
 
     private func projectClippedSourceChoice(): Bool {
         if (!this.window.isPrepared() || this.selectionVersion != this.window.contentVersion() ||
-            this.selectionStartByte < 0) { return false }
+            this.selectionStartByte < 0) {
+            return false
+        }
         let start = this.window.windowStartByte()
         let end = start + cjguiUtf8Length(this.window.text())
         let lo = this.clampSourceByte(this.selectionStartByte, start, end)
         let hi = this.clampSourceByte(this.selectionEndByte, start, end)
         let a = cjguiUtf8OffsetToUtf16(this.window.text(), lo - start)
         let b = cjguiUtf8OffsetToUtf16(this.window.text(), hi - start)
-        if (a.isNone() || b.isNone()) { return false }
-        this.selStart16 = a.getOrThrow(); this.selEnd16 = b.getOrThrow()
+        if (a.isNone() || b.isNone()) {
+            return false
+        }
+        this.selStart16 = a.getOrThrow()
+        this.selEnd16 = b.getOrThrow()
         return true
     }
 
     private func refreshSourceChoiceProjection(requireRestore: Bool): Bool {
-        let owner = match (this.window.selectionOwner()) { case Some(value) => value; case None => return false }
+        let owner = match (this.window.selectionOwner()) {
+            case Some(value) => value;
+            case None => return false
+        }
         let choice = owner.sourceSelectionSnapshot()
-        if (choice.version != this.window.contentVersion() || choice.anchorByte < 0 || choice.focusByte < 0) { return false }
+        if (choice.version != this.window.contentVersion() || choice.anchorByte < 0 || choice.focusByte < 0) {
+            return false
+        }
         let changed = choice.revision != this.selectionRevision || choice.version != this.selectionVersion
-        this.selectionRevision = choice.revision; this.selectionVersion = choice.version
-        this.selectionAnchorByte = choice.anchorByte; this.selectionFocusByte = choice.focusByte
-        this.selectionStartByte = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else { choice.focusByte }
-        this.selectionEndByte = if (choice.anchorByte > choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+        this.selectionRevision = choice.revision
+        this.selectionVersion = choice.version
+        this.selectionAnchorByte = choice.anchorByte
+        this.selectionFocusByte = choice.focusByte
+        this.selectionStartByte = if (choice.anchorByte < choice.focusByte) {
+            choice.anchorByte
+        } else {
+            choice.focusByte
+        }
+        this.selectionEndByte = if (choice.anchorByte > choice.focusByte) {
+            choice.anchorByte
+        } else {
+            choice.focusByte
+        }
         let projected = this.projectClippedSourceChoice()
-        if (projected && requireRestore && changed) { this.selectionNeedsNativeRestore = true }
+        if (projected && requireRestore && changed) {
+            this.selectionNeedsNativeRestore = true
+        }
         return projected
+    }
+
+    // Drawing authorization is separate from native installation/needsRestore.
+    func ohosSelectionPaintRange(display: String): ?(Int64, Int64, Int64) {
+        if (this.ohosInputSourceBasis().isEmpty()) {
+            return None
+        }
+        let mirror = this.mirrorSnapshot()
+        return cjguiOhosDirectSelectionPaintRange(display, mirror.text, mirror.startByte, mirror.contentVersion,
+            this.selectionVersion, this.selectionAnchorByte, this.selectionFocusByte)
     }
 
     /// The accepted source span represented by the current UTF-16 selection.
@@ -875,11 +985,15 @@ public class CjguiTextSession {
     // do not erase owner/mirror/choice revisions or source direction.
     func ohosInputSourceBasis(): String {
         let m = this.mirrorSnapshot()
-        if (!m.prepared || !this.bound) { return "" }
+        if (!m.prepared || !this.bound) {
+            return ""
+        }
         if (let Some(owner) <- this.window.selectionOwner()) {
             let c = owner.sourceSelectionSnapshot()
-            if (c.version != this.selectionVersion || c.revision != this.selectionRevision ||
-                c.anchorByte != this.selectionAnchorByte || c.focusByte != this.selectionFocusByte) { return "" }
+            if (c.version != this.selectionVersion || c.revision != this.selectionRevision || c.anchorByte != this
+                .selectionAnchorByte || c.focusByte != this.selectionFocusByte) {
+                return ""
+            }
         }
         return "${m.contextEpoch},${m.mirrorRevision},${m.contentVersion},${m.sourceVersion},${m.startByte},${m.sourceByteLength}," +
             "${this.selectionVersion},${this.selectionRevision},${this.selectionAnchorByte},${this.selectionFocusByte}," +
@@ -887,9 +1001,9 @@ public class CjguiTextSession {
     }
 
     public func selectedSourceRange(): ?(Int64, Int64, Int64) {
-        if (!this.bound || this.selectionVersion < 0 ||
-            this.selectionStartByte < 0 || this.selectionEndByte < this.selectionStartByte ||
-            this.selectionNeedsNativeRestore || this.selectionVersion != this.window.contentVersion()) {
+        if (!this.bound || this.selectionVersion < 0 || this.selectionStartByte < 0 || this.selectionEndByte < this
+            .selectionStartByte || this.selectionNeedsNativeRestore || this.selectionVersion !=
+            this.window.contentVersion()) {
             return None
         }
         return Some((this.selectionVersion, this.selectionStartByte, this.selectionEndByte))
@@ -937,48 +1051,55 @@ public class CjguiTextSession {
     public func handlePlainIntent(intent: CjguiTextPlainIntent): CjguiPlainIntentOutcome {
         let (failA, failB) = this.selection16()
         if (!this.bound) {
-            return CjguiPlainIntentOutcome(handled: false, reason: "session_unbound",
-                wroteOwner: false, start16: failA, end16: failB)
+            return CjguiPlainIntentOutcome(handled: false, reason: "session_unbound", wroteOwner: false, start16: failA,
+                end16: failB)
         }
         if (this.compositionActive) {
-            return CjguiPlainIntentOutcome(handled: false, reason: "composition_busy",
-                wroteOwner: false, start16: failA, end16: failB)
+            return CjguiPlainIntentOutcome(handled: false, reason: "composition_busy", wroteOwner: false, start16: failA,
+                end16: failB)
         }
         if (this.needsCalibration) {
-            return CjguiPlainIntentOutcome(handled: false, reason: "recalibration_required",
-                wroteOwner: false, start16: failA, end16: failB)
+            return CjguiPlainIntentOutcome(handled: false, reason: "recalibration_required", wroteOwner: false,
+                start16: failA, end16: failB)
         }
         if (!this.window.isPrepared()) {
-            return CjguiPlainIntentOutcome(handled: false, reason: this.window.unpreparedReason(),
-                wroteOwner: false, start16: failA, end16: failB)
+            return CjguiPlainIntentOutcome(handled: false, reason: this.window.unpreparedReason(), wroteOwner: false,
+                start16: failA, end16: failB)
         }
         let alignmentBlock = this.selectionAlignmentBlock()
         if (alignmentBlock != "") {
-            return CjguiPlainIntentOutcome(handled: false, reason: alignmentBlock,
-                wroteOwner: false, start16: failA, end16: failB)
+            return CjguiPlainIntentOutcome(handled: false, reason: alignmentBlock, wroteOwner: false, start16: failA,
+                end16: failB)
         }
-        if (this.window.selectionOwner().isSome() &&
-            match (intent) { case MoveLeft | MoveRight | ExtendLeft | ExtendRight => true case _ => false }) {
+        if (this.window.selectionOwner().isSome() && match (intent) {
+            case MoveLeft | MoveRight | ExtendLeft | ExtendRight => true
+            case _ => false
+        }) {
             return this.navigateSourceChoice(intent)
         }
         let text = this.window.text()
         let total16 = this.mirrorUtf16Length
         let (lo, hi) = this.selection16()
-        if (match (intent) { case DeleteBackward | DeleteForward => true case _ => false }) {
+        if (match (intent) {
+            case DeleteBackward | DeleteForward => true
+            case _ => false
+        }) {
             if (hi > lo) {
                 return this.submitPlainDelete(lo, hi)
             }
             let caretByte = match (cjguiUtf16OffsetToUtf8(text, lo)) {
                 case Some(byte) => byte
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
             let bytes = text.toArray()
-            if (match (intent) { case DeleteBackward => true case _ => false }) {
+            if (match (intent) {
+                case DeleteBackward => true
+                case _ => false
+            }) {
                 if (lo == 0 || caretByte == 0) {
-                    return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start",
-                        wroteOwner: false, start16: lo, end16: hi)
+                    return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start", wroteOwner: false,
+                        start16: lo, end16: hi)
                 }
                 match (cjguiGraphemeClusterRangeUtf8(text, caretByte - 1)) {
                     case Some((clusterStart, clusterEnd)) =>
@@ -990,84 +1111,104 @@ public class CjguiTextSession {
                                 wroteOwner: false, start16: lo, end16: hi)
                         }
                         return this.submitPlainDelete(clusterStart16, clusterEnd16)
-                    case None =>
-                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
-                            wroteOwner: false, start16: lo, end16: hi)
+                    case None => return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                        wroteOwner: false, start16: lo, end16: hi)
                 }
             }
             if (lo >= total16 || caretByte >= Int64(bytes.size)) {
-                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end",
-                    wroteOwner: false, start16: lo, end16: hi)
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end", wroteOwner: false, start16: lo,
+                    end16: hi)
             }
             match (cjguiGraphemeClusterRangeUtf8(text, caretByte)) {
                 case Some((clusterStart, clusterEnd)) =>
                     if (clusterStart != caretByte) {
-                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior",
-                            wroteOwner: false, start16: lo, end16: hi)
+                        return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_interior", wroteOwner: false,
+                            start16: lo, end16: hi)
                     }
                     let clusterEnd16 = cjguiUtf16Length(String.fromUtf8(bytes[0..clusterEnd]))
                     return this.submitPlainDelete(lo, clusterEnd16)
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
         }
         let bytes = text.toArray()
-        if (match (intent) { case MoveLeft | ExtendLeft => true case _ => false }) {
+        if (match (intent) {
+            case MoveLeft | ExtendLeft => true
+            case _ => false
+        }) {
             if (lo == 0) {
-                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start",
-                    wroteOwner: false, start16: lo, end16: hi)
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_start", wroteOwner: false,
+                    start16: lo, end16: hi)
             }
             let edgeByte = match (cjguiUtf16OffsetToUtf8(text, lo)) {
                 case Some(byte) => byte
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
             let clusterStart16 = match (cjguiGraphemeClusterRangeUtf8(text, edgeByte - 1)) {
                 case Some((cs, _)) => cjguiUtf16Length(String.fromUtf8(bytes[0..cs]))
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
-            if (match (intent) { case MoveLeft => true case _ => false }) {
+            if (match (intent) {
+                case MoveLeft => true
+                case _ => false
+            }) {
                 // 非空选区先折叠到左端（零事务），与平台惯例一致。
-                let target = if (hi > lo) { lo } else { clusterStart16 }
+                let target = if (hi > lo) {
+                    lo
+                } else {
+                    clusterStart16
+                }
                 return this.applyPlainSelection(target, target)
             }
             return this.applyPlainSelection(clusterStart16, hi)
         }
-        if (match (intent) { case MoveRight | ExtendRight => true case _ => false }) {
+        if (match (intent) {
+            case MoveRight | ExtendRight => true
+            case _ => false
+        }) {
             if (hi >= total16) {
-                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end",
-                    wroteOwner: false, start16: lo, end16: hi)
+                return CjguiPlainIntentOutcome(handled: false, reason: "at_document_end", wroteOwner: false, start16: lo,
+                    end16: hi)
             }
             let edgeByte = match (cjguiUtf16OffsetToUtf8(text, hi)) {
                 case Some(byte) => byte
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "selection_not_utf8_boundary",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
             let clusterEnd16 = match (cjguiGraphemeClusterRangeUtf8(text, edgeByte)) {
                 case Some((_, ce)) => cjguiUtf16Length(String.fromUtf8(bytes[0..ce]))
-                case None =>
-                    return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
-                        wroteOwner: false, start16: lo, end16: hi)
+                case None => return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                    wroteOwner: false, start16: lo, end16: hi)
             }
-            if (match (intent) { case MoveRight => true case _ => false }) {
+            if (match (intent) {
+                case MoveRight => true
+                case _ => false
+            }) {
                 // 非空选区先折叠到右端（零事务）。
-                let target = if (hi > lo) { hi } else { clusterEnd16 }
+                let target = if (hi > lo) {
+                    hi
+                } else {
+                    clusterEnd16
+                }
                 return this.applyPlainSelection(target, target)
             }
             return this.applyPlainSelection(lo, clusterEnd16)
         }
-        return CjguiPlainIntentOutcome(handled: false, reason: "intent_unknown",
-            wroteOwner: false, start16: lo, end16: hi)
+        return CjguiPlainIntentOutcome(handled: false, reason: "intent_unknown", wroteOwner: false, start16: lo,
+            end16: hi)
     }
 
     private func navigateSourceChoice(intent: CjguiTextPlainIntent): CjguiPlainIntentOutcome {
-        let left = match (intent) { case MoveLeft | ExtendLeft => true case _ => false }
-        let extending = match (intent) { case ExtendLeft | ExtendRight => true case _ => false }
+        let left = match (intent) {
+            case MoveLeft | ExtendLeft => true
+            case _ => false
+        }
+        let extending = match (intent) {
+            case ExtendLeft | ExtendRight => true
+            case _ => false
+        }
         let version = this.selectionVersion
         let anchor = this.selectionAnchorByte
         let focus = this.selectionFocusByte
@@ -1077,57 +1218,77 @@ public class CjguiTextSession {
         }
         var target = focus
         if (!extending && anchor != focus) {
-            target = if (left) { this.selectionStartByte } else { this.selectionEndByte }
+            target = if (left) {
+                this.selectionStartByte
+            } else {
+                this.selectionEndByte
+            }
         } else {
             if ((left && focus == 0) || (!left && focus >= this.window.sourceByteLength())) {
-                return CjguiPlainIntentOutcome(handled: false,
-                    reason: if (left) { "at_document_start" } else { "at_document_end" },
-                    wroteOwner: false, start16: this.selStart16, end16: this.selEnd16)
+                return CjguiPlainIntentOutcome(handled: false, reason: if (left) {
+                    "at_document_start"
+                } else {
+                    "at_document_end"
+                }, wroteOwner: false, start16: this.selStart16, end16: this.selEnd16)
             }
             let start = this.window.windowStartByte()
             let end = start + cjguiUtf8Length(this.window.text())
             if ((left && focus <= start) || (!left && focus >= end)) {
-                let _ = this.revealByte(if (left) { focus - 1 } else { focus + 1 })
+                let _ = this.revealByte(if (left) {
+                    focus - 1
+                } else {
+                    focus + 1
+                })
             }
             let local = focus - this.window.windowStartByte()
-            let probe = if (left) { local - 1 } else { local }
+            let probe = if (left) {
+                local - 1
+            } else {
+                local
+            }
             let cluster = cjguiGraphemeClusterRangeUtf8(this.window.text(), probe)
             if (cluster.isNone()) {
-                return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable", wroteOwner: false,
-                    start16: this.selStart16, end16: this.selEnd16)
+                return CjguiPlainIntentOutcome(handled: false, reason: "grapheme_boundary_unavailable",
+                    wroteOwner: false, start16: this.selStart16, end16: this.selEnd16)
             }
-            target = this.window.windowStartByte() + if (left) { cluster.getOrThrow()[0] } else { cluster.getOrThrow()[1] }
+            target = this.window.windowStartByte() + if (left) {
+                cluster.getOrThrow()[0]
+            } else {
+                cluster.getOrThrow()[1]
+            }
         }
         let moved = this.window.revealByte(target)
         if (moved) {
-            this.mirrorRevision += 1; this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
+            this.mirrorRevision += 1
+            this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
         }
-        if (!this.setDirectedSourceSelection(version, if (extending) { anchor } else { target }, target)) {
+        if (!this.setDirectedSourceSelection(version, if (extending) {
+            anchor
+        } else {
+            target
+        }, target)) {
             return CjguiPlainIntentOutcome(handled: false, reason: "source_selection_stale", wroteOwner: false,
                 start16: this.selStart16, end16: this.selEnd16)
         }
         this.selectionNeedsNativeRestore = true
-        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
-            start16: this.selStart16, end16: this.selEnd16)
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false, start16: this.selStart16,
+            end16: this.selEnd16)
     }
 
     private func applyPlainSelection(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
         this.setSelection16(start16, end16)
         this.selectionNeedsNativeRestore = true
         let (a, b) = this.selection16()
-        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false,
-            start16: a, end16: b)
+        return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: false, start16: a, end16: b)
     }
 
     private func submitPlainDelete(start16: Int64, end16: Int64): CjguiPlainIntentOutcome {
         let decision = this.replaceRange16(start16, end16, "")
         let (a, b) = this.selection16()
         if (decision.accepted) {
-            return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: true,
-                start16: a, end16: b)
+            return CjguiPlainIntentOutcome(handled: true, reason: "", wroteOwner: true, start16: a, end16: b)
         }
-        return CjguiPlainIntentOutcome(handled: false, reason: decision.reason, wroteOwner: false,
-            start16: a, end16: b)
+        return CjguiPlainIntentOutcome(handled: false, reason: decision.reason, wroteOwner: false, start16: a, end16: b)
     }
 
     // ---- 组合(IME marked) ----
@@ -1142,7 +1303,11 @@ public class CjguiTextSession {
 
     /// 组合基版本(开始组字时的 owner 内容版本);无组合时为 -1。
     public func compositionBaseVersionValue(): Int64 {
-        return if (this.compositionActive) { this.compositionBaseVersion } else { -1 }
+        return if (this.compositionActive) {
+            this.compositionBaseVersion
+        } else {
+            -1
+        }
     }
 
     public func markedRange16(): (Int64, Int64) {
@@ -1163,17 +1328,17 @@ public class CjguiTextSession {
         }
         if (this.compositionSurface == 1) {
             // 呈现面:冻结范围本就是 owner 源字节,无镜像换算;UTF-16 端点不适用(-1)。
-            return Some((this.activeCompositionId, this.compositionBaseVersion, -1, -1,
-                this.compositionSourceStartByte, this.compositionSourceEndByte))
+            return Some(
+                (this.activeCompositionId, this.compositionBaseVersion, -1, -1, this.compositionSourceStartByte, this
+                        .compositionSourceEndByte))
         }
         if (!this.window.isPrepared()) {
             return None
         }
-        if (let Some(bytes) <- this.window.documentRangeForUtf16(
-            this.replacementStart16, this.replacementLength16)) {
-            return Some((this.activeCompositionId, this.compositionBaseVersion,
-                this.replacementStart16, this.replacementStart16 + this.replacementLength16,
-                bytes[0], bytes[1]))
+        if (let Some(bytes) <- this.window.documentRangeForUtf16(this.replacementStart16, this.replacementLength16)) {
+            return Some(
+                (this.activeCompositionId, this.compositionBaseVersion, this.replacementStart16,
+                    this.replacementStart16 + this.replacementLength16, bytes[0], bytes[1]))
         }
         return None
     }
@@ -1192,8 +1357,7 @@ public class CjguiTextSession {
     /// 起点一致)或 NS_NOT_FOUND,但显式给出**不同起点**的范围表达的是另一个替换段,
     /// 映射不到 owner 的原始文本上,只能具名拒绝并由平台按新镜像重建组合。
     public func updateComposition(text: String, replacementStart16: Int64, replacementLength16: Int64,
-        markedStart16: Int64, innerAnchor16: Int64, innerFocus16: Int64,
-        compositionId!: Int64 = -1): CjguiTextSessionEdit {
+        markedStart16: Int64, innerAnchor16: Int64, innerFocus16: Int64, compositionId!: Int64 = -1): CjguiTextSessionEdit {
         if (!this.bound) {
             this.lastReason = "session_unbound"
             return this.edit(this.editSeq, false, -1, this.lastReason)
@@ -1224,14 +1388,13 @@ public class CjguiTextSession {
         // 写入正文时,旧替换范围会被重新标成新基版本,提交时看似合法而它表达的是过时正文。
         // 基版本只在组合开始时冻结一次;期间 owner 推进就是具名拒绝,由平台重新组字。
         if (this.compositionActive && (this.window.sourceVersion() != this.compositionBaseVersion ||
-                this.mirrorRevision != this.compositionBaseMirror)) {
+            this.mirrorRevision != this.compositionBaseMirror)) {
             // 同一 Q4 恢复契约:被外部写打断的组合要保留可取回的 preedit,否则用户
             // 刚打出的字随组合一起消失(各表面四个 stale 分支共用同一份保留实现)。
             // 先保留(它按精确 token 结束 claim 并把 token 记进草稿),再按名字锁死
             // 这次组合——顺序反过来草稿只能记下 -1,丢失 claim 身份。
-            this.retainInterruptedCompositionDraft(this.compositionSurface,
-                "composition_base_stale", "owner_version_advanced", this.activeCompositionId,
-                clear: false)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, "composition_base_stale",
+                "owner_version_advanced", this.activeCompositionId, clear: false)
             this.invalidateCompositionClaim("composition_base_stale")
             return this.refuseCompositionIntent("composition_base_stale", true)
         }
@@ -1248,13 +1411,11 @@ public class CjguiTextSession {
         }
         // 恢复草稿容量闸门:未处理草稿占满时,先让用户取回/放弃再组新字——
         // 中断发生后绝不静默丢草稿,所以准入放在组合开始之前。
-        if (startingComposition &&
-            Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
+        if (startingComposition && Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
             return this.refuseCompositionIntent("recovery_draft_capacity", false)
         }
         if (startingComposition) {
-            if (resolvedStart < 0 || resolvedLength < 0 ||
-                resolvedStart + resolvedLength > this.mirrorUtf16Length) {
+            if (resolvedStart < 0 || resolvedLength < 0 || resolvedStart + resolvedLength > this.mirrorUtf16Length) {
                 return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_OUTSIDE_WINDOW, true)
             }
             if (this.compositionArbitration) {
@@ -1329,8 +1490,7 @@ public class CjguiTextSession {
             }
             return this.refuseCompositionIntent("composition_not_active", true)
         }
-        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-            compositionId != this.activeCompositionId) {
+        if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
             // A delayed terminal from A must never consume B's frozen range.
             // It cannot describe B's proxy state, so leave B and its ticket
             // untouched for its own terminal phase.
@@ -1349,16 +1509,16 @@ public class CjguiTextSession {
         if (this.compositionInvalidReason != "") {
             // 该组合的 claim 已经结束:终态不得再落到任何写入路径。
             let reason = this.compositionInvalidReason
-            this.retainInterruptedCompositionDraft(this.compositionSurface, reason,
-                "terminal_after_invalid_update", this.activeCompositionId)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, reason, "terminal_after_invalid_update",
+                this.activeCompositionId)
             return this.refuseCompositionIntent(reason, true)
         }
-        if (this.window.sourceVersion() != this.compositionBaseVersion ||
-            this.mirrorRevision != this.compositionBaseMirror) {
+        if (this.window.sourceVersion() != this.compositionBaseVersion || this.mirrorRevision != this
+            .compositionBaseMirror) {
             // Agent/另一窗口在组合期间改过基版本:旧回调不猜新坐标,具名拒绝并要
             // 求平台按新镜像重新组字。草稿保留,由用户决定重打还是放弃。
-            this.retainInterruptedCompositionDraft(this.compositionSurface,
-                "composition_base_stale", "owner_version_advanced", this.activeCompositionId)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, "composition_base_stale",
+                "owner_version_advanced", this.activeCompositionId)
             return this.refuseCompositionIntent("composition_base_stale", true)
         }
         // 统一恢复确认门(在既有具名判定之后):恢复未确认期间,任何仍活动的组合
@@ -1376,8 +1536,8 @@ public class CjguiTextSession {
             // (自锁),也绕开"恰好一次"的 token 记账。
             return this.commitOwnerClaim(committed, compositionId)
         }
-        let result = this.submitRange16(this.replacementStart16,
-            this.replacementStart16 + this.replacementLength16, committed)
+        let result = this.submitRange16(this.replacementStart16, this.replacementStart16 + this.replacementLength16,
+            committed)
         if (result.accepted) {
             this.lastTerminalCompositionId = compositionId
             this.clearComposition()
@@ -1395,8 +1555,7 @@ public class CjguiTextSession {
     /// `compositionId` 命中最近一次真正结束的组合时按重复终态处理(幂等)。
     public func cancelComposition(compositionId!: Int64 = -1): Unit {
         if (this.compositionActive) {
-            if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-                compositionId != this.activeCompositionId) {
+            if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
                 this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
                     "composition_terminal_duplicate"
                 } else {
@@ -1421,15 +1580,13 @@ public class CjguiTextSession {
     /// 已接受的 Agent 事务原样保留;本路径自身零正文写入、零新撤销记录,也不会把
     /// 草稿静默提交 —— 取回/放弃由消费方的明确用户动作决定(`consumeRecoveryDraft`)。
     /// 返回值是本次扰乱判决(意图票据),供窗口按同一 acknowledge 结算留痕。
-    public func disruptComposition(compositionId: Int64, reason: String,
-        cause: String): CjguiTextSessionEdit {
+    public func disruptComposition(compositionId: Int64, reason: String, cause: String): CjguiTextSessionEdit {
         let surface = this.compositionSurface
         if (!this.compositionActive) {
             // 没有活动组合:重复/迟到的扰乱取消按重复终态处理,不产生新草稿。
             return this.refuseCompositionIntent("composition_terminal_duplicate", false)
         }
-        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-            compositionId != this.activeCompositionId) {
+        if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
             return this.refuseCompositionIntent("composition_id_mismatch", false)
         }
         this.retainInterruptedCompositionDraft(surface, reason, cause, compositionId)
@@ -1452,8 +1609,8 @@ public class CjguiTextSession {
     /// `compositionId` 同时充当"这次组合已保留过"的判据:同一次中断的迟到相位
     /// (先 stale 拒绝、后取消相位)不得产生第二份草稿。空 preedit(用户尚未输入
     /// 任何内容)不产生草稿,只有 claim 收尾与恢复门关闭。
-    private func retainInterruptedCompositionDraft(surface: Int64, reason: String,
-        cause: String, compositionId: Int64, clear!: Bool = true): Unit {
+    private func retainInterruptedCompositionDraft(surface: Int64, reason: String, cause: String, compositionId: Int64,
+        clear!: Bool = true): Unit {
         if (this.compositionDraftRetained) {
             // 这次组合的 preedit 已经保留过:迟到相位只收尾,不产生第二份。
             if (clear) {
@@ -1478,16 +1635,16 @@ public class CjguiTextSession {
         if (surface == 1) {
             startByte = this.compositionSourceStartByte
             endByte = this.compositionSourceEndByte
-        } else if (let Some(bytes) <- this.window.documentRangeForUtf16(
-            this.replacementStart16, this.replacementLength16)) {
+        } else if (let Some(bytes) <- this
+            .window
+            .documentRangeForUtf16(this.replacementStart16, this.replacementLength16)) {
             startByte = bytes[0]
             endByte = bytes[1]
         }
         this.recoveryDraftSeq += 1
-        let draft = CjguiTextSessionRecoveryDraft(
-            this.recoveryDraftSeq, this.compositionDraft, startByte, endByte,
-            this.compositionBaseVersion, this.contextEpoch, this.activeCompositionId,
-            this.compositionToken, this.compositionBindingIdentity(), surface, reason, cause)
+        let draft = CjguiTextSessionRecoveryDraft(this.recoveryDraftSeq, this.compositionDraft, startByte, endByte,
+            this.compositionBaseVersion, this.contextEpoch, this.activeCompositionId, this.compositionToken,
+            this.compositionBindingIdentity(), surface, reason, cause)
         // 追加而非覆盖;容量闸门在组合 begin 处,这里防御性地保界并如实计数。
         if (Int64(this.recoveryDrafts.size) >= CJGUI_TEXT_SESSION_MAX_RECOVERY_DRAFTS) {
             this.recoveryDrafts.remove(at: 0)
@@ -1535,8 +1692,8 @@ public class CjguiTextSession {
                     this.lastReason = "recalibration_required"
                     return false
                 }
-                if (draft.contextEpoch != this.contextEpoch ||
-                    draft.bindingIdentity != this.compositionBindingIdentity()) {
+                if (draft.contextEpoch != this.contextEpoch || draft.bindingIdentity != this
+                    .compositionBindingIdentity()) {
                     this.lastReason = "recovery_draft_binding_lost"
                     return false
                 }
@@ -1588,10 +1745,9 @@ public class CjguiTextSession {
     /// (`CjguiPreparedSourceRange` 的身份字段)。仲裁绑定的组合在这里登记 owner
     /// claim;未声明仲裁的绑定不得使用本入口(继续走既有普通替换路径)。
     /// 冻结范围是**源字节**:呈现坐标属于消费方投影,不经镜像换算。
-    public func beginPresentationComposition(contentVersion: Int64, startByte: Int64,
-        endByte: Int64, contextEpoch: Int64, mirrorRevision: Int64, compositionId: Int64,
-        firstPreedit!: String = "", firstInnerAnchor16!: Int64 = 0,
-        firstInnerFocus16!: Int64 = 0): CjguiTextSessionEdit {
+    public func beginPresentationComposition(contentVersion: Int64, startByte: Int64, endByte: Int64,
+        contextEpoch: Int64, mirrorRevision: Int64, compositionId: Int64, firstPreedit!: String = "",
+        firstInnerAnchor16!: Int64 = 0, firstInnerFocus16!: Int64 = 0): CjguiTextSessionEdit {
         if (!this.bound) {
             return this.refuseCompositionIntent("session_unbound", false)
         }
@@ -1609,8 +1765,8 @@ public class CjguiTextSession {
         // 相位完成。外部扰乱恰在唯一一次 marked update 之后到来时,保存的草稿必须
         // 与刚显示的文字一致——begin 后草稿为空的旧形状做不到这一点。
         let preeditUnits = cjguiUtf16Length(firstPreedit)
-        if (firstInnerAnchor16 < 0 || firstInnerFocus16 < 0 ||
-            firstInnerAnchor16 > preeditUnits || firstInnerFocus16 > preeditUnits) {
+        if (firstInnerAnchor16 < 0 || firstInnerFocus16 < 0 || firstInnerAnchor16 > preeditUnits || firstInnerFocus16 >
+            preeditUnits) {
             return this.refuseCompositionIntent("composition_inner_range_invalid", false)
         }
         if (contextEpoch != this.contextEpoch || mirrorRevision != this.mirrorRevision) {
@@ -1622,18 +1778,16 @@ public class CjguiTextSession {
         if (this.compositionArbitration) {
             let sink = match (this.compositionSink) {
                 case Some(wired) => wired
-                case None => return this.refuseCompositionIntent(
-                    CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
+                case None => return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
             }
-            let claim = sink.beginRangeTextComposition(this.compositionBindingIdentity(),
-                contentVersion, startByte, endByte)
+            let claim = sink.beginRangeTextComposition(this.compositionBindingIdentity(), contentVersion, startByte,
+                endByte)
             if (!claim.accepted) {
                 return this.refuseCompositionIntent(claim.reason, false)
             }
             this.compositionToken = claim.token
         } else {
-            return this.refuseCompositionIntent(
-                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
+            return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, false)
         }
         this.compositionActive = true
         this.compositionSurface = 1
@@ -1653,8 +1807,8 @@ public class CjguiTextSession {
 
     /// 呈现面组合更新:只更新 preedit 与内部选区(相对传入 preedit)。期间 owner 版本
     /// 前进 ⇒ claim 具名失效并保留草稿,由平台按新投影重建组合;不再有镜像坐标判定。
-    public func updatePresentationComposition(text: String, innerAnchor16: Int64,
-        innerFocus16: Int64, compositionId: Int64): CjguiTextSessionEdit {
+    public func updatePresentationComposition(text: String, innerAnchor16: Int64, innerFocus16: Int64,
+        compositionId: Int64): CjguiTextSessionEdit {
         if (!this.bound) {
             return this.refuseCompositionIntent("session_unbound", false)
         }
@@ -1664,8 +1818,7 @@ public class CjguiTextSession {
         if (this.compositionInvalidReason != "") {
             return this.refuseCompositionIntent(this.compositionInvalidReason, false)
         }
-        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-            compositionId != this.activeCompositionId) {
+        if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
             return this.refuseCompositionIntent("composition_id_mismatch", false)
         }
         if (this.window.sourceVersion() != this.compositionBaseVersion) {
@@ -1673,9 +1826,8 @@ public class CjguiTextSession {
             // 保留可取回。此前这条分支只拒绝(真实输入反例:α visual 链在 base-stale
             // 之后没有任何恢复草稿,产品无通知、无「取回草稿」)。草稿保留后组合仍由
             // 平台自己的取消相位收尾,迟到的相位不会产生第二份。
-            this.retainInterruptedCompositionDraft(this.compositionSurface,
-                "composition_base_stale", "owner_version_advanced", this.activeCompositionId,
-                clear: false)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, "composition_base_stale",
+                "owner_version_advanced", this.activeCompositionId, clear: false)
             this.invalidateCompositionClaim("composition_base_stale")
             return this.refuseCompositionIntent("composition_base_stale", true)
         }
@@ -1685,8 +1837,7 @@ public class CjguiTextSession {
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
         let textLen16 = cjguiUtf16Length(text)
-        if (innerAnchor16 < 0 || innerFocus16 < 0 || innerAnchor16 > textLen16 ||
-            innerFocus16 > textLen16) {
+        if (innerAnchor16 < 0 || innerFocus16 < 0 || innerAnchor16 > textLen16 || innerFocus16 > textLen16) {
             this.invalidateCompositionClaim("composition_inner_range_invalid")
             return this.refuseCompositionIntent("composition_inner_range_invalid", true)
         }
@@ -1700,8 +1851,7 @@ public class CjguiTextSession {
 
     /// 呈现面组合终态:与正文表面共用 `commitOwnerClaim` —— 一笔 Human 事务、凭据
     /// 恰好消费一次、提交后镜像按 owner 实际消费范围刷新。
-    public func commitPresentationComposition(finalText: String,
-        compositionId: Int64): CjguiTextSessionEdit {
+    public func commitPresentationComposition(finalText: String, compositionId: Int64): CjguiTextSessionEdit {
         if (!this.bound) {
             return this.refuseCompositionIntent("session_unbound", false)
         }
@@ -1712,8 +1862,7 @@ public class CjguiTextSession {
             }
             return this.refuseCompositionIntent("composition_not_active", false)
         }
-        if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-            compositionId != this.activeCompositionId) {
+        if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
             this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
                 "composition_terminal_duplicate"
             } else {
@@ -1723,16 +1872,16 @@ public class CjguiTextSession {
         }
         if (this.compositionInvalidReason != "") {
             let reason = this.compositionInvalidReason
-            this.retainInterruptedCompositionDraft(this.compositionSurface, reason,
-                "terminal_after_invalid_update", this.activeCompositionId)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, reason, "terminal_after_invalid_update",
+                this.activeCompositionId)
             return this.refuseCompositionIntent(reason, true)
         }
         if (this.window.sourceVersion() != this.compositionBaseVersion) {
             // 真实输入反例(α visual 链):这条分支就是终局——native 在外部写之后
             // 到达的是一次**提交**(phase 2),此前只拒绝 ⇒ 用户刚提交的首候选直接
             // 消失,产品既无通知也无「取回草稿」。按同一 Q4 契约保留草稿。
-            this.retainInterruptedCompositionDraft(this.compositionSurface,
-                "composition_base_stale", "owner_version_advanced", this.activeCompositionId)
+            this.retainInterruptedCompositionDraft(this.compositionSurface, "composition_base_stale",
+                "owner_version_advanced", this.activeCompositionId)
             return this.refuseCompositionIntent("composition_base_stale", true)
         }
         // 统一恢复确认门(在既有具名判定之后),与正文表面同一把锁。
@@ -1743,15 +1892,13 @@ public class CjguiTextSession {
         if (this.compositionToken >= 0) {
             return this.commitOwnerClaim(finalText, compositionId)
         }
-        return this.refuseCompositionIntent(
-            CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
+        return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
     }
 
     /// 呈现面组合取消:零事务,按精确 token 结束 claim(含重复终态幂等)。
     public func cancelPresentationComposition(compositionId!: Int64 = -1): Unit {
         if (this.compositionActive && this.compositionSurface == 1) {
-            if (compositionId >= 0 && this.activeCompositionId >= 0 &&
-                compositionId != this.activeCompositionId) {
+            if (compositionId >= 0 && this.activeCompositionId >= 0 && compositionId != this.activeCompositionId) {
                 this.lastReason = if (compositionId == this.lastTerminalCompositionId) {
                     "composition_terminal_duplicate"
                 } else {
@@ -1838,7 +1985,11 @@ public class CjguiTextSession {
     /// 活动组合的平台编号；无活动组合或平台未提供时为 -1。窗口据此在副作用之前
     /// 判决迟到终态的身份，与 visual 表面的 `presentationCompositionId` 同契约。
     public func compositionIdValue(): Int64 {
-        return if (this.compositionActive) { this.activeCompositionId } else { -1 }
+        return if (this.compositionActive) {
+            this.activeCompositionId
+        } else {
+            -1
+        }
     }
 
     /// 最近一次真正结束(提交/取消/扰乱/保留草稿)的组合编号；-1 表示尚无终态。
@@ -1881,8 +2032,8 @@ public class CjguiTextSession {
         if (!this.compositionActive || this.compositionToken < 0) {
             return false
         }
-        if (this.mirrorRevision == this.compositionBaseMirror &&
-            this.window.sourceVersion() == this.compositionBaseVersion) {
+        if (this.mirrorRevision == this.compositionBaseMirror && this.window.sourceVersion() == this
+            .compositionBaseVersion) {
             return true
         }
         let sink = match (this.compositionSink) {
@@ -1893,7 +2044,11 @@ public class CjguiTextSession {
         }
         let live = sink.inspectRangeTextComposition(this.compositionToken)
         if (!live.ok) {
-            this.lastReason = if (live.reason == "") { "composition_stale" } else { live.reason }
+            this.lastReason = if (live.reason == "") {
+                "composition_stale"
+            } else {
+                live.reason
+            }
             return false
         }
         let _ = this.refreshMirror()
@@ -1917,20 +2072,19 @@ public class CjguiTextSession {
     /// 为组合开始登记 owner 的活动 claim,范围 `[resolvedStart16, +resolvedLength16)`。范围经
     /// **同一个**有界镜像换算,并由 owner 判定换算版本:陈旧镜像必然得到 `version_conflict`,
     /// 零 claim、零正文变化,而不是把旧坐标登记到新文本上。
-    private func beginOwnerClaim(resolvedStart16: Int64,
-        resolvedLength16: Int64): CjguiRangeTextCompositionClaim {
+    private func beginOwnerClaim(resolvedStart16: Int64, resolvedLength16: Int64): CjguiRangeTextCompositionClaim {
         let sink = match (this.compositionSink) {
             case Some(wired) => wired
-            case None => return CjguiRangeTextCompositionClaim.refused(
-                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, this.window.contentVersion())
+            case None => return CjguiRangeTextCompositionClaim.refused(CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE,
+                this.window.contentVersion())
         }
         let mapped = match (this.window.documentRangeForUtf16(resolvedStart16, resolvedLength16)) {
             case Some(range) => range
-            case None => return CjguiRangeTextCompositionClaim.refused(
-                CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY, this.window.contentVersion())
+            case None => return CjguiRangeTextCompositionClaim.refused(CJGUI_RANGE_TEXT_REASON_NOT_BOUNDARY,
+                this.window.contentVersion())
         }
-        return sink.beginRangeTextComposition(this.compositionBindingIdentity(),
-            this.window.contentVersion(), mapped[0], mapped[1])
+        return sink.beginRangeTextComposition(this.compositionBindingIdentity(), this.window.contentVersion(), mapped[0],
+            mapped[1])
     }
 
     /// 用精确 token 释放活动 claim(绝不用按名字的通配释放)。best effort:owner 可能已经
@@ -1963,8 +2117,7 @@ public class CjguiTextSession {
     private func commitOwnerClaim(committed: String, compositionId: Int64): CjguiTextSessionEdit {
         let sink = match (this.compositionSink) {
             case Some(wired) => wired
-            case None => return this.refuseCompositionIntent(
-                CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
+            case None => return this.refuseCompositionIntent(CJGUI_RANGE_TEXT_REASON_ARBITRATION_UNAVAILABLE, true)
         }
         let token = this.compositionToken
         let expectedVersion = this.compositionBaseVersion
@@ -1999,8 +2152,7 @@ public class CjguiTextSession {
             }
             this.editSeq += 1
             let localCaret = caretByte - this.window.windowStartByte()
-            let caret: ?Int64 = if (this.window.isPrepared() &&
-                this.window.contentVersion() == outcome.versionAfter) {
+            let caret: ?Int64 = if (this.window.isPrepared() && this.window.contentVersion() == outcome.versionAfter) {
                 cjguiUtf8OffsetToUtf16(this.window.text(), localCaret)
             } else {
                 None
@@ -2032,8 +2184,8 @@ public class CjguiTextSession {
         this.needsCalibration = true
         this.calibrationRecalibrated = false
         this.lastReason = this.compositionInvalidReason
-        this.retainInterruptedCompositionDraft(this.compositionSurface, this.lastReason,
-            "owner_terminal_refused", this.activeCompositionId)
+        this.retainInterruptedCompositionDraft(this.compositionSurface, this.lastReason, "owner_terminal_refused",
+            this.activeCompositionId)
         let refused = this.edit(this.editSeq, false, outcome.versionAfter, this.lastReason, ticket)
         this.pending.add(CjguiTextSessionPending(ticket, baseMirror, refused))
         return refused
@@ -2055,33 +2207,71 @@ public class CjguiTextSession {
     /// remains with the application; the session proves one bounded mirror
     /// covers both UTF-8 endpoints at the requested owner version.
     func ohosVerifyPostimage(version: Int64, origin: Int64, text: String): Bool {
-        return this.bound && !this.needsCalibration && !this.compositionActive &&
-            this.window.ohosVerifyPostimage(version, origin, text)
+        return this.bound && !this.needsCalibration && !this.compositionActive && this
+            .window
+            .ohosVerifyPostimage(version, origin, text)
+    }
+    // Reuse the source owner's bounded ChangeMap chain; no latest mirror reinterpretation.
+    func ohosRebaseObservedChoice(fromVersion: Int64, anchor: Int64, focus: Int64, targetVersion: Int64): ?(Int64,
+        Int64) {
+        if (!this.bound || this.window.contentVersion() != targetVersion || this.window.sourceVersion() != targetVersion) {
+            return None
+        }
+        let lo = if (anchor < focus) {
+            anchor
+        } else {
+            focus
+        };
+        let hi = if (anchor > focus) {
+            anchor
+        } else {
+            focus
+        }
+        if (let Some((version, a, b)) <- this.window.rebaseSelection(fromVersion, lo, hi)) {
+            if (version == targetVersion) {
+                return Some(if (anchor <= focus) {
+                    (a, b)
+                } else {
+                    (b, a)
+                })
+            }
+        }
+        return None
     }
     // A verified predecessor postimage maps the original local numbers, never the current new mirror.
-    func ohosContinueRange16(version: Int64, origin: Int64, before: String,
-        start16: Int64, end16: Int64, text: String): CjguiTextSessionEdit {
+    func ohosContinueRange16(version: Int64, origin: Int64, before: String, start16: Int64, end16: Int64, text: String): CjguiTextSessionEdit {
         if (!this.ohosVerifyPostimage(version, origin, before)) {
-            return this.edit(this.editSeq,false,version,"input_postimage_mapping_stale")
+            return this.edit(this.editSeq, false, version, "input_postimage_mapping_stale")
         }
-        let a = match (cjguiUtf16OffsetToUtf8(before,start16)) { case Some(v) => v; case None => -1 }
-        let b = match (cjguiUtf16OffsetToUtf8(before,end16)) { case Some(v) => v; case None => -1 }
-        if (a < 0 || b < a) { return this.edit(this.editSeq,false,version,"input_postimage_range_invalid") }
-        let prepared = this.prepareSourceRange(version,origin+a,origin+b)
+        let a = match (cjguiUtf16OffsetToUtf8(before, start16)) {
+            case Some(v) => v;
+            case None => -1
+        }
+        let b = match (cjguiUtf16OffsetToUtf8(before, end16)) {
+            case Some(v) => v;
+            case None => -1
+        }
+        if (a < 0 || b < a) {
+            return this.edit(this.editSeq, false, version, "input_postimage_range_invalid")
+        }
+        let prepared = this.prepareSourceRange(version, origin + a, origin + b)
         return match (prepared) {
             case Some(ticket) => ticket.replace(text, sourceProxyChanged: true)
-            case None => this.edit(this.editSeq,false,version,"input_postimage_prepare_refused")
+            case None => this.edit(this.editSeq, false, version, "input_postimage_prepare_refused")
         }
     }
 
-    public func prepareSourceRange(expectedVersion: Int64, startByte: Int64,
-        endByte: Int64): ?CjguiPreparedSourceRange {
+    public func prepareSourceRange(expectedVersion: Int64, startByte: Int64, endByte: Int64): ?CjguiPreparedSourceRange {
         if (!this.bound) {
             this.lastReason = "session_unbound"
             return None
         }
         if (this.needsCalibration || this.compositionActive) {
-            this.lastReason = if (this.needsCalibration) { "recalibration_required" } else { "composition_busy" }
+            this.lastReason = if (this.needsCalibration) {
+                "recalibration_required"
+            } else {
+                "composition_busy"
+            }
             return None
         }
         if (this.window.sourceVersion() != expectedVersion) {
@@ -2106,8 +2296,7 @@ public class CjguiTextSession {
             this.lastReason = reason
             return None
         }
-        if (this.window.contentVersion() != expectedVersion ||
-            this.window.sourceVersion() != expectedVersion) {
+        if (this.window.contentVersion() != expectedVersion || this.window.sourceVersion() != expectedVersion) {
             this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
             return None
         }
@@ -2115,29 +2304,26 @@ public class CjguiTextSession {
         let mirror = this.mirrorRevision
         let choiceRevision = this.selectionRevision
         this.lastReason = ""
-        return Some(CjguiPreparedSourceRange(expectedVersion, startByte, endByte, epoch, mirror,
-            { text, sourceProxyChanged =>
-                return this.submitPreparedSourceRange(epoch, mirror, choiceRevision, expectedVersion,
-                    startByte, endByte, text, sourceProxyChanged)
-            }))
+        return Some(CjguiPreparedSourceRange(expectedVersion, startByte, endByte, epoch, mirror, {
+            text, sourceProxyChanged => return this.submitPreparedSourceRange(epoch, mirror, choiceRevision,
+                expectedVersion, startByte, endByte, text, sourceProxyChanged)
+        }))
     }
 
     private func submitPreparedSourceRange(epoch: Int64, mirror: Int64, choiceRevision: Int64, expectedVersion: Int64,
-        startByte: Int64, endByte: Int64, text: String,
-        sourceProxyChanged: Bool): CjguiTextSessionEdit {
+        startByte: Int64, endByte: Int64, text: String, sourceProxyChanged: Bool): CjguiTextSessionEdit {
         if (let Some(owner) <- this.window.selectionOwner()) {
             if (owner.sourceSelectionSnapshot().revision != choiceRevision) {
                 this.lastReason = "prepared_range_stale"
                 return this.edit(this.editSeq, false, -1, this.lastReason)
             }
         }
-        if (!this.bound || epoch != this.contextEpoch || mirror != this.mirrorRevision ||
-            choiceRevision != this.selectionRevision || this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
+        if (!this.bound || epoch != this.contextEpoch || mirror != this.mirrorRevision || choiceRevision != this
+            .selectionRevision || this.needsCalibration || this.compositionActive || !this.window.isPrepared()) {
             this.lastReason = "prepared_range_stale"
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
-        if (this.window.contentVersion() != expectedVersion ||
-            this.window.sourceVersion() != expectedVersion) {
+        if (this.window.contentVersion() != expectedVersion || this.window.sourceVersion() != expectedVersion) {
             this.lastReason = CJGUI_RANGE_TEXT_REASON_VERSION
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
@@ -2154,20 +2340,21 @@ public class CjguiTextSession {
                 let _ = this.refreshSourceChoiceProjection(false)
             } else {
                 let caret = cjguiUtf8OffsetToUtf16(this.window.text(), caretByte - this.window.windowStartByte())
-                if (let Some(caret16) <- caret) { this.setSelection16(caret16, caret16) }
-                else { this.invalidateSourceSelection("accepted_caret_unprepared") }
+                if (let Some(caret16) <- caret) {
+                    this.setSelection16(caret16, caret16)
+                } else {
+                    this.invalidateSourceSelection("accepted_caret_unprepared")
+                }
             }
             this.selectionNeedsNativeRestore = !sourceProxyChanged
             this.lastReason = ""
             let accepted = this.edit(this.editSeq, true, outcome.versionAfter, "", ticket)
-            this.pending.add(CjguiTextSessionPending(ticket, mirror, accepted,
-                sourceProxyChanged: sourceProxyChanged))
+            this.pending.add(CjguiTextSessionPending(ticket, mirror, accepted, sourceProxyChanged: sourceProxyChanged))
             return accepted
         }
         this.lastReason = outcome.reason
         let rejected = this.edit(this.editSeq, false, outcome.versionAfter, outcome.reason, ticket)
-        this.pending.add(CjguiTextSessionPending(ticket, mirror, rejected,
-            sourceProxyChanged: sourceProxyChanged))
+        this.pending.add(CjguiTextSessionPending(ticket, mirror, rejected, sourceProxyChanged: sourceProxyChanged))
         if (sourceProxyChanged) {
             this.needsCalibration = true
             this.calibrationRecalibrated = false
@@ -2175,14 +2362,27 @@ public class CjguiTextSession {
         return rejected
     }
 
-    private func submitCurrentSourceChoice(text: String): CjguiTextSessionEdit {
+    // Cancelled SDK insertion: fixed Q or preceding owner result grants this
+    // source transaction; no platform Change or latest caret is invented.
+    func ohosOriginalInsert(basis: String, version: Int64, anchor: Int64, focus: Int64,
+        text: String): CjguiTextSessionEdit {
+        if (basis.isEmpty() || basis != this.ohosInputSourceBasis() || this.compositionActive ||
+            this.needsCalibration || version != this.contentVersion() || anchor != this.selectionAnchorByte ||
+            focus != this.selectionFocusByte) {
+            return this.edit(this.editSeq, false, this.contentVersion(), "original_command_source_stale")
+        }
+        return this.submitCurrentSourceChoice(text, sourceProxyChanged: false)
+    }
+
+    private func submitCurrentSourceChoice(text: String, sourceProxyChanged!: Bool = true): CjguiTextSessionEdit {
         let owner = match (this.window.selectionOwner()) {
             case Some(value) => value
-            case None => return this.edit(this.editSeq, false, this.window.sourceVersion(), "source_selection_edit_unavailable")
+            case None => return this.edit(this.editSeq, false, this.window.sourceVersion(),
+                "source_selection_edit_unavailable")
         }
         let choice = owner.sourceSelectionSnapshot()
-        if (choice.version != this.selectionVersion || choice.revision != this.selectionRevision ||
-            choice.anchorByte != this.selectionAnchorByte || choice.focusByte != this.selectionFocusByte) {
+        if (choice.version != this.selectionVersion || choice.revision != this.selectionRevision || choice.anchorByte != this
+            .selectionAnchorByte || choice.focusByte != this.selectionFocusByte) {
             this.lastReason = "source_selection_stale"
             return this.edit(this.editSeq, false, this.window.sourceVersion(), this.lastReason)
         }
@@ -2192,7 +2392,11 @@ public class CjguiTextSession {
         let outcome = this.window.applySelectedSourceEdit(choice, text)
         if (outcome.applied) {
             this.editSeq += 1
-            let lo = if (choice.anchorByte < choice.focusByte) { choice.anchorByte } else { choice.focusByte }
+            let lo = if (choice.anchorByte < choice.focusByte) {
+                choice.anchorByte
+            } else {
+                choice.focusByte
+            }
             let caret = lo + cjguiUtf8Length(text)
             let _ = this.window.revealByte(caret)
             this.mirrorRevision += 1
@@ -2202,10 +2406,13 @@ public class CjguiTextSession {
             this.lastReason = ""
         } else {
             this.lastReason = outcome.reason
-            this.needsCalibration = true; this.calibrationRecalibrated = false
+            if (sourceProxyChanged) {
+                this.needsCalibration = true
+                this.calibrationRecalibrated = false
+            }
         }
         let result = this.edit(this.editSeq, outcome.applied, outcome.versionAfter, this.lastReason, ticket)
-        this.pending.add(CjguiTextSessionPending(ticket, mirror, result))
+        this.pending.add(CjguiTextSessionPending(ticket, mirror, result, sourceProxyChanged: sourceProxyChanged))
         return result
     }
 
@@ -2235,8 +2442,16 @@ public class CjguiTextSession {
             this.lastReason = this.window.unpreparedReason()
             return this.edit(this.editSeq, false, -1, this.lastReason)
         }
-        let lo = if (start16 <= end16) { start16 } else { end16 }
-        let hi = if (start16 <= end16) { end16 } else { start16 }
+        let lo = if (start16 <= end16) {
+            start16
+        } else {
+            end16
+        }
+        let hi = if (start16 <= end16) {
+            end16
+        } else {
+            start16
+        }
         if (lo < 0) {
             this.lastReason = "negative_range"
             return this.edit(this.editSeq, false, -1, this.lastReason)
@@ -2266,8 +2481,8 @@ public class CjguiTextSession {
         }
         let priorStart = this.window.windowStartByte()
         let priorText = this.window.text()
-        let nativePostimage = priorText[0..startByte - priorStart] + text +
-            priorText[endByte - priorStart..priorText.size]
+        let nativePostimage = priorText[0..startByte - priorStart] + text + priorText[endByte - priorStart..priorText
+                .size]
         this.ticketSeq += 1
         let ticket = this.ticketSeq
         let outcome = this.window.applyByteEdit(startByte, endByte, text)
@@ -2281,10 +2496,12 @@ public class CjguiTextSession {
             this.mirrorRevision += 1
             this.mirrorUtf16Length = cjguiUtf16Length(this.window.text())
             let localCaretByte = caretByte - this.window.windowStartByte()
-            let mappedCaret: ?Int64 = if (this.window.isPrepared() &&
-                this.window.contentVersion() == outcome.versionAfter) {
+            let mappedCaret: ?Int64 = if (this.window.isPrepared() && this.window.contentVersion() == outcome
+                .versionAfter) {
                 cjguiUtf8OffsetToUtf16(this.window.text(), localCaretByte)
-            } else { None }
+            } else {
+                None
+            }
             if (let Some(caret16) <- mappedCaret) {
                 this.setSelection16(caret16, caret16)
                 // A bounded reload may trim or move the native edit's postimage. The owner
@@ -2318,15 +2535,13 @@ public class CjguiTextSession {
         return this.edit(seq, accepted, versionAfter, reason, -1)
     }
 
-    private func edit(seq: Int64, accepted: Bool, versionAfter: Int64, reason: String,
-        ticket: Int64): CjguiTextSessionEdit {
-        return CjguiTextSessionEdit(seq, ticket, accepted, versionAfter, this.mirrorRevision,
-            this.contextEpoch, reason)
+    private func edit(seq: Int64, accepted: Bool, versionAfter: Int64, reason: String, ticket: Int64): CjguiTextSessionEdit {
+        return CjguiTextSessionEdit(seq, ticket, accepted, versionAfter, this.mirrorRevision, this.contextEpoch, reason)
     }
 
     private func ignoredCompositionEvent(reason: String): CjguiTextSessionEdit {
-        return CjguiTextSessionEdit(this.editSeq, -1, false, -1, this.mirrorRevision,
-            this.contextEpoch, reason, proxyRecoveryRequired: false)
+        return CjguiTextSessionEdit(this.editSeq, -1, false, -1, this.mirrorRevision, this.contextEpoch, reason,
+            proxyRecoveryRequired: false)
     }
 
     // ---- 串行 pending / ACK / 拒绝校准 ----
@@ -2336,7 +2551,11 @@ public class CjguiTextSession {
     }
 
     public func oldestPendingTicket(): Int64 {
-        return if (this.pending.size > 0) { this.pending[0].ticket } else { -1 }
+        return if (this.pending.size > 0) {
+            this.pending[0].ticket
+        } else {
+            -1
+        }
     }
 
     /// 按位置结算:参数依次为 `ticket`(结算到该票据为止,含)与 `contextEpoch`。

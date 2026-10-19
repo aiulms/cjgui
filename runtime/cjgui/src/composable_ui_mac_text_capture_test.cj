@@ -16,6 +16,7 @@ private class MacTextCaptureController <: CjguiComposableUiController & CjguiCom
     var duplicate: Bool = false
     var selectionDecoration: Bool = false
     var fontSize: Float64 = 18.0
+    var bodyText = "ABCDE🙂"
     let phases = ArrayList<Int64>()
     let deliveredVersions = ArrayList<Int64>()
     let runs = [CjguiComposableUiTextStyleRun(0, 5, 18.0, 0, "system", 0.1, 0.1, 0.1, 1.0)]
@@ -29,7 +30,7 @@ private class MacTextCaptureController <: CjguiComposableUiController & CjguiCom
         let displayedRuns = ArrayList<CjguiComposableUiTextStyleRun>(runs)
         if (selectionDecoration) { displayedRuns.add(CjguiComposableUiTextStyleRun.selectionBackground(1, 3,
             CjguiComposableUiColor(0.2, 0.3, 0.8, 0.55))) }
-        let text = cjguiComposableText(7771, "mac-capture-body", "ABCDE🙂",
+        let text = cjguiComposableText(7771, "mac-capture-body", bodyText,
             CjguiComposableUiStyle(fixedWidth: 250, fixedHeight: 55, pointerInteractive: true,
                 translateX: translateX, fontSize: fontSize), fieldId: fieldId, textStyleRuns: displayedRuns.toArray())
         text.semanticIncarnation = incarnation
@@ -542,5 +543,36 @@ func macTextBeginOldAndNewDownSeparateSameSceneSourcePublications(): Unit {
         @Assert(controller.phases.toArray(), [37])
         @Assert(macTextNativeEpoch(window), successor)
         @Assert(window.pointerCaptureActiveForTest(), true)
+    } finally { window.close() }
+}
+
+@Test
+func acceptedTextCapturedPointAboveViewportHitsVisibleWrappedRow(): Unit {
+    let controller = MacTextCaptureController()
+    controller.scrollFixture = true
+    controller.bodyText = "A\nB\nC\nD\nE\nF\n"
+    let window = CjguiComposableUiWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        @Assert(window.refresh(), true)
+        let _ = controller.viewport.requestOffset(31)
+        controller.revision += 1
+        @Assert(window.refresh(), true)
+        @Assert(window.nearestVisibleTextNodeAtAcceptedPoint([7771], 20.0, -100.0), Some(7771))
+        let viewport = window.nodeRect(7780).getOrThrow()
+        let visibleHit = window.hitTestComposableTextDetailed(7771, 20.0, Float64(viewport[1]) + 0.5)
+        let capturedHit = window.hitTestComposableTextDetailed(7771, 20.0, -100.0, clampToVisible: true)
+        @Assert(visibleHit[0], 0)
+        @Assert(visibleHit[1] > 0, true)
+        @Assert(capturedHit[0], 0)
+        // Resolving a visible node must not hit an earlier clipped-away line.
+        @Assert(capturedHit[1], visibleHit[1])
+        let originalHit = window.hitTestComposableTextDetailed(7771, 20.0, -100.0)
+        @Assert(originalHit[1] < visibleHit[1], true)
+        let stale = window.hitTestComposableTextDetailed(7771, 20.0, -100.0,
+            sceneTicket: UInt64(window.inputSceneVersion() - 1), clampToVisible: true)
+        @Assert(stale[0], CJGUI_INTERNAL_RENDERER_SCENE_STALE)
+        @Assert(window.hitTestComposableTextDetailed(7772, 20.0, -100.0, clampToVisible: true)[0],
+            CJGUI_INTERNAL_RENDERER_SCENE_STALE)
     } finally { window.close() }
 }

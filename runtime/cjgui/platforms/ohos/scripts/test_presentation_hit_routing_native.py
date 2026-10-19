@@ -52,6 +52,10 @@ PREFIX = r'''
 #include <vector>
 #define RLOGI(...) do {} while(0)
 #define RLOGW(...) do {} while(0)
+// Routing copies the production opaque coverage reference but does not consume
+// coverage internals. Keep its real pointee/type without unrelated header code.
+struct CjguiOhosTextCoverage;
+using CjguiOhosCoverage = std::shared_ptr<const CjguiOhosTextCoverage>;
 
 enum CjguiInternalRendererStatus {
   CJGUI_INTERNAL_RENDERER_OK = 0,
@@ -112,6 +116,9 @@ struct PaintedTextLayout {
 };
 struct CaretHitTestJob {
   std::u16string text;
+  std::u16string layoutText;
+  CjguiOhosCoverage coverage;
+  uint64_t observationFocus = 0, observationOperation = 0;
   std::vector<int> runs;
   double fontSize = 13.0;
   uint32_t fontWeight = 400;
@@ -129,6 +136,7 @@ struct Session {
   struct OwnedMirrorDeclaration {
     bool valid = false;
     std::u16string text;
+    CjguiOhosCoverage coverage;
     int64_t ownerContentVersion = -1;
     uint64_t bindingEpoch = 0, declaredBindingEpoch = 0;
   };
@@ -145,6 +153,8 @@ struct Session {
   int64_t ownedTextSessionResourceId = -1;
   uint32_t ownedTextSessionNodeKind = kKindText;
   OwnedMirrorDeclaration ownedMirrorAccepted;
+  struct { uint64_t generation = 0; } focusAuthority; // observation only
+  uint64_t selectionOperationGeneration = 0;
 };
 static Session g_theSession;
 struct { std::mutex lock; } g_sessions;

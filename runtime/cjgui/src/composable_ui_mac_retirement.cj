@@ -14,7 +14,15 @@ func internalRendererDrainComposableRetirement(session: UInt64, deadline: UInt64
     let status = unsafe { cjgui_internal_renderer_drain_composable_retirement(session, deadline, inout mayBegin) }
     return (status, mayBegin == 1u8)
 }
-@When[os != "macOS" && os != "Windows"]
+// Linux 显式落点：没有私有准备图退休队列，"无真实回收可等"就是结论 ——
+// 返回可以开始，不伪装已回收（审计文档 §3.3）。接通需 native 实现
+// cjgui_internal_renderer_drain_composable_retirement。
+@When[os == "Linux"]
+func internalRendererDrainComposableRetirement(session: UInt64, deadline: UInt64): (Int32, Bool) {
+    return (CJGUI_INTERNAL_RENDERER_OK, true)
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func internalRendererDrainComposableRetirement(session: UInt64, deadline: UInt64): (Int32, Bool) {
     return (CJGUI_INTERNAL_RENDERER_OK, true)
 }

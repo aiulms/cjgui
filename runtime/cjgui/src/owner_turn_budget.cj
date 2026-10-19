@@ -1,6 +1,7 @@
 package cjgui
 
 import std.overflow.*
+import std.env.*
 import std.collection.*
 import std.time.*
 
@@ -9,13 +10,22 @@ func cjguiSchedulingWorkRevision(): UInt64 {
     return unsafe { cjgui_internal_renderer_owner_work_revision() }
 }
 
-@When[os != "macOS"]
+// Linux 显式并入 Windows 支：都没有 macOS 的原生调度工作修订计数。
+// Linux 的 owner 调度收尾因此不计量（审计文档 §3.8），预算责任仍由
+// begin -> pumpOneTurn -> end 承担，不伪造空步骤。
+@When[os == "Windows" || os == "Linux"]
+func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
 
 @When[os == "macOS"]
 func cjguiCommonSchedulingEnabled(): Bool { return true }
 
-@When[os != "macOS"]
+@When[os == "Windows" || os == "Linux"]
+func cjguiCommonSchedulingEnabled(): Bool { return false }
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiCommonSchedulingEnabled(): Bool { return false }
 
 @When[os == "macOS"]
@@ -25,7 +35,10 @@ func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
     return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
 }
 
-@When[os != "macOS"]
+@When[os == "Windows" || os == "Linux"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
 
 @When[os == "macOS"]
@@ -35,12 +48,30 @@ func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relat
         managedId) }
 }
 
-@When[os != "macOS"]
+// Linux 本阶段没有 owner trace 原生通道（审计文档 §3.8）：显式 no-op，
+// 不伪造已记录。接通需 native 实现 owner_trace_boundary/managed_record。
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
+    value: UInt64, managedId: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
     value: UInt64, managedId: UInt64): Unit {}
 
 // Platform diagnostics retain the same owner budget. Windows records fixed
 // native-clock spans only; it does not register the macOS sampler watches.
+@When[os == "macOS"]
+func cjguiOwnerTraceElapsedValue(nanoseconds: Int64): UInt64 {
+    // A diagnostic clock anomaly is unknown, not zero elapsed time. The
+    // existing native record formatter renders this sentinel as "unknown".
+    // Never let an optional timing observation terminate the owner loop.
+    if (nanoseconds < 0) {
+        println("CJGUI_OWNER_TRACE_INVALID_ELAPSED signed_ns=${nanoseconds} span=unknown")
+        return UInt64.Max
+    }
+    return UInt64(nanoseconds)
+}
+
 @When[os == "macOS"]
 func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
     generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
@@ -69,7 +100,7 @@ func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request:
         UInt64.Max
     }
     if (let Some(started) <- localStart) {
-        cjguiOwnerTraceBoundary(session, turn, 136u32, kind, phase, UInt64((MonoTime.now() - started).toNanoseconds()),
+        cjguiOwnerTraceBoundary(session, turn, 136u32, kind, phase, cjguiOwnerTraceElapsedValue((MonoTime.now() - started).toNanoseconds()),
             managedId)
         localStart = Some(MonoTime.now())
         cjguiOwnerTraceBoundary(session, turn, 137u32, kind, phase, 0u64, managedId)
@@ -84,7 +115,7 @@ func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request:
     let result = unsafe { cjgui_internal_renderer_owner_trace_managed_record(kind, session, turn, request, dispatch,
         generation, phase, span, managedId, withWatch) }
     if (let Some(started) <- localStart) {
-        cjguiOwnerTraceBoundary(session, turn, 139u32, kind, phase, UInt64((MonoTime.now() - started).toNanoseconds()),
+        cjguiOwnerTraceBoundary(session, turn, 139u32, kind, phase, cjguiOwnerTraceElapsedValue((MonoTime.now() - started).toNanoseconds()),
             managedId)
     }
     return result
@@ -103,7 +134,11 @@ func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, g
         0u64, generation, phase, startedNs, UInt64.Max, 0u8) }
 }
 
-@When[os != "macOS" && os != "Windows"]
+@When[os == "Linux"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
     startedNs: UInt64): Unit {}
 
@@ -114,7 +149,13 @@ func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request:
         generation, phase, span, UInt64.Max, 0u8) }
 }
 
-@When[os != "macOS" && os != "Windows"]
+@When[os == "Linux"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    return 0u64
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
     generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
     return 0u64
@@ -125,7 +166,10 @@ func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {
     unsafe { cjgui_internal_renderer_owner_trace_set_turn(turn) }
 }
 
-@When[os != "macOS"]
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {}
 
 @When[os == "macOS"]
@@ -133,13 +177,17 @@ func cjguiOwnerTraceExport(): Unit {
     unsafe { cjgui_internal_renderer_owner_trace_export() }
 }
 
-@When[os != "macOS"]
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceExport(): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiOwnerTraceExport(): Unit {}
 
 /// Experimental owner pacing. All windows on one serialized owner loop share
 /// this object. Only measured waits made by their event pumps are credited;
 /// dispatch, callbacks, accepted publication and resource preparation count.
 public class CjguiOwnerTurnBudget {
+    private let completeCostObservation: Bool = getVariable("CJGUI_OWNER_TURN_COST") == Some("1")
     private var active: Bool = false
     private var startedNs: Int64 = 0
     private var limitNs: Int64 = 0
@@ -191,6 +239,13 @@ public class CjguiOwnerTurnBudget {
     }
 
     public func end(): Unit {
+        // Only the common allowance owns these measured idle credits. This
+        // diagnostic fact is matched to the original outer boundary; it never
+        // extends a budget, changes a wait or supplies input authority.
+        if (active && completeCostObservation) {
+            cjguiOwnerTraceBoundary(0u64, UInt64(turn), 400u32, 0u32, 0u32,
+                UInt64(idleNs), UInt64.Max)
+        }
         // A closed/detached window cannot strand live siblings. Its priority
         // is retired after exactly one turn in which it made no admission call.
         if (refreshPriority != 0u64 && !priorityVisited) {

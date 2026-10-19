@@ -1,6 +1,6 @@
 # CJGUI 设计意图与资产导航
 
-更新：2026-09-28（追加本地开源实现参考；其他资产抽查沿原记录）。回答为什么做、已有东西在哪里、接续时要辨别什么。当前阶段和运行证据仍只在 [ACTIVE_DIRECTION.md](../../runtime/cjgui/ACTIVE_DIRECTION.md) 维护。
+更新：2026-10-13（补共同源码与平台消费入口；其他资产抽查沿原记录）。回答为什么做、已有东西在哪里、接续时要辨别什么。当前阶段和运行证据仍只在 [ACTIVE_DIRECTION.md](../../runtime/cjgui/ACTIVE_DIRECTION.md) 维护。
 
 ## 怎样使用
 
@@ -10,6 +10,21 @@
 本页只导航资产，不另维护架构规则。目标、架构、验收、当前状态的职责分工见[文档归属](../README.md#各类信息只在一处维护)。
 
 2026-09-26 的跨阶段缺口与分工见[三线能力推进表](2026-09-26-framework-capability-roadmap.md)：编辑器以产品补框架，鸿蒙完成平台后端，第三线补通用视觉、动效与可用性。该表保留已有资产与待验边界，实际开工对象和当前包仍见 ACTIVE。
+
+<a id="shared-code-entrypoints"></a>
+## 共同源码与平台消费入口
+
+先定位 CJGUI 自己已有的实现，再按需参考外部框架。复用规则统一见 [AGENTS](../../AGENTS.md#shared-implementation)；本表是定位入口，不声明各平台已同版或全部可用。
+
+| 问题归属 | 先查已有源码 | 平台接续边界 |
+| --- | --- | --- |
+| 组件、布局、场景提交、选择与输入交接 | [组件与布局](../../runtime/cjgui/src/composable_ui.cj)、[共同窗口](../../runtime/cjgui/src/composable_ui_window.cj)、[平台调用边界](../../runtime/cjgui/src/runtime_renderer_session.cj)及同目录相关模块/测试 | 先辨别共同机制缺陷还是平台漏接；不要在每个宿主或编辑器重建完整交接逻辑。 |
+| 人与 Agent 的共同操作、正文/版本、文档会话 | [shared_operation_core](../../runtime/cjgui/shared_operation_core/)、[有界文字普通消费者](../../runtime/cjgui/examples/range_text_window_app/) | 复用 owner 与公开操作入口。Pharos 自有文档/Markdown/文件业务接其应用模块，不在 Windows 或 OHOS 另造编辑器核心。 |
+| 系统窗口、输入与图形资源 | [macOS native](../../runtime/cjgui/native/)、[Windows native](../../runtime/cjgui/platforms/windows/native/)、[OHOS host](../../runtime/cjgui/platforms/ohos/host/)与[ArkTS 适配](../../runtime/cjgui/platforms/ohos/arkts/) | 系统调用、线程、字体与绘制资源由平台实现；对照相同公共协议的失效、失败和回收规则，不强迫不同 GPU/输入 API 合为一套。 |
+| OHOS 核心副本与消费者同步 | [平台说明](../../runtime/cjgui/platforms/ohos/README.md)、[snapshot](../../runtime/cjgui/platforms/ohos/snapshot/)、[sync_platform.sh](../../runtime/cjgui/platforms/ohos/scripts/sync_platform.sh) | 当前脚本从平台 snapshot 同步到 lab；它不证明 snapshot 已与主树合流。跨平台修复需核主树差异与实际构建源，lab 内生成副本不单独维护。 |
+| Windows 冻结、capture/relay 与验收入口 | [Windows 阶段与构建接续](2026-10-09-windows-bounded-preparation.md)、[当前交付构建说明](<../../artifacts/windows-pharos-20261005/delivery/Pharos Windows R7 current source/BUILD.md>) | 用该交付源码清单确认共同源码版本及适配差异；冻结包用于可复现构建，不成为持续分叉的核心。复制进来宾不等于移植完成。 |
+
+每个阶段只写本次用到的入口、复用/补接/替换关系和实际消费边界。后端尚未实现的能力应具名暴露，不让产品私有补丁悄悄成为第二套实现；没有新证据时复用既有反例与成果，避免重新从零造工具和重新验全包。
 
 ## 框架主线与已有资产
 

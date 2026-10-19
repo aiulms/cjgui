@@ -1,0 +1,2 @@
+range short: owner_bytes=191 prefix=abZ# range_decisions=5 session_accepted=5 session_refused=0 leaked_range_events=0 exit=0
+ime spot: CJGUI_IME_SPOT x=92.0 y=196.5 h=19.0 focused=1

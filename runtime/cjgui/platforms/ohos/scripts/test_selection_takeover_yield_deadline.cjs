@@ -26,14 +26,16 @@ const SRC = process.env.PROXY_SRC ||
 const timers = [];
 let now = 0, timerSerial = 0;
 const env = {};
+env.FrameCallback = class {};
 env.setTimeout = (fn, delay) => { const id = ++timerSerial; timers.push({ id, due: now + (delay || 0), fn }); return id; };
 env.clearTimeout = (id) => { const at = timers.findIndex(t => t.id === id); if (at >= 0) timers.splice(at, 1); };
 env.clearInterval = env.clearTimeout;
 vm.createContext(env);
-const src = mod.stripTypeScriptTypes(fs.readFileSync(SRC, 'utf8'), { mode: 'transform' });
+const src = mod.stripTypeScriptTypes(fs.readFileSync(SRC, 'utf8').replace(/^import .*;\s*$/gm, ''), { mode: 'transform' });
 vm.runInContext(src.replace(/export /g, '') + ';globalThis.LC=CjguiImeSelectionLifecycle;', env);
 
-const mountOf = (name) => ({ fieldId: name, key: { contextId: 9, describe() { return 'c9/' + name; } } });
+const mountOf = (name) => ({ fieldId: name, focusGeneration: 1, draft: 'A'.repeat(64), commandExecution: null, selectionCommand: null,
+  key: { contextId: 9, describe() { return 'c9/' + name; } } });
 const flushMicrotasks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 async function advance(deltaMs) {
   const target = now + deltaMs;

@@ -22,6 +22,9 @@
 *.tmp
 *.temp
 
+# Test run outputs — large binary corpora, must never enter history
+/artifacts/
+
 # Build outputs and compiled artifacts
 build/
 dist/
@@ -113,3 +116,8 @@ sources/
 /labs/ohos_cangjie_smoke/artifacts/cjgui-backend/screenshots/
 /labs/ohos_cangjie_smoke/artifacts/cjgui-backend/verification/*.png
 /labs/ohos_cangjie_smoke/artifacts/cjgui-backend/verification/*.jpeg
+
+# Local scratch and generated platform build trees (2026-10-19)
+/--out/
+/.omo/
+/labs/ohos_thermo_asm_r3/

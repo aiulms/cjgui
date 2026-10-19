@@ -572,6 +572,19 @@ typedef struct CjguiInternalRendererComposableDataTransferItem {
 // Generic scene node. Geometry uses top-left point coordinates supplied by
 // the Cangjie layout engine. The C side copies labels/values immediately and
 // never stores a Cangjie pointer. This remains an internal ABI.
+// ABI 版本握手：渲染器静态库与仓颉侧字段表必须同代。
+// **任何对 CjguiInternalRendererComposableNode 字段的增删改都必须同时改这里
+// 和仓颉侧 runtime_renderer_session.cj 的同名常量**；仓颉在建立会话时比对，
+// 不一致直接拒绝建会话，而不是带着错位的字段表去绘制（那会画成花屏，不报错）。
+#define CJGUI_INTERNAL_RENDERER_ABI_VERSION 8u
+// 返回结构布局的版本号。**改这个结构体的任何字段都必须同时升这里和仓颉侧
+// runtime_renderer_session.cj 的同名常量**，仓颉在建会话时比对，不一致拒绝建会话。
+// 为什么不比 sizeof：@C 结构在 host 与设备 aarch64 上的对齐规则不同，
+// 同一个源在两边算出的字节数并不相等（实测 host 912、设备侧不同），
+// 比大小会假报错。字段级对齐由 host 侧哨兵测试
+// （scripts/run_node_abi_sentinel_cjpm.py，断言 sizeOf(镜像) == sizeof(C)）保证。
+uint32_t cjgui_internal_renderer_abi_version(void);
+
 typedef struct CjguiInternalRendererComposableNode {
     uint64_t nodeId;
     uint64_t projectionVersion;
@@ -713,11 +726,41 @@ typedef struct CjguiInternalRendererComposableNode {
     // from style.wheelScrollable; hit routing matches it alongside
     // COMPOSABLE_SCROLL_AREA.
     uint32_t wheelScrollable;
+    // Read-only label overflow, 0 keeps legacy wrapping. Native mirrors must match.
+    uint32_t textMaxLines;
+    uint32_t textOverflow; // 0=clip, 1=tail ellipsis
     uint64_t acceptedBindingEpoch;
+    // ---- 文字排版（追加在尾部，已有字段偏移不变）----
+    // 字间距与行高都是逻辑点：正值放大、负值收紧；0 表示交给字体原生度量。
+    // 这四个值必须一起进入文本布局的缓存键，否则不同参数会复用同一份测量结果。
+    double letterSpacing;
+    double lineHeightPoints;
+    uint32_t maxLines;        // 0 = 不限行数
+    uint32_t ellipsisEnabled; // 1 = 溢出显示省略号（仅当 maxLines > 0 有意义）
+    // ---- 四角独立圆角（追加在尾部；present=0 时继续用单一 cornerRadius）----
+    // 顺序按视觉顺时针：左上、右上、右下、左下。仅影响填充与描边，
+    // 裁剪链仍用统一圆角（裁剪是祖先继承的几何，混用会让子节点越界）。
+    uint32_t cornerRadiiPresent;
+    double cornerTopLeft;
+    double cornerTopRight;
+    double cornerBottomRight;
+    double cornerBottomLeft;
+    // 已解析的兄弟绘制次序；共享布局按此顺序生成场景数组，后端只按数组顺序绘制/命中。
+    int64_t zIndex;
+    // 仅绘制的旋转，单位为度，绕节点自身中心。布局、祖先裁剪与命中仍用未旋转矩形；
+    // 只旋转本节点自身的绘制，不旋转子节点。0 = 轴对齐。
+    double rotateDegrees;
+    // 单色图标着色。采样 RGB 乘以 (r,g,b)，alpha 乘以 a；a == 0 保持原像素，
+    // 也是默认值。只有 image 节点读取这些字段，文本与形状忽略。源资源必须是
+    // 透明底单色字形，否则着色会把不透明背景一起染色。
+    double iconTintRed;
+    double iconTintGreen;
+    double iconTintBlue;
+    double iconTintAlpha;
 } CjguiInternalRendererComposableNode;
-_Static_assert(offsetof(CjguiInternalRendererComposableNode, acceptedBindingEpoch) + 8 ==
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 ==
                sizeof(CjguiInternalRendererComposableNode),
-               "CjguiInternalRendererComposableNode binding tail drifted");
+               "CjguiInternalRendererComposableNode iconTintAlpha tail drifted");
 
 typedef struct CjguiInternalRendererViewport {
     uint32_t width;
@@ -946,6 +989,11 @@ typedef struct {
     double clip1X, clip1Y;
     double clip2X, clip2Y;
     double clip3X, clip3Y;
+    // Paint-only per-node scale around the node's own centre. Appended after
+    // the stable clip slots; consumers normalize non-finite/non-positive
+    // values to 1.0. The OHOS fork does not feed this sidecar yet.
+    double scaleX;
+    double scaleY;
 } CjguiInternalRendererComposableGeometry;
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_geometry(
     uint64_t session, uint64_t projectionVersion, uint32_t nodeIndex,

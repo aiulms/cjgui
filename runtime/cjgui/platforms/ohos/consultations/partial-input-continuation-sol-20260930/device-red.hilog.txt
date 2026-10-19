@@ -1,0 +1,510 @@
+09-30 16:26:29.030 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=17 op=GET_CONTEXT_0 queueUs=11270
+09-30 16:26:29.049 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=18 op=OTHER queueUs=3842
+09-30 16:26:29.065 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=19 op=OTHER queueUs=5435
+09-30 16:26:29.245 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.245 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 0
+09-30 16:26:29.245 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.245 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 0
+09-30 16:26:29.246 12026 12026 I C01d02/accessibility_asacfwk: [(RegisterElementOperator:388)]Register windowId[308] start
+09-30 16:26:29.246 12026 12026 I C03931/AceXcomponent: [(-2:100000:singleton)] Not register native accessibility
+09-30 16:26:29.253 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.830 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.830 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 0
+09-30 16:26:29.830 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.830 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 0
+09-30 16:26:29.830 12026 12026 I C01d02/accessibility_asacfwk: [(DeregisterElementOperator:467)]Deregister windowId[308] start
+09-30 16:26:29.838 12026 12186 I C01d02/accessibility_asacfwk: [(NotifyStateChanged:705)]observers size is 1
+09-30 16:26:29.905 12026 12026 W C02805/ClientMsgHandler: [K:D:12971|163]The client receives a key, Fd:39
+09-30 16:26:29.905 12026 12026 I C02805/InputManagerImpl: [K:D:12971|576]id:12971 recv
+09-30 16:26:29.905 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:0,InputId:12971,wid:308
+09-30 16:26:29.907 12026 12026 I C02805/InputManagerImpl: [K:D:12971|601]Key event report keyCode:<private>, id:12971 recv
+09-30 16:26:29.918 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand len: 1 reason: 1
+09-30 16:26:29.919 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:29.919 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand MarkDirtyNode 12, reason: 1
+09-30 16:26:29.919 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/12handle KeyEvent(secure_field, 0) return: 1
+09-30 16:26:29.919 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus system handled the key event: code:secure_field/action:0
+09-30 16:26:29.919 12026 12186 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12971, consumed: 1,escTrigger: 0, escDown: 0
+09-30 16:26:29.933 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillInsertValueEvent len:1,offset:5
+09-30 16:26:29.933 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillDeleteEvent len:5,offset:10
+09-30 16:26:29.934 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():83.076004,handleRect.GetY():27.999969
+09-30 16:26:29.935 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:29.935 12026 12026 I C01c10/ImsaKit: line: 887, function: OnCursorUpdate,left: 105, top: 230, height: 65.
+09-30 16:26:29.935 12026 12026 I C01c10/ImsaKit: line: 922, function: OnSelectionChange,IMC size: 64, range: 5/10/6/6.
+09-30 16:26:29.935 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] UpdateCaretInfoToController, left 105.076004, top 230.999969, width 7.000000, height 65.631989, selectController_ Start 6, end 6
+09-30 16:26:29.936 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:29.936 12026 12026 I A00000/CjguiRenderer: ime range delta node=107 range=6:10 bytes=0
+09-30 16:26:29.937 12026 12227 I A00000/CjguiRenderer: text layout painted serial=5 ctx=1 ticket=2 node=107 units=64
+09-30 16:26:29.941 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:29.941 12026 12026 I A00000/CjguiApp: ime proxy onChange len=64 verdict=ok mount=app1/s1/c1/e1/m1
+09-30 16:26:29.941 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=0, removedLen=4
+09-30 16:26:29.942 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:29.942 12026 12026 I A00000/CjguiApp: ime select [6,6) rc=0 mount=app1/s1/c1/e1/m1
+09-30 16:26:29.942 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:29.946 12026 12227 E C02515/DGLES: [d_eglSwapBuffers_special@egl_gpu.cpp:729] thread output size 156099 speed 2k/s API_num 197
+09-30 16:26:29.946 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=5 session=1 ticket=2 projection=2
+09-30 16:26:29.946 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=5 layouts=47 layoutBytes=1607
+09-30 16:26:29.946 12026 12227 I A00000/CjguiRenderer: text layout painted serial=6 ctx=1 ticket=2 node=107 units=64
+09-30 16:26:29.948 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=6 affinity=0 x=37.828 top=93.837 bottom=114.933
+09-30 16:26:29.949 12026 12225 I A00000/CjguiRenderer: caret phase session=1 ctx=1 visible=1 active=1 nextMs=66195448
+09-30 16:26:29.953 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():83.076004,handleRect.GetY():27.999969
+09-30 16:26:29.953 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:29.958 12026 12026 W C02805/ClientMsgHandler: [K:U:12972|163]The client receives a key, Fd:39
+09-30 16:26:29.958 12026 12026 I C02805/InputManagerImpl: [K:U:12972|576]id:12972 recv
+09-30 16:26:29.958 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:1,InputId:12972,wid:308
+09-30 16:26:29.958 12026 12026 I C02805/InputManagerImpl: [K:U:12972|601]Key event report keyCode:<private>, id:12972 recv
+09-30 16:26:29.958 12026 12026 W C02805/ClientMsgHandler: [K:D:12973|163]The client receives a key, Fd:39
+09-30 16:26:29.958 12026 12026 I C02805/InputManagerImpl: [K:D:12973|576]id:12973 recv
+09-30 16:26:29.958 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:2,InputId:12973,wid:308
+09-30 16:26:29.959 12026 12026 I C02805/InputManagerImpl: [K:D:12973|601]Key event report keyCode:<private>, id:12973 recv
+09-30 16:26:29.959 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/12handle KeyEvent(secure_field, 1) return: 0
+09-30 16:26:29.959 12026 12026 W C03926/AceTheme: [(100000:100000:scope)] style 125829872 not contains app_theme_pattern!
+09-30 16:26:29.959 12026 12026 E C01e00/ResourceManager: ref <private> id not found
+09-30 16:26:29.959 12026 12026 E C01e00/ResourceManager: ref <private> id not found
+09-30 16:26:29.959 12026 12026 W C03937/AceResource: [(100000:100000:scope)] Get pattern by name error, name=app_theme_pattern
+09-30 16:26:29.959 12026 12026 E C01e00/ResourceManager: ref <private> id not found
+09-30 16:26:29.959 12026 12026 E C01e00/ResourceManager: ref <private> id not found
+09-30 16:26:29.959 12026 12026 W C03937/AceResource: [(100000:100000:scope)] Get pattern by name error, name=app_theme_pattern
+09-30 16:26:29.959 12026 12026 W C03926/AceTheme: [(100000:100000:scope)] style app_theme_pattern not contains app_theme_drag_distancethreshold!
+09-30 16:26:29.959 12026 12186 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12972, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:29.959 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand len: 1 reason: 1
+09-30 16:26:29.960 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:29.960 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand MarkDirtyNode 12, reason: 1
+09-30 16:26:29.960 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/12handle KeyEvent(secure_field, 0) return: 1
+09-30 16:26:29.960 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus system handled the key event: code:secure_field/action:0
+09-30 16:26:29.960 12026 12186 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12973, consumed: 1,escTrigger: 0, escDown: 0
+09-30 16:26:29.963 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=6 session=1 ticket=2 projection=2
+09-30 16:26:29.963 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=6 layouts=53 layoutBytes=1791
+09-30 16:26:29.964 12026 12227 I A00000/CjguiRenderer: text layout painted serial=7 ctx=1 ticket=2 node=107 units=64
+09-30 16:26:29.965 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=6 affinity=0 x=37.828 top=93.837 bottom=114.933
+09-30 16:26:29.965 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillInsertValueEvent len:1,offset:6
+09-30 16:26:29.967 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():96.460007,handleRect.GetY():27.999969
+09-30 16:26:29.967 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:29.967 12026 12026 I C01c10/ImsaKit: line: 887, function: OnCursorUpdate,left: 118, top: 230, height: 65.
+09-30 16:26:29.968 12026 12026 I C01c10/ImsaKit: line: 922, function: OnSelectionChange,IMC size: 65, range: 6/6/7/7.
+09-30 16:26:29.968 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] UpdateCaretInfoToController, left 118.460007, top 230.999969, width 7.000000, height 65.631989, selectController_ Start 7, end 7
+09-30 16:26:29.968 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:29.968 12026 12026 I A00000/CjguiRenderer: ime range delta node=107 range=6:6 bytes=1
+09-30 16:26:29.968 12026 12026 I A00000/CjguiApp: ime proxy onChange len=65 verdict=ok mount=app1/s1/c1/e1/m1
+09-30 16:26:29.968 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=1, removedLen=0
+09-30 16:26:29.968 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:29.968 12026 12026 I A00000/CjguiApp: ime select [7,7) rc=0 mount=app1/s1/c1/e1/m1
+09-30 16:26:29.970 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:29.979 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=7 session=1 ticket=2 projection=2
+09-30 16:26:29.980 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=7 layouts=59 layoutBytes=1975
+09-30 16:26:29.980 12026 12227 I A00000/CjguiRenderer: measure ok w=311 h=126 lineH=21 base=17
+09-30 16:26:29.980 12026 12227 I A00000/CjguiRenderer: text layout painted serial=8 ctx=1 ticket=2 node=107 units=65
+09-30 16:26:29.982 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=7 affinity=0 x=42.130 top=93.837 bottom=114.933
+09-30 16:26:29.983 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():96.460007,handleRect.GetY():27.999969
+09-30 16:26:29.983 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:29.997 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=8 session=1 ticket=2 projection=2
+09-30 16:26:29.997 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=8 layouts=66 layoutBytes=2292
+09-30 16:26:29.997 12026 12227 I A00000/CjguiRenderer: text layout painted serial=9 ctx=1 ticket=2 node=107 units=65
+09-30 16:26:29.998 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=7 affinity=0 x=42.130 top=93.837 bottom=114.933
+09-30 16:26:30.010 12026 12026 W C02805/ClientMsgHandler: [K:U:12974|163]The client receives a key, Fd:39
+09-30 16:26:30.010 12026 12026 I C02805/InputManagerImpl: [K:U:12974|576]id:12974 recv
+09-30 16:26:30.010 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:3,InputId:12974,wid:308
+09-30 16:26:30.010 12026 12026 I C02805/InputManagerImpl: [K:U:12974|601]Key event report keyCode:<private>, id:12974 recv
+09-30 16:26:30.011 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/12handle KeyEvent(secure_field, 1) return: 0
+09-30 16:26:30.011 12026 12186 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12974, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.011 12026 12026 W C02805/ClientMsgHandler: [K:D:12975|163]The client receives a key, Fd:39
+09-30 16:26:30.011 12026 12026 I C02805/InputManagerImpl: [K:D:12975|576]id:12975 recv
+09-30 16:26:30.011 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:4,InputId:12975,wid:308
+09-30 16:26:30.011 12026 12026 I C02805/InputManagerImpl: [K:D:12975|601]Key event report keyCode:<private>, id:12975 recv
+09-30 16:26:30.012 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand len: 1 reason: 1
+09-30 16:26:30.012 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.012 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand MarkDirtyNode 12, reason: 1
+09-30 16:26:30.012 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/12handle KeyEvent(secure_field, 0) return: 1
+09-30 16:26:30.012 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus system handled the key event: code:secure_field/action:0
+09-30 16:26:30.012 12026 12186 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12975, consumed: 1,escTrigger: 0, escDown: 0
+09-30 16:26:30.012 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=9 session=1 ticket=2 projection=2
+09-30 16:26:30.012 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=9 layouts=72 layoutBytes=2477
+09-30 16:26:30.013 12026 12227 I A00000/CjguiRenderer: measure ok w=88 h=13 lineH=13 base=10
+09-30 16:26:30.013 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillInsertValueEvent len:1,offset:7
+09-30 16:26:30.013 12026 12227 I A00000/CjguiRenderer: ensureSurface dispatch gen=1 sessBackend=0 armed=0 want=1
+09-30 16:26:30.013 12026 12227 I A00000/CjguiRenderer: text layout painted serial=10 ctx=1 ticket=3 node=107 units=65
+09-30 16:26:30.014 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():130.451996,handleRect.GetY():27.999969
+09-30 16:26:30.015 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.015 12026 12026 I C01c10/ImsaKit: line: 887, function: OnCursorUpdate,left: 152, top: 230, height: 65.
+09-30 16:26:30.015 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=1 caret=7 affinity=0 x=42.130 top=93.837 bottom=114.933
+09-30 16:26:30.017 12026 12026 I C01c10/ImsaKit: line: 922, function: OnSelectionChange,IMC size: 66, range: 7/7/8/8.
+09-30 16:26:30.017 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] UpdateCaretInfoToController, left 152.451996, top 230.999969, width 7.000000, height 65.631989, selectController_ Start 8, end 8
+09-30 16:26:30.017 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:30.017 12026 12026 I A00000/CjguiRenderer: ime range delta node=107 range=7:7 bytes=1
+09-30 16:26:30.017 12026 12026 I A00000/CjguiApp: ime proxy onChange len=66 verdict=ok mount=app1/s1/c1/e1/m1
+09-30 16:26:30.017 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=1, removedLen=0
+09-30 16:26:30.018 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:30.018 12026 12026 I A00000/CjguiApp: ime select [8,8) rc=0 mount=app1/s1/c1/e1/m1
+09-30 16:26:30.018 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.030 12026 12227 I A00000/CjguiRenderer: present frame ok (nodes=15) layouts=79 layoutBytes=2685
+09-30 16:26:30.030 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=10 session=1 ticket=3 projection=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: image-lease stage=accepted-swap seq=3 session=1 ticket=3 cause=commit oldProjection=2 newProjection=3 rows=0 omitted=0 wrapped=0
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=100 x=0 y=0 w=377 h=749 clip=(0,0,377,749)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=101 x=0 y=0 w=377 h=44 clip=(0,0,377,44)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=102 x=6 y=6 w=120 h=20 clip=(6,6,120,20)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=112 x=130 y=6 w=52 h=30 clip=(130,6,52,30)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=118 x=186 y=6 w=52 h=30 clip=(186,6,52,30)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=119 x=242 y=6 w=52 h=30 clip=(242,6,52,30)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=104 x=0 y=44 w=377 h=1 clip=(0,44,377,1)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=105 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=311 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=190 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=106 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=107 x=22 y=67 w=333 h=240 clip=(22,67,333,240)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=108 x=0 y=713 w=377 h=36 clip=(0,713,377,36)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=110 x=3 y=716 w=259 h=18 clip=(3,716,259,18)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: node-rect id=109 x=272 y=716 w=102 h=18 clip=(272,716,102,18)
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=100 semantic=pharos-editor-root kind=1 label=pharos-editor-root value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=101 semantic=pharos-editor-header kind=2 label=pharos-editor-header value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=102 semantic=pharos-editor-title kind=3 label=pharos-editor-title value=Pharos Mark v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=112 semantic=pharos-save kind=4 label=保存 value=保存 v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=118 semantic=pharos-undo kind=4 label=撤销 value=撤销 v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=119 semantic=pharos-redo kind=4 label=重做 value=重做 v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=104 semantic=pharos-editor-divider kind=1 label=pharos-editor-divider value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=105 semantic=pharos-editor-body-area kind=1 label=pharos-editor-body-area value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=311 semantic=pharos-editor-scroll kind=8 label=pharos-editor-scroll value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=190 semantic=pharos-editor-scroll-content kind=1 label=pharos-editor-scroll-content value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=106 semantic=pharos-editor-body-column kind=1 label=pharos-editor-body-column value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=107 semantic=pharos-editor-body kind=10 label=pharos-editor-body value=前行保留\na 拒绝输入😆 gamma\n末行保留H1R\n中文接续😆\nAgent:公开接口修改人接续😆重开接续\nAgent审验 v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=108 semantic=pharos-editor-status kind=2 label=pharos-editor-status value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=110 semantic=pharos-editor-status-state kind=3 label=pharos-editor-status-state value= v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: accepted node=109 semantic=pharos-editor-status-counts kind=3 label=pharos-editor-status-counts value=未保存 · 132 字节 v=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: ime context reconcile old=1 new=2 base=3
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame starts=0 encoded=0 readUs=0 decodeUs=0 hits=0
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame resident=0 idle=0 activeBytes=0 peakActiveBytes=0 reservations=0 peakTracked=0 running=0 queued=0 bitmapCreates=0 bitmapDestroys=0 bitmapCreateUs=0 bitmapDestroyUs=0
+09-30 16:26:30.030 12026 12225 I A00000/CjguiRenderer: present terminal session=1 ticket=3 status=0 phase=3
+09-30 16:26:30.031 12026 12225 I A00000/CjguiApp: PHAROS_OHOS_EDIT count=1 seq=1 ticket=1 applied=true mirror=2 reason= owner_version=2 owner_bytes=132 undo=1 redo=0
+09-30 16:26:30.031 12026 12225 I A00000/CjguiRenderer: ime reconcile notification old=1 new=2
+09-30 16:26:30.031 12026 12225 I A00000/CjguiRenderer: caret phase session=1 ctx=2 visible=1 active=1 nextMs=66195529
+09-30 16:26:30.032 12026 12227 I A00000/CjguiRenderer: text layout painted serial=11 ctx=2 ticket=3 node=107 units=64
+09-30 16:26:30.032 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():130.451996,handleRect.GetY():27.999969
+09-30 16:26:30.032 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.033 12026 12026 I A00000/CjguiApp: ime focus payload={"action":"reconcile","oldContext":1,"context":2,"field":"pharos-editor-body"}
+09-30 16:26:30.033 12026 12026 I A00000/CjguiHost: ime context json: {"context":2,"field":"pharos-editor-body","nodeId":107,"x":22,"y":67,"width":333,"height":240,"fontSize":18,"density":3.500000,"selStart":64,"selEnd":64,"generation":1,"baseVersion":3,"sessionToken":1,"mode":"immediate","inputCapabilities":{"fullDraft":"available","selectionUtf16":"available","markedRange":"callback_conditional","markedRangeObserved":false,"cancelEvent":"not_observed"},"text":"前行保留\na 拒绝输入😆 gamma\n末行保留H1R\n中文接续😆\nAgent:公开接口修改人接续😆重开接续\nAgent审验"}
+09-30 16:26:30.033 12026 12026 I A00000/CjguiApp: proxy retired for external reconcile ctx=1
+09-30 16:26:30.034 12026 12026 I A00000/CjguiApp: ime reconcile retired old=1 new=2 base=3
+09-30 16:26:30.034 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:30.045 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus will stop at root scope Stack/5 of focus view page/2
+09-30 16:26:30.045 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] TextArea/secure_fieldtrigger onBlurInternal by 2
+09-30 16:26:30.045 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] TextField 12 OnBlur
+09-30 16:26:30.045 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] nodeId:[12] TextField reportComponentChangeEvent 134
+09-30 16:26:30.045 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] FocusSwitch end, TextArea/secure_field onBlur, Stack/secure_field onFocus, start: 5, end: 1, update: 0
+09-30 16:26:30.045 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] current focus node: (Stack/5). isDynamic: 0
+09-30 16:26:30.045 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] FrameNode(Stack/5) notNeedSoftKeyboard.
+09-30 16:26:30.045 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] Ime Shown Or Attached, Need to close keyboard
+09-30 16:26:30.045 12026 12026 I C01c10/ImsaKit: line: 520, function: Close,start.
+09-30 16:26:30.045 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnDetach
+09-30 16:26:30.046 12026 12186 I C03914/AceTextField: [(-1:100000:singleton)] FinishTextPreview
+09-30 16:26:30.046 12026 12186 I C03914/AceTextField: [(-1:100000:singleton)] SendKeyboardStatus status: 1
+09-30 16:26:30.046 12026 12186 I C03914/AceTextField: [(-1:100000:singleton)] SetKeyboardStatus status: 0
+09-30 16:26:30.046 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] FinishTextPreview
+09-30 16:26:30.046 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] SendKeyboardStatus status: 1
+09-30 16:26:30.046 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] SetKeyboardStatus status: 0
+09-30 16:26:30.046 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] PageChange CloseKeyboard FrameNode notNeedSoftKeyboard.
+09-30 16:26:30.047 12026 12186 E C01c10/ImsaKit: line: 1608, function: NotifyPanelStatusInfo,listener is nullptr!
+09-30 16:26:30.047 12026 12156 W C01c10/ImsaKit: line: 1875, function: FinishTextPreview,not bound or listener is nullptr!
+09-30 16:26:30.050 12026 12026 I A00000/CjguiApp: ime stale blur ignored mount=app1/s1/c1/e1/m1
+09-30 16:26:30.051 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=11 session=1 ticket=3 projection=3
+09-30 16:26:30.051 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=10 layouts=85 layoutBytes=2869
+09-30 16:26:30.051 12026 12227 I A00000/CjguiRenderer: text layout painted serial=12 ctx=2 ticket=3 node=107 units=64
+09-30 16:26:30.053 12026 12026 I A00000/CjguiHost: ime context json: {"context":2,"field":"pharos-editor-body","nodeId":107,"x":22,"y":67,"width":333,"height":240,"fontSize":18,"density":3.500000,"selStart":64,"selEnd":64,"generation":1,"baseVersion":3,"sessionToken":1,"mode":"immediate","inputCapabilities":{"fullDraft":"available","selectionUtf16":"available","markedRange":"callback_conditional","markedRangeObserved":false,"cancelEvent":"not_observed"},"text":"前行保留\na 拒绝输入😆 gamma\n末行保留H1R\n中文接续😆\nAgent:公开接口修改人接续😆重开接续\nAgent审验"}
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: ime proxy mounted ctx=2 field=pharos-editor-body node=107 gen=1 base=3 font=18 px=22,67 333x240 vp=6.3,19.1 95.1x68.6 density=3.50 text=前行保留
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: a 拒绝输入😆 gamma
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: 末行保留H1R
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: 中文接续😆
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: Agent:公开接口修改人接续😆重开接续
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: Agent审验
+09-30 16:26:30.053 12026 12026 I A00000/CjguiApp: proxy mounted key=app1/s1/c2/e1/m2 field=pharos-editor-body
+09-30 16:26:30.054 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Request focus id can not found.
+09-30 16:26:30.054 12026 12026 E C03900/Ace: [napi_utils.cpp(58)-(100000:100000:scope)] napi throw errCode 150003 strMsg The component doesn't exist, is currently invisible, or has been disabled.
+09-30 16:26:30.054 12026 12026 W A00000/CjguiApp: ime requestFocus threw attempt=0
+09-30 16:26:30.054 12026 12026 W C03914/AceTextField: [(100000:100000:scope)] CaretPosition: The JSTextEditableController is NULL
+09-30 16:26:30.054 12026 12026 I A00000/CjguiApp: ime proxy selection set [64,64) reason=mount attempt=0 focused=false
+09-30 16:26:30.054 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:30.064 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=12 session=1 ticket=3 projection=3
+09-30 16:26:30.064 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=11 layouts=91 layoutBytes=3053
+09-30 16:26:30.064 12026 12227 I A00000/CjguiRenderer: text layout painted serial=13 ctx=2 ticket=3 node=107 units=64
+09-30 16:26:30.068 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:30.069 12026 12026 W C01202/Ces: Already subscribed
+09-30 16:26:30.069 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:30.069 12026 12026 I A00000/CjguiApp: ime proxy onChange len=64 verdict=ok mount=app1/s1/c2/e1/m2
+09-30 16:26:30.069 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=0, removedLen=0
+09-30 16:26:30.070 12026 12026 E C01406/OHOS::RS: Failed to attach property, property is null.
+09-30 16:26:30.070 12026 12026 E C01406/OHOS::RS: Failed to attach property, property is null.
+09-30 16:26:30.070 12026 12026 E C01406/OHOS::RS: Failed to attach property, property is null.
+09-30 16:26:30.070 12026 12026 E C01406/OHOS::RS: Failed to attach property, property is null.
+09-30 16:26:30.070 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:30.070 12026 12026 I A00000/CjguiRenderer: ime selection observation forwarded ctx=2 sel=64:64 native_changed=0
+09-30 16:26:30.070 12026 12026 I A00000/CjguiApp: ime select [64,64) rc=0 mount=app1/s1/c2/e1/m2
+09-30 16:26:30.070 12026 12026 I C0420b/WMSKeyboard: transaction: 1, safeHeight: 0, occupied rect: x 0, y 0, w 0, h 0, callingWindowRect: [0 0 1320 2856]
+09-30 16:26:30.070 12026 12026 I C01406/OHOS::RS: BeginSyncTransaction syncId:6146098200818
+09-30 16:26:30.071 12026 12026 I C03959/AceLayout: [(-2:100000:singleton)] [com.pharos.mark.hovernight20260930][entry][100000]: UpdateViewportConfig Viewport config: size: (1320, 2856) orientation: 0 density: 3.500000 position: (0, 0) transformHint: 0 displayId: 0, windowSizeChangeReason 34, is rsTransaction nullptr 1, updateAvoidAreas size: 5[(0,top [0 0 1320 136] )(1,top [517 45 285 103] )(2,empty)(3,empty)(4,bottom [429 2758 462 98] )], keyboardRect Rect (0.00, 0.00) - [0.00 x 0.00]
+09-30 16:26:30.071 12026 12026 I C04208/WMSLayout: UpdateViewportConfig: Id: 308, reason: 34, windowRect: [0 0 1320 2856], displayOrientation: 0, config[0, 0, 0, 3.500000]
+09-30 16:26:30.071 12026 12026 I C01406/OHOS::RS: CommitSyncTransaction syncId:6146098200818 syncCount: 0 parentPid: 1431
+09-30 16:26:30.071 12026 12026 I C01406/OHOS::RS: ResetSyncTransactionInfo syncId:6146098200818
+09-30 16:26:30.071 12026 12026 I C04209/WMSImms: NotifyAvoidAreaChange: win 308 api 26 type 3 area empty
+09-30 16:26:30.072 12026 12026 I C04208/WMSLayout: UpdateViewportConfig: Id: 308, reason: 23, windowRect: [0 0 1320 2856], displayOrientation: 0, config[0, 0, 0, 3.500000]
+09-30 16:26:30.074 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.075 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.075 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] origin positionY: 203.000000, height 177.631958
+09-30 16:26:30.075 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] use origin arg from the window
+09-30 16:26:30.075 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] keyboardHeight: 0.000000, positionY: 203.000000, textHeight: 177.631958, rootSize.Height() 2856.000000 adjust: 0.000000 final calculate keyboard offset is 0.000000
+09-30 16:26:30.075 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.075 12026 12026 W C02805/ClientMsgHandler: [K:U:12976|163]The client receives a key, Fd:39
+09-30 16:26:30.075 12026 12026 I C02805/InputManagerImpl: [K:U:12976|576]id:12976 recv
+09-30 16:26:30.075 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:5,InputId:12976,wid:308
+09-30 16:26:30.076 12026 12026 I C0420c/WMSEvent: HandleKeyEvent: DispatchKeyEvent ret:48, id:12976
+09-30 16:26:30.076 12026 12026 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12976, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.076 12026 12026 I C02805/InputManagerImpl: [K:U:12976|601]Key event report keyCode:<private>, id:12976 recv
+09-30 16:26:30.079 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=13 session=1 ticket=3 projection=3
+09-30 16:26:30.079 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=12 layouts=97 layoutBytes=3237
+09-30 16:26:30.080 12026 12227 I A00000/CjguiRenderer: text layout painted serial=14 ctx=2 ticket=3 node=107 units=64
+09-30 16:26:30.082 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:30.096 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=14 session=1 ticket=3 projection=3
+09-30 16:26:30.096 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=13 layouts=103 layoutBytes=3421
+09-30 16:26:30.096 12026 12227 I A00000/CjguiRenderer: text layout painted serial=15 ctx=2 ticket=3 node=107 units=64
+09-30 16:26:30.098 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=64 affinity=0 x=113.571 top=177.904 bottom=199.000
+09-30 16:26:30.101 12026 12026 W C02805/ClientMsgHandler: [K:D:12977|163]The client receives a key, Fd:39
+09-30 16:26:30.101 12026 12026 I C02805/InputManagerImpl: [K:D:12977|576]id:12977 recv
+09-30 16:26:30.101 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:6,InputId:12977,wid:308
+09-30 16:26:30.101 12026 12026 I C0420c/WMSEvent: HandleKeyEvent: DispatchKeyEvent ret:48, id:12977
+09-30 16:26:30.101 12026 12026 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12977, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.101 12026 12026 I C02805/InputManagerImpl: [K:D:12977|601]Key event report keyCode:<private>, id:12977 recv
+09-30 16:26:30.112 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=15 session=1 ticket=3 projection=3
+09-30 16:26:30.113 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=14 layouts=109 layoutBytes=3605
+09-30 16:26:30.160 12026 12026 W C02805/ClientMsgHandler: [K:U:12978|163]The client receives a key, Fd:39
+09-30 16:26:30.160 12026 12026 I C02805/InputManagerImpl: [K:U:12978|576]id:12978 recv
+09-30 16:26:30.160 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:7,InputId:12978,wid:308
+09-30 16:26:30.160 12026 12026 I C0420c/WMSEvent: HandleKeyEvent: DispatchKeyEvent ret:48, id:12978
+09-30 16:26:30.160 12026 12026 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12978, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.160 12026 12026 I C02805/InputManagerImpl: [K:U:12978|601]Key event report keyCode:<private>, id:12978 recv
+09-30 16:26:30.161 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] TextArea/secure_fieldRequest focus sync by id
+09-30 16:26:30.161 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] TextArea/secure_field RequestFocusImmediately isOnMainTree:1
+09-30 16:26:30.161 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] TextField 14 on focus
+09-30 16:26:30.161 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] Set needToRequestKeyboardInner_ to 1 : reason 2
+09-30 16:26:30.161 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] 14 RequestKeyboardByFocusSwitch: onFocus_: 1 Inner: 1 modalCovered: 0
+09-30 16:26:30.161 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] 14 add requestkeyboard task
+09-30 16:26:30.161 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] FocusSwitch end, Stack/secure_field onBlur, TextArea/secure_field onFocus, start: 2, end: 1, update: 2
+09-30 16:26:30.161 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] current focus node: (TextArea/14). isDynamic: 0
+09-30 16:26:30.161 12026 12026 I A00000/CjguiApp: ime requestFocus sent attempt=1
+09-30 16:26:30.166 12026 12026 W C02805/ClientMsgHandler: [K:D:12979|163]The client receives a key, Fd:39
+09-30 16:26:30.166 12026 12026 I C02805/InputManagerImpl: [K:D:12979|576]id:12979 recv
+09-30 16:26:30.166 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:8,InputId:12979,wid:308
+09-30 16:26:30.166 12026 12026 I C0420c/WMSEvent: HandleKeyEvent: DispatchKeyEvent ret:48, id:12979
+09-30 16:26:30.166 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand len: 1 reason: 1
+09-30 16:26:30.167 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.167 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand MarkDirtyNode 14, reason: 1
+09-30 16:26:30.167 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 0) return: 1
+09-30 16:26:30.167 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus system handled the key event: code:secure_field/action:0
+09-30 16:26:30.167 12026 12026 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12979, consumed: 1,escTrigger: 0, escDown: 0
+09-30 16:26:30.167 12026 12026 I C02805/InputManagerImpl: [K:D:12979|601]Key event report keyCode:<private>, id:12979 recv
+09-30 16:26:30.174 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillInsertValueEvent len:1,offset:64
+09-30 16:26:30.176 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():139.076004,handleRect.GetY():146.368042
+09-30 16:26:30.176 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.176 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] node:14, RequestKeyboard set calling window id:308 inputType:-1, enterKeyType:8, needKeyboard:1, sourceType:0 placeholderLength:0
+09-30 16:26:30.176 12026 12026 I C01c10/ImsaKit: line: 361, function: AttachExec,isShowKeyboard 1.
+09-30 16:26:30.179 12026 12026 I C01c10/ImsaKit: line: 1308, function: OnInputReady,InputMethodController start.
+09-30 16:26:30.179 12026 12026 I C01c10/ImsaKit: line: 406, function: AttachExec,bind imf successfully.
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.180 12026 12026 I C01c10/ImsaKit: line: 887, function: OnCursorUpdate,left: 161, top: 349, height: 65.
+09-30 16:26:30.180 12026 12026 I C01c10/ImsaKit: line: 922, function: OnSelectionChange,IMC size: 65, range: 65/65/65/65.
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] UpdateCaretInfoToController, left 161.076004, top 349.368042, width 7.000000, height 65.631958, selectController_ Start 65, end 65
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] Set needToRequestKeyboardInner_ to 0 : reason 4
+09-30 16:26:30.180 12026 12026 I A00000/CjguiApp: ime proxy FOCUSED field=pharos-editor-body mount=app1/s1/c2/e1/m2
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:30.180 12026 12026 I A00000/CjguiRenderer: ime range delta node=107 range=64:64 bytes=1
+09-30 16:26:30.180 12026 12026 I A00000/CjguiApp: ime proxy onChange len=65 verdict=ok mount=app1/s1/c2/e1/m2
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=1, removedLen=0
+09-30 16:26:30.180 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:30.180 12026 12026 I A00000/CjguiRenderer: ime selection observation forwarded ctx=2 sel=65:65 native_changed=0
+09-30 16:26:30.180 12026 12026 I A00000/CjguiApp: ime select [65,65) rc=0 mount=app1/s1/c2/e1/m2
+09-30 16:26:30.181 12026 12227 I A00000/CjguiRenderer: text layout painted serial=16 ctx=2 ticket=3 node=107 units=65
+09-30 16:26:30.182 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.183 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=65 affinity=0 x=123.399 top=177.904 bottom=199.000
+09-30 16:26:30.183 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=16 session=1 ticket=3 projection=3
+09-30 16:26:30.183 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=15 layouts=115 layoutBytes=3790
+09-30 16:26:30.186 12026 12225 I A00000/CjguiRenderer: caret phase session=1 ctx=2 visible=1 active=1 nextMs=66195684
+09-30 16:26:30.190 12026 12227 I A00000/CjguiRenderer: text layout painted serial=17 ctx=2 ticket=3 node=107 units=65
+09-30 16:26:30.191 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():139.076004,handleRect.GetY():146.368042
+09-30 16:26:30.191 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=65 affinity=0 x=123.399 top=177.904 bottom=199.000
+09-30 16:26:30.191 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.201 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=17 session=1 ticket=3 projection=3
+09-30 16:26:30.201 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=16 layouts=121 layoutBytes=3975
+09-30 16:26:30.201 12026 12227 I A00000/CjguiRenderer: measure ok w=311 h=126 lineH=21 base=17
+09-30 16:26:30.203 12026 12227 I A00000/CjguiRenderer: measure ok w=88 h=13 lineH=13 base=10
+09-30 16:26:30.204 12026 12227 I A00000/CjguiRenderer: ensureSurface dispatch gen=1 sessBackend=0 armed=0 want=1
+09-30 16:26:30.204 12026 12227 I A00000/CjguiRenderer: text layout painted serial=18 ctx=2 ticket=4 node=107 units=65
+09-30 16:26:30.205 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=65 affinity=0 x=123.399 top=177.904 bottom=199.000
+09-30 16:26:30.213 12026 12187 I C03914/AceTextField: [(-1:100000:singleton)] SendKeyboardStatus status: 2
+09-30 16:26:30.213 12026 12187 I C03914/AceTextField: [(-1:100000:singleton)] SetKeyboardStatus status: 1
+09-30 16:26:30.216 12026 12227 I A00000/CjguiRenderer: present frame ok (nodes=15) layouts=129 layoutBytes=4316
+09-30 16:26:30.217 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=18 session=1 ticket=4 projection=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: image-lease stage=accepted-swap seq=4 session=1 ticket=4 cause=commit oldProjection=3 newProjection=4 rows=0 omitted=0 wrapped=0
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=100 x=0 y=0 w=377 h=749 clip=(0,0,377,749)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=101 x=0 y=0 w=377 h=44 clip=(0,0,377,44)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=102 x=6 y=6 w=120 h=20 clip=(6,6,120,20)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=112 x=130 y=6 w=52 h=30 clip=(130,6,52,30)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=118 x=186 y=6 w=52 h=30 clip=(186,6,52,30)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=119 x=242 y=6 w=52 h=30 clip=(242,6,52,30)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=104 x=0 y=44 w=377 h=1 clip=(0,44,377,1)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=105 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=311 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=190 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=106 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=107 x=22 y=67 w=333 h=240 clip=(22,67,333,240)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=108 x=0 y=713 w=377 h=36 clip=(0,713,377,36)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=110 x=3 y=716 w=259 h=18 clip=(3,716,259,18)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: node-rect id=109 x=272 y=716 w=102 h=18 clip=(272,716,102,18)
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=100 semantic=pharos-editor-root kind=1 label=pharos-editor-root value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=101 semantic=pharos-editor-header kind=2 label=pharos-editor-header value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=102 semantic=pharos-editor-title kind=3 label=pharos-editor-title value=Pharos Mark v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=112 semantic=pharos-save kind=4 label=保存 value=保存 v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=118 semantic=pharos-undo kind=4 label=撤销 value=撤销 v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=119 semantic=pharos-redo kind=4 label=重做 value=重做 v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=104 semantic=pharos-editor-divider kind=1 label=pharos-editor-divider value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=105 semantic=pharos-editor-body-area kind=1 label=pharos-editor-body-area value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=311 semantic=pharos-editor-scroll kind=8 label=pharos-editor-scroll value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=190 semantic=pharos-editor-scroll-content kind=1 label=pharos-editor-scroll-content value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=106 semantic=pharos-editor-body-column kind=1 label=pharos-editor-body-column value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=107 semantic=pharos-editor-body kind=10 label=pharos-editor-body value=前行保留\na 拒绝输入😆 gamma\n末行保留H1R\n中文接续😆\nAgent:公开接口修改人接续😆重开接续\nAgent审验a v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=108 semantic=pharos-editor-status kind=2 label=pharos-editor-status value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=110 semantic=pharos-editor-status-state kind=3 label=pharos-editor-status-state value= v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: accepted node=109 semantic=pharos-editor-status-counts kind=3 label=pharos-editor-status-counts value=未保存 · 133 字节 v=4
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame starts=0 encoded=0 readUs=0 decodeUs=0 hits=0
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame resident=0 idle=0 activeBytes=0 peakActiveBytes=0 reservations=0 peakTracked=0 running=0 queued=0 bitmapCreates=0 bitmapDestroys=0 bitmapCreateUs=0 bitmapDestroyUs=0
+09-30 16:26:30.217 12026 12225 I A00000/CjguiRenderer: present terminal session=1 ticket=4 status=0 phase=3
+09-30 16:26:30.217 12026 12225 I A00000/CjguiApp: PHAROS_OHOS_EDIT count=2 seq=2 ticket=2 applied=true mirror=3 reason= owner_version=3 owner_bytes=133 undo=2 redo=0
+09-30 16:26:30.218 12026 12026 W C02805/ClientMsgHandler: [K:U:12980|163]The client receives a key, Fd:39
+09-30 16:26:30.218 12026 12026 I C02805/InputManagerImpl: [K:U:12980|576]id:12980 recv
+09-30 16:26:30.218 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:9,InputId:12980,wid:308
+09-30 16:26:30.219 12026 12026 I C02805/InputManagerImpl: [K:U:12980|601]Key event report keyCode:<private>, id:12980 recv
+09-30 16:26:30.220 12026 12026 W C02805/ClientMsgHandler: [K:D:12981|163]The client receives a key, Fd:39
+09-30 16:26:30.220 12026 12026 I C02805/InputManagerImpl: [K:D:12981|576]id:12981 recv
+09-30 16:26:30.220 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:10,InputId:12981,wid:308
+09-30 16:26:30.221 12026 12026 I C02805/InputManagerImpl: [K:D:12981|601]Key event report keyCode:<private>, id:12981 recv
+09-30 16:26:30.223 12026 12026 W C02805/ClientMsgHandler: [K:D:12982|163]The client receives a key, Fd:39
+09-30 16:26:30.223 12026 12026 I C02805/InputManagerImpl: [K:D:12982|576]id:12982 recv
+09-30 16:26:30.223 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:11,InputId:12982,wid:308
+09-30 16:26:30.223 12026 12026 I C02805/InputManagerImpl: [K:D:12982|601]Key event report keyCode:<private>, id:12982 recv
+09-30 16:26:30.226 12026 12026 I C0420b/WMSKeyboard: transaction: 0, safeHeight: 1099, occupied rect: x 0, y 1757, w 1320, h 1099, callingWindowRect: [0 0 1320 2856]
+09-30 16:26:30.230 12026 12026 I C04208/WMSLayout: UpdateViewportConfig: Id: 308, reason: 34, windowRect: [0 0 1320 2856], displayOrientation: 0, config[0, 0, 0, 3.500000]
+09-30 16:26:30.230 12026 12026 I C04209/WMSImms: NotifyAvoidAreaChange: win 308 api 26 type 3 area bottom [0 1757 1320 1099] 
+09-30 16:26:30.231 12026 12026 I C04208/WMSLayout: UpdateViewportConfig: Id: 308, reason: 23, windowRect: [0 0 1320 2856], displayOrientation: 0, config[0, 0, 0, 3.500000]
+09-30 16:26:30.231 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.232 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.232 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] origin positionY: 203.000000, height 296.000000
+09-30 16:26:30.232 12026 12026 I C03933/AceKeyboard: [(100000:100000:scope)] keyboardHeight: 1099.000000, positionY: 349.368042, textHeight: 149.631958, rootSize.Height() 2856.000000 adjust: 0.000000 final calculate keyboard offset is 0.000000
+09-30 16:26:30.232 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.232 12026 12026 I C03914/AceTextField: [(-1:100000:singleton)] NotifyPanelStatusInfo SetImeShow:1
+09-30 16:26:30.232 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 1) return: 0
+09-30 16:26:30.233 12026 12187 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12980, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.233 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 0) return: 0
+09-30 16:26:30.233 12026 12187 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12981, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.233 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand len: 1 reason: 1
+09-30 16:26:30.233 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.233 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] AddInsertCommand MarkDirtyNode 14, reason: 1
+09-30 16:26:30.233 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 0) return: 1
+09-30 16:26:30.233 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] Focus system handled the key event: code:secure_field/action:0
+09-30 16:26:30.233 12026 12187 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12982, consumed: 1,escTrigger: 0, escDown: 0
+09-30 16:26:30.238 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] OnWillInsertValueEvent len:1,offset:65
+09-30 16:26:30.239 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():180.796005,handleRect.GetY():146.368042
+09-30 16:26:30.239 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.239 12026 12026 I C01c10/ImsaKit: line: 887, function: OnCursorUpdate,left: 202, top: 349, height: 65.
+09-30 16:26:30.239 12026 12026 I C01c10/ImsaKit: line: 922, function: OnSelectionChange,IMC size: 66, range: 65/65/66/66.
+09-30 16:26:30.239 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] UpdateCaretInfoToController, left 202.796005, top 349.368042, width 7.000000, height 65.631958, selectController_ Start 66, end 66
+09-30 16:26:30.239 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On change previewText, len:0, index:<private>
+09-30 16:26:30.239 12026 12026 I A00000/CjguiRenderer: ime range delta node=107 range=65:65 bytes=1
+09-30 16:26:30.239 12026 12026 I A00000/CjguiApp: ime proxy onChange len=66 verdict=ok mount=app1/s1/c2/e1/m2
+09-30 16:26:30.239 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] addedLen=1, removedLen=0
+09-30 16:26:30.239 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] On selection change start <private>, end <private>
+09-30 16:26:30.239 12026 12026 I A00000/CjguiRenderer: ime selection observation forwarded ctx=2 sel=66:66 native_changed=0
+09-30 16:26:30.239 12026 12026 I A00000/CjguiApp: ime select [66,66) rc=0 mount=app1/s1/c2/e1/m2
+09-30 16:26:30.241 12026 12227 I A00000/CjguiRenderer: text layout painted serial=19 ctx=2 ticket=4 node=107 units=66
+09-30 16:26:30.242 12026 12026 W C0390d/AceOverlay: [(100000:100000:scope)] failed to get foldCreaseRegion
+09-30 16:26:30.243 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=66 affinity=0 x=136.809 top=177.904 bottom=199.000
+09-30 16:26:30.243 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=19 session=1 ticket=4 projection=4
+09-30 16:26:30.243 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=17 layouts=135 layoutBytes=4502
+09-30 16:26:30.250 12026 12225 I A00000/CjguiRenderer: caret phase session=1 ctx=2 visible=1 active=1 nextMs=66195748
+09-30 16:26:30.250 12026 12227 I A00000/CjguiRenderer: text layout painted serial=20 ctx=2 ticket=4 node=107 units=66
+09-30 16:26:30.251 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=66 affinity=0 x=136.809 top=177.904 bottom=199.000
+09-30 16:26:30.255 12026 12026 I C03912/AceTextInput: [(100000:100000:scope)] after move, handleRect.GetX():180.796005,handleRect.GetY():146.368042
+09-30 16:26:30.255 12026 12026 I C03914/AceTextField: [(100000:100000:scope)] gradientMode = 0 fluidLightMode = 0
+09-30 16:26:30.260 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=20 session=1 ticket=4 projection=4
+09-30 16:26:30.260 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=18 layouts=141 layoutBytes=4688
+09-30 16:26:30.260 12026 12227 I A00000/CjguiRenderer: measure ok w=311 h=126 lineH=21 base=17
+09-30 16:26:30.260 12026 12227 I A00000/CjguiRenderer: measure ok w=88 h=13 lineH=13 base=10
+09-30 16:26:30.261 12026 12227 I A00000/CjguiRenderer: ensureSurface dispatch gen=1 sessBackend=0 armed=0 want=1
+09-30 16:26:30.261 12026 12227 I A00000/CjguiRenderer: text layout painted serial=21 ctx=2 ticket=5 node=107 units=66
+09-30 16:26:30.262 12026 12227 I A00000/CjguiRenderer: caret geometry session=1 ctx=2 caret=66 affinity=0 x=136.809 top=177.904 bottom=199.000
+09-30 16:26:30.271 12026 12227 E C02515/DGLES: [d_eglSwapBuffers_special@egl_gpu.cpp:566] sync get ret 0 error 1 sync_fd 55
+09-30 16:26:30.275 12026 12026 W C02805/ClientMsgHandler: [K:U:12983|163]The client receives a key, Fd:39
+09-30 16:26:30.275 12026 12026 I C02805/InputManagerImpl: [K:U:12983|576]id:12983 recv
+09-30 16:26:30.275 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:12,InputId:12983,wid:308
+09-30 16:26:30.276 12026 12026 I C02805/InputManagerImpl: [K:U:12983|601]Key event report keyCode:<private>, id:12983 recv
+09-30 16:26:30.276 12026 12026 W C02805/ClientMsgHandler: [K:U:12984|163]The client receives a key, Fd:39
+09-30 16:26:30.276 12026 12026 I C02805/InputManagerImpl: [K:U:12984|576]id:12984 recv
+09-30 16:26:30.276 12026 12026 I C04213/InputKeyFlow: HandleInputEvent: eid:13,InputId:12984,wid:308
+09-30 16:26:30.276 12026 12026 I C02805/InputManagerImpl: [K:U:12984|601]Key event report keyCode:<private>, id:12984 recv
+09-30 16:26:30.277 12026 12227 I A00000/CjguiRenderer: present frame ok (nodes=15) layouts=149 layoutBytes=5031
+09-30 16:26:30.277 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=21 session=1 ticket=5 projection=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: image-lease stage=accepted-swap seq=5 session=1 ticket=5 cause=commit oldProjection=4 newProjection=5 rows=0 omitted=0 wrapped=0
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=100 x=0 y=0 w=377 h=749 clip=(0,0,377,749)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=101 x=0 y=0 w=377 h=44 clip=(0,0,377,44)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=102 x=6 y=6 w=120 h=20 clip=(6,6,120,20)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=112 x=130 y=6 w=52 h=30 clip=(130,6,52,30)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=118 x=186 y=6 w=52 h=30 clip=(186,6,52,30)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=119 x=242 y=6 w=52 h=30 clip=(242,6,52,30)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=104 x=0 y=44 w=377 h=1 clip=(0,44,377,1)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=105 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=311 x=0 y=45 w=377 h=668 clip=(0,45,377,668)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=190 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=106 x=0 y=45 w=377 h=284 clip=(0,45,377,284)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=107 x=22 y=67 w=333 h=240 clip=(22,67,333,240)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=108 x=0 y=713 w=377 h=36 clip=(0,713,377,36)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=110 x=3 y=716 w=259 h=18 clip=(3,716,259,18)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: node-rect id=109 x=272 y=716 w=102 h=18 clip=(272,716,102,18)
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=100 semantic=pharos-editor-root kind=1 label=pharos-editor-root value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=101 semantic=pharos-editor-header kind=2 label=pharos-editor-header value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=102 semantic=pharos-editor-title kind=3 label=pharos-editor-title value=Pharos Mark v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=112 semantic=pharos-save kind=4 label=保存 value=保存 v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=118 semantic=pharos-undo kind=4 label=撤销 value=撤销 v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=119 semantic=pharos-redo kind=4 label=重做 value=重做 v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=104 semantic=pharos-editor-divider kind=1 label=pharos-editor-divider value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=105 semantic=pharos-editor-body-area kind=1 label=pharos-editor-body-area value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=311 semantic=pharos-editor-scroll kind=8 label=pharos-editor-scroll value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=190 semantic=pharos-editor-scroll-content kind=1 label=pharos-editor-scroll-content value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=106 semantic=pharos-editor-body-column kind=1 label=pharos-editor-body-column value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=107 semantic=pharos-editor-body kind=10 label=pharos-editor-body value=前行保留\na 拒绝输入😆 gamma\n末行保留H1R\n中文接续😆\nAgent:公开接口修改人接续😆重开接续\nAgent审验aH v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=108 semantic=pharos-editor-status kind=2 label=pharos-editor-status value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=110 semantic=pharos-editor-status-state kind=3 label=pharos-editor-status-state value= v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: accepted node=109 semantic=pharos-editor-status-counts kind=3 label=pharos-editor-status-counts value=未保存 · 134 字节 v=5
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame starts=0 encoded=0 readUs=0 decodeUs=0 hits=0
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: image-cost stage=frame resident=0 idle=0 activeBytes=0 peakActiveBytes=0 reservations=0 peakTracked=0 running=0 queued=0 bitmapCreates=0 bitmapDestroys=0 bitmapCreateUs=0 bitmapDestroyUs=0
+09-30 16:26:30.277 12026 12225 I A00000/CjguiRenderer: present terminal session=1 ticket=5 status=0 phase=3
+09-30 16:26:30.278 12026 12225 I A00000/CjguiApp: PHAROS_OHOS_EDIT count=3 seq=3 ticket=3 applied=true mirror=4 reason= owner_version=4 owner_bytes=134 undo=3 redo=0
+09-30 16:26:30.293 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 1) return: 0
+09-30 16:26:30.293 12026 12187 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12983, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.293 12026 12026 I C0391c/AceFocus: [(100000:100000:scope)] OnKeyEventInteral Node process self: Node TextArea/14handle KeyEvent(secure_field, 1) return: 0
+09-30 16:26:30.293 12026 12187 I C0420c/WMSEvent: DispatchKeyEventCallback: id: 12984, consumed: 0,escTrigger: 0, escDown: 0
+09-30 16:26:30.294 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=20 op=GET_CONTEXT_0 queueUs=7357
+09-30 16:26:30.311 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=21 op=OTHER queueUs=6849
+09-30 16:26:30.362 12026 12026 I C01c10/ImsaKit: line: 745, function: ShowTextInput,run in.
+09-30 16:26:30.362 12026 12026 I C01c10/ImsaKit: line: 776, function: GetAttachOptionsValue,run in. requestKeyboardReason=0
+09-30 16:26:30.362 12026 12221 I C01c10/ImsaKit: line: 433, function: ShowTextInputInner,start.
+09-30 16:26:30.363 12026 12221 I C01c10/ImsaKit: line: 445, function: ShowTextInputInner,enter editable state.
+09-30 16:26:30.363 12026 12221 I C01c10/ImsaKit: line: 543, function: operator(),exec success.
+09-30 16:26:30.363 12026 12026 I A00000/CjguiApp: ime showTextInput ok field=pharos-editor-body
+09-30 16:26:30.364 12026 12187 I C03914/AceTextField: [(-1:100000:singleton)] SendKeyboardStatus status: 2
+09-30 16:26:30.364 12026 12187 I C03914/AceTextField: [(-1:100000:singleton)] SetKeyboardStatus status: 1
+09-30 16:26:30.365 12026 12026 I C03914/AceTextField: [(-1:100000:singleton)] NotifyPanelStatusInfo SetImeShow:1
+09-30 16:26:30.459 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=22 op=GET_CONTEXT_0 queueUs=15295
+09-30 16:26:30.477 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=23 op=OTHER queueUs=7256
+09-30 16:26:30.622 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=24 op=GET_CONTEXT_0 queueUs=11955
+09-30 16:26:30.638 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=25 op=OTHER queueUs=4579
+09-30 16:26:30.753 12026 12225 I A00000/CjguiRenderer: caret phase session=1 ctx=2 visible=0 active=1 nextMs=66196252
+09-30 16:26:30.754 12026 12227 I A00000/CjguiRenderer: text layout painted serial=22 ctx=2 ticket=5 node=107 units=66
+09-30 16:26:30.756 12026 12227 I A00000/CjguiRenderer: text layout flushed serial=22 session=1 ticket=5 projection=5
+09-30 16:26:30.756 12026 12227 I A00000/CjguiRenderer: redraw frame ok session=1 gen=1 geometry=1 seq=19 layouts=155 layoutBytes=5217
+09-30 16:26:30.787 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=26 op=GET_CONTEXT_0 queueUs=13494
+09-30 16:26:30.804 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=27 op=OTHER queueUs=5277
+09-30 16:26:30.950 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=28 op=GET_CONTEXT_0 queueUs=14005
+09-30 16:26:30.967 12026 12225 I A00000/CjguiTransport: transport-cost stage=owner-claim instance=ohos_transport_1 requestId=29 op=OTHER queueUs=5963

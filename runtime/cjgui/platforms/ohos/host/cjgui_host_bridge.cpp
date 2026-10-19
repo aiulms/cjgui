@@ -1972,9 +1972,24 @@ using ImeContextPreviewFn = int32_t (*)(const char *, size_t, int64_t);
 using ImePlainKeyFn = int32_t (*)(const char *, int64_t, uint64_t);
 using ImeContextEndFn = int32_t (*)(int64_t);
 using FocusAuthorityFn = int64_t (*)(uint64_t, uint64_t, int64_t, uint64_t, uint64_t, int32_t, uint64_t, int64_t, uint64_t);
+using FocusTransferAuthorityFn = int64_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,int32_t,
+    uint64_t,int64_t,uint64_t,uint64_t,uint64_t,int64_t,uint32_t,uint64_t,const char *,uint64_t,int64_t);
 using FocusForegroundFn = void (*)(uint64_t, int32_t);
+using SelectionCommandPrepareFn = const char *(*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,
+    uint64_t,uint64_t,uint64_t,uint64_t,const char *,size_t);
+using SelectionCommandObserveFn = int32_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,
+    uint64_t,uint64_t,uint32_t,uint32_t,uint32_t);
+using SelectionCommandCloseCaptureFn = int32_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using OrdinarySelectionSourceFn = const char *(*)(const char*,size_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using OrdinarySelectionPrepareFn = const char *(*)(const char*,size_t,uint32_t,uint32_t,uint64_t,uint64_t,
+    int64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,int64_t);
+using OrdinarySelectionObserveFn = int32_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,
+    uint64_t,uint64_t,uint32_t,uint32_t,uint32_t,uint64_t);
 using InputWillFn = int64_t (*)(const char *,size_t,const char *,size_t,const char *,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using InputWillSuccessorFn = int64_t (*)(const char *,size_t,const char *,size_t,const char *,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,uint64_t);
 using InputChangeFn = int32_t (*)(const char *,size_t,uint64_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+using InputChangePrefixFn = int64_t (*)(const char *,size_t,const char *,size_t,uint64_t,uint64_t,uint64_t,int64_t,
+    uint64_t,uint64_t,uint64_t,uint64_t,uint32_t,uint32_t,uint32_t,uint32_t,int32_t,const char *,size_t,int32_t,const char *,size_t);
 using FinishProxyFn = int32_t (*)(const char *, size_t, uint64_t, uint64_t, int64_t, uint64_t, uint64_t, uint64_t);
 using ImeContextQueryFn = int32_t (*)(char *, int32_t);
 using ImeGraphemeQueryFn = int32_t (*)(const char *, size_t, int32_t, int64_t, int32_t *, int32_t *);
@@ -2018,10 +2033,28 @@ using ImeContextPreviewRangeFn = int32_t (*)(const char *, size_t, int32_t, int3
 static ImeContextPreviewRangeFn imeContextPreviewRangeFn = nullptr;
 static ImeContextEndFn imeContextEndFn = nullptr;
 static FocusAuthorityFn focusAuthorityFn = nullptr;
+static FocusTransferAuthorityFn focusTransferAuthorityFn = nullptr;
+using OriginalInsertReceiveFn = int64_t (*)(const uint16_t*,size_t,uint32_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+using OriginalInsertStatusFn = int32_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t);
+static OriginalInsertReceiveFn originalInsertReceiveFn = nullptr;
+static OriginalInsertStatusFn originalInsertStatusFn = nullptr;
+static OriginalInsertStatusFn originalInsertCancelFn = nullptr;
+using OriginalInsertExitFn=int32_t (*)(uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+static OriginalInsertExitFn originalInsertExitFn=nullptr;
+static SelectionCommandPrepareFn selectionCommandPrepareFn = nullptr;
+static SelectionCommandObserveFn selectionCommandObserveFn = nullptr;
+static SelectionCommandCloseCaptureFn selectionCommandCloseCaptureFn = nullptr;
+static OrdinarySelectionSourceFn ordinarySelectionSourceFn=nullptr;
+static OrdinarySelectionPrepareFn ordinarySelectionPrepareFn=nullptr;
+static OrdinarySelectionObserveFn ordinarySelectionObserveFn=nullptr;
 static FocusForegroundFn focusForegroundFn = nullptr;
 static FinishProxyFn finishProxyFn = nullptr;
+using InputWillCommandFn = int64_t (*)(const char *,size_t,const char *,size_t,const char *,uint32_t,uint32_t,uint32_t,uint32_t,uint64_t,uint64_t,int64_t,uint64_t,uint64_t,uint64_t,uint64_t,uint64_t);
+static InputWillCommandFn inputWillCommandFn = nullptr;
 static InputWillFn inputWillFn = nullptr;
+static InputWillSuccessorFn inputWillSuccessorFn = nullptr;
 static InputChangeFn inputChangeFn = nullptr;
+static InputChangePrefixFn inputChangePrefixFn = nullptr;
 static ImeContextQueryFn imeContextQueryFn = nullptr;
 // 菜单有界元数据（B）：与整文查询同一符号族，但只含 O(1) 字段。
 using ImeMenuMetaFn = int32_t (*)(char *, int32_t);
@@ -2158,10 +2191,24 @@ static void resolvePlatformEntryPoints(void *handle)
     imeContextEndFn = reinterpret_cast<ImeContextEndFn>(
         dlsym(handle, "ohos_renderer_ime_finish_editing_ctx"));
     focusAuthorityFn = reinterpret_cast<FocusAuthorityFn>(dlsym(handle, "ohos_renderer_focus_authority"));
+    focusTransferAuthorityFn = reinterpret_cast<FocusTransferAuthorityFn>(dlsym(handle, "ohos_renderer_focus_transfer_authority"));
+    selectionCommandPrepareFn = reinterpret_cast<SelectionCommandPrepareFn>(dlsym(handle,"ohos_renderer_selection_command_prepare"));
+    ordinarySelectionSourceFn=reinterpret_cast<OrdinarySelectionSourceFn>(dlsym(handle,"ohos_renderer_ordinary_selection_source"));
+    ordinarySelectionPrepareFn=reinterpret_cast<OrdinarySelectionPrepareFn>(dlsym(handle,"ohos_renderer_ordinary_selection_prepare"));
+    ordinarySelectionObserveFn=reinterpret_cast<OrdinarySelectionObserveFn>(dlsym(handle,"ohos_renderer_ordinary_selection_observe"));
+    originalInsertReceiveFn = reinterpret_cast<OriginalInsertReceiveFn>(dlsym(handle,"ohos_renderer_original_insert_receive"));
+    originalInsertStatusFn = reinterpret_cast<OriginalInsertStatusFn>(dlsym(handle,"ohos_renderer_original_insert_status"));
+    originalInsertCancelFn = reinterpret_cast<OriginalInsertStatusFn>(dlsym(handle,"ohos_renderer_original_insert_cancel"));
+    originalInsertExitFn=reinterpret_cast<OriginalInsertExitFn>(dlsym(handle,"ohos_renderer_original_insert_exit"));
+    selectionCommandObserveFn = reinterpret_cast<SelectionCommandObserveFn>(dlsym(handle,"ohos_renderer_selection_command_observe"));
+    selectionCommandCloseCaptureFn = reinterpret_cast<SelectionCommandCloseCaptureFn>(dlsym(handle,"ohos_renderer_selection_command_close_capture"));
     focusForegroundFn = reinterpret_cast<FocusForegroundFn>(dlsym(handle, "ohos_renderer_focus_foreground"));
     finishProxyFn = reinterpret_cast<FinishProxyFn>(dlsym(handle, "ohos_renderer_finish_proxy"));
     inputWillFn = reinterpret_cast<InputWillFn>(dlsym(handle,"ohos_renderer_input_will"));
+    inputWillSuccessorFn = reinterpret_cast<InputWillSuccessorFn>(dlsym(handle,"ohos_renderer_input_will_successor"));
+    inputWillCommandFn = reinterpret_cast<InputWillCommandFn>(dlsym(handle,"ohos_renderer_input_will_command"));
     inputChangeFn = reinterpret_cast<InputChangeFn>(dlsym(handle,"ohos_renderer_input_change"));
+    inputChangePrefixFn = reinterpret_cast<InputChangePrefixFn>(dlsym(handle,"ohos_renderer_input_change_prefix"));
     if(!inputWillFn || !inputChangeFn) HLOGW("paired input entry unavailable");
     if (!focusAuthorityFn || !focusForegroundFn || !finishProxyFn) HLOGW("focus authority entry unavailable");
     imeGraphemeQueryFn = reinterpret_cast<ImeGraphemeQueryFn>(
@@ -3287,7 +3334,8 @@ static napi_value ImePlainKey(napi_env env, napi_callback_info info)
         if (context > 0 && generation > 0) rc = imePlainKeyFn(intent.c_str(), context, static_cast<uint64_t>(generation));
     }
     napi_value result;
-    napi_create_string_utf8(env, rc == 0 ? "0" : rc == 2 ? "2" : "1", NAPI_AUTO_LENGTH, &result);
+    const std::string reply=std::to_string(rc);
+    napi_create_string_utf8(env,reply.c_str(),NAPI_AUTO_LENGTH,&result);
     return result;
 }
 
@@ -3446,17 +3494,144 @@ static napi_value ImeFocusAuthority(napi_env env, napi_callback_info info)
     napi_value result; napi_create_string_utf8(env, text.c_str(), text.size(), &result); return result;
 }
 
+static napi_value ImeFocusTransferAuthority(napi_env env,napi_callback_info info)
+{
+    size_t argc=17; napi_value argv[17]{};
+    napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints(); std::string field; int64_t code=0;
+    if (argc==17 && focusTransferAuthorityFn && readStringArg(env,argv[14],&field)) {
+        code=focusTransferAuthorityFn(static_cast<uint64_t>(readInt64Arg(env,argv[0])),
+            static_cast<uint64_t>(readInt64Arg(env,argv[1])),readInt64Arg(env,argv[2]),
+            static_cast<uint64_t>(readInt64Arg(env,argv[3])),static_cast<uint64_t>(readInt64Arg(env,argv[4])),
+            static_cast<int32_t>(readInt64Arg(env,argv[5])),static_cast<uint64_t>(readInt64Arg(env,argv[6])),
+            readInt64Arg(env,argv[7]),static_cast<uint64_t>(readInt64Arg(env,argv[8])),
+            static_cast<uint64_t>(readInt64Arg(env,argv[9])),static_cast<uint64_t>(readInt64Arg(env,argv[10])),
+            readInt64Arg(env,argv[11]),static_cast<uint32_t>(readInt64Arg(env,argv[12])),
+            static_cast<uint64_t>(readInt64Arg(env,argv[13])),field.c_str(),
+            static_cast<uint64_t>(readInt64Arg(env,argv[15])),readInt64Arg(env,argv[16]));
+    }
+    napi_value result; const std::string text=std::to_string(code);
+    napi_create_string_utf8(env,text.c_str(),text.size(),&result); return result;
+}
+
+static napi_value ImeOriginalInsert(napi_env env,napi_callback_info info)
+{
+    size_t argc=11;napi_value argv[11]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();size_t units=0;int64_t code=-1;uint64_t n[10]{};
+    bool valid=argc==11 && originalInsertReceiveFn && napi_get_value_string_utf16(env,argv[0],nullptr,0,&units)==napi_ok && units>0 && units<=32768;
+    for(size_t i=0;valid && i<10;++i){double value=0;valid=napi_get_value_double(env,argv[i+1],&value)==napi_ok &&
+        std::isfinite(value) && value>=0 && value<=9007199254740991.0 && std::floor(value)==value;n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid && n[0]<=UINT32_MAX){std::vector<char16_t> raw(units+1);size_t copied=0;
+        if(napi_get_value_string_utf16(env,argv[0],raw.data(),raw.size(),&copied)==napi_ok && copied==units)
+            code=originalInsertReceiveFn(reinterpret_cast<const uint16_t*>(raw.data()),units,n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9]);}
+    napi_value out;const auto result=std::to_string(code);napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+static napi_value ImeOriginalInsertExit(napi_env env,napi_callback_info info)
+{
+    size_t argc=10;napi_value argv[10]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);resolveImeEntryPoints();
+    int32_t rc=1;uint64_t n[10]{};bool valid=argc==10 && originalInsertExitFn;
+    for(size_t i=0;valid && i<10;++i){double v=0;valid=napi_get_value_double(env,argv[i],&v)==napi_ok &&
+        std::isfinite(v) && v>=0 && v<=9007199254740991.0 && std::floor(v)==v;n[i]=valid?static_cast<uint64_t>(v):0;}
+    if(valid)rc=originalInsertExitFn(n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9]);
+    napi_value out;napi_create_string_utf8(env,rc==0?"0":"1",NAPI_AUTO_LENGTH,&out);return out;
+}
+static napi_value ImeOriginalInsertStatus(napi_env env,napi_callback_info info)
+{
+    size_t argc=6;napi_value argv[6]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);resolveImeEntryPoints();
+    int32_t code=-1;if(argc==6 && originalInsertStatusFn)code=originalInsertStatusFn(readInt64Arg(env,argv[0]),
+        readInt64Arg(env,argv[1]),readInt64Arg(env,argv[2]),readInt64Arg(env,argv[3]),readInt64Arg(env,argv[4]),readInt64Arg(env,argv[5]));
+    napi_value out;const auto result=std::to_string(code);napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+
+static napi_value ImeOriginalInsertCancel(napi_env env,napi_callback_info info)
+{
+    size_t argc=6;napi_value argv[6]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);resolveImeEntryPoints();
+    int32_t code=-1;if(argc==6 && originalInsertCancelFn)code=originalInsertCancelFn(readInt64Arg(env,argv[0]),
+        readInt64Arg(env,argv[1]),readInt64Arg(env,argv[2]),readInt64Arg(env,argv[3]),readInt64Arg(env,argv[4]),readInt64Arg(env,argv[5]));
+    napi_value out;const auto result=std::to_string(code);napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+
+static napi_value ImeOrdinarySelectionSource(napi_env env,napi_callback_info info)
+{
+    size_t argc=7;napi_value argv[7]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string result,text;uint64_t n[6]{};
+    bool valid=argc==7 && ordinarySelectionSourceFn && readStringArg(env,argv[0],&text) && text.size()<=32768;
+    for(size_t i=0;valid && i<6;++i){double value=0;valid=napi_get_value_double(env,argv[i+1],&value)==napi_ok &&
+        std::isfinite(value) && value>0 && value<=9007199254740991.0 && std::floor(value)==value;
+        n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid){const char *reply=ordinarySelectionSourceFn(text.c_str(),text.size(),n[0],n[1],n[2],n[3],n[4],n[5]);if(reply)result=reply;}
+    napi_value out;napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+static napi_value ImeOrdinarySelectionPrepare(napi_env env,napi_callback_info info)
+{
+    size_t argc=12;napi_value argv[12]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string result,text;uint64_t n[11]{};
+    bool valid=argc==12 && ordinarySelectionPrepareFn && readStringArg(env,argv[0],&text) && text.size()<=32768;
+    for(size_t i=0;valid && i<11;++i){double value=0;valid=napi_get_value_double(env,argv[i+1],&value)==napi_ok &&
+        std::isfinite(value) && value>=0 && value<=9007199254740991.0 && std::floor(value)==value;
+        n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid && n[0]<=UINT32_MAX && n[1]<=UINT32_MAX){const auto reply=ordinarySelectionPrepareFn(text.c_str(),text.size(),
+        n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9],n[10]);if(reply)result=reply;}
+    napi_value out;napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+static napi_value ImeOrdinarySelectionObserve(napi_env env,napi_callback_info info)
+{
+    size_t argc=12;napi_value argv[12]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();uint64_t n[12]{};int32_t rc=1;bool valid=argc==12 && ordinarySelectionObserveFn;
+    for(size_t i=0;valid && i<12;++i){double value=0;valid=napi_get_value_double(env,argv[i],&value)==napi_ok &&
+        std::isfinite(value) && value>=0 && value<=9007199254740991.0 && std::floor(value)==value;
+        n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid && n[8]<=3 && n[9]<=UINT32_MAX && n[10]<=UINT32_MAX)
+        rc=ordinarySelectionObserveFn(n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9],n[10],n[11]);
+    napi_value out;const auto result=std::to_string(rc);napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+static napi_value ImeSelectionCommandPrepare(napi_env env,napi_callback_info info)
+{
+    size_t argc=11;napi_value argv[11]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string text,result;uint64_t n[10]{};
+    bool valid=argc==11 && selectionCommandPrepareFn && readStringArg(env,argv[0],&text);
+    for(size_t i=0;valid && i<10;++i){double value=0;valid=napi_get_value_double(env,argv[i+1],&value)==napi_ok &&
+        std::isfinite(value) && value>=0 && value<=9007199254740991.0 && std::floor(value)==value;n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid){const auto reply=selectionCommandPrepareFn(n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9],text.c_str(),text.size());if(reply)result=reply;}
+    napi_value out;napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+
+static napi_value ImeSelectionCommandObserve(napi_env env,napi_callback_info info)
+{
+    size_t argc=11;napi_value argv[11]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();uint64_t n[11]{};bool valid=argc==11 && selectionCommandObserveFn;int32_t rc=1;
+    for(size_t i=0;valid && i<11;++i){double value=0;valid=napi_get_value_double(env,argv[i],&value)==napi_ok &&
+        std::isfinite(value) && value>=0 && value<=9007199254740991.0 && std::floor(value)==value;n[i]=valid?static_cast<uint64_t>(value):0;}
+    if(valid && n[8]<=3 && n[9]<=UINT32_MAX && n[10]<=UINT32_MAX)
+        rc=selectionCommandObserveFn(n[0],n[1],n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9],n[10]);
+    napi_value out;const auto result=std::to_string(rc);napi_create_string_utf8(env,result.c_str(),result.size(),&out);return out;
+}
+
+static napi_value ImeSelectionCommandCloseCapture(napi_env env,napi_callback_info info)
+{
+    size_t argc=6;napi_value argv[6]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();int32_t rc=1;
+    if(argc==6 && selectionCommandCloseCaptureFn)rc=selectionCommandCloseCaptureFn(
+        readInt64Arg(env,argv[0]),readInt64Arg(env,argv[1]),readInt64Arg(env,argv[2]),
+        readInt64Arg(env,argv[3]),readInt64Arg(env,argv[4]),readInt64Arg(env,argv[5]));
+    napi_value out;napi_create_string_utf8(env,rc==0?"0":"1",NAPI_AUTO_LENGTH,&out);return out;
+}
+
 static napi_value ImeInputWill(napi_env env,napi_callback_info info)
 {
-    size_t argc=13;napi_value argv[13]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    size_t argc=16;napi_value argv[16]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
     resolveImeEntryPoints();std::string before,after,field;int64_t id=-1;
-    bool valid=argc==13 && inputWillFn && readStringArg(env,argv[0],&before) &&
+    bool valid=(argc==13 || argc==14 || argc==15 || argc==16) && inputWillFn && readStringArg(env,argv[0],&before) &&
         readStringArg(env,argv[1],&after) && readStringArg(env,argv[2],&field);
-    double numbers[10]{};
-    for(size_t i=0;valid&&i<10;++i)valid=napi_get_value_double(env,argv[i+3],&numbers[i])==napi_ok &&
+    double numbers[13]{};
+    for(size_t i=0;valid&&i<argc-3;++i)valid=napi_get_value_double(env,argv[i+3],&numbers[i])==napi_ok &&
         std::isfinite(numbers[i]) && numbers[i]>=0 && std::floor(numbers[i])==numbers[i] && numbers[i]<=9007199254740991.0;
     for(size_t i=0;valid&&i<4;++i)valid=numbers[i]<=UINT32_MAX;
-    if(valid)id=inputWillFn(before.c_str(),before.size(),after.c_str(),after.size(),field.c_str(),
+    if(valid && numbers[12]>0 && numbers[10]==0 && numbers[11]==0 && inputWillSuccessorFn)id=inputWillSuccessorFn(before.c_str(),before.size(),after.c_str(),after.size(),field.c_str(),
+        numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6],numbers[7],numbers[8],numbers[9],numbers[12]);
+    else if(valid && numbers[12]==0 && argc>=14 && numbers[10]>0 && inputWillCommandFn)id=inputWillCommandFn(before.c_str(),before.size(),after.c_str(),after.size(),field.c_str(),
+        numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6],numbers[7],numbers[8],numbers[9],numbers[10],numbers[11]);
+    else if(valid && numbers[12]==0 && (argc==13 || (numbers[10]==0 && numbers[11]==0)))id=inputWillFn(before.c_str(),before.size(),after.c_str(),after.size(),field.c_str(),
         numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6],numbers[7],numbers[8],numbers[9]);
     const auto text=std::to_string(id);napi_value result;napi_create_string_utf8(env,text.c_str(),text.size(),&result);return result;
 }
@@ -3469,6 +3644,43 @@ static napi_value ImeInputChange(napi_env env,napi_callback_info info)
         std::isfinite(numbers[i]) && numbers[i]>0 && std::floor(numbers[i])==numbers[i] && numbers[i]<=9007199254740991.0;
     if(valid)rc=inputChangeFn(text.c_str(),text.size(),numbers[0],numbers[1],numbers[2],numbers[3],numbers[4],numbers[5],numbers[6]);
     napi_value result;napi_create_string_utf8(env,rc==0?"0":"1",NAPI_AUTO_LENGTH,&result);return result;
+}
+
+// New proof transport is strict even when called without the ArkTS adapter.
+// In particular, UTF-8 replacement of an unpaired JS surrogate is not evidence.
+static bool readPlatformEvidenceText(napi_env env,napi_value value,std::string &out)
+{
+    size_t units=0,bytes=0;
+    if(napi_get_value_string_utf16(env,value,nullptr,0,&units)!=napi_ok || units>262144 ||
+       napi_get_value_string_utf8(env,value,nullptr,0,&bytes)!=napi_ok || bytes>262144)return false;
+    std::vector<char16_t> buffer(units+1);size_t actual=0;
+    if(napi_get_value_string_utf16(env,value,buffer.data(),buffer.size(),&actual)!=napi_ok || actual!=units)return false;
+    for(size_t i=0;i<units;++i) {
+        if(buffer[i]>=0xd800 && buffer[i]<=0xdbff) {if(++i>=units || buffer[i]<0xdc00 || buffer[i]>0xdfff)return false;}
+        else if(buffer[i]>=0xdc00 && buffer[i]<=0xdfff)return false;
+    }
+    std::vector<char> utf8(bytes+1);
+    if(napi_get_value_string_utf8(env,value,utf8.data(),utf8.size(),&actual)!=napi_ok || actual!=bytes)return false;
+    out.assign(utf8.data(),bytes);return true;
+}
+static napi_value ImeInputChangePrefix(napi_env env,napi_callback_info info)
+{
+    size_t argc=19;napi_value argv[19]{};napi_get_cb_info(env,info,&argc,argv,nullptr,nullptr);
+    resolveImeEntryPoints();std::string before,after,preview,oldPreview;double n[18]{};
+    bool valid=argc==18 && inputChangePrefixFn &&
+        readPlatformEvidenceText(env,argv[0],before) && readPlatformEvidenceText(env,argv[1],after) &&
+        readPlatformEvidenceText(env,argv[15],preview) && readPlatformEvidenceText(env,argv[17],oldPreview);
+    for(size_t i=2;valid && i<=13;++i) {
+        const double minimum=i<10?1:0,maximum=i<10?9007199254740991.0:4294967295.0;
+        valid=napi_get_value_double(env,argv[i],&n[i])==napi_ok && std::isfinite(n[i]) &&
+            std::floor(n[i])==n[i] && n[i]>=minimum && n[i]<=maximum;
+    }
+    for(const auto i:{14,16})if(valid)valid=napi_get_value_double(env,argv[i],&n[i])==napi_ok && n[i]==-1;
+    int64_t boundary=0;
+    if(valid)boundary=inputChangePrefixFn(before.c_str(),before.size(),after.c_str(),after.size(),
+        n[2],n[3],n[4],n[5],n[6],n[7],n[8],n[9],n[10],n[11],n[12],n[13],
+        n[14],preview.c_str(),preview.size(),n[16],oldPreview.c_str(),oldPreview.size());
+    const auto text=std::to_string(boundary);napi_value result;napi_create_string_utf8(env,text.c_str(),text.size(),&result);return result;
 }
 
 static napi_value ImeFinishEditing(napi_env env, napi_callback_info info)
@@ -3537,8 +3749,13 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"imeMenuMeta", nullptr, ImeMenuMeta, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeCommitText", nullptr, ImeCommitText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeGraphemeRange", nullptr, ImeGraphemeRange, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOriginalInsert", nullptr, ImeOriginalInsert, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOriginalInsertStatus", nullptr, ImeOriginalInsertStatus, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOriginalInsertExit", nullptr, ImeOriginalInsertExit, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOriginalInsertCancel", nullptr, ImeOriginalInsertCancel, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeInputWill", nullptr, ImeInputWill, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeInputChange", nullptr, ImeInputChange, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeInputChangePrefix", nullptr, ImeInputChangePrefix, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewText", nullptr, ImePreviewText, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePreviewRange", nullptr, ImePreviewRange, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imePlainKey", nullptr, ImePlainKey, nullptr, nullptr, nullptr, napi_default, nullptr},
@@ -3547,6 +3764,13 @@ static napi_value Init(napi_env env, napi_value exports) {
         {"imeRestoreAck", nullptr, ImeRestoreAck, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFinishEditing", nullptr, ImeFinishEditing, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFocusAuthority", nullptr, ImeFocusAuthority, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeFocusTransferAuthority", nullptr, ImeFocusTransferAuthority, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeSelectionCommandPrepare", nullptr, ImeSelectionCommandPrepare, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOrdinarySelectionSource",nullptr,ImeOrdinarySelectionSource,nullptr,nullptr,nullptr,napi_default,nullptr},
+        {"imeOrdinarySelectionPrepare", nullptr, ImeOrdinarySelectionPrepare, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeOrdinarySelectionObserve", nullptr, ImeOrdinarySelectionObserve, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeSelectionCommandObserve", nullptr, ImeSelectionCommandObserve, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"imeSelectionCommandCloseCapture", nullptr, ImeSelectionCommandCloseCapture, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"imeFinishProxy", nullptr, ImeFinishProxy, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(descriptors) / sizeof(descriptors[0]), descriptors);

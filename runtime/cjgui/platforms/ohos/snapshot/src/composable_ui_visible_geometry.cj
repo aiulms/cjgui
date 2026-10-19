@@ -61,3 +61,20 @@ func cjguiAcceptedTextEdgeScrollDistance(direction: Int64, requested: Int64,
         else { last - viewport.y - 1 }
     return min(requested, max(room, 0))
 }
+
+// Only actual published typography line bands are admissible here. The caller
+// handles materialized-window continuation separately; a fragment is not EOF.
+// A line taller than the clip keeps the largest attainable visible portion.
+func cjguiAcceptedTextLineEdgeScrollDistance(direction: Int64, requested: Int64, viewport: CjguiComposableUiRect,
+    firstLine: CjguiComposableUiRect, lastLine: CjguiComposableUiRect): Int64 {
+    if (direction == 0 || requested <= 0 || viewport.height <= 0 || firstLine.width <= 0 || lastLine.width <= 0 ||
+        firstLine.height <= 0 || lastLine.height <= 0) {
+        return 0
+    }
+    let room = if (direction < 0) {
+        viewport.y + viewport.height - min(firstLine.height, viewport.height) - firstLine.y
+    } else {
+        lastLine.y + lastLine.height - viewport.y - min(lastLine.height, viewport.height)
+    }
+    return min(requested, max(room, 0))
+}

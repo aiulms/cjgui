@@ -38,7 +38,7 @@ private func sentinelNode(): CjguiInternalRendererComposableNode {
         isInteractive: 1u32,
         isReadOnly: 0u32,
         tabInsertsText: 1u32,
-        borderWidth: 2u32,
+        borderWidth: 2.5,
         cornerRadius: 4.5,
         clip0CornerRadius: 1.25,
         fontSize: 17.5,
@@ -109,7 +109,7 @@ private func zeroNode(): CjguiInternalRendererComposableNode {
         isInteractive: 0u32,
         isReadOnly: 0u32,
         tabInsertsText: 0u32,
-        borderWidth: 0u32,
+        borderWidth: 0.0,
         fontSize: 13.0,
         fontWeight: 0u32,
         fontFamily: 0u32,
@@ -133,7 +133,7 @@ private func zeroNode(): CjguiInternalRendererComposableNode {
 func ohosNodeAbiMirrorSizeMatchesC(): Unit {
     let cSize = unsafe { cjgui_node_probe_sizeof() }
     let cjSize = unsafe { sizeOf<CjguiInternalRendererComposableNode>() }
-    @Assert(cSize, UIntNative(888))
+    @Assert(cSize, UIntNative(1008))
     @Assert(cjSize, cSize)
 }
 

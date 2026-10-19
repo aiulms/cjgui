@@ -481,10 +481,23 @@ public class CjguiRangeTextWindow {
         return this.source.rangeTextVersion()
     }
 
+    /// Read the source at `startByte` without publishing it into the mirror.
+    /// A caller that must decide whether an accepted frame still corresponds
+    /// to the source uses this together with `sourceVersion()`; it never reads
+    /// the mirror as if it were the latest owner text.
+    public func peekSource(startByte: Int64, maxBytes: Int64): CjguiRangeTextSlice {
+        return this.source.readRangeText(startByte, maxBytes)
+    }
+
     /// The callback is the final session-only state transition. Source/owner
     /// protects the version comparison and that transition in one write boundary.
     public func confirmContentVersion(action: () -> Bool): Bool {
         return this.source.confirmRangeTextVersion(this.version, action)
+    }
+
+    // Confirm a real owner version independently of a possibly older mirror.
+    func confirmSourceVersion(expectedVersion: Int64, action: () -> Bool): Bool {
+        return this.source.confirmRangeTextVersion(expectedVersion, action)
     }
 
     public func rebaseSelection(fromVersion: Int64, startByte: Int64,

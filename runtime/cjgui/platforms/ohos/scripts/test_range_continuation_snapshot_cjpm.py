@@ -57,7 +57,7 @@ def harness(red=None):
     start=source.index(marker);end=source.index('                    if (nativeEvent.eventKind == 31u32 && controller.uiSceneVersion()',start)
     stamp=source[start:end]
     methods='\n'.join(method(source,n) for n in ('finishOhosInput','noteRefusedOhosInput','flushOhosInputCompletions','admitOhosRangeInput','routeOwnedTextSessionRangeEdit','resolveLocalTextContinuation','isEditableTextNodeKind','clearLocalTextContinuation','clearPendingLocalTextValue','ownedTextBindingHolds','recordOwnedRangeLocalAcceptance','resolveOwnedRangeContinuation','ownedRangeMirrorMatches','noteUnresolvedOwnedRangeEvent','adoptOwnedTextSelection'))
-    methods+='\n'+method(source,'resolvePlatformSelectionEvent')
+    methods+='\n'+method(source,'normalizeOhosObservedChoice')+'\n'+method(source,'resolvePlatformSelectionEvent')
     local_class=balanced(source,source.index('private class CjguiLocalRangeContinuation {')).replace('private class','class',1)
     local_class+='\n'+balanced(source,source.index('private class CjguiOhosRangeInputAdmission {')).replace('private class','class',1)
     binding_func=balanced(source,source.index('func cjguiSameFocusedTextBinding('))
@@ -66,6 +66,9 @@ def harness(red=None):
     constants+='\n'+balanced(runtime,runtime.index('class CjguiOhosInputTicketFact {'))
     constants+='\nvar testInputOrigin: ?CjguiOhosInputTicketFact = None\nfunc internalRendererInputTicket(token: UInt64): ?CjguiOhosInputTicketFact { return testInputOrigin }'
     constants+='\nfunc internalRendererWindowLog(message: String): Unit {}'
+    constants+='\n'+balanced(runtime,runtime.index('class CjguiOhosChoiceFact {'))
+    constants+='\nfunc internalRendererObservedChoice(token: UInt64): ?CjguiOhosChoiceFact { return None }'
+
     constants+='\n'+authority
     constants+='\n'+local_class+'\n'+binding_func+'\n'+ '\n'.join(re.findall(r'^private let CJGUI_OWNED_SELECTION_[^\n]+',source,re.M)).replace('private let','let')
     selection_source=balanced((SNAPSHOT/'composable_ui.cj').read_text(),(SNAPSHOT/'composable_ui.cj').read_text().index('    public func resolveSelection('))

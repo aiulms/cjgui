@@ -1,0 +1,8 @@
+date=2026-10-19
+sdk=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+Apple clang version 21.0.0 (clang-2100.1.1.101)
+Target: arm64-apple-darwin25.6.0
+renderer_sha256=b537007676d0c086693577e58ed4e617d6d06d93627b56fcb636e180528decd6
+fallback_test_sha256=a2079a558e01c40a6dd3e7cf832394578475d6145ee46ba283081398f6f5cd80
+fallback_binary_sha256=5b233fe26627e1f469eb7232b926eb896796ce12fb9d13e1be370ad3e0f4542b
+control_binary_sha256=b59cded82aa0efeae64ac07460d73cc9b131de3d70be3a157684e106d53db9dc

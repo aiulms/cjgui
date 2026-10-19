@@ -168,7 +168,7 @@ _Static_assert(offsetof(CjguiInternalRendererEvent, acceptedBindingEpoch) == 176
         # 这里把 C 侧尺寸与关键偏移钉死为契约（与头部尾部 _Static_assert 互补）。
         source = f'''
 #include "{HEADER.name}"
-_Static_assert(sizeof(CjguiInternalRendererComposableNode) == 888, "node size");
+_Static_assert(sizeof(CjguiInternalRendererComposableNode) == 1008, "node size");
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, inputScope) == 416, "input scope offset");
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, tabGroupId) == 424, "tab group offset");
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, tabSelected) == 432, "tab selected offset");
@@ -178,7 +178,8 @@ _Static_assert(offsetof(CjguiInternalRendererComposableNode, gradientPresent) ==
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, effectGroupPresent) == 736, "effect group offset");
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, effectBackdropBlurRadiusPoints) == 864, "backdrop offset");
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, wheelScrollable) == 872, "wheel offset");
-_Static_assert(offsetof(CjguiInternalRendererComposableNode, acceptedBindingEpoch) == 880, "accepted offset");
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, acceptedBindingEpoch) == 888, "accepted offset");
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) == 1000, "tint tail offset");
 '''
         completed = subprocess.run(
             ["cc", "-std=c11", "-fsyntax-only", "-x", "c", "-", "-I", str(HEADER.parent)],
@@ -204,8 +205,14 @@ _Static_assert(offsetof(CjguiInternalRendererComposableNode, acceptedBindingEpoc
                          "shadowPresent", "gradientPresent", "effectGroupPresent", "effectMaskPresent",
                          "effectBackdropBlurRadiusPoints", "wheelScrollable", "acceptedBindingEpoch"):
             self.assertIn(required, names)
-        self.assertEqual(names.index("acceptedBindingEpoch"), len(names) - 1)
-        self.assertEqual(names.index("wheelScrollable"), len(names) - 2)
+        # Append-only tail: acceptedBindingEpoch is the stable binding anchor and
+        # every later field must stay after it on all four mirrors.
+        self.assertEqual(names.index("acceptedBindingEpoch"), names.index("wheelScrollable") + 3)
+        self.assertEqual(names[names.index("acceptedBindingEpoch") + 1:],
+                         ["letterSpacing", "lineHeightPoints", "maxLines", "ellipsisEnabled",
+                          "cornerRadiiPresent", "cornerTopLeft", "cornerTopRight",
+                          "cornerBottomRight", "cornerBottomLeft", "zIndex", "rotateDegrees",
+                          "iconTintRed", "iconTintGreen", "iconTintBlue", "iconTintAlpha"])
 
     def test_host_copies_the_full_c_node_pod(self):
         host = HOST.read_text()

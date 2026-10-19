@@ -1,0 +1,145 @@
+1 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=788
+09-30 10:02:05.007 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=788
+09-30 10:02:05.007 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=788
+09-30 10:02:05.008 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=788 status=0 phase=3
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=271 w=220 h=56 clip=(32,282,220,45)
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=789
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=789
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=789
+09-30 10:02:05.026 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=789 status=0 phase=3
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=270 w=220 h=56 clip=(32,282,220,44)
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=790
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=790
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=790
+09-30 10:02:05.044 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=790 status=0 phase=3
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=269 w=220 h=56 clip=(32,282,220,43)
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=791
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=791
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=791
+09-30 10:02:05.061 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=791 status=0 phase=3
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=267 w=220 h=56 clip=(32,282,220,41)
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=792
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=792
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=792
+09-30 10:02:05.095 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=792 status=0 phase=3
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=266 w=220 h=56 clip=(32,282,220,40)
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=793
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=793
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=793
+09-30 10:02:05.113 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=793 status=0 phase=3
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=265 w=220 h=56 clip=(32,282,220,39)
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=794
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=794
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=794
+09-30 10:02:05.130 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=794 status=0 phase=3
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=264 w=220 h=56 clip=(32,282,220,38)
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=795
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=795
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=795
+09-30 10:02:05.164 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=795 status=0 phase=3
+09-30 10:02:05.180 28901 29089 I A00000/CjguiRenderer: raw touch action=39 x=1100 y=1144 ep=14
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=263 w=220 h=56 clip=(32,282,220,37)
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=796
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=796
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=796
+09-30 10:02:05.182 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=796 status=0 phase=3
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=262 w=220 h=56 clip=(32,282,220,36)
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=797
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=797
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=797
+09-30 10:02:05.204 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=797 status=0 phase=3
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=261 w=220 h=56 clip=(32,282,220,35)
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=798
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=798
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=798
+09-30 10:02:05.227 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=798 status=0 phase=3
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=260 w=220 h=56 clip=(32,282,220,34)
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=799
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=799
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=799
+09-30 10:02:05.253 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=799 status=0 phase=3
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=259 w=220 h=56 clip=(32,282,220,33)
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=800
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=800
+09-30 10:02:05.280 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=800
+09-30 10:02:05.281 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=800 status=0 phase=3
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=258 w=220 h=56 clip=(32,282,220,32)
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=801
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=801
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=801
+09-30 10:02:05.311 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=801 status=0 phase=3
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=257 w=220 h=56 clip=(32,282,220,31)
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=802
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=802
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=802
+09-30 10:02:05.344 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=802 status=0 phase=3
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=256 w=220 h=56 clip=(32,282,220,30)
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=803
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=803
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=803
+09-30 10:02:05.381 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=803 status=0 phase=3
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=255 w=220 h=56 clip=(32,282,220,29)
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=804
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=804
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=804
+09-30 10:02:05.423 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=804 status=0 phase=3
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=254 w=220 h=56 clip=(32,282,220,28)
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=805
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=805
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=805
+09-30 10:02:05.471 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=805 status=0 phase=3
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=253 w=220 h=56 clip=(32,282,220,27)
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=806
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=806
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=806
+09-30 10:02:05.527 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=806 status=0 phase=3
+09-30 10:02:05.595 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.595 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.595 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=252 w=220 h=56 clip=(32,282,220,26)
+09-30 10:02:05.596 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=807
+09-30 10:02:05.596 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=807
+09-30 10:02:05.596 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=807
+09-30 10:02:05.596 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=807 status=0 phase=3
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: node-rect id=1 x=0 y=0 w=377 h=487 clip=(0,0,377,487)
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: node-rect id=900 x=12 y=282 w=353 h=150 clip=(12,282,353,150)
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: node-rect id=944 x=32 y=251 w=220 h=56 clip=(32,282,220,25)
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: accepted node=1 semantic=thermo-root kind=1 label=thermo-root value= v=808
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: accepted node=900 semantic=thermo-hand-scroll kind=8 label=thermo-hand-scroll value= v=808
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: accepted node=944 semantic=thermo-focus-note-nav kind=4 label=定位滚动备注 value=定位滚动备注 v=808
+09-30 10:02:05.682 28901 29089 I A00000/CjguiRenderer: present terminal session=1 ticket=808 status=0 phase=3

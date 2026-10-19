@@ -18,6 +18,59 @@
 #include "cjgui_internal_renderer.h"
 #include "cjgui_native_bridge.h"
 
+// Opt-in, listen-only observations of this process's own synthetic test keys.
+// userData narrows logging only; it is never an input authority or routing key.
+static uint32_t gCjguiApplicationKeyTraceCount;
+static uint32_t gCjguiQuartzKeyTraceCount;
+static uint32_t gCjguiOwnedApplicationPointerCount;
+static void CjguiTraceApplicationPointer(CGEventRef cg,const char *phase,NSEvent *event) {
+    if (!getenv("CJGUI_OWNED_POINTER_TRACE") || gCjguiOwnedApplicationPointerCount>=24 || !cg) return;
+    CGEventType type=CGEventGetType(cg);
+    int64_t data=CGEventGetIntegerValueField(cg,kCGEventSourceUserData);
+    if ((type!=kCGEventLeftMouseDown && type!=kCGEventLeftMouseDragged && type!=kCGEventLeftMouseUp) || data<0 || data>4096) return;
+    CGPoint point=CGEventGetLocation(cg);NSPoint local=event ? event.locationInWindow : NSZeroPoint;
+    fprintf(stderr,"CJGUI_OWNED_APPLICATION_POINTER pid=%d record=%u phase=%s type=%u userdata=%lld source_pid=%lld cg_time=%llu cg_x=%.3f cg_y=%.3f event_ptr=%p window=%ld local_x=%.3f local_y=%.3f mono_ns=%llu\n",
+        getpid(),++gCjguiOwnedApplicationPointerCount,phase,type,(long long)data,
+        (long long)CGEventGetIntegerValueField(cg,kCGEventSourceUnixProcessID),(unsigned long long)CGEventGetTimestamp(cg),
+        point.x,point.y,(__bridge void *)event,(long)event.windowNumber,local.x,local.y,
+        (unsigned long long)cjgui_internal_renderer_owner_clock_ns());
+}
+static BOOL CjguiIsObservedTestKey(CGEventRef event) {
+    int64_t userData = event ? CGEventGetIntegerValueField(event, kCGEventSourceUserData) : 0;
+    return userData >= 1 && userData <= (getenv("CJGUI_OWNED_POINTER_TRACE") ? 16 : 6) &&
+        CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 0;
+}
+static void CjguiTraceApplicationTestKey(CGEventRef event, const char *phase, NSEvent *nativeEvent) {
+    uint32_t *count = nativeEvent ? &gCjguiApplicationKeyTraceCount : &gCjguiQuartzKeyTraceCount;
+    if (*count >= 512 || !CjguiIsObservedTestKey(event)) return;
+    ++*count;
+    UniChar units[16] = {0}; UniCharCount length = 0;
+    CGEventKeyboardGetUnicodeString(event, 16, &length, units);
+    char characters[65] = {0};
+    for (NSUInteger i = 0; i < MIN((NSUInteger)length, (NSUInteger)16); ++i)
+        snprintf(characters + i * 4, 5, "%04x", (unsigned)units[i]);
+    fprintf(stderr, "CJGUI_APPLICATION_KEY pid=%d record=%u phase=%s mono_ns=%llu type=%u userdata=%lld "
+        "source_pid=%lld target_pid=%lld cg_time=%llu chars16_len=%lu chars16=%s flags=%llu repeat=%lld "
+        "event_ptr=%p window=%ld key_window=%ld first_class=%s\n",
+        getpid(), *count, phase, (unsigned long long)cjgui_internal_renderer_owner_clock_ns(),
+        (unsigned)CGEventGetType(event), (long long)CGEventGetIntegerValueField(event, kCGEventSourceUserData),
+        (long long)CGEventGetIntegerValueField(event, kCGEventSourceUnixProcessID),
+        (long long)CGEventGetIntegerValueField(event, kCGEventTargetUnixProcessID),
+        (unsigned long long)CGEventGetTimestamp(event), (unsigned long)length, characters,
+        (unsigned long long)CGEventGetFlags(event),
+        (long long)CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat),
+        (__bridge void *)nativeEvent, (long)nativeEvent.windowNumber, (long)NSApp.keyWindow.windowNumber,
+        NSStringFromClass([NSApp.keyWindow.firstResponder class]).UTF8String ?: "nil");
+}
+static CGEventRef CjguiObserveProcessKey(CGEventTapProxy proxy, CGEventType type,
+    CGEventRef event, void *context) {
+    (void)proxy; (void)context;
+    if (type == kCGEventKeyDown || type == kCGEventKeyUp)
+        CjguiTraceApplicationTestKey(event, "process_listen", nil);
+    CjguiTraceApplicationPointer(event,"process_listen",nil);
+    return event;
+}
+
 extern int InitCJRuntime(const void *parameter);
 typedef void (*CjguiRuntimeStart)(void *entry);
 
@@ -170,7 +223,39 @@ int CJ_MRT_CjRuntimeStart(void *entry) {
 
     NSApplication *application = [NSApplication sharedApplication];
     [application setActivationPolicy:NSApplicationActivationPolicyRegular];
+    id keyObserver = nil;
+    CFMachPortRef processKeyTap = NULL;
+    CFRunLoopSourceRef processKeySource = NULL;
+    if (getenv("CJGUI_EARLY_KEY_TRACE") || getenv("CJGUI_OWNED_POINTER_TRACE")) {
+        NSEventMask pointerMask=getenv("CJGUI_OWNED_POINTER_TRACE") ? (NSEventMaskLeftMouseDown | NSEventMaskLeftMouseDragged | NSEventMaskLeftMouseUp) : 0;
+        keyObserver = [NSEvent addLocalMonitorForEventsMatchingMask:(NSEventMaskKeyDown | NSEventMaskKeyUp | pointerMask)
+            handler:^NSEvent *(NSEvent *event) {
+                if (event.type==NSEventTypeKeyDown || event.type==NSEventTypeKeyUp) CjguiTraceApplicationTestKey(event.CGEvent, "app_local", event);
+                CjguiTraceApplicationPointer(event.CGEvent,"app_local",event);
+                return event;
+            }];
+        CGEventMask keys = CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp);
+        if (pointerMask) keys |= CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseDragged) | CGEventMaskBit(kCGEventLeftMouseUp);
+        processKeyTap = CGEventTapCreateForPid(getpid(), kCGHeadInsertEventTap,
+            kCGEventTapOptionListenOnly, keys, CjguiObserveProcessKey, NULL);
+        if (processKeyTap) {
+            processKeySource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, processKeyTap, 0);
+            if (processKeySource) CFRunLoopAddSource(CFRunLoopGetMain(), processKeySource, kCFRunLoopCommonModes);
+        }
+        fprintf(stderr, "CJGUI_APPLICATION_KEY_OBSERVER pid=%d local=%d process_tap=%d source=%d "
+            "listen_preflight=%d max_each=512 own_process_only=true modifies_event=false\n",
+            getpid(), keyObserver != nil, processKeyTap != NULL, processKeySource != NULL,
+            CGPreflightListenEventAccess());
+    }
+    if (getenv("CJGUI_OWNED_POINTER_TRACE")) fprintf(stderr,"CJGUI_OWNED_POINTER_OBSERVER pid=%d local=%d process_tap=%d source=%d listen_preflight=%d application_limit=24 renderer_limit=40 total_limit=64\n",getpid(),keyObserver!=nil,processKeyTap!=NULL,processKeySource!=NULL,CGPreflightListenEventAccess());
     [application run];
+    if (getenv("CJGUI_OWNED_POINTER_TRACE")) fprintf(stderr,"CJGUI_OWNED_POINTER_OBSERVER_END pid=%d application_records=%u application_limit=24 exhausted=%d\n",getpid(),gCjguiOwnedApplicationPointerCount,gCjguiOwnedApplicationPointerCount>=24);
+    if (keyObserver) [NSEvent removeMonitor:keyObserver];
+    if (processKeySource) {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), processKeySource, kCFRunLoopCommonModes);
+        CFRelease(processKeySource);
+    }
+    if (processKeyTap) { CFMachPortInvalidate(processKeyTap); CFRelease(processKeyTap); }
     const char *trace = getenv("CJGUI_OWNER_PHASE_TRACE");
     if (trace && strcmp(trace, "1") == 0) {
         uint64_t tid = 0;

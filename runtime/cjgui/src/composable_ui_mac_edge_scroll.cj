@@ -20,9 +20,28 @@ class CjguiMacDragEdgeAwaitedViewport {
 
 @When[os == "macOS"]
 foreign {
+    func cjgui_internal_renderer_retire_reversed_drag_edge_request(session: UInt64, gesture: UInt64,
+        node: UInt64, resource: Int64, binding: UInt64, identity: UInt64,
+        requestGeneration: Int64, requested: Int64, accepted: Int64, scene: UInt64,
+        pointerGeneration: UInt64, pointerSequence: UInt64, pointX: Float64, pointY: Float64): Int32
     func cjgui_internal_renderer_ack_drag_edge_viewport(session: UInt64, gesture: UInt64,
         node: UInt64, resource: Int64, binding: UInt64, identity: UInt64,
         requestGeneration: Int64, requested: Int64, accepted: Int64, scene: UInt64, phase: UInt32): Int32
+}
+
+@When[os == "macOS"]
+func internalRendererRetireReversedDragEdgeRequest(ticket: CjguiMacDragEdgeAwaitedViewport,
+    fifo: CjguiMacSliderPointerFifo, event: InternalRendererPumpResult): Int32 {
+    let record = ticket.record
+    return unsafe { cjgui_internal_renderer_retire_reversed_drag_edge_request(ticket.session,
+        ticket.gesture, UInt64(record.nodeId), record.resourceId, record.acceptedBindingEpoch,
+        UInt64(record.viewportIdentity), ticket.generation, ticket.requested, ticket.accepted,
+        UInt64(ticket.scene), fifo.generation, fifo.last, event.pointerVisualX, event.pointerVisualY) }
+}
+@When[os != "macOS"]
+func internalRendererRetireReversedDragEdgeRequest(ticket: CjguiMacDragEdgeAwaitedViewport,
+    fifo: CjguiMacSliderPointerFifo, event: InternalRendererPumpResult): Int32 {
+    return CJGUI_INTERNAL_RENDERER_SCENE_STALE
 }
 @When[os == "macOS"]
 func internalRendererAckDragEdgeViewport(session: UInt64, gesture: UInt64,

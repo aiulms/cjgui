@@ -15,6 +15,10 @@ source "$HERE/env.sh"
   echo "generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "lab=$LAB"
   echo "platform_fingerprint=$(cat "$PLATFORM/FINGERPRINT.txt" 2>/dev/null || echo missing)"
+  if [ -n "${CJGUI_FROZEN_INPUT_MANIFEST:-}" ]; then
+    echo "frozen_input_manifest=$CJGUI_FROZEN_INPUT_MANIFEST"
+    shasum -a 256 "$CJGUI_FROZEN_INPUT_MANIFEST"
+  fi
   echo
   echo "## 工具链身份"
   echo "deveco_studio=$DEVECO_STUDIO_HOME"

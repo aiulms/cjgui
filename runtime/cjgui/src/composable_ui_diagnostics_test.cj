@@ -1,5 +1,6 @@
 package cjgui
 
+import std.collection.*
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -156,4 +157,95 @@ func diagnosticsTimingIsOptInBoundedAndDoesNotRefresh(): Unit {
     @Assert(disabledAgain.nativeStageAndSubmitNanoseconds, -1)
     @Assert(disabledAgain.positionPrepareCount, -1)
     window.close()
+}
+
+@Test
+func diagnosticsCommandSnapshotIsReadOnlyBoundedAndKeepsReasons(): Unit {
+    let owner = DiagnosticCommandController()
+    let window = CjguiComposableUiWindow(owner)
+    @Assert(window.start(), true)
+    // Command declarations bind with an accepted scene refresh, not with the
+    // start handshake alone; publish one real revision change.
+    owner.revision += 1
+    window.requestRefresh()
+    var settled = false
+    var turns: Int64 = 0
+    while (!settled && turns < 80) {
+        settled = window.refreshIfNeeded()
+        if (!settled) {
+            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window, turnBudgetMs: 4u32)
+        }
+        turns += 1
+    }
+    @Assert(settled, true)
+    let page = window.diagnosticCommandSnapshot(maximumCommands: 8)
+    @Assert(page.status, "ok")
+    @Assert(page.totalCommands, 2)
+    @Assert(page.commands.size, 2)
+    @Assert(page.truncated, false)
+    @Assert(page.acceptedSceneVersion, window.displayedSceneVersion())
+    @Assert(page.sessionIdentity, window.liveWindowSessionIdentity().getOrThrow())
+    let live = page.commands[0]
+    @Assert(live.id, "diag.live")
+    @Assert(live.resolution, "resolved")
+    @Assert(live.resolvedNodeId, 2)
+    @Assert(live.enabled, true)
+    @Assert(live.checked, true)
+    @Assert(live.shortcut, "shortcut:shift+command+k")
+    @Assert(live.acceptedSceneVersion, page.acceptedSceneVersion)
+    @Assert(live.unavailableReason, "")
+    let disabled = page.commands[1]
+    @Assert(disabled.resolution, "resolved")
+    @Assert(disabled.enabled, false)
+    @Assert(disabled.unavailableReason, "declaration_disabled")
+    // The bound is applied without executing anything; the full count stays.
+    let bounded = window.diagnosticCommandSnapshot(maximumCommands: 1)
+    @Assert(bounded.commands.size, 1)
+    @Assert(bounded.totalCommands, 2)
+    @Assert(bounded.truncated, true)
+    // No command ran: the controller saw no activation.
+    @Assert(owner.activations, 0)
+    window.close()
+    let closed = window.diagnosticCommandSnapshot()
+    @Assert(closed.status, "closed")
+    @Assert(closed.commands.size, 0)
+    @Assert(closed.acceptedSceneVersion, -1)
+}
+
+private class DiagnosticCommandController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant {
+    var revision: Int64 = 1
+    var activations: Int64 = 0
+
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(1, "diag-command-root", CjguiComposableUiStyle())
+        root.add(cjguiComposableButton(2, "diag-command-button", "Target", "PRESS", 0,
+            CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: 32)))
+        return root
+    }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>([
+            CjguiComposableUiCommand("diag.live", CjguiComposableUiNodeReference.manual(2), "Live",
+                CjguiComposableUiShortcut("k", usesShift: true), "View", 0, true, true),
+            CjguiComposableUiCommand("diag.disabled", CjguiComposableUiNodeReference.manual(2), "Disabled",
+                "", 0, false, false)
+        ])
+    }
+    public func beginSceneRefresh(): Bool { return true }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func commitSceneRefresh(): Unit {}
+    public func rollbackSceneRefresh(): Unit {}
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 27) { activations += 1 }
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        let _ = eventKind
+        let _ = nodeId
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
 }

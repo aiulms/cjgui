@@ -739,6 +739,8 @@ struct CjguiInternalRendererComposableNode {
     var iconTintGreen: Float64 = 0.0
     var iconTintBlue: Float64 = 0.0
     var iconTintAlpha: Float64 = 0.0
+    var pointerControlMinimum: Int64 = 0
+    var pointerControlMaximum: Int64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -782,7 +784,10 @@ struct CjguiInternalRendererComposableNode {
         cornerTopLeft!: Float64 = 0.0, cornerTopRight!: Float64 = 0.0,
         cornerBottomRight!: Float64 = 0.0, cornerBottomLeft!: Float64 = 0.0, zIndex!: Int64 = 0,
         rotateDegrees!: Float64 = 0.0, iconTintRed!: Float64 = 0.0, iconTintGreen!: Float64 = 0.0,
-        iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0) {
+        iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0,
+        pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0) {
+        this.pointerControlMinimum = pointerControlMinimum
+        this.pointerControlMaximum = pointerControlMaximum
         this.textMaxLines = textMaxLines
         this.textOverflow = textOverflow
         this.letterSpacing = letterSpacing
@@ -1417,6 +1422,10 @@ foreign {
         semanticId: CString
     ): Int32
 
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_set_composable_node_semantic_help(session: UInt64, preparationId: UInt64,
+        nodeIndex: UInt32, help: CString): Int32
+
     func cjgui_internal_renderer_set_composable_node_semantic_metadata(
         session: UInt64,
         nodeIndex: UInt32,
@@ -1512,7 +1521,8 @@ foreign {
         menuSection: UInt32,
         focusScope: UInt64,
         enabled: UInt8,
-        checked: UInt8
+        checked: UInt8,
+        presentationOnly: UInt8
     ): Int32
 
     func cjgui_internal_renderer_commit_composable_command_menu(session: UInt64): Int32
@@ -1578,6 +1588,13 @@ foreign {
     @When[os == "macOS"]
     func cjgui_internal_renderer_owner_work_revision(): UInt64
     @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_notify_work(): Unit
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_idle_wait_support_version(): UInt32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_wait_idle_work(observedRevision: UInt64, absoluteDeadlineNs: UInt64,
+        outIdleWaitNs: CPointer<UInt64>): Int32
+    @When[os == "macOS"]
     func cjgui_internal_renderer_owner_wait_work(observedRevision: UInt64, absoluteDeadlineNs: UInt64,
         outIdleWaitNs: CPointer<UInt64>): Int32
     // 诊断观测：私有准备图与有界退休的计数/字节（字段码见 Windows 侧调试入口）。
@@ -1633,6 +1650,11 @@ foreign {
         proxyGeneration: UInt64, selectionRevision: UInt64): Int32
     @When[os == "macOS" || os == "Windows" || os == "Linux"]
     func cjgui_internal_renderer_installed_range_cancel(session: UInt64, nonce: UInt64): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_stage_modal_return(session: UInt64, request: CPointer<UInt64>, body: CString): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_modal_return_receipt(session: UInt64, scene: UInt64,
+        request: UInt64, receipt: CPointer<UInt64>): Int32
     @When[os == "macOS"]
     func cjgui_internal_renderer_stage_candidate_caret_identity(session: UInt64, preparationId: UInt64,
         sceneVersion: UInt64, present: UInt8, nodeId: Int64, localByte: Int64, affinity: UInt32,
@@ -1852,6 +1874,12 @@ foreign {
         session: UInt64,
         nodeId: UInt64,
         encoded: CString
+    ): Int32
+
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_set_composable_text_runs_batch(
+        session: UInt64, projectionVersion: UInt64, count: UInt32,
+        nodeIds: CPointer<UInt64>, encoded: CPointer<CString>
     ): Int32
 
     func cjgui_internal_renderer_measure_composable_text(
@@ -3482,7 +3510,8 @@ func internalRendererSetComposableCommandMenuItem(
     menuSection: UInt32,
     focusScope: UInt64,
     enabled: Bool,
-    checked: Bool
+    checked: Bool,
+    presentationOnly: Bool
 ): Int32 {
     let cCommandId = unsafe { LibC.mallocCString(commandId) }
     let cTitle = unsafe { LibC.mallocCString(title) }
@@ -3509,6 +3538,11 @@ func internalRendererSetComposableCommandMenuItem(
                                 0u8
                             },
                             if (checked) {
+                                1u8
+                            } else {
+                                0u8
+                            },
+                            if (presentationOnly) {
                                 1u8
                             } else {
                                 0u8
@@ -3724,6 +3758,44 @@ func internalRendererSetComposableDataTransferItemBytes(session: UInt64, itemInd
         releaseArrayRawData(handle)
     }
     return status
+}
+
+@When[os == "macOS"]
+func internalRendererAtomicModalReturnSupported(): Bool { return true }
+@When[os != "macOS"]
+func internalRendererAtomicModalReturnSupported(): Bool { return false }
+
+@When[os == "macOS"]
+func internalRendererStageModalReturn(session: UInt64, words: Array<UInt64>, body: String): Int32 {
+    if (words.size != 16) { return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+    let wire = unsafe { LibC.mallocCString(body) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (resource = wire.asResource()) {
+        unsafe {
+            let data = acquireArrayRawData(words)
+            try { status = cjgui_internal_renderer_stage_modal_return(session, data.pointer, resource.value) }
+            finally { releaseArrayRawData(data) }
+        }
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererStageModalReturn(session: UInt64, words: Array<UInt64>, body: String): Int32 {
+    return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+@When[os == "macOS"]
+func internalRendererModalReturnReceipt(session: UInt64, scene: UInt64, request: UInt64): (Int32, Array<UInt64>) {
+    let receipt = Array<UInt64>(19, repeat: 0u64)
+    let status = unsafe {
+        let data = acquireArrayRawData(receipt)
+        try { cjgui_internal_renderer_modal_return_receipt(session, scene, request, data.pointer) }
+        finally { releaseArrayRawData(data) }
+    }
+    return (status, receipt)
+}
+@When[os != "macOS"]
+func internalRendererModalReturnReceipt(session: UInt64, scene: UInt64, request: UInt64): (Int32, Array<UInt64>) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Array<UInt64>(19, repeat: 0u64))
 }
 
 func internalRendererPresentComposableScene(session: UInt64): InternalRendererFrameResult {
@@ -4154,10 +4226,11 @@ private class CjguiInternalRendererTextMeasurementCacheEntry {
     let lineHeight: Float64
     let maximumWidth: Int64
     let queryKind: Int64
+    let runsKey: String
     let measurement: CjguiComposableUiTextMeasurement
     init(value: String, fontSize: Float64, fontWeight: Int64, fontFamily: String, letterSpacing: Float64,
         lineHeight: Float64, maximumWidth: Int64, queryKind: Int64,
-        measurement: CjguiComposableUiTextMeasurement) {
+        measurement: CjguiComposableUiTextMeasurement, runsKey!: String = "") {
         this.value = value
         this.fontSize = fontSize
         this.fontWeight = fontWeight
@@ -4167,9 +4240,10 @@ private class CjguiInternalRendererTextMeasurementCacheEntry {
         this.maximumWidth = maximumWidth
         this.queryKind = queryKind
         this.measurement = measurement
+        this.runsKey = runsKey
     }
-    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64): Bool {
-        return this.queryKind == queryKind && this.value == value && this.fontSize == style.fontSize &&
+    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, queryKind: Int64, runsKey!: String = ""): Bool {
+        return this.runsKey == runsKey && this.queryKind == queryKind && this.value == value && this.fontSize == style.fontSize &&
             this.fontWeight == style.fontWeight && this.fontFamily == style.fontFamily &&
             this.letterSpacing == style.letterSpacing && this.lineHeight == style.lineHeight && this.maximumWidth ==
             maximumWidth
@@ -4181,7 +4255,7 @@ private class CjguiInternalRendererTextMeasurementCacheEntry {
 /// by the native sidecar. The fallback is used only to complete the current
 /// local calculation safely: callers inspect `measurementStatus` and refuse
 /// to publish the scene if any real AppKit query failed.
-class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
+class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiStyledTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment {
     private let session: UInt64
     private let fallback: CjguiComposableUiFallbackTextMeasurer
     private var cache: ArrayList<CjguiInternalRendererTextMeasurementCacheEntry>
@@ -4236,11 +4310,11 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
     func measurementCacheEntryCount(): Int64 { return cache.size }
 
     func cachedMeasurement(value: String, style: CjguiComposableUiStyle,
-        width: Int64, kind: Int64): ?CjguiComposableUiTextMeasurement {
+        width: Int64, kind: Int64, runsKey!: String = ""): ?CjguiComposableUiTextMeasurement {
         var index: Int64 = 0
         while (index < cache.size) {
             let entry = cache[index]
-            if (entry.matches(value, style, width, kind)) {
+            if (entry.matches(value, style, width, kind, runsKey: runsKey)) {
                 // A hit is actual reuse of a successful query from this
                 // session/font environment. Retain its recent position so a
                 // single changing status label cannot evict the whole pass.
@@ -4267,16 +4341,16 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         cache.add(entry)
     }
     func retainPreparedMeasurement(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64,
-        measured: CjguiComposableUiTextMeasurement, expectedEnvironment: String): Bool {
+        measured: CjguiComposableUiTextMeasurement, expectedEnvironment: String, runsKey!: String = ""): Bool {
         if (layoutMeasurementEnvironmentKey() != expectedEnvironment) {
             return false
         }
         // Preparation is pure geometry. Keeping a successful result in the
         // same bounded cache lets a later selection-only scene reuse it.
-        if (cachedMeasurement(value, style, width, kind).isNone()) {
+        if (cachedMeasurement(value, style, width, kind, runsKey: runsKey).isNone()) {
             retainMeasurement(
                 CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
-                    style.letterSpacing, style.lineHeight, width, kind, measured))
+                    style.letterSpacing, style.lineHeight, width, kind, measured, runsKey: runsKey))
         }
         return true
     }
@@ -4295,7 +4369,7 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         let nativeStarted = MonoTime.now()
         try (textResource = cText.asResource()) {
             unsafe {
-                status = cjgui_internal_renderer_measure_composable_text(
+                let (typographyStatus, measuredWidth, measuredHeight, measuredLine, measuredBaseline) = cjguiMeasureTextTypography(
                     session,
                     textResource.value,
                     style.fontSize,
@@ -4308,8 +4382,13 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
                     },
                     composableFontFamilyCode(style.fontFamily),
                     boundedWidth,
-                    inout native
-                )
+                    style.letterSpacing,
+                    style.lineHeight)
+                status = typographyStatus
+                native.width = measuredWidth
+                native.height = measuredHeight
+                native.lineHeight = measuredLine
+                native.baseline = measuredBaseline
             }
         }
         measurementPassNativeCallCountValue += 1
@@ -4345,6 +4424,71 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         )
         return result
     }
+    public func measureStyled(value: String, style: CjguiComposableUiStyle, runs: Array<CjguiComposableUiTextStyleRun>, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
+        let key = cjguiTextRunsGeometryKey(style, runs)
+        if (let Some(cached) <- cachedMeasurement(value, style, maximumWidth, 2, runsKey: key)) { return cached }
+        let wire = cjguiTextRunsMeasurementWire(runs)
+        if (wire.size > 65536) {
+            lastMeasurementStatus = CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED
+            return fallback.measure(value, style, maximumWidth)
+        }
+        let cRuns = unsafe { LibC.mallocCString(wire) }
+        let cText = unsafe { LibC.mallocCString(value) }
+        var native = CjguiInternalRendererTextMeasurement()
+        var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+        let boundedWidth = if (maximumWidth <= 0) {
+            0u32
+        } else if (maximumWidth > 4294967295) {
+            4294967295u32
+        } else {
+            UInt32(maximumWidth)
+        }
+        let nativeStarted = MonoTime.now()
+        try (textResource = cText.asResource()) {
+            try (runResource = cRuns.asResource()) {
+            unsafe {
+                let (typographyStatus, measuredWidth, measuredHeight, measuredLine, measuredBaseline) = cjguiMeasureStyledTypography(session, textResource.value, runResource.value, style, boundedWidth)
+                status = typographyStatus
+                native.width = measuredWidth
+                native.height = measuredHeight
+                native.lineHeight = measuredLine
+                native.baseline = measuredBaseline
+            }
+        }
+        }
+        measurementPassNativeCallCountValue += 1
+        measurementPassNativeElapsedMsValue += (MonoTime.now() - nativeStarted).toMilliseconds()
+        if (status != CJGUI_INTERNAL_RENDERER_OK || native.lineHeight == 0u32) {
+            if (lastMeasurementStatus == CJGUI_INTERNAL_RENDERER_OK) {
+                lastMeasurementStatus = if (status == CJGUI_INTERNAL_RENDERER_OK) {
+                    CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+                } else {
+                    status
+                }
+            }
+            return fallback.measure(value, style, maximumWidth)
+        }
+        let result = CjguiComposableUiTextMeasurement(
+            Int64(native.width),
+            Int64(native.height),
+            Int64(native.lineHeight),
+            Int64(native.baseline)
+        )
+        retainMeasurement(
+            CjguiInternalRendererTextMeasurementCacheEntry(
+                value,
+                style.fontSize,
+                style.fontWeight,
+                style.fontFamily,
+                style.letterSpacing,
+                style.lineHeight,
+                maximumWidth,
+                2,
+                result, runsKey: key
+            )
+        )
+        return result
+    }
     public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         if (let Some(cached) <- cachedMeasurement(value, style, contentWidth, 1)) { return Some(cached.height) }
         let cText = unsafe { LibC.mallocCString(value) }
@@ -4360,14 +4504,17 @@ class CjguiInternalRendererTextMeasurer <: CjguiComposableUiTextMeasurer & Cjgui
         let nativeStarted = MonoTime.now()
         try (textResource = cText.asResource()) {
             unsafe {
-                status = cjgui_internal_renderer_measure_composable_multiline_natural_height(session, textResource.value,
+                let (typographyStatus, typographyOutput) = cjguiMeasureMultilineTypography(session, textResource.value,
                     style.fontSize, if (style.fontWeight <= 0) {
                         0u32
                     } else if (style.fontWeight > 1000) {
                         1000u32
                     } else {
                         UInt32(style.fontWeight)
-                    }, composableFontFamilyCode(style.fontFamily), boundedWidth, inout nativeHeight)
+                    }, composableFontFamilyCode(style.fontFamily), boundedWidth, style.letterSpacing,
+                    style.lineHeight)
+                status = typographyStatus
+                nativeHeight = typographyOutput
             }
         }
         measurementPassNativeCallCountValue += 1
@@ -4413,7 +4560,7 @@ class CjguiLayoutPreparationFailure <: Exception {
     init(reason: String) { super(reason) }
 }
 
-class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment & CjguiComposableUiLayoutPacer {
+class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiComposableUiStyledTextMeasurer & CjguiComposableUiMultilineNaturalHeightMeasurer & CjguiComposableUiLayoutMeasurementEnvironment & CjguiComposableUiLayoutPacer {
     private let base: CjguiInternalRendererTextMeasurer
     private let budget: CjguiOwnerTurnBudget
     private let environment: String
@@ -4476,11 +4623,11 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
             if (status != CJGUI_ASYNC_MEASURE_READY || measured.lineHeight <= 0) {
                 fail("layout_native_text_worker_failed")
             }
-            if (!base.retainPreparedMeasurement(textJob.value, textJob.style, textJob.maximumWidth, 0, measured,
-                environment)) {
+            if (!base.retainPreparedMeasurement(textJob.value, textJob.style, textJob.maximumWidth, if (textJob.runsKey.isEmpty()) { 0 } else { 2 }, measured,
+                environment, runsKey: textJob.runsKey)) {
                 fail("layout_measurement_environment_changed")
             }
-            let _ = pin(textJob.value, textJob.style, textJob.maximumWidth, 0, measured)
+            let _ = pin(textJob.value, textJob.style, textJob.maximumWidth, if (textJob.runsKey.isEmpty()) { 0 } else { 2 }, measured, runsKey: textJob.runsKey)
         }
         let job = match (pendingMultiline) {
             case Some(value) => value
@@ -4523,18 +4670,18 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
         failure = reason
         throw CjguiLayoutPreparationFailure(reason)
     }
-    private func lookup(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64): ?CjguiComposableUiTextMeasurement {
+    private func lookup(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64, runsKey!: String = ""): ?CjguiComposableUiTextMeasurement {
         checkpoint(false)
         for (entry in pins) {
-            if (entry.matches(value, style, width, kind)) {
+            if (entry.matches(value, style, width, kind, runsKey: runsKey)) {
                 return Some(entry.measurement)
             }
         }
         return None
     }
     private func pin(value: String, style: CjguiComposableUiStyle, width: Int64, kind: Int64,
-        measured: CjguiComposableUiTextMeasurement): CjguiComposableUiTextMeasurement {
-        let bytes = value.size + style.fontFamily.size + 64
+        measured: CjguiComposableUiTextMeasurement, runsKey!: String = ""): CjguiComposableUiTextMeasurement {
+        let bytes = value.size + style.fontFamily.size + runsKey.size + 64
         if (pins.size >= maximumEntries || bytes > maximumBytes - keyBytes) {
             fail("layout_measurement_pin_capacity")
         }
@@ -4542,7 +4689,7 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
         // No metric is evicted before the candidate completes or is cancelled.
         pins.add(
             CjguiInternalRendererTextMeasurementCacheEntry(value, style.fontSize, style.fontWeight, style.fontFamily,
-                style.letterSpacing, style.lineHeight, width, kind, measured))
+                style.letterSpacing, style.lineHeight, width, kind, measured, runsKey: runsKey))
         keyBytes += bytes
         return measured
     }
@@ -4586,6 +4733,34 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
         }
         return pin(value, style, maximumWidth, 0, actual)
     }
+    public func measureStyled(value: String, style: CjguiComposableUiStyle,
+        runs: Array<CjguiComposableUiTextStyleRun>, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
+        let key = cjguiTextRunsGeometryKey(style, runs)
+        if (let Some(found) <- lookup(value, style, maximumWidth, 2, runsKey: key)) { return found }
+        if (let Some(found) <- base.cachedMeasurement(value, style, maximumWidth, 2, runsKey: key)) {
+            return pin(value, style, maximumWidth, 2, found, runsKey: key)
+        }
+        if (value.size > 1024) {
+            if (let Some(job) <- pendingTextMetrics) {
+                if (!job.matches(value, style, maximumWidth, runsKey: key)) { fail("layout_styled_worker_identity_changed") }
+                throw CjguiLayoutMeasurementNeedWorker(false)
+            }
+            if (pendingMultiline.isSome()) { fail("layout_worker_kind_changed") }
+            checkpoint(true)
+            let (status, started) = beginCjguiAsyncStyledTextMetrics(value, style, runs, maximumWidth)
+            if (status == CJGUI_ASYNC_MEASURE_STARTED && started.isSome()) {
+                pendingTextMetrics = started
+                multilineWorkerStartCount += 1
+                throw CjguiLayoutMeasurementNeedWorker(false)
+            }
+            if (status == CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY) { throw CjguiLayoutMeasurementNeedWorker(true) }
+            fail("layout_native_styled_worker_unavailable")
+        }
+        checkpoint(true)
+        let actual = base.measureStyled(value, style, runs, maximumWidth)
+        if (base.measurementStatus() != CJGUI_INTERNAL_RENDERER_OK) { fail("layout_native_styled_measurement_failed") }
+        return pin(value, style, maximumWidth, 2, actual, runsKey: key)
+    }
     public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         if (let Some(found) <- lookup(value, style, contentWidth, 1)) {
             return Some(found.height)
@@ -4614,8 +4789,10 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
 }
 
 /// Internal ABI enum only. Style construction already normalizes to this
-/// closed set, and the native side applies the same system fallback.
+/// legacy modes and immutable font-resource generations share this value-only field.
 func composableFontFamilyCode(fontFamily: String): UInt32 {
+    let resource = cjguiFontResourceCode(fontFamily)
+    if (resource >= 4u32) { return resource }
     if (fontFamily == "monospaced") {
         return 1u32
     }
@@ -5202,4 +5379,80 @@ func internalRendererRefusePointerSelectionDispatch(session: UInt64, identity: U
 @When[os != "macOS"]
 func internalRendererRefusePointerSelectionDispatch(session: UInt64, identity: UInt64): Int32 {
     CJGUI_INTERNAL_RENDERER_OK
+}
+
+// Optional platform projection. Other platforms retain common semanticHelp but
+// do not currently transport it to native accessibility services.
+@When[os == "macOS"]
+func internalRendererSetComposableSemanticHelp(session: UInt64, preparationId: UInt64,
+    nodeIndex: UInt32, help: String): Int32 {
+    let value = unsafe { LibC.mallocCString(help) }
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (resource = value.asResource()) {
+        status = unsafe { cjgui_internal_renderer_set_composable_node_semantic_help(
+            session, preparationId, nodeIndex, resource.value) }
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererSetComposableSemanticHelp(session: UInt64, preparationId: UInt64,
+    nodeIndex: UInt32, help: String): Int32 { return CJGUI_INTERNAL_RENDERER_OK }
+
+// Borrowed synchronous transport, with one bounded scratch packet. The
+// declaration visitor adds no managed object/array per source node.
+@When[os == "macOS"]
+func internalRendererSetComposableTextRunsBatch(session: UInt64, projectionVersion: UInt64,
+    count: Int64, emitAll: ((UInt64, String) -> Unit) -> Unit): Int32 {
+    if (count <= 0) { return CJGUI_INTERNAL_RENDERER_OK }
+    let capacity = min(1024, count)
+    let ids = unsafe { LibC.malloc<UInt64>(count: capacity) }
+    var result = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    try (idMemory = ids.asResource()) {
+    let strings = unsafe { LibC.malloc<CString>(count: capacity) }
+    try (stringMemory = strings.asResource()) {
+        // filled slots, first status, total emitted. One temporary cursor only;
+        // Cangjie closures do not capture mutable local variables.
+        let cursor: Array<Int64> = [0, 0, 0]
+        try {
+            emitAll({ id, encoded =>
+                if (cursor[1] == 0) {
+                    let pointer = unsafe { LibC.mallocCString(encoded) }
+                    unsafe { ids.write(cursor[0], id); strings.write(cursor[0], pointer) }
+                    cursor[0] += 1; cursor[2] += 1
+                    if (cursor[0] == capacity) {
+                        cursor[1] = Int64(unsafe { cjgui_internal_renderer_set_composable_text_runs_batch(
+                            session, projectionVersion, UInt32(cursor[0]), ids, strings) })
+                        for (i in 0..cursor[0]) { unsafe { LibC.free(strings.read(i)) } }
+                        cursor[0] = 0
+                    }
+                }
+            })
+            result = Int32(cursor[1])
+            if (result == CJGUI_INTERNAL_RENDERER_OK && cursor[2] != count) {
+                result = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+            }
+            if (result == CJGUI_INTERNAL_RENDERER_OK && cursor[0] > 0) {
+                result = unsafe { cjgui_internal_renderer_set_composable_text_runs_batch(
+                    session, projectionVersion, UInt32(cursor[0]), ids, strings) }
+            }
+        } finally {
+            for (i in 0..cursor[0]) { unsafe { LibC.free(strings.read(i)) } }
+        }
+    }
+    }
+    return result
+}
+
+@When[os != "macOS"]
+func internalRendererSetComposableTextRunsBatch(session: UInt64, projectionVersion: UInt64,
+    count: Int64, emitAll: ((UInt64, String) -> Unit) -> Unit): Int32 {
+    let result: Array<Int64> = [0, 0]
+    emitAll({ id, encoded =>
+        if (result[0] == 0) {
+            result[0] = Int64(internalRendererSetComposableTextRuns(session, id, encoded))
+            result[1] += 1
+        }
+    })
+    if (result[0] == 0 && result[1] != count) { return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR }
+    return Int32(result[0])
 }

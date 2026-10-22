@@ -346,7 +346,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         // A1：受理（首帧 PENDING）不是失败——窗口已打开且留在泵送集合里，
         // 由后续 turn 的前置结算门推进到 Ready/失败。只有 StartFailed 才拒绝。
         var windowStartFailed = false
-        match (window.startWithOutcome()) {
+        match (window.startForApplicationWindow(liveWindowCount() > 0)) {
             case StartFailed => windowStartFailed = true
             case _ => windowStartFailed = false
         }
@@ -533,6 +533,17 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// actually concerns it. This keeps a shared document's sibling views in
     /// sync while leaving unrelated owners idle.
     public func pumpOneTurn(turnBudgetMs!: UInt32 = 16u32): CjguiMacosApplicationTurnResult {
+        return pumpTurn(turnBudgetMs, turnBudgetMs)
+    }
+
+    /// Normal event-driven loop. Work retains the original turn allowance;
+    /// timeoutMs bounds this whole call, or Max waits for a real wake/deadline.
+    public func pumpUntilWork(turnBudgetMs!: UInt32 = 16u32,
+        timeoutMs!: UInt32 = UInt32.Max): CjguiMacosApplicationTurnResult {
+        return pumpTurn(turnBudgetMs, timeoutMs)
+    }
+
+    private func pumpTurn(turnBudgetMs: UInt32, maximumIdleWaitMs: UInt32): CjguiMacosApplicationTurnResult {
         // A controller may synchronously re-enter the application while an
         // event is being delivered. It gets no second event drain or wait;
         // structural close requests are queued and applied by the outer turn.
@@ -545,8 +556,16 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             return CjguiMacosApplicationTurnResult(false, 0, 0, 0u32, 0, None)
         }
         isPumpingTurn = true
+        var observingOrdinaryTurn = false
+        if (cjguiOrdinaryOwnerCostObservation.enabled) {
+            var activeAllowance = false
+            for (entry in windows) {
+                activeAllowance = activeAllowance || entry.composableWindow.hasActiveOwnerSchedulingRound()
+            }
+            if (!activeAllowance) { observingOrdinaryTurn = cjguiOrdinaryOwnerCostObservation.begin() }
+        }
         try {
-            let result = pumpOneTurnWhileGuarded(turnBudgetMs)
+            let result = pumpOneTurnWhileGuarded(turnBudgetMs, maximumIdleWaitMs)
             isPumpingTurn = false
             return result
         } catch (error: Exception) {
@@ -556,16 +575,22 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             // caller observed a failed turn and may decide recovery itself.
             isPumpingTurn = false
             throw error
+        } finally {
+            if (observingOrdinaryTurn) { cjguiOrdinaryOwnerCostObservation.finish() }
         }
     }
 
     /// All normal exits flow through `pumpOneTurn` so the reentry guard is
     /// released both after a result and after a propagated callback failure.
-    private func pumpOneTurnWhileGuarded(turnBudgetMs: UInt32): CjguiMacosApplicationTurnResult {
+    private func pumpOneTurnWhileGuarded(turnBudgetMs: UInt32,
+        maximumIdleWaitMs: UInt32): CjguiMacosApplicationTurnResult {
         let started = MonoTime.now()
-        let roundStartedNs = unsafe { cjgui_internal_renderer_owner_clock_ns() }
+        if (let Some(connection) <- externalConnection) {
+            connection.ensureOwnerWorkNotifier(cjguiNotifySchedulingWork)
+        }
         let observedWork = cjguiSchedulingWorkRevision()
         var externalActionCount: Int64 = 0
+        var handledInput = false
         if (let Some(connection) <- externalConnection) {
             while (externalActionCount < 16) {
                 if (externalActionCount > 0 && elapsedMs(started) >= Int64(turnBudgetMs)) {
@@ -601,6 +626,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                     if (let Some(liveWindow) <- window(identifier)) {
                         observer.postRefreshBeforePump(liveWindow)
                         let result = liveWindow.pump(0u32)
+                        handledInput = handledInput || result.didApplyHumanAction
                         if (liveWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                             return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
                                 0u32, elapsedMs(started), None)
@@ -630,6 +656,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                     if (!result.isOpen) {
                         retire(identifier)
                     } else if (result.didApplyHumanAction) {
+                        handledInput = true
                         eventWindows.add(identifier)
                     } else {
                         otherWindows.add(identifier)
@@ -702,10 +729,18 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             nextWaitIndex = 0
         }
         let elapsed = elapsedMs(started)
-        var waitBudget: UInt32 = if (elapsed >= Int64(turnBudgetMs)) {
+        var waitBudget: UInt32 = if (handledInput || externalActionCount > 0 || elapsed >= Int64(turnBudgetMs) ||
+            (maximumIdleWaitMs != UInt32.Max && elapsed >= Int64(maximumIdleWaitMs))) {
             0u32
         } else {
-            UInt32(Int64(turnBudgetMs) - elapsed)
+            if (maximumIdleWaitMs == UInt32.Max) { UInt32.Max } else {
+                maximumIdleWaitMs - UInt32(elapsed)
+            }
+        }
+        for (identifier in waitIdentifiers) {
+            if (let Some(liveWindow) <- window(identifier)) {
+                waitBudget = min(waitBudget, liveWindow.ownerIdleWaitAllowance(waitBudget))
+            }
         }
         // P2：有活动动效时申请下一帧而不是长睡。无活动动效时保留原休眠预算，
         // 因此静止窗口不会持续唤醒，帧请求与提交收敛。
@@ -716,12 +751,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         // once for any host or worker, using the original outer wall deadline;
         // a sibling becoming ready cannot be stranded behind the chosen host.
         if (cjguiCommonSchedulingEnabled() && waitBudget > 0u32) {
-            let absoluteDeadline = roundStartedNs + UInt64(turnBudgetMs) * 1000000u64
-            let animationDeadline = unsafe { cjgui_internal_renderer_owner_clock_ns() } +
-                UInt64(waitBudget) * 1000000u64
-            let _ = cjguiWaitSchedulingWork(observedWork, min(absoluteDeadline, animationDeadline))
+            let _ = cjguiWaitIdleSchedulingWork(observedWork, cjguiIdleSchedulingDeadline(waitBudget))
         }
-        let pumpWait = if (cjguiCommonSchedulingEnabled()) { 0u32 } else { waitBudget }
+        let pumpWait = if (cjguiCommonSchedulingEnabled()) { 0u32 } else { min(waitBudget, 16u32) }
         if (let Some(waitedWindow) <- window(waitedIdentifier)) {
             let waited = if (hasPostRefreshObserver) {
                 waitedWindow.pump(pumpWait)
@@ -734,7 +766,11 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             }
             if (!waited.isOpen) {
                 retire(waitedIdentifier)
-            } else if (waited.didApplyHumanAction) {
+            } else if (waited.didApplyHumanAction || waitedWindow.hasDeferredEventWork()) {
+                // Resource readiness can wake this SAME wait without a human
+                // event. Finish the existing deferred visual work before the
+                // caller starts unrelated work (for example a cold peer).
+                // Reuse this tail and flags; do not add another event pump.
                 let _ = waitedWindow.refreshAfterDeferredPump()
             }
         }
@@ -1183,11 +1219,21 @@ public class CjguiMacosApplicationHost {
 
     /// One bounded normal turn. The existing scheduler remains the only
     /// source of AppKit event waiting and optional external action pacing.
-    public func pumpOneTurn(): Bool {
+    public func pumpOneTurn(): Bool { return pumpTurn(16u32) }
+
+    /// Event-driven counterpart of the compatibility bounded turn. A finite
+    /// timeout remains an actual caller deadline, including measurement loops.
+    public func pumpUntilWork(timeoutMs!: UInt32 = UInt32.Max): Bool { return pumpTurn(timeoutMs) }
+
+    private func pumpTurn(maximumIdleWaitMs: UInt32): Bool {
         if (!started || closed || !composableWindow.isOpen()) {
             close()
             return false
         }
+        let observingOrdinaryTurn = if (!composableWindow.hasActiveOwnerSchedulingRound()) {
+            cjguiOrdinaryOwnerCostObservation.begin()
+        } else { false }
+        try {
         // C：先采集本窗最小平台状态，只有事实变化时才重发动效策略；随后推进
         // 本窗动效。无活动动画时保持原有休眠。
         cjguiOwnerTraceBoundary(0u64, 0u64, 311u32, 0u32, 0u32, 0u64, UInt64.Max)
@@ -1196,9 +1242,11 @@ public class CjguiMacosApplicationHost {
         let _ = composableWindow.advanceAnimations(atTime: MonoTime.now())
         cjguiOwnerTraceBoundary(0u64, 0u64, 313u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (let Some(connection) <- externalConnection) {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection)
+            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection,
+                maximumIdleWaitMs: maximumIdleWaitMs)
         } else {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(composableWindow)
+            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(composableWindow,
+                maximumIdleWaitMs: maximumIdleWaitMs)
         }
         cjguiOwnerTraceBoundary(0u64, 0u64, 314u32, 0u32, 0u32, 0u64, UInt64.Max)
         cjguiOwnerTraceBoundary(0u64, 0u64, 315u32, 0u32, 0u32, 0u64, UInt64.Max)
@@ -1208,6 +1256,9 @@ public class CjguiMacosApplicationHost {
         }
         cjguiOwnerTraceBoundary(0u64, 0u64, 316u32, 0u32, 0u32, 0u64, UInt64.Max)
         return true
+        } finally {
+            if (observingOrdinaryTurn) { cjguiOrdinaryOwnerCostObservation.finish() }
+        }
     }
 
     public func isOpen(): Bool {

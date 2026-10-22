@@ -1,0 +1,1 @@
+Lilex Regular fixture, unmodified. Copyright 2019 The Lilex Project Authors (https://github.com/mishamyrt/Lilex). SIL Open Font License 1.1; see OFL.txt. Copied from the local Zed asset mirror solely as a redistributable font fixture; no Zed runtime or source dependency. System fallback supplies CJK and emoji glyphs not covered by this face.

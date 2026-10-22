@@ -454,10 +454,10 @@ func generatedRegistrationRejectsUnimplementedComponents(): Unit {
     let catalog = CjguiGeneratedUiCapabilityCatalog()
     // A custom kind without an implemented presentation is refused at
     // registration - it can never be accepted and then degrade into a label.
-    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("slider",
+    @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("unimplementedDial",
         ArrayList<CjguiGeneratedUiPropertySpec>(), false)), false)
-    @Assert(catalog.lastRegistrationRejection(), "component_presentation_not_implemented:slider")
-    @Assert(catalog.componentFor("slider").isNone(), true)
+    @Assert(catalog.lastRegistrationRejection(), "component_presentation_not_implemented:unimplementedDial")
+    @Assert(catalog.componentFor("unimplementedDial").isNone(), true)
     // A declared property the presentation never reads is refused too.
     @Assert(catalog.registerComponent(CjguiGeneratedUiComponentSpec("vertical",
         ArrayList<CjguiGeneratedUiPropertySpec>([

@@ -3,7 +3,15 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 runtime_dir="$(cd "$script_dir/../.." && pwd)"
-sdkroot_path="${CJ_GUI_SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}"
+mode=production
+if (( $# > 0 )); then
+  if (( $# != 1 )) || [[ "$1" != --testing ]]; then
+    print -u2 'usage: build_cjgui_internal_renderer_sidecar.sh [--testing]'
+    exit 2
+  fi
+  mode=testing
+fi
+sdkroot_path="${CJ_GUI_SDKROOT:-$(xcrun --sdk macosx --show-sdk-path)}"
 
 if [[ ! -d "$sdkroot_path" ]]; then
   echo "cjgui native sidecar: unavailable SDKROOT=$sdkroot_path" >&2
@@ -11,6 +19,12 @@ if [[ ! -d "$sdkroot_path" ]]; then
 fi
 
 output_dir="$runtime_dir/native/lib"
+if [[ "$mode" == testing ]]; then
+  output_dir="$runtime_dir/native/testing/lib"
+elif [[ "${CJGUI_NATIVE_CLANG_FLAGS_APPEND:-}" == *CJGUI_INTERNAL_TESTING* ]]; then
+  print -u2 'cjgui native sidecar: testing macro requires --testing; use verify_cjpm_mac_testing_link.py for package tests'
+  exit 2
+fi
 mkdir -p "$output_dir"
 renderer_source="$runtime_dir/native/cjgui_internal_renderer.m"
 renderer_header="$runtime_dir/native/cjgui_internal_renderer.h"
@@ -28,6 +42,9 @@ archive="$output_dir/libcjgui_internal_renderer.a"
 fingerprint_file="$output_dir/cjgui_internal_renderer_sidecar.fingerprint"
 typeset -a compile_flags
 compile_flags=(-O2 -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0)
+if [[ "$mode" == testing ]]; then
+  compile_flags+=(-DCJGUI_INTERNAL_TESTING)
+fi
 # Keep the package build hook aligned with the macOS application host.  A
 # caller may explicitly add a temporary native compile flag for an isolated
 # reproducer; it must reach the sidecar which cjpm links, and participate in
@@ -35,7 +52,12 @@ compile_flags=(-O2 -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack
 if [[ -n "${CJGUI_NATIVE_CLANG_FLAGS_APPEND:-}" ]]; then
   compile_flags+=( ${=CJGUI_NATIVE_CLANG_FLAGS_APPEND} )
 fi
-fingerprint="sdk=$sdkroot_path\nflags=${(j: :)compile_flags}\nrenderer=$renderer_source\nbridge=$bridge_source\nasync_measure=$async_measure_source\nasync_bridge=$async_bridge_source"
+source_fingerprint() {
+  print -r -- "mode=$mode sdk=$sdkroot_path flags=${(j: :)compile_flags}"
+  shasum -a 256 "$renderer_source" "$renderer_header" "$bridge_source" "$bridge_header" \
+    "$async_measure_source" "$async_measure_header" "$async_bridge_source" "$font_snapshot_header"
+}
+fingerprint="$(source_fingerprint)"
 
 needs_rebuild=0
 if [[ ! -f "$archive" || ! -f "$renderer_object" || ! -f "$bridge_object" || ! -f "$async_measure_object" || ! -f "$async_bridge_object" || ! -f "$fingerprint_file" ||
@@ -52,17 +74,32 @@ if (( ! needs_rebuild )); then
   exit 0
 fi
 
+staging_dir="$(mktemp -d "$output_dir/.cjgui-sidecar.XXXXXX")"
+cleanup() { rm -rf "$staging_dir"; }
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
 clang "${compile_flags[@]}" -isysroot "$sdkroot_path" \
   -c "$renderer_source" \
-  -o "$renderer_object"
+  -o "$staging_dir/cjgui_internal_renderer.o"
 clang "${compile_flags[@]}" -isysroot "$sdkroot_path" \
   -c "$bridge_source" \
-  -o "$bridge_object"
+  -o "$staging_dir/cjgui_native_bridge.o"
 clang "${compile_flags[@]}" -isysroot "$sdkroot_path" \
   -c "$async_measure_source" \
-  -o "$async_measure_object"
+  -o "$staging_dir/cjgui_async_multiline_measure.o"
 clang "${compile_flags[@]}" -isysroot "$sdkroot_path" \
   -c "$async_bridge_source" \
-  -o "$async_bridge_object"
-ar rcs "$archive" "$renderer_object" "$bridge_object" "$async_measure_object" "$async_bridge_object"
-print -rn -- "$fingerprint" > "$fingerprint_file"
+  -o "$staging_dir/cjgui_async_multiline_bridge.o"
+ar rcs "$staging_dir/libcjgui_internal_renderer.a" "$staging_dir/cjgui_internal_renderer.o" \
+  "$staging_dir/cjgui_native_bridge.o" "$staging_dir/cjgui_async_multiline_measure.o" "$staging_dir/cjgui_async_multiline_bridge.o"
+if [[ "$(source_fingerprint)" != "$fingerprint" ]]; then
+  print -u2 'cjgui native sidecar: inputs changed during compilation; previous archive preserved'
+  exit 2
+fi
+for object in "$renderer_object" "$bridge_object" "$async_measure_object" "$async_bridge_object"; do
+  mv "$staging_dir/${object:t}" "$object"
+done
+mv "$staging_dir/libcjgui_internal_renderer.a" "$archive"
+print -rn -- "$fingerprint" > "$staging_dir/fingerprint"
+mv "$staging_dir/fingerprint" "$fingerprint_file"
+print -r -- "cjgui native sidecar: mode=$mode archive=$archive"

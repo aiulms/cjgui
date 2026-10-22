@@ -156,6 +156,10 @@ int cjgui_linux_window_size(CjguiLinuxWindow *window, uint32_t *outWidth, uint32
 // 是否已收到 WM_DELETE_WINDOW。闩锁语义：收到后恒为 1，不会被本层清零。
 int cjgui_linux_window_close_requested(CjguiLinuxWindow *window);
 
+// 核心的 requestClose：只给这个窗口立关闭闩锁，核心随后 destroy 本会话。
+// 不得触碰进程级 application-stop；多窗口时那会让其它窗口的泵变成退出请求。
+void cjgui_linux_window_request_close(CjguiLinuxWindow *window);
+
 // 取走"因内部事件队列（256 条）满而被丢弃"的事件数（读后清零，0 = 没有丢弃）。
 // 队列满时绝不静默丢弃：丢弃数在这里如实暴露，上层据此上报
 // CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_INPUT_QUEUE_FULL，说明已接受的事件仍然保留。
@@ -163,6 +167,14 @@ int cjgui_linux_window_take_input_overflow(CjguiLinuxWindow *window);
 
 // 从任意线程唤醒正在 cjgui_linux_window_pump 阻塞的会话（自唤醒 pipe）。
 void cjgui_linux_window_wake(CjguiLinuxWindow *window);
+
+// 等待 X11 连接或自唤醒 pipe 就绪，不取事件。deadline 为 CLOCK_MONOTONIC 纳秒。
+// 返回 2 = 自唤醒已排空，1 = X11 可读需调用方 pump，0 = 到期/无窗口，-1 = poll 失败。
+// 只允许会话线程调用；跨线程唤醒仍只走 cjgui_linux_window_wake。
+int cjgui_linux_window_wait_ready(CjguiLinuxWindow *window, uint64_t deadline_ns, uint64_t *out_idle_ns);
+// Poll every window at once; result: 1 X11 ready, 2 wake, 0 deadline, -1 error.
+int cjgui_linux_window_wait_ready_multi(CjguiLinuxWindow **windows, uint32_t count,
+                                        uint64_t deadline_ns, uint64_t *out_idle_ns);
 
 // 设置窗口标题（标题被复制，不保留调用方指针）。返回 0 表示成功。
 int cjgui_linux_window_set_title(CjguiLinuxWindow *window, const char *title);

@@ -41,6 +41,29 @@ for item in "ax_node_probe.swift:$AX_PROBE" "ax_owned_window.swift:$AX_WINDOW" "
   swiftc -O "$PHAROS_TOOLS/$source_name" -o "$target" > "$WORK/${source_name%.swift}.build.log" 2>&1 \
     || blocked "could not build helper $source_name"
 done
+# The owned keyboard driver refuses foreign-window mouse bases; ordinary left
+# clicks are delivered through the WindowServer like the right-click helper.
+LEFT_CLICK="$WORK/left_pointer_driver"
+cat > "$WORK/left_pointer_driver.swift" <<'SWIFT'
+import CoreGraphics
+import Foundation
+func post(_ type: CGEventType, _ point: CGPoint) {
+    let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+    event?.post(tap: .cghidEventTap)
+    usleep(30_000)
+}
+let args = CommandLine.arguments
+guard args.count == 3, let x = Double(args[1]), let y = Double(args[2]) else { exit(2) }
+let point = CGPoint(x: x, y: y)
+post(.mouseMoved, point)
+post(.leftMouseDown, point)
+usleep(60_000)
+post(.leftMouseUp, point)
+print("posted=CGEvent.mouseEventLeftMouseDown+Up screen_x=\(Int(x)) screen_y=\(Int(y))")
+SWIFT
+swiftc -O "$WORK/left_pointer_driver.swift" -o "$LEFT_CLICK" > "$WORK/left_pointer_driver.build.log" 2>&1 \
+  || blocked "could not build left click helper"
+left_click() { "$LEFT_CLICK" "$1" "$2" >> "$WORK/left_click.log" 2>&1; }
 real_input_preflight || blocked "synthetic input permission refused"
 NAME="CJGUIRangeTextConsumer"; SUFFIX="Cm${RUN_TAG//-/}"
 ROUND_EXEC="$WORK/round-app/target/release/CJGUI Range Text Consumer.app/Contents/MacOS/${NAME}${SUFFIX}"
@@ -94,7 +117,9 @@ wait_installed() {
 wait_end() {
   local req="$1" reason="$2" tries=40 i=0
   while (( i < tries )); do
-    grep -q "^CJGUI_CONTEXT_MENU phase=ended request_id=${req} reason=${reason}$" "$STDOUT_LOG" && return 0
+    # The window may append optional settlement fields after reason=, e.g.
+    # restore_id; match the required prefix rather than end-of-line.
+    grep -qE "^CJGUI_CONTEXT_MENU phase=ended request_id=${req} reason=${reason}([[:space:]]|$)" "$STDOUT_LOG" && return 0
     sleep 0.35; i=$((i + 1))
   done
   return 1
@@ -150,12 +175,28 @@ right_body() {
 # Use real keys to create a known non-empty range, then a real secondary click.
 real_ax_wait_ready "$APP_PID" 24 > "$WORK/ax-ready.log" 2>&1 || true
 activate_app; [[ "$(app_frontmost)" == "true" ]] || blocked "app not frontmost"
+# The input driver authorizes only an explicitly bound process/window scope.
+# Create this round's private scope, bind it to the round's own executable and
+# window, and export it so every driver call validates the same instance.
+OWNED_SCOPE="$WORK/owned-input-$APP_PID.json"
+python3 - "$APP_PID" "$ROUND_EXEC" "$OWNED_SCOPE" <<'PY'
+import json, os, sys, uuid
+pid, executable, path = sys.argv[1:]
+with open(path, "w") as handle:
+    json.dump({"pid": int(pid), "nonce": uuid.uuid4().hex, "executable": executable}, handle)
+os.chmod(path, 0o600)
+PY
+"$WORK/cjgui_desktop_input_driver" bind-target "$OWNED_SCOPE" > "$WORK/owned-bind.log" 2>&1 \
+  || blocked "owned target bind failed"
+export CJGUI_DRIVER_TARGET_PID="$APP_PID"
+export CJGUI_DRIVER_TARGET_FILE="$OWNED_SCOPE"
+log "step0c owned_input_bound scope=$OWNED_SCOPE $(cat "$WORK/owned-bind.log")"
 frame="$(ax_frame range-text-body)"; [[ -n "$frame" ]] || blocked "body frame unavailable"
 read -r bx by bw bh <<< "$frame"
-drive click $((bx + bw / 2)) $((by + bh / 2)) || blocked "could not focus editor"
-drive shortcut command 123 || blocked "command-left not delivered"
-drive shortcut shift 124 || blocked "shift-right not delivered"
-drive shortcut shift 124 || blocked "second shift-right not delivered"
+left_click $((bx + bw / 2)) $((by + bh / 2)) || blocked "could not focus editor"
+drive cmd-key 123 || blocked "command-left not delivered"
+drive shift-key 124 || blocked "shift-right not delivered"
+drive shift-key 124 || blocked "second shift-right not delivered"
 sleep 0.3
 [[ "$(status_field v)" == "1" && "$(status_field bytes)" == "${#SEED}" && "$(status_field edits)" == "0" ]] || fail "seed baseline mismatch: $(status_line)"
 log "step1 seed=$SEED owner_version=1 selection_expected=0,2"
@@ -165,7 +206,7 @@ reply="$(right_body 0,2 1)"; read -r req1 px1 py1 <<< "$reply"
 # actual keyboard edit. Version/edit counts and final owner hex are independent.
 frame="$(ax_frame range-text-context-select-all || true)"; [[ -n "$frame" ]] || fail "select-all AX button missing"
 read -r mx my mw mh <<< "$frame"
-drive click $((mx + mw / 2)) $((my + mh / 2)) || blocked "select-all click was not delivered"
+left_click $((mx + mw / 2)) $((my + mh / 2)) || blocked "select-all click was not delivered"
 log "action=CGEvent.leftClick target=range-text-context-select-all request=$req1"
 wait_end "$req1" target_or_selection_changed || fail "select-all did not retire the frozen selection ticket"
 wait_field v 1 20
@@ -175,8 +216,8 @@ wait_field v 2; wait_field bytes 1; wait_field edits 1
 log "step2 select_all_then_type=pass owner=Z version=2 edits=1"
 
 # Escape must dismiss without changing the known one-character selection.
-drive shortcut command 123 || blocked "command-left not delivered before Esc check"
-drive shortcut shift 124 || blocked "selection key not delivered before Esc check"
+drive cmd-key 123 || blocked "command-left not delivered before Esc check"
+drive shift-key 124 || blocked "selection key not delivered before Esc check"
 sleep 0.25
 reply="$(right_body 0,1 2)"; read -r req2 px2 py2 <<< "$reply"
 drive key 53 || blocked "Escape key not delivered"
@@ -190,7 +231,7 @@ log "step3 escape=pass request=$req2 owner_version=2 selection=0,1"
 reply="$(right_body 0,1 2)"; read -r req3 px3 py3 <<< "$reply"
 frame="$(ax_frame range-text-heading || true)"; [[ -n "$frame" ]] || fail "heading outside target frame missing"
 read -r hx hy hw hh <<< "$frame"; ox=$((hx + hw / 2)); oy=$((hy + hh / 2))
-drive click "$ox" "$oy" || blocked "outside click not delivered"
+left_click "$ox" "$oy" || blocked "outside click not delivered"
 log "action=CGEvent.leftClick target=range-text-heading request=$req3 point=$ox,$oy"
 wait_end "$req3" outside || fail "outside click did not close request $req3"
 [[ "$(status_field v)" == "2" && "$(status_field edits)" == "1" && "$(ax_value range-text-body)" == "Z" ]] || fail "outside click activated/edited underlying content"

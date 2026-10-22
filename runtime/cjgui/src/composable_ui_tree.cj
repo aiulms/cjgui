@@ -109,7 +109,7 @@ public struct CjguiComposableUiTreeRow {
 /// Expanded-state, visible-row projection and data-version bookkeeping.
 /// Rebuild is O(visible) after the first O(N) index pass; hot scroll, hover
 /// and local selection never re-walk hidden subtrees.
-public class CjguiComposableUiTreeProjection {
+public class CjguiComposableUiTreeProjection <: CjguiComposableUiCollectionOrder {
     private let source: CjguiComposableUiTreeDataSource
     private var expandedKeys: HashSet<String>
     private var rows: ArrayList<CjguiComposableUiTreeRow>
@@ -259,6 +259,30 @@ public class CjguiComposableUiTreeProjection {
             return index
         }
         return -1
+    }
+
+    public func indexOfKey(key: String): Int64 {
+        return indexForKey(key)
+    }
+
+    // CjguiComposableUiCollectionOrder: the same visible projection the tree
+    // presents, so the shared selection core can walk ranges over it.
+    public func count(): Int64 {
+        return rows.size
+    }
+
+    public func keyAt(index: Int64): String {
+        if (index < 0 || index >= rows.size) {
+            return ""
+        }
+        return rows[index].key
+    }
+
+    public func isSelectableAt(index: Int64): Bool {
+        if (index < 0 || index >= rows.size) {
+            return false
+        }
+        return rows[index].selectable
     }
 
     /// Parent key of a projected node ("" for roots); empty when unknown.
@@ -471,210 +495,82 @@ public class CjguiComposableUiTreeNavigationResult {
     }
 }
 
-/// Multi-selection, focus and anchor over the tree projection. Selection is
-/// a set of stable keys; anchor/focus/expand stay explicit. All mutating
-/// operations take the projection so range semantics follow the current
-/// visible order and the data version is recorded with every change.
+/// Multi-selection, focus and anchor over the tree projection. The
+/// hierarchy-independent key set, range, anchor and version logic lives in
+/// `CjguiComposableUiCollectionSelection`; this wrapper adds only tree
+/// expansion/collapse and visible-ancestor focus repair.
 public class CjguiComposableUiTreeSelection {
     private let projection: CjguiComposableUiTreeProjection
-    private var selectedKeys: HashSet<String>
-    private var selectionOrder: ArrayList<String>
-    private var focusKey: String
-    private var anchorKey: String
-    private var selectionVersionValue: Int64
+    private let core: CjguiComposableUiCollectionSelection
 
     public init(projection: CjguiComposableUiTreeProjection) {
         this.projection = projection
-        this.selectedKeys = HashSet<String>()
-        this.selectionOrder = ArrayList<String>()
-        this.focusKey = ""
-        this.anchorKey = ""
-        this.selectionVersionValue = 0
+        this.core = CjguiComposableUiCollectionSelection()
     }
 
     public func selectionVersion(): Int64 {
-        return selectionVersionValue
+        return core.selectionVersion()
     }
 
     public func focus(): String {
-        return focusKey
+        return core.focus()
     }
 
     public func anchor(): String {
-        return anchorKey
+        return core.anchor()
     }
 
     public func isSelected(key: String): Bool {
-        return selectedKeys.contains(key)
+        return core.isSelected(key)
     }
 
     public func selectedCount(): Int64 {
-        return selectionOrder.size
+        return core.selectedCount()
     }
 
     /// Ordered stable keys of the current selection.
     public func selectedKeysInOrder(): ArrayList<String> {
-        return selectionOrder
+        return core.selectedKeysInOrder()
     }
 
     /// Public snapshot of the selection for windows, components and external
     /// readers: exact stable keys, focus, anchor and both versions. Values come
     /// from the live selection state, never from rendered labels.
     public func snapshot(): CjguiComposableUiTreeSelectionSnapshot {
+        let shared = core.snapshot(projection.dataVersion())
         return CjguiComposableUiTreeSelectionSnapshot(
-            ArrayList<String>(selectionOrder), focusKey, anchorKeyEffective(),
-            selectionVersionValue, projection.dataVersion())
-    }
-
-    private func addKey(key: String): Unit {
-        if (!selectedKeys.contains(key)) {
-            selectedKeys.add(key)
-            selectionOrder.add(key)
-        }
-    }
-
-    private func removeKey(key: String): Unit {
-        if (selectedKeys.contains(key)) {
-            selectedKeys.remove(key)
-            var index = 0
-            while (index < selectionOrder.size) {
-                if (selectionOrder[index] == key) {
-                    selectionOrder.remove(at: index)
-                    break
-                }
-                index += 1
-            }
-        }
-    }
-
-    private func replaceSelectionWith(key: String): Unit {
-        selectedKeys.clear()
-        selectionOrder.clear()
-        addKey(key)
-    }
-
-    /// Range selection over the current visible order. `anchorKey` and
-    /// `targetKey` form a closed interval; the interval is always walked in
-    /// visible order (ascending row index), so the selected-key list a public
-    /// reader sees is the same for a forward and for a reverse Shift range.
-    /// The anchor itself is unchanged, so later extensions still measure from
-    /// it. Groups stay focusable but contribute no selected key.
-    private func applyRange(anchorKey: String, targetKey: String, extendSelection: Bool): Unit {
-        if (!extendSelection) {
-            replaceSelectionWith(targetKey)
-            return
-        }
-        let startIndex = projection.indexForKey(anchorKey)
-        let endIndex = projection.indexForKey(targetKey)
-        if (startIndex < 0 || endIndex < 0) {
-            replaceSelectionWith(targetKey)
-            return
-        }
-        selectedKeys.clear()
-        selectionOrder.clear()
-        let low = if (startIndex <= endIndex) { startIndex } else { endIndex }
-        let high = if (startIndex <= endIndex) { endIndex } else { startIndex }
-        var index = low
-        while (index <= high) {
-            let row = projection.rowAt(index)
-            if (row.selectable) {
-                addKey(row.key)
-            }
-            index += 1
-        }
+            ArrayList<String>(shared.keys), shared.focus, shared.anchor,
+            shared.selectionVersion, shared.viewVersion)
     }
 
     /// Mouse click semantics: plain click selects one row; Cmd toggles the
     /// row and moves anchor/focus to it; Shift extends from the anchor along
-    /// the current visible order.
+    /// the current visible order. Range and anchor fallback are shared with
+    /// the flat collection selection.
     public func click(key: String, command: Bool, shift: Bool): Unit {
-        let index = projection.indexForKey(key)
-        if (index < 0) { return }
-        let row = projection.rowAt(index)
-        if (!row.selectable) { return }
-        if (shift) {
-            let rangeAnchor = pickAnchor(key)
-            applyRange(rangeAnchor, key, true)
-            focusKey = key
-            selectionVersionValue += 1
-            return
-        }
-        if (command) {
-            if (selectedKeys.contains(key)) {
-                removeKey(key)
-            } else {
-                addKey(key)
-            }
-            anchorKeyEffectiveSet(key)
-            focusKey = key
-            selectionVersionValue += 1
-            return
-        }
-        replaceSelectionWith(key)
-        anchorKeyEffectiveSet(key)
-        focusKey = key
-        selectionVersionValue += 1
-    }
-
-    private var anchorKeyEffectiveValue: String = ""
-
-    private func anchorKeyEffective(): String {
-        return anchorKeyEffectiveValue
-    }
-
-    private func pickAnchor(fallback: String): String {
-        if (anchorKeyEffective().isEmpty()) {
-            return fallback
-        }
-        return anchorKeyEffective()
-    }
-
-    private func anchorKeyEffectiveSet(key: String): Unit {
-        anchorKeyEffectiveValue = key
-        anchorKey = key
+        core.click(key, command, shift, projection)
     }
 
     /// Selects every selectable row of the current expanded projection
     /// (including rows outside the viewport).
     public func selectAllVisible(): Unit {
-        selectedKeys.clear()
-        selectionOrder.clear()
-        var index: Int64 = 0
-        while (index < projection.rowCount()) {
-            let row = projection.rowAt(index)
-            if (row.selectable) {
-                addKey(row.key)
-            }
-            index += 1
-        }
-        selectionVersionValue += 1
+        core.selectAll(projection)
     }
 
     public func clearSelection(): Unit {
-        selectedKeys.clear()
-        selectionOrder.clear()
-        selectionVersionValue += 1
+        core.clearSelection()
     }
 
     /// Removes one key without touching the rest of the selection (used by
     /// toggle-style consumers).
     public func clearKey(key: String): Unit {
-        removeKey(key)
-        selectionVersionValue += 1
+        core.clearKey(key)
     }
 
     /// Focus movement along the visible projection. `extendSelection` keeps the
     /// anchor and applies a range from it to the new focus.
     public func moveFocus(targetKey: String, extendSelection: Bool): Unit {
-        let index = projection.indexForKey(targetKey)
-        if (index < 0) { return }
-        if (extendSelection) {
-            applyRange(anchorKeyEffective(), targetKey, true)
-        } else {
-            focusKey = targetKey
-        }
-        focusKey = targetKey
-        selectionVersionValue += 1
+        core.moveFocus(targetKey, extendSelection, projection)
     }
 
     /// One visible step of tree focus. `delta` is negative toward the first
@@ -683,117 +579,62 @@ public class CjguiComposableUiTreeSelection {
     /// Returns the resulting focus key, or "" for an empty projection. A
     /// command that cannot move the focus does not advance the version.
     public func moveFocusBy(delta: Int64, extendSelection: Bool): String {
-        let count = projection.rowCount()
-        if (count <= 0) {
-            return ""
-        }
-        var current = projection.indexForKey(focusKey)
-        if (current < 0) {
-            let fallback = projection.indexForKey(anchorKeyEffective())
-            current = if (fallback >= 0) {
-                fallback
-            } else {
-                if (delta >= 0) { -1 } else { count }
-            }
-        }
-        var target = current + delta
-        if (target < 0) { target = 0 }
-        if (target >= count) { target = count - 1 }
-        let key = projection.rowAt(target).key
-        if (!extendSelection && key == focusKey) {
-            return focusKey
-        }
-        if (extendSelection) {
-            applyRange(beginOrContinueRange(key), key, true)
-        }
-        focusKey = key
-        selectionVersionValue += 1
-        return key
-    }
-
-    /// Anchor for a keyboard range extension. The first extension starts at the
-    /// current focus (so Shift+Down selects from the focused row, exactly like
-    /// a Shift-click from it) and remembers that anchor for later extensions in
-    /// the same gesture; an explicit anchor set by a click always wins.
-    private func beginOrContinueRange(targetKey: String): String {
-        let current = anchorKeyEffective()
-        if (!current.isEmpty() && projection.indexForKey(current) >= 0) {
-            return current
-        }
-        let start = if (!focusKey.isEmpty() && projection.indexForKey(focusKey) >= 0) {
-            focusKey
-        } else {
-            targetKey
-        }
-        anchorKeyEffectiveSet(start)
-        return start
+        return core.moveFocusBy(delta, extendSelection, projection)
     }
 
     /// First or last visible row of the current projection.
     public func moveFocusToEdge(last: Bool, extendSelection: Bool): String {
-        let count = projection.rowCount()
-        if (count <= 0) {
-            return ""
-        }
-        let target = if (last) { count - 1 } else { 0 }
-        let key = projection.rowAt(target).key
-        if (!extendSelection && key == focusKey) {
-            return focusKey
-        }
-        if (extendSelection) {
-            applyRange(beginOrContinueRange(key), key, true)
-        }
-        focusKey = key
-        selectionVersionValue += 1
-        return key
+        return core.moveFocusToEdge(last, extendSelection, projection)
     }
 
     /// Keyboard "left": collapse an expanded group, otherwise move the focus
     /// to the visible ancestor. Returns the resulting focus key.
     public func collapseOrAscend(): String {
-        if (focusKey.isEmpty() || !projection.isVisible(focusKey)) {
-            return focusKey
+        let focused = core.focus()
+        if (focused.isEmpty() || !projection.isVisible(focused)) {
+            return focused
         }
-        let row = projection.rowAt(projection.indexForKey(focusKey))
+        let row = projection.rowAt(projection.indexForKey(focused))
         if (row.isGroup && row.expanded) {
-            let _ = projection.setExpanded(focusKey, false)
-            selectionVersionValue += 1
-            return focusKey
+            let _ = projection.setExpanded(focused, false)
+            core.advanceSelectionVersion()
+            return focused
         }
-        let parent = projection.parentKeyOf(focusKey)
+        let parent = projection.parentKeyOf(focused)
         if (parent.isEmpty() || !projection.isVisible(parent)) {
-            return focusKey
+            return focused
         }
-        focusKey = parent
-        selectionVersionValue += 1
-        return focusKey
+        core.setFocusWithoutVersionChange(parent)
+        core.advanceSelectionVersion()
+        return parent
     }
 
     /// Keyboard "right": expand a collapsed group, or descend to its first
     /// child when it is already expanded. Returns the resulting focus key.
     public func expandOrDescend(): String {
-        if (focusKey.isEmpty() || !projection.isVisible(focusKey)) {
-            return focusKey
+        let focused = core.focus()
+        if (focused.isEmpty() || !projection.isVisible(focused)) {
+            return focused
         }
-        let index = projection.indexForKey(focusKey)
+        let index = projection.indexForKey(focused)
         let row = projection.rowAt(index)
         if (!row.isGroup) {
-            return focusKey
+            return focused
         }
         if (!row.expanded) {
-            let _ = projection.setExpanded(focusKey, true)
-            selectionVersionValue += 1
-            return focusKey
+            let _ = projection.setExpanded(focused, true)
+            core.advanceSelectionVersion()
+            return focused
         }
         if (index + 1 < projection.rowCount()) {
             let child = projection.rowAt(index + 1)
             if (child.depth > row.depth) {
-                focusKey = child.key
-                selectionVersionValue += 1
-                return focusKey
+                core.setFocusWithoutVersionChange(child.key)
+                core.advanceSelectionVersion()
+                return child.key
             }
         }
-        return focusKey
+        return focused
     }
 
     /// One navigation command inside the tree focus scope. Commands match the
@@ -805,48 +646,31 @@ public class CjguiComposableUiTreeSelection {
     /// materialize/reveal that row in its virtual list; grouping stays here so
     /// no consumer re-implements tree navigation.
     public func navigate(command: String, extendSelection: Bool): CjguiComposableUiTreeNavigationResult {
-        let focusBefore = focusKey
-        let versionBefore = selectionVersionValue
+        let versionBefore = core.selectionVersion()
         let rowsBefore = projection.rowCount()
         if (command == "left") {
             let _ = collapseOrAscend()
         } else if (command == "right") {
             let _ = expandOrDescend()
-        } else if (command == "select_all") {
-            selectAllVisible()
-        } else if (command == "home" || command == "end") {
-            let _ = moveFocusToEdge(command == "end", extendSelection)
         } else {
-            var step: Int64 = 0
-            if (command == "up") {
-                step = -1
-            } else if (command == "down") {
-                step = 1
-            } else if (command == "page_up") {
-                step = -10
-            } else if (command == "page_down") {
-                step = 10
-            } else {
-                return CjguiComposableUiTreeNavigationResult(false, focusBefore)
-            }
-            let _ = moveFocusBy(step, extendSelection)
+            let _ = core.navigate(command, extendSelection, projection)
         }
-        let changed = selectionVersionValue != versionBefore || projection.rowCount() != rowsBefore
-        return CjguiComposableUiTreeNavigationResult(changed, focusKey)
+        let changed = core.selectionVersion() != versionBefore || projection.rowCount() != rowsBefore
+        return CjguiComposableUiTreeNavigationResult(changed, core.focus())
     }
 
     /// Keeps the focus honest after an expand/collapse change: a focus hidden
     /// by a collapsed group falls back to its nearest visible ancestor instead
     /// of pointing at an invisible row.
     public func ensureFocusVisible(): Unit {
-        let current = focusKey
+        let current = core.focus()
         if (current.isEmpty() || projection.isVisible(current)) {
             return
         }
         let fallback = projection.nearestVisibleAncestor(current)
         if (fallback != current && !fallback.isEmpty()) {
-            focusKey = fallback
-            selectionVersionValue += 1
+            core.setFocusWithoutVersionChange(fallback)
+            core.advanceSelectionVersion()
         }
     }
 
@@ -857,39 +681,7 @@ public class CjguiComposableUiTreeSelection {
     /// nothing does not advance the selection version (so a no-op refresh
     /// cannot force a scene commit).
     public func prune(existingKeys: ArrayList<String>): Unit {
-        let alive = HashSet<String>()
-        for (key in existingKeys) {
-            alive.add(key)
-        }
-        var changed = false
-        var index = selectionOrder.size - 1
-        while (index >= 0) {
-            if (!alive.contains(selectionOrder[index])) {
-                selectedKeys.remove(selectionOrder[index])
-                selectionOrder.remove(at: index)
-                changed = true
-            }
-            index -= 1
-        }
-        if (!alive.contains(anchorKeyEffective())) {
-            // A vanished anchor falls back to the first surviving selected key
-            // (never extends the selection to unrelated branches).
-            let fallbackAnchor = if (selectionOrder.size > 0) { selectionOrder[0] } else { "" }
-            if (fallbackAnchor != anchorKeyEffectiveValue) {
-                changed = true
-            }
-            anchorKeyEffectiveValue = fallbackAnchor
-            anchorKey = fallbackAnchor
-        }
-        if (!alive.contains(focusKey)) {
-            if (!focusKey.isEmpty()) {
-                changed = true
-            }
-            focusKey = ""
-        }
-        if (changed) {
-            selectionVersionValue += 1
-        }
+        core.prune(existingKeys)
     }
 
     /// Drops selected/anchor keys whose row is gone OR has stopped being
@@ -902,35 +694,7 @@ public class CjguiComposableUiTreeSelection {
     /// projects: a non-selectable group row is a legitimate focus target for
     /// expand/collapse, so the user's row position is not thrown away.
     public func pruneSelectionToSelectable(): Unit {
-        var changed = false
-        var index = selectionOrder.size - 1
-        while (index >= 0) {
-            let key = selectionOrder[index]
-            let rowIndex = projection.indexForKey(key)
-            if (rowIndex < 0 || !projection.rowAt(rowIndex).selectable) {
-                selectedKeys.remove(key)
-                selectionOrder.remove(at: index)
-                changed = true
-            }
-            index -= 1
-        }
-        let anchor = anchorKeyEffective()
-        if (!anchor.isEmpty()) {
-            let anchorRow = projection.indexForKey(anchor)
-            if (anchorRow < 0 || !projection.rowAt(anchorRow).selectable) {
-                // Same fallback rule as `prune`: first surviving selected key,
-                // never an unrelated branch.
-                let fallbackAnchor = if (selectionOrder.size > 0) { selectionOrder[0] } else { "" }
-                if (fallbackAnchor != anchorKeyEffectiveValue) {
-                    changed = true
-                }
-                anchorKeyEffectiveValue = fallbackAnchor
-                anchorKey = fallbackAnchor
-            }
-        }
-        if (changed) {
-            selectionVersionValue += 1
-        }
+        core.pruneToSelectable(projection)
     }
 }
 

@@ -55,10 +55,11 @@ class CjguiAsyncTextMetricsJob {
     let fontWeight: Int64
     let fontFamily: String
     let maximumWidth: Int64
+    let runsKey: String
     let handle: UInt64
     private var released: Bool = false
 
-    init(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, handle: UInt64) {
+    init(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, handle: UInt64, runsKey!: String = "") {
         this.value = value
         this.style = style
         this.fontSize = style.fontSize
@@ -66,10 +67,12 @@ class CjguiAsyncTextMetricsJob {
         this.fontFamily = style.fontFamily
         this.maximumWidth = maximumWidth
         this.handle = handle
+        this.runsKey = runsKey
     }
-    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64): Bool {
-        return this.value == value && this.fontSize == style.fontSize && this.fontWeight == style.fontWeight &&
-            this.fontFamily == style.fontFamily && this.maximumWidth == maximumWidth
+    func matches(value: String, style: CjguiComposableUiStyle, maximumWidth: Int64, runsKey!: String = ""): Bool {
+        return this.runsKey == runsKey && this.value == value && this.fontSize == style.fontSize && this.fontWeight == style.fontWeight &&
+            this.fontFamily == style.fontFamily && this.maximumWidth == maximumWidth &&
+            this.style.letterSpacing == style.letterSpacing && this.style.lineHeight == style.lineHeight
     }
     func poll(): (Int32, CjguiComposableUiTextMeasurement, Int32) {
         var native = CjguiInternalRendererTextMeasurement()
@@ -119,14 +122,55 @@ func beginCjguiAsyncTextMetrics(value: String, style: CjguiComposableUiStyle, ma
     var status = CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT
     try (textResource = cText.asResource()) {
         unsafe {
-            status = cjgui_async_composable_text_metrics_begin(textResource.value, UInt64(value.size), style.fontSize,
-                weight, composableFontFamilyCode(style.fontFamily), width, inout handle)
+            let (typographyStatus, typographyOutput) = cjguiBeginAsyncTextTypography(textResource.value, UInt64(value.size), style.fontSize,
+                weight, composableFontFamilyCode(style.fontFamily), width, style.letterSpacing, style.lineHeight)
+                status = typographyStatus
+                handle = typographyOutput
         }
     }
     if (status != CJGUI_ASYNC_MEASURE_STARTED || handle == 0u64) {
         return (status, None)
     }
     return (status, Some(CjguiAsyncTextMetricsJob(value, style, maximumWidth, handle)))
+}
+
+func beginCjguiAsyncStyledTextMetrics(value: String, style: CjguiComposableUiStyle, runs: Array<CjguiComposableUiTextStyleRun>, maximumWidth: Int64): (Int32, ?CjguiAsyncTextMetricsJob) {
+    if (value.size > CJGUI_ASYNC_MEASURE_MAX_JOB_BYTES || style.fontSize <= 0.0) {
+        return (CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT, None)
+    }
+    let width = if (maximumWidth <= 0) {
+        0u32
+    } else if (maximumWidth > Int64(UInt32.Max)) {
+        UInt32.Max
+    } else {
+        UInt32(maximumWidth)
+    }
+    let weight = if (style.fontWeight <= 0) {
+        0u32
+    } else if (style.fontWeight > 1000) {
+        1000u32
+    } else {
+        UInt32(style.fontWeight)
+    }
+    let wire = cjguiTextRunsMeasurementWire(runs)
+    if (wire.size > 65536) { return (CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT, None) }
+    let cRuns = unsafe { LibC.mallocCString(wire) }
+    let cText = unsafe { LibC.mallocCString(value) }
+    var handle: UInt64 = 0u64
+    var status = CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT
+    try (textResource = cText.asResource()) {
+        try (runResource = cRuns.asResource()) {
+        unsafe {
+            let (typographyStatus, typographyOutput) = cjguiBeginAsyncStyledTypography(textResource.value, UInt64(value.size), runResource.value, style, width)
+                status = typographyStatus
+                handle = typographyOutput
+        }
+        }
+    }
+    if (status != CJGUI_ASYNC_MEASURE_STARTED || handle == 0u64) {
+        return (status, None)
+    }
+    return (status, Some(CjguiAsyncTextMetricsJob(value, style, maximumWidth, handle, runsKey: cjguiTextRunsGeometryKey(style, runs))))
 }
 
 class CjguiAsyncMultilineHeightJob {
@@ -151,7 +195,8 @@ class CjguiAsyncMultilineHeightJob {
 
     func matches(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): Bool {
         return this.value == value && this.fontSize == style.fontSize && this.fontWeight == style.fontWeight &&
-            this.fontFamily == style.fontFamily && this.contentWidth == contentWidth
+            this.fontFamily == style.fontFamily && this.contentWidth == contentWidth &&
+            this.style.letterSpacing == style.letterSpacing && this.style.lineHeight == style.lineHeight
     }
 
     func poll(): (Int32, Int64, Int32) {
@@ -188,8 +233,11 @@ func beginCjguiAsyncMultilineHeight(value: String, style: CjguiComposableUiStyle
     var status = CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT
     try (textResource = cText.asResource()) {
         unsafe {
-            status = cjgui_async_composable_multiline_begin(textResource.value, UInt64(value.size), style.fontSize,
-                UInt32(style.fontWeight), composableFontFamilyCode(style.fontFamily), UInt32(contentWidth), inout handle)
+            let (typographyStatus, typographyOutput) = cjguiBeginAsyncMultilineTypography(textResource.value, UInt64(value.size), style.fontSize,
+                UInt32(style.fontWeight), composableFontFamilyCode(style.fontFamily), UInt32(contentWidth),
+                style.letterSpacing, style.lineHeight)
+                status = typographyStatus
+                handle = typographyOutput
         }
     }
     if (status != CJGUI_ASYNC_MEASURE_STARTED || handle == 0u64) {

@@ -1,6 +1,6 @@
 # CJGUI runtime 与样例
 
-更新：2026-10-01。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
+更新：2026-10-19。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
 仓颉包当前名为 cjgui，版本 0.0.0，输出 static；不承诺稳定公共 API。
 
 ## 当前目录
@@ -27,7 +27,11 @@
 `CjguiMacosApplicationHost`、`cjgui_macos_app.sh` 与统一 runner。两个现有窗口
 消费者是这个入口的兼容实例，而非新应用的 native 依赖。
 
-新建应用优先使用 `scripts/create_macos_application.sh ui-only|collaboration`；需要在临时目录证明
+开发分发可用 `scripts/export_framework_preview.sh DESTINATION --profile macos-dev`，在包根README完成创建／运行；默认full保留原可选消费者，见[宿主与预览](MACOS_APPLICATION_HOST.md#创建与本地源码预览)。
+
+只读文字的多字体、字号与颜色使用同一 `textStyleRuns` 声明；macOS 的自然测量、换行、限行省略和生成 label 接入见[公共多样式文本](STYLED_TEXT.md)。`mixed-form --styled-text` 的手写与公开生成区读取同一应用资源定义。
+
+新建应用优先使用 `scripts/create_macos_application.sh ui-only|command-surface|collaboration|mixed-form`；需要在临时目录证明
 没有隐式连接当前工作区时，使用 `scripts/export_framework_preview.sh` 导出源码预览后再创建。runner 的
 `source_origin`/`resource_origin` 日志用于核对实际预览来源；验证时清除继承的
 `CJGUI_NATIVE_SOURCE_DIR`，但不删除开发者的显式覆盖能力。完整的工具链选择、路径依赖、资源和预览边界见
@@ -63,7 +67,7 @@ native 写业务规则。
 
 模式切换或代理重建使用 `requestAcceptedSelectionRestore`／`requestTextSelectionRestore`及 `selectionRestoreState`。请求由框架持有，首次拒绝保留待办，安装确认才终结；同语义菜单关闭保留待安装映射，新用户选择／换绑会使旧请求失效。`CjguiTextSession.sourceRangeForSelectionTicket`只供准备 SourceMap 映射，不能充当输入授权或 native 安装确认。
 
-controller 实现 `CjguiComposableUiContextMenuRequestHandler`提供内容，框架从现有事件队列生成右键请求并保持选择。用 `cjguiComposableContextMenuBounds`／`cjguiComposableContextMenuLayer`按请求点击点声明弹层，再以 `declareContextMenuCommand`／`invokeContextMenuCommand`接已有公共命令；失效目标被拒绝，Esc／外部点击关闭和焦点恢复归统一窗口机制。普通消费者见 [range_text_window_app](examples/range_text_window_app/src/main.cj)；真实右键验收入口为 `native/scripts/verify_range_text_window_app_context_menu.sh`。独立位置输入验收入口为 `native/scripts/verify_range_text_window_app_position.sh`。
+controller 实现 `CjguiComposableUiContextMenuRequestHandler`提供内容，框架从现有事件队列生成右键请求并保持选择。用 `cjguiComposableContextMenuBounds`／`cjguiComposableContextMenuLayer`按请求点击点声明弹层，再以 `declareContextMenuCommand`／`invokeContextMenuCommand`接已有公共命令；失效目标被拒绝，Esc／外部点击关闭和焦点恢复归统一窗口机制。普通消费者见 [range_text_window_app](examples/range_text_window_app/src/main.cj)；真实右键验收入口为 `native/scripts/verify_range_text_window_app_context_menu.sh`。独立位置输入验收入口为 `native/scripts/verify_range_text_window_app_position.sh`；公共单层菜单的键盘导航／确认／取消入口为 `native/scripts/verify_settings_context_menu_keyboard.sh`。
 
 `positionWorkCounts()`提供正常构建的 process-local prepares、queries、line-builds、cache-hits；计时未启用时标 unavailable。macOS 原件与未扩展范围见 [E 最终证据](</Users/jiangxuanyang/Desktop/cangjie/artifacts/e-macos-position-20260930/evidence-index.json>)，签名／指纹见 [产品 H 最小契约](</Users/jiangxuanyang/Desktop/Pharos Mark/artifacts/e-text-position-20260929/m1-m2-overnight/README.md#h-可消费最小契约不要求-h-追逐在途文件>)；本节不承诺稳定 API 或 OHOS V1。
 
@@ -89,6 +93,49 @@ controller 实现 `CjguiComposableUiContextMenuRequestHandler`提供内容，框
 
 `CjguiComposableUiTreeSelection.snapshot()` 返回 keys/focus/anchor/选择与投影版本；窗口控件点击事件带
 `modifierFlags`（AppKit 位，见 `CJGUI_UI_MODIFIER_*`），消费者据此实现普通点击/Cmd/Shift 语义。
+
+### 虚拟卡片网格（experimental）
+
+`composable_ui_card_grid.cj` 在既有可变高度虚拟列表上按实际内容宽度排等高卡片，只物化可见行加
+overscan。卡片身份是 `instanceKey + itemKey`，列数变化用 `rowKeyForItem` 映射到当前行并复用列表
+`revealKey`；选择/动作仍走调用方的 `CollectionSelection` 与业务对象。身份使用可逆 hex，业务 key
+上限 48 UTF-8 字节，超长明确拒绝而不哈希。用法、重排锚点和边界见
+[CARD_GRID.md](CARD_GRID.md)，正常消费者见 [rule_set_window_app](examples/rule_set_window_app/src/main.cj)。
+
+### 公共布局原语（experimental，macOS）
+
+`composable_ui.cj` 在普通纵向/横向节点上提供 `Stack`、横向 `Wrap`、
+`AspectRatio` 和 `Spacer`，复用同一布局引擎的测量、约束、复用签名、裁剪和
+命中路径；生成式同名组件 `stack`/`wrap`/`aspectRatio`/`spacer` 消费同一实现。
+
+    let tags = cjguiComposableWrap(3401, "detail-tags",
+        CjguiComposableUiStyle(growX: 1, gap: 6), rowGap: 4)
+    tags.add(cjguiComposableText(3402, "detail-tag-applied", "已应用 v1", tagStyle))
+    tags.add(cjguiComposableText(3403, "detail-tag-draft", "草稿 v4", tagStyle))
+
+`rule_set_window_app` 的详情头部用 `Wrap` 标签栏和 `Stack`/`AspectRatio`
+图片卡（含真实编辑角标），草稿操作行用 `Spacer`。约束、示例、生成属性名、
+支持范围与定向测试见 [LAYOUT_PRIMITIVES.md](LAYOUT_PRIMITIVES.md)。
+
+### 字段控件与状态反馈（experimental，macOS）
+
+`composable_ui_field_controls.cj` 提供公共数值步进和稳定 key 单选组，
+`composable_ui_feedback.cj` 提供状态消息、内容状态和确定/忙碌进度。它们只
+生成普通可组合节点：值、上下限、动作、进度总量和动作目标都由调用方提供，
+不拥有业务状态、不启动定时器或任务。
+
+    let stepper = CjguiNumericStepper.build(binding, presets: presets)
+    let choice = CjguiChoiceGroup.build(nodeId, semanticId, optionsNodeId,
+        options, currentValue, unmatchedNodeId)
+    let status = CjguiStatusFeedback.buildMessage(nodeId, semanticId,
+        chipNodeId, textNodeId, actionNodeId,
+        CjguiStatusMessageSpec(CJGUI_STATUS_ERROR, "保存失败，请重试",
+            actionLabel: "重试", actionName: "RETRY"))
+
+规则集已用公共步进替换保留天数控件，用单选组表达标准/紧凑布局，并用公共
+状态/内容/进度反馈呈现消息、空结果和外部状态。生成式同名复合组件复用同一
+构建器；`notification_threshold_window_app` 是不同字段配置的轻量消费入口。
+用法、边界和生成属性见 [FIELD_CONTROLS.md](FIELD_CONTROLS.md)。
 
 ### 运行时生成式接入（experimental，已接通公开闭环）
 
@@ -139,6 +186,49 @@ unknown_action / unknown_field / max_depth_exceeded / max_nodes_exceeded / prope
 structure_version_conflict / malformed_node。参见[生成契约](../../docs/core/AI_NATIVE_UI_SEMANTICS.md#运行时生成与修改界面)与
 [生成式阶段方案](../../docs/plans/2026-09-19-runtime-generated-ui-milestone.md)。
 
+公共面版本与支持事实（experimental，additive-only）：`generated-capabilities` 在既有目录正文中新增三种行，旧读者忽略它们：
+
+    SURFACE version=1.0 stability=experimental compatibility=additive_only protocol=2 subset=host,layout,fields,commands,identity,generated,read_write
+    SUPPORT component <kind> state=available reason=registered source=catalog_registration
+    SUPPORT image_resource <key> state=available reason=registered source=catalog_registration
+    SUPPORT capability window_background state=unavailable reason=window_background_not_enabled source=catalog_opt_in
+    SUPPORT backend <backend> state=available reason=build_target source=platform_build
+    EVIDENCE backend:<backend> state=unverified reason=delivery_evidence_not_declared
+
+`SUPPORT` 由注册/准入的同一张表派生：只有注册成功的项才会被列出，`available` 不是自由文本的后端承诺；未列出的项是 unknown，不能当作可用。操作目录未启用的能力（例如根 `windowBackground`）会如实发布 `unavailable` 及准入原因；应用另可用 `catalog.declareSupportFact(kind, item, "fallback"|"unavailable", reason)` 声明被缩减或不可用的项，与注册表矛盾的声明会被拒绝（`available` 不可手写）。`EVIDENCE` 单独表示交付证据，默认 `unverified`；应用用 `catalog.declareDeliveryEvidence(item, state, reason)` 声明 `verified|unverified`。typed 客户端（`cjgui_generated_client.py`）提供 `capabilities().surface`、`support_for(kind, item)`、`evidence_for(item)`，`fallback`/`unavailable`/`unverified` 是彼此独立的状态。
+
+typed 客户端对 `SURFACE` 做具名兼容检查：没有该行的旧生产方按原格式继续可读（不推断兼容等级）；同主版本的新增键保留在 `surface.extra`；未知主版本、未知 `protocol` 或未知 `compatibility` 以带原值的 `GeneratedUiError` 拒绝，不把无法读取的协议当作旧协议解析。当前本地候选声明 `version=1.0`、`protocol=2`、`compatibility=additive_only`，公共子集为 `host,layout,fields,commands,identity,generated,read_write`；这些入口仍是 experimental，不因新增兼容检查改名为 stable。
+
+拒绝结果保留既有 `ERROR <code>` 前缀；owner 写准入拒绝还会携带 `DETAIL_HEX`、`VERSION` 与 `TARGET` token。typed 客户端把它们解析为 `GeneratedUiRemoteError` 的 `code/detail/versions/target`，未知 code 以 `unknown=True` 原样保留。默认调用和旧响应格式保持兼容；本面仍是 experimental，不宣布稳定 API。
+
+### 应用复合组件：同一声明、多对象、持续编辑（experimental）
+
+`CjguiCompositeComponentSpec` + `CjguiCompositeComponentFactory` 让应用把一段界面声明为一种 kind，由框架为**每个实例**分配元素身份并解析 owner 绑定；工厂只能使用框架给的身份（返回其它节点 id 会被展开审计拒绝），因此两个实例不可能共享节点或串写对象。实例的 owner 由 provider 的 instance-aware 方法解析：
+
+    func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64
+    func actionOperationResourceId(actionName: String, instanceKey: String): Int64
+    func draftText(fieldId: String, instanceKey: String): String
+    func formFeedback(instanceKey: String): ?CjguiGeneratedUiFormFeedback
+
+数据刷新与结构发布是两条路：同 key 同 owner 的草稿、错误、动作可用性和原因由该实例的同一反馈快照重新投影（值、`blockedReason`、`actionEnabled` 随之变化），**不提交结构、不推进结构版本**；只有真正的增删、重排、换绑才经 `submit` 候选，失败候选保留上一份已接受绑定与代次。owner 映射在候选之外漂移时（provider 已指向新对象、场景尚未接受）框架保留已接受的 owner 与值，不自动改绑，也不借另一个对象的字段。
+
+多对象动作携带**已接受的目标与代次**：
+
+    func executeAction(actionName: String, nodeKey: String, instanceKey: String,
+        ownerTargetResourceId: Int64, instanceIncarnation: Int64): CjguiGeneratedUiActionResult
+
+框架先校验该元素仍是解析时的同一条 accepted 绑定；provider 还必须校验自己的映射仍解析到 `ownerTargetResourceId`，否则返回 `owner_target_retired`。五参默认实现对带真实目标（`ownerTargetResourceId >= 0`）的调用**具名拒绝**（`instance_owner_target_requires_five_argument_execute`），不再丢弃 owner 后按当前 key 执行到新对象；旧单 owner（无 per-object 目标）保持原两参/三参行为。
+
+`mixed_form` 模板是完整消费样例：两个 `presetCard` 实例（owner 6301/6302）复用原有 jobName/copies/duplex 字段与 APPLY_DRAFT/CANCEL_DRAFT 动作，`client.py` 提供 `card-read|card-set|card-apply|card-cancel|card-rebind|stale-write|lock|unlock`。一条链覆盖键盘编辑、外部置非法、键盘纠正、实际按钮 Apply/Cancel、锁定/解锁（卡片与手写预设同一规则）、外改与重排、重排后焦点与合法选区保留、显式换绑拒绝旧写入、新对象续写与正常关闭（`native/scripts/verify_reactive_generated_chain.sh`）。锁定用既有 `CjguiSharedAvailability` 通道发布与拒绝同一原因，不新增接口。设置 `CJGUI_PRINT_COUNTERS_TRACE=1` 时，模板在每次真实场景提交后打印 `region.testWorkCounts()` 的既有计数；数据刷新应表现为 builds/commits 各 +1 而 decodes/validations 不变，空闲不应出现新行。卡片文本走整值 intent，不进 owned range 会话；需要逐键会话的应用应为其 provider 显式实现范围写，而不是在卡片里复制输入状态机。
+
+导出 SDK 并验证包外消费（`--profile macos-dev`；`--source-lock` 是路径→sha256 的 JSON，锁定本轮接受的叶子源码）：
+
+    zsh scripts/export_framework_preview.sh /tmp/cjgui-preview --profile macos-dev --source-lock /tmp/source-lock.json
+    zsh /tmp/cjgui-preview/framework/cjgui/scripts/create_macos_application.sh mixed-form /tmp/PrintPresetApp
+    cd /tmp/PrintPresetApp && zsh run.sh --build-only
+
+导出目录的 `source-manifest.json` 记录 `source_content_sha256`/`exported_content_sha256`/`source_drift`；同一 source-lock 重导出应得到相同 `exported_content_sha256`。包外工程可继续修改应用源码（例如新增卡片）并在同一 SDK 上重建运行，不需要改框架。
+
 ### 运行时生成式接入（原规划说明）
 
 框架方向包含手写、运行时生成及混合界面。应用注册可用组件、字段与动作，外部提交受限结构描述，
@@ -180,6 +270,35 @@ owner event；测试会条件恢复其读到的剪贴板内容。它是受控 Ap
 探针另覆盖 128B/4KiB/512KiB（文档总量边界）payload、队列满压力与 close 后保留收敛；文档消费者链在真实
 bundle 窗口上串起外部授权调用与窗口编辑/复制粘贴；跨窗脚本以真实鼠标拖动验证同进程跨窗口 drop。
 这些同样是自动化验证，不等同于人工物理输入。
+
+### 公共整数滑块（experimental，macOS 已接入）
+
+`cjguiComposableSlider(id, semanticId, value, minimum, maximum, step, style)` 保留原调用形式；
+现在由共同布局用普通圆角矩形画轨道、填充和滑块头，原 slider 节点仍是唯一输入／AX 目标。
+`appearance:` 可传 `CjguiComposableUiSliderAppearance.fromTheme(theme)` 或分别声明 track/fill/thumb
+颜色、thumbDiameter、trackThickness。默认提供 hover/pressed/focused 边框，禁用时降低图形透明度。
+普通手写树可直接 `layout(root, ...)`；已有用户 scoped 身份仍使用原 candidate registry。
+
+绑定既有 INTEGER 字段时，手写和生成共享同一个入口：
+
+```cangjie
+let field = catalog.fieldFor("retentionCount").getOrThrow()
+let slider = cjguiComposableFieldSlider(62, "retention-slider", field, binding,
+    CjguiComposableUiStyle(fixedHeight: 32, growX: 1), step: 1)
+let _ = catalog.registerComponent(cjguiGeneratedSliderComponent())
+// 生成声明：kind=slider, fieldId=retentionCount；step 默认 1，且必须为正数。
+```
+
+范围、字段身份、可用性和写动作来自原 FieldSpec/provider，生成描述不能另设 minimum/maximum。
+空、非法、溢出或越界整数草稿显示保留原文的只读提示，不投影成零，也不写回业务数据。
+宿主 controller 的 `applyUiEvent` 将手写事件交给 region.handleFieldSliderEvent，生成事件仍走
+region.handleEvent；pointerCaptureVersion 和 sliderCaptureMapping 分别转发 region 的
+sliderCaptureVersion／sliderCaptureMapping。连续输入沿用原捕获凭证，映射保留已接受画面，
+输出凭证单独读回原 owner；独立字段变更使旧捕获失效。NAVIGATE 仍复用原 adjustValue。
+
+Mac AX 发布整数值／范围及增减动作。正常消费者为 [generated_collection](examples/generated_collection/README.md)
+的同字段双呈现；AX API、原始键鼠与实际 VoiceOver 分别记证。共同 Cangjie 代码不依赖外部 GUI
+框架，其他平台的本簇编译、绘制、输入和无障碍未验，不能据此称已支持。
 
 ### 交互状态与主题（experimental）
 
@@ -323,6 +442,66 @@ resource/field 对应关系，不能以不匹配的 projection 静默渲染。�
 具名拒绝。命名样式、交互 paint 和 translation 组合保留声明。当前实际绘制消费仅 macOS；
 Linux/Windows 原生绘制尚未接入，OHOS 冻结副本也未移植，本轮不宣称其他平台支持。
 
+### 标准草稿表单的混合接入（experimental，macOS）
+
+可直接创建包含手写区、可选运行时区、业务 owner 和独立客户端的应用：
+
+```sh
+zsh scripts/create_macos_application.sh mixed-form "/你的目录/My Print Tool"
+cd "/你的目录/My Print Tool"
+./run.sh                 # 先选择 Cangjie 1.1.3；默认只做本地编辑
+```
+
+窗口点击“开启本地协作”后才发布连接；`client.py` 复用公开 typed client，发现字段、
+生成/重排实际结构、读写原草稿及调用 Apply。[一页接入说明](templates/macos_application/mixed_form/README.md)
+列出字段/规则/布局的修改入口及示例的实验性边界。
+
+`CjguiGeneratedUiFormBinding(domain, ownerResourceId)` 将现有
+`CjguiSharedEditableFormDomain` 接到 `CjguiGeneratedUiWindowRegion`：字段规格由
+`formBinding()` 派生，内容从 `formSnapshot()` 读取，编辑、Apply、取消仍进入原领域。
+应用提供同一套字段定义、真实业务校验和手写布局，选择允许生成的组件；框架复用字段类型分派、
+范围输入、候选提交/回滚和公开查询。新增普通字段不需要按字段名修改框架或 native。
+
+```cangjie
+let form = CjguiGeneratedUiFormBinding(domain, ownerId)
+let _ = catalog.registerFields(form.fieldSpecs())
+let region = CjguiGeneratedUiWindowRegion(catalog, form, "my-form")
+region.attachWindow(window)
+// buildUi adds region.buildNode(); the existing SceneRefreshParticipant
+// delegates begin/prepare/commit/rollback/dispose to region.
+// Route region.handleEvent(event), then form.handleFormEvent(event, window)
+// for handwritten editors declared with the SAME field/operation identities.
+let _ = connection.enableGeneratedUiProvider(region)
+```
+
+手写控件的 `resourceId` 使用字段规格，`operationResourceId` 使用业务 owner；字段标签、writer
+和范围均取同一声明。生成 TEXT 使用已有范围会话，当前焦点/选择从真实窗口读回，适配器不保存
+第二份草稿或选择历史。owner 与公开连接须沿既有宿主循环串行调用。只支持既定 TEXT/INTEGER/BOOLEAN
+及标准 Apply/取消语义；旧字段版本无法无歧义映射时返回 None，不猜坐标。
+
+TEXT 范围会话须配合宿主 `CjguiMacosApplicationWindowConfiguration(...,
+rangeTextEditDeltaDelivery: true)`，由原范围会话消费编辑；整值预览不会再触发一次 owner 写入。
+
+正常消费见 [通知窗口接线](examples/notification_threshold_window_app/src/notification_generated.cj)，
+外部调用直接复用 [typed client 示例](examples/notification_threshold_window_app/mixed_form_client.py)：
+
+```sh
+python3 mixed_form_client.py DESCRIPTOR inspect
+python3 mixed_form_client.py DESCRIPTOR create
+# 在窗口编辑后：
+python3 mixed_form_client.py DESCRIPTOR read
+python3 mixed_form_client.py DESCRIPTOR reorder
+python3 mixed_form_client.py DESCRIPTOR reject
+```
+
+示例提交真实节点数据并转换当前已接受的树，不重启或选择预写页面。它是普通公开客户端消费，
+不是模型生成证明。本轮仅验 macOS；同 key/同绑定重排与续写通过，跨绑定换写和其他平台未扩验。
+通知混合窗口的主体闭环按已验版本保留；macOS 普通单行模态返回随同一候选在原生主线程
+安装目标和精确选区，仓颉仅消费实际回执。最终候选 Esc 后直接 Z、Y 的草稿读回为 ZY。
+安装拒绝保留原返回位置供明确重开，仍需新请求真实安装；候选拒绝/取消有明确终态，
+换绑不得复用原位置。文本聚焦不能代替选区安装。具体版本与原件见
+[E 当前结果](../../artifacts/e-astra-mechanisms-20261005/caret-regression/searchable-panel-current/RESULT.md)。
+
 ### 可搜索选择面板（experimental，macOS）
 
 `CjguiSearchableSelectionPanel` 组合普通输入、虚拟列表、弹层和主题。应用提供稳定 `key`、
@@ -335,7 +514,8 @@ let picker = CjguiSearchableSelectionPanel("delivery-channel")
 picker.open("选择通道", ArrayList<CjguiSearchableSelectionItem>([
     CjguiSearchableSelectionItem("email", "邮件", keywords: "mail"),
     CjguiSearchableSelectionItem("sms", "短信", isEnabled: false, disabledReason: "尚未配置")
-]), window.editingFocusReference() ?? CjguiComposableUiNodeReference.manual(13))
+]), window.editingFocusReference() ?? window.focusedNodeReference() ??
+    CjguiComposableUiNodeReference.manual(36)) // 36 是打开面板的现存按钮
 // buildUi: return picker.attachTo(base, theme)
 // uiSceneVersion: include picker.revision()
 // SceneRefreshParticipant.candidateSceneCommands: include picker.commands()
@@ -344,6 +524,8 @@ picker.open("选择通道", ArrayList<CjguiSearchableSelectionItem>([
 if (let Some(item) <- picker.takeConfirmed(window)) {
     applicationChooseChannel(item.key)
 }
+let failure = picker.takeConfirmationFailure()
+if (failure.size > 0) { applicationShowStatus(failure) }
 ```
 
 每次打开固定一份条目快照，过滤只改变结果映射，已物化行以本次打开生命周期和原条目身份保持稳定。
@@ -354,6 +536,8 @@ if (let Some(item) <- picker.takeConfirmed(window)) {
 `takeConfirmationFailure()` 显示原因，允许重新打开；pending 沿用现有恢复，已有 need_prepare_installation
 结果转为本次面板失败，不另建恢复队列。取消也报告恢复失败。已聚焦的非文本触发器只有无需恢复选区时
 才返回 focused。`window.modalReturnPositionState(target)` 是只读实验性观察，不授权输入。
+`editingFocusReference()` 复用 owner 编辑位置或普通输入的既有有效书签；首次没有文本位置时，
+调用方将现存触发按钮作为 anchor，不要求恢复一个从未建立过的文本选区。
 组字中的 Enter/Esc 留给系统文本服务。普通应用复用见
 [通知阈值的通道选择](examples/notification_threshold_window_app/src/main.cj)。Pharos 的文件目录和命令执行仍属于产品。
 
@@ -441,6 +625,40 @@ let command = CjguiComposableUiCommand(
 命令由实现 `CjguiComposableUiSceneRefreshParticipant` 的 Cangjie owner 在每次候选 scene 中返回；`scope.local("publish")` 是稳定目标，不能用列表下标或 native 对象替代。`CjguiComposableUiShortcut` 的快捷键是可选的：带快捷键的声明进入平台菜单投影，不带快捷键的声明仍可被仓颉拥有的自绘菜单通过 `window.invokeCommand("editor.publish")` 调用。`focusScopeId` 可将同一个命令 vocabulary 限定到当前焦点范围；相同 scope 的重复命令或快捷键冲突会使候选失败。
 
 `isEnabled` 和 `isChecked` 是当前已接受 Cangjie 声明的投影。disabled 命令、目标已移除、目标换绑、候选 scene 未被 native 接受，都会 fail closed：调用返回 `false`，保留上一份 accepted scene/命令集合，不静默重定向到另一个按钮。命令处理仍进入 owner 的 `applyUiEvent()`；按钮、平台菜单和自绘菜单因此共享同一动作与领域状态。结果可用 `window.windowProjection().fieldValues` 读回，但这只是 owner 状态的只读投影，不是第二个真相源。
+
+`isCheckable`（命名参数，默认 false）把声明区分为可勾选命令与普通动作：未勾选的可勾选命令（`checked=false, isCheckable=true`）和普通动作（两者皆 false）是两个事实，任何语义读者都不得从标签中的 ✓ 或 checked 值反推可勾选性。声明为可勾选后，工具栏、命令面板、自绘菜单行的按钮以 macOS 标准语义暴露：AX 角色为 AXCheckBox，AXValue 为声明 checked（VoiceOver 读作 checked/unchecked），metadata 的 `disabledReason` 作为 AXHelp 说明；普通动作保持 AXButton。同实例更新保持 AX 引用有效，checked/enabled/help 的已接受实际变化以 AXValueChanged 通知派生，静置不重复通知、不抢焦；移除或换绑使命名旧身份的引用失效。原生菜单继续消费同源声明设置菜单项勾选状态。
+
+命令诊断有发布身份：`window.commandPublicationRevision()` 是已接受命令集合的单调修订号，`replaceCommands`/`revokeCommand`/候选接受与撤销都在同一漏斗更新它；投影未变化（同集合同序同值）不升版，失败候选保留旧发布。`diagnosticCommandSnapshot` 快照记录该修订号并支持 `startIndex`/`expectedPublicationRevision` 有界翻页（窗口单次读取钳制 256 条，Inspector 每页 64 条，`nextIndex` 指向下一页），期望修订不匹配返回 `stale_publication`；窗口身份和 scene 版本因此不再是判断命令快照新鲜的充分条件——Inspector 命令视图同时比较两者并提供首页/下一页，未读取部分以总数与截断标记呈现。诊断保持只读：不执行命令、不试探测可用性。
+
+工具栏与面板消费同一份 `CjguiCommandToolbarPlacement`。owner 在每次候选 scene 重建命令和元数据列表，并用 `cjguiCommandToolbarPlacement` 重新投影；运行时增删命令、全部清空和恢复都是合法集合。空集合组装为空工具栏；面板已打开时用 `CjguiCommandPalette.updateItems` 更新，空态仍可取消，查询与仍然有效的高亮保留，相同投影不升版本。`searchCommandId` 命中的声明投影为搜索钮：其 `isEnabled` 直接决定按钮 enabled，声明被移除时搜索钮一起移除。搜索钮始终使用 metadata 中的 owner action，不能包成 `CJGUICOMMAND:`，否则 `invokeCommand` 会重新进入同一按钮；普通命令触发钮才使用该前缀交给消费方转 `window.invokeCommand`。设置应用的双作用域实例提供了可运行的消费样例：`settingsScopedCommands`／`scopedPlacementFor`。
+
+单层右键菜单由 `CjguiContextCommandMenu` 从同一命令集合派生，不需要应用维护第二张动作表或硬编码菜单槽位：
+
+```cangjie
+class Editor <: CjguiComposableUiContextMenuRequestHandler {
+    let window: CjguiComposableUiWindow
+    let commands: ArrayList<CjguiComposableUiCommand>
+    let metadata: ArrayList<CjguiCommandToolbarMetadata>
+    let menu = CjguiContextCommandMenu(scope, "editor-context-menu")
+
+    public func requestContextMenu(request: CjguiComposableUiContextMenuRequest): Bool {
+        return menu.open(window, request, commands, metadata, "editor-card",
+            searchCommandId: "editor.search")
+    }
+    public func contextMenuRequestEnded(requestId: Int64, reason: String): Unit {
+        if (menu.requestEnded(requestId)) { window.requestRefresh() }
+    }
+    // 命令集变化时（增删/禁用/换目标）用同一来源重新投影；可执行集合变化
+    // 会退役菜单，由窗口按既有生命周期结束请求。
+    public func commandsChanged(): Unit {
+        if (menu.isOpen()) {
+            let _ = menu.reconcile(window, commands, metadata, searchCommandId: "editor.search")
+        }
+    }
+}
+```
+
+`cjguiContextCommandMenuProjection` 复用工具栏的标题、快捷键提示、checked、enabled 与 metadata 禁用原因，并按 `searchCommandId` 排除搜索命令。enabled 声明保留命令自身的 `targetReference`；窗口在 declare 时按 accepted scene 解析它，并与请求的 node/resource/kind/identity/value 逐项比较，因此 A 目标请求拿到 B 命令会直接被拒绝，而不是在投影阶段改写目标后通过。disabled 行仍可见但不 declare。`CjguiContextCommandMenu.reconcile` 只允许标签、checked 和禁用原因在原集合内更新；enabled 集合、目标引用或焦点范围变化时菜单退役，旧行不再挂载。`declareContextMenuCommand` 用 `source` 显式区分两种来源：默认 `CjguiContextMenuCommandSource.RequestLocal` 保持原 API 契约，命令只需属于当前右键请求，不要求另外注册为窗口普通命令；`CjguiContextMenuCommandSource.WindowCommand` 引用窗口已声明的命令，声明和执行都重新读取当前 `commandBindings`，要求命令仍存在、启用且 target 引用、焦点范围、完成策略未变，invoke 用当前声明重新解析目标。窗口来源在 lookup 失败时只拒绝（`command_revoked`），不会降级为请求局部命令；两种来源共用同一个 request、accepted target、选择票据校验与 `invokeContextMenuCommand` 执行路径。因此旧行、旧 requestId/commandId 调用或应用已撤销的窗口命令都只会被拒绝，零业务写入；请求局部命令（如 range_text_window_app 的 select_all）保持原行为。`CjguiContextCommandMenu.open` 默认按 `WindowCommand` 声明调用方命令集；菜单行只属于当前请求时显式传 `source: CjguiContextMenuCommandSource.RequestLocal`，不会跳过 accepted target 校验。菜单按钮的 action 是 `CJGUICONTEXTCOMMAND:<requestId>:<commandId>`，消费方必须把它交给 `window.invokeContextMenuCommand(requestId, commandId)`，不能走普通 `invokeCommand`，也不能把旧请求重绑到新目标。键盘操作复用窗口已有的层内焦点遍历：菜单按钮的 inputScope 让 ↑↓ 只在本层可聚焦按钮间移动并跳过禁用行，聚焦行由 `interactionStyle.focused` 背景/边框绘制，不改变 checked 或原正文选区；Enter 激活当前行后仍经同一 `invokeContextMenuCommand` 恰好执行一次，失效／撤销／禁用声明按来源规则拒绝；Esc 走既有的 `escape:<requestId>` 取消和层移除焦点返回，不新增菜单生命周期或动作表。`CjguiContextCommandMenuStyle.maxHeight` 大于 0 且内容更高时，菜单层固定为 `maxHeight`，行仍全部保留在声明中，只由一个 `CjguiComposableUiScrollViewport` 绑定的滚动区裁剪；滚轮、导航聚焦后的 `revealAcceptedNodeIfNeeded` 和 accepted scene 的偏移都使用这同一滚动状态，不另建偏移模型。菜单同时通过 `initialFocusReference` 指向首个启用行（或启用的关闭行），让初始焦点落在真实行而不是覆盖层的滚动区，保证 Tab/Down 进入本层。长标签和禁用原因用公共 `textMaxLines: 1` + `textOverflow: "ellipsis"` 绘制，节点的 label/value 仍保留完整原文，AX 语义不截断。全部行禁用时菜单在首行提供启用的“关闭菜单”入口（action `CJGUICONTEXTMENUCLOSE:<requestId>`），初始焦点落在它上面；Enter 只调用菜单已有的 hide + requestRefresh，经窗口既有 layer 结束/焦点返回路径以 `dismissed` 收尾，不执行任何业务命令，旧 id 的 close action 被拒绝；Esc 与 outside 仍走原取消路径。设置应用用 `CJGUI_SETTINGS_NARROW=1` 启动 460×760 窗口和 `maxHeight: 132` 菜单跑窄窗链；生成的表单字段写回继续要求宿主配置 `rangeTextEditDeltaDelivery: true`（既有通道，不是菜单新增状态机），否则生成的整值 `TEXT_CHANGED` 会被会话回显跳过而 owner 收不到逐键增量。
 
 native 只保存当前 accepted scene 的菜单标题、分组、可选快捷键和 enabled/checked 投影，并在输入到达时回到 Cangjie target；它不解释业务 `command id`，不保存 callback/action name，也不拥有资源、权限或版本。菜单和快捷键仅在 macOS bridge 的平台边界内成立；Cmd-A/C/X/V、marked text 和输入法继续由系统文本服务优先处理。其他平台或没有平台菜单的宿主应使用同一个 Cangjie command declaration 和自绘 surface，不能假定 AppKit 菜单存在。
 

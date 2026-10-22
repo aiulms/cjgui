@@ -42,36 +42,26 @@ CLIPBOARD_GUARD_EXPECTED=""
 typeset -a SOURCE_PAYLOAD_RELATIVE
 SOURCE_PAYLOAD_RELATIVE=(
   README.md
+  MACOS_APPLICATION_HOST.md
   cjpm.toml
   shared_operation_core/cjpm.toml
-  shared_operation_core/client.py
-  shared_operation_core/src/shared_editing_form_contract.cj
-  shared_operation_core/src/shared_field_write_rule.cj
-  shared_operation_core/src/shared_operation_contract.cj
-  shared_operation_core/src/shared_operation_list.cj
-  shared_operation_core/src/shared_operation_transport.cj
-  shared_operation_core/src/shared_operation_transfer.cj
-  shared_operation_core/src/shared_text_document.cj
-  shared_operation_core/src/shared_text_document_workspace.cj
-  shared_operation_core/src/shared_text_document_file.cj
-  native/cjgui_internal_renderer.m
-  native/cjgui_internal_renderer.h
-  native/cjgui_native_bridge.m
-  native/cjgui_native_bridge.h
-  native/cjgui_macos_application_launcher.m
-  resources/composable-beacon.png
-  resources/composable-beacon-coral.png
+  native/scripts/lib_cjgui_source_set.sh
   scripts/run_macos_application.sh
   scripts/create_macos_application.sh
-  templates/macos_application/ui_only/cjgui_macos_app.sh
-  templates/macos_application/ui_only/cjpm.toml
-  templates/macos_application/ui_only/run.sh
-  templates/macos_application/collaboration/cjgui_macos_app.sh
-  templates/macos_application/collaboration/cjpm.toml
-  templates/macos_application/collaboration/run.sh
 )
-for source_name in "${CJGUI_FRAMEWORK_SOURCE_NAMES[@]}" "${CJGUI_GENERATED_SOURCE_NAMES[@]}"; do
-  SOURCE_PAYLOAD_RELATIVE+=("src/$source_name")
+for source_path in "${(@f)$(cjgui_package_source_paths "$RUNTIME_DIR")}" \
+    "${(@f)$(cjgui_package_source_paths "$RUNTIME_DIR/shared_operation_core")}" \
+    "${(@f)$(cjgui_macos_native_source_paths "$RUNTIME_DIR/native")}"; do
+  SOURCE_PAYLOAD_RELATIVE+=("${source_path#$RUNTIME_DIR/}")
+done
+for source_path in "$RUNTIME_DIR/shared_operation_core/"*.py(N) \
+    "$RUNTIME_DIR/resources/"**/*(.N) "$RUNTIME_DIR/templates/macos_application/"**/*(.N); do
+  source_relative="${source_path#$RUNTIME_DIR/}"
+  [[ "${source_path:t}" == test_*.py || "${source_path:t}" == *_test.py ]] && continue
+  [[ "$source_relative" == */target/* || "$source_relative" == */.cjgui/* ||
+     "$source_relative" == */artifacts/* || "$source_relative" == */__pycache__/* ||
+     "${source_path:t}" == .DS_Store ]] && continue
+  SOURCE_PAYLOAD_RELATIVE+=("$source_relative")
 done
 
 payload_sha256() {

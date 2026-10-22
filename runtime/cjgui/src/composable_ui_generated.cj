@@ -9,6 +9,7 @@
 // business data, source code, native handles or new permissions.
 package cjgui
 
+import std.convert.*
 import std.env.*
 import std.random.*
 import std.collection.*
@@ -234,6 +235,19 @@ public let CJGUI_GENERATED_PRESENTATION_TABS: String = "CONTAINER_TABS"
 /// metadata on a DEDICATED kind is what lets the validator bind a key to a page
 /// without inventing properties on every possible content kind.
 public let CJGUI_GENERATED_PRESENTATION_TAB_PAGE: String = "CONTAINER_TAB_PAGE"
+/// Shared layout presentations. They map onto ordinary containers/metadata in
+/// the canonical layout engine; no generated-only layout engine exists.
+public let CJGUI_GENERATED_PRESENTATION_STACK: String = "CONTAINER_STACK"
+public let CJGUI_GENERATED_PRESENTATION_WRAP: String = "CONTAINER_WRAP"
+public let CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO: String = "CONTAINER_ASPECT_RATIO"
+public let CJGUI_GENERATED_PRESENTATION_SPACER: String = "SPACER"
+/// Named refusal from the five-argument action default: the accepted element
+/// carried a real per-object owner target, but the provider implements only the
+/// older owner-less overloads. Executing anyway would re-resolve the instance
+/// key against whatever object the provider maps it to now, so the framework
+/// refuses instead of writing to a different object.
+public let CJGUI_GENERATED_ACTION_OWNER_TARGET_UNSUPPORTED: String =
+    "instance_owner_target_requires_five_argument_execute"
 
 /// ONE application image resource, declared once and shared by handwritten
 /// code, the generated side and the public capability discovery.
@@ -275,17 +289,21 @@ public class CjguiGeneratedUiPresentation {
             presentation == CJGUI_GENERATED_PRESENTATION_ACTION || presentation == CJGUI_GENERATED_PRESENTATION_IMAGE ||
             presentation == CJGUI_GENERATED_PRESENTATION_SCROLL || presentation == CJGUI_GENERATED_PRESENTATION_SPLIT ||
             presentation == CJGUI_GENERATED_PRESENTATION_TABS || presentation == CJGUI_GENERATED_PRESENTATION_TAB_PAGE ||
+            presentation == CJGUI_GENERATED_PRESENTATION_STACK || presentation == CJGUI_GENERATED_PRESENTATION_WRAP ||
+            presentation == CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO || presentation ==
+            CJGUI_GENERATED_PRESENTATION_SPACER ||
             // An application composite is presented by its own registered
             // factory; the catalog only stores this presentation together with
             // that factory, so accepting it here cannot degrade an unregistered
             // kind into a label.
             presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE || presentation == "FIELD_TEXT" || presentation ==
-            "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN"
+            "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER"
     }
 
     /// Presentation inferred from a built-in kind. An application kind must
     /// declare its presentation explicitly.
     public static func forBuiltInKind(kind: String): String {
+        if (kind == "slider") { return "FIELD_SLIDER" }
         if (kind == "vertical") {
             return CJGUI_GENERATED_PRESENTATION_VERTICAL
         }
@@ -312,6 +330,18 @@ public class CjguiGeneratedUiPresentation {
         }
         if (kind == "tabPage") {
             return CJGUI_GENERATED_PRESENTATION_TAB_PAGE
+        }
+        if (kind == "stack") {
+            return CJGUI_GENERATED_PRESENTATION_STACK
+        }
+        if (kind == "wrap") {
+            return CJGUI_GENERATED_PRESENTATION_WRAP
+        }
+        if (kind == "aspectRatio") {
+            return CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO
+        }
+        if (kind == "spacer") {
+            return CJGUI_GENERATED_PRESENTATION_SPACER
         }
         if (kind == "textInput") {
             return "FIELD_TEXT"
@@ -365,6 +395,37 @@ public class CjguiGeneratedUiPresentation {
         return properties
     }
 
+    /// Content properties of the built-in horizontal `wrap` kind. `rowGap=0`
+    /// reuses `gap`; a positive value separates rows without changing item gaps.
+    public static func wrapContentProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
+        properties.add(CjguiGeneratedUiPropertySpec("rowGap", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
+        return properties
+    }
+
+    /// Content properties of the built-in `aspectRatio` kind. Both terms are
+    /// positive integers; the layout engine rejects an invalid pair as a whole
+    /// candidate instead of producing a zero-size success.
+    public static func aspectRatioContentProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
+        properties.add(CjguiGeneratedUiPropertySpec("aspectWidth", "INTEGER", minimum: 1, maximum: 1000000,
+            defaultValue: "16"))
+        properties.add(CjguiGeneratedUiPropertySpec("aspectHeight", "INTEGER", minimum: 1, maximum: 1000000,
+            defaultValue: "9"))
+        return properties
+    }
+
+    /// Content properties of the built-in `spacer` kind. It is a thin wrapper
+    /// over the ordinary grow/min-size allocation, not a second flex system.
+    public static func spacerContentProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = ArrayList<CjguiGeneratedUiPropertySpec>()
+        properties.add(CjguiGeneratedUiPropertySpec("axis", "STRING", maxLength: 16,
+            values: ArrayList<String>(["horizontal", "vertical"]), defaultValue: "horizontal"))
+        properties.add(CjguiGeneratedUiPropertySpec("minimum", "INTEGER", minimum: 0, maximum: 4096, defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("weight", "INTEGER", minimum: 1, maximum: 100, defaultValue: "1"))
+        return properties
+    }
+
     /// Content properties of the built-in `scrollArea` kind: the declaration's
     /// INITIAL offset (a request the first accepted solve clamps) and the inner
     /// padding. After the first solve the view state belongs to the instance, so
@@ -399,7 +460,8 @@ public class CjguiGeneratedUiPresentation {
     /// numeric style name because it is a real layout/paint field on the shared
     /// Style.
     public static func isPaintPropertyName(name: String): Bool {
-        return name == "background" || name == "border" || name == "textColor" || name == "shadow" || name == "gradient" ||
+        return name == "trackColor" || name == "fillColor" || name == "thumbColor" ||
+            name == "background" || name == "border" || name == "textColor" || name == "shadow" || name == "gradient" ||
             name == "effectGroup"
     }
 
@@ -407,32 +469,55 @@ public class CjguiGeneratedUiPresentation {
         return name == "fixedWidth" || name == "fixedHeight" || name == "minWidth" || name == "maxWidth" || name ==
             "minHeight" || name == "maxHeight" || name == "growX" || name == "growY" || name == "alignX" || name ==
             "alignY" || name == "fontSize" || name == "fontWeight" || name == "borderWidth" || name == "translateX" ||
-            name == "translateY" || name == "textMaxLines" || name == "textOverflow"
+            name == "translateY" || name == "textMaxLines" || name == "textOverflow" ||
+            name == "letterSpacing" || name == "lineHeight" || name == "fontResource" || name == "fontVersion" || name == "textRuns"
     }
 
     /// Whether one presentation consumes one style property. A container also
     /// consumes its own gap/padding; a leaf does not (a leaf's padding would be
     /// declared but the same leaf the handwritten builder writes carries none).
     public static func consumesStyleProperty(presentation: String, name: String): Bool {
+        if (name == "textRuns") { return presentation == CJGUI_GENERATED_PRESENTATION_LABEL }
+        if (name == "trackColor" || name == "fillColor" || name == "thumbColor") { return presentation == "FIELD_SLIDER" }
         if (presentation != CJGUI_GENERATED_PRESENTATION_VERTICAL && presentation !=
             CJGUI_GENERATED_PRESENTATION_HORIZONTAL && presentation != CJGUI_GENERATED_PRESENTATION_SCROLL &&
             presentation != CJGUI_GENERATED_PRESENTATION_SPLIT && presentation != CJGUI_GENERATED_PRESENTATION_TABS &&
             presentation != CJGUI_GENERATED_PRESENTATION_TAB_PAGE && presentation != CJGUI_GENERATED_PRESENTATION_LABEL &&
             presentation != CJGUI_GENERATED_PRESENTATION_ACTION && presentation != CJGUI_GENERATED_PRESENTATION_IMAGE &&
-            presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN") {
+            presentation != CJGUI_GENERATED_PRESENTATION_STACK && presentation != CJGUI_GENERATED_PRESENTATION_WRAP &&
+            presentation != CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO && presentation !=
+            CJGUI_GENERATED_PRESENTATION_SPACER &&
+            presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN" &&
+            presentation != "FIELD_SLIDER") {
             return false
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
-            CJGUI_GENERATED_PRESENTATION_HORIZONTAL || presentation == CJGUI_GENERATED_PRESENTATION_TABS) {
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL || presentation == CJGUI_GENERATED_PRESENTATION_TABS ||
+            presentation == CJGUI_GENERATED_PRESENTATION_WRAP) {
             // A tab container stacks its title row above the active page, so it
             // consumes the same gap/padding vocabulary as any other container.
             if (name == "gap" || name == "padding") {
                 return true
             }
         }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_STACK ||
+            presentation == CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO || presentation ==
+            CJGUI_GENERATED_PRESENTATION_SPACER) {
+            if (name == "padding") {
+                return true
+            }
+        }
         if (name == "textMaxLines" || name == "textOverflow") {
             return presentation == CJGUI_GENERATED_PRESENTATION_LABEL || presentation ==
                 CJGUI_GENERATED_PRESENTATION_ACTION
+        }
+        if (name == "letterSpacing" || name == "lineHeight" || name == "fontResource" || name == "fontVersion") {
+            // The common style decoder resolves these on every supported box,
+            // just like fontSize/fontWeight. leafStyleProperties() also serves
+            // images; rejecting its inherited typography silently withdrew the
+            // existing image component from normal catalogs. Read-only overflow
+            // above remains restricted to text/action presentations.
+            return true
         }
         if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
             return true
@@ -444,6 +529,10 @@ public class CjguiGeneratedUiPresentation {
     /// that no presentation consumes is rejected, so a declared attribute
     /// cannot pass validation and then be ignored by the renderer.
     public static func isPropertyImplemented(presentation: String, name: String, valueType: String): Bool {
+        if (presentation == "FIELD_SLIDER") {
+            if (name == "step" || name == "thumbDiameter" || name == "trackThickness") { return valueType == "INTEGER" }
+            if (name == "label") { return valueType == "STRING" }
+        }
         if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
             // A composite's declared properties are consumed by the
             // application's own factory, which the framework cannot inspect
@@ -459,7 +548,7 @@ public class CjguiGeneratedUiPresentation {
         if (name == "textOverflow") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
-        if (name == "translateX" || name == "translateY") {
+        if (name == "translateX" || name == "translateY" || name == "letterSpacing" || name == "lineHeight" || name == "fontResource" || name == "textRuns") {
             return consumesStyleProperty(presentation, name) && valueType == "STRING"
         }
         if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) || name == "style") {
@@ -493,6 +582,31 @@ public class CjguiGeneratedUiPresentation {
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_SPLIT) {
             return (name == "firstSize" || name == "firstMinimum" || name == "secondMinimum") && valueType == "INTEGER"
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_STACK || presentation ==
+            CJGUI_GENERATED_PRESENTATION_WRAP) {
+            if (name == "gap" || name == "padding") {
+                return valueType == "INTEGER"
+            }
+            if (presentation == CJGUI_GENERATED_PRESENTATION_WRAP && name == "rowGap") {
+                return valueType == "INTEGER"
+            }
+            return false
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO) {
+            if (name == "padding") {
+                return valueType == "INTEGER"
+            }
+            return (name == "aspectWidth" || name == "aspectHeight") && valueType == "INTEGER"
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_SPACER) {
+            if (name == "padding") {
+                return valueType == "INTEGER"
+            }
+            if (name == "axis") {
+                return valueType == "STRING"
+            }
+            return (name == "minimum" || name == "weight") && valueType == "INTEGER"
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
             CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
@@ -611,6 +725,16 @@ public class CjguiGeneratedUiPresentation {
         return properties
     }
 
+    /// The overlapping-container vocabulary: the box properties plus padding.
+    /// Stack children share one rect, so there is no gap between them to
+    /// publish; advertising `gap` here would accept a property the layout never
+    /// consumes.
+    public static func stackStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = boxProperties()
+        properties.add(CjguiGeneratedUiPropertySpec("padding", "INTEGER", minimum: 0, maximum: 32, defaultValue: "0"))
+        return properties
+    }
+
     /// The container style vocabulary: the box properties plus its own gap and
     /// padding. A leaf gets `fontProperties()` instead: a container's padding is
     /// consumed by its own layout, a leaf's is not.
@@ -624,10 +748,33 @@ public class CjguiGeneratedUiPresentation {
     /// The leaf style vocabulary: box properties plus font size/weight. Font
     /// size is published in whole points (the generated value model has no
     /// fractional type); the mapping passes it to the same Float64 Style field.
+    /// Experimental styled LABEL vocabulary. Public offsets are UTF-8 bytes.
+    public static func styledTextStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
+        let properties = readonlyTextStyleProperties()
+        properties.add(CjguiGeneratedUiPropertySpec("textRuns", "STRING", maxLength: 16384, defaultValue: "",
+            encoding: "v1 start:end:size:weight:fontKey:fontVersion:color;...", unit: "UTF-8 bytes; logical points",
+            valueRange: "64 spans; 16384 wire bytes; size 0..144; weight -1..1000",
+            semantics: "base:0=base font; size0/weight-1/color inherit use base; registered fonts only; ordered ranges",
+            stability: "experimental", backendSupport: "macOS styled measurement v1; unsupported elsewhere"))
+        return properties
+    }
+
     public static func leafStyleProperties(): ArrayList<CjguiGeneratedUiPropertySpec> {
         let properties = boxProperties()
         properties.add(CjguiGeneratedUiPropertySpec("fontSize", "INTEGER", minimum: 1, maximum: 128, defaultValue: "13"))
         properties.add(CjguiGeneratedUiPropertySpec("fontWeight", "INTEGER", minimum: 0, maximum: 1, defaultValue: "0"))
+        properties.add(CjguiGeneratedUiPropertySpec("fontResource", "STRING", maxLength: 64, defaultValue: "",
+            semantics: "application-registered logical font key; never a path", stability: "experimental",
+            backendSupport: "macOS resource fonts; other platforms explicit fallback"))
+        properties.add(CjguiGeneratedUiPropertySpec("fontVersion", "INTEGER", minimum: 0, maximum: 1000000,
+            defaultValue: "0", stability: "experimental", backendSupport: "same registered font generation"))
+        for (name in ["letterSpacing", "lineHeight"]) {
+            properties.add(CjguiGeneratedUiPropertySpec(name, "STRING", maxLength: 12, defaultValue: "",
+                encoding: "signed decimal, at most 3 fractional digits", unit: "logical points",
+                valueRange: if (name == "lineHeight") { "0=natural; (0,1000)" } else { "(-1000,1000)" },
+                semantics: "absent=inherit named style; empty or 0=natural/default", stability: "experimental",
+                backendSupport: "macOS TextKit; other backends not verified"))
+        }
         return properties
     }
 
@@ -648,7 +795,7 @@ public class CjguiGeneratedUiPresentation {
         if (presentation == "FIELD_TEXT") {
             return "TEXT"
         }
-        if (presentation == "FIELD_INTEGER") {
+        if (presentation == "FIELD_INTEGER" || presentation == "FIELD_SLIDER") {
             return "INTEGER"
         }
         if (presentation == "FIELD_BOOLEAN") {
@@ -707,6 +854,15 @@ public class CjguiGeneratedUiCapabilityCatalog {
     private let components: ArrayList<CjguiGeneratedUiComponentSpec>
     private let actions: ArrayList<CjguiGeneratedUiActionSpec>
     private let fields: ArrayList<CjguiGeneratedUiFieldSpec>
+    // Delivery evidence is app-declared and deliberately separate from the
+    // registration support facts: a registered component is available to
+    // admission, but it is not "verified on this backend" until a real
+    // consumer run publishes that evidence.
+    private let deliveryEvidenceDeclarations: ArrayList<CjguiGeneratedUiDeliveryEvidence>
+    // App-declared reduced/unavailable capabilities. `available` is never
+    // declarable: it is derived from the registration tables that admission
+    // reads. A declared state that contradicts those tables is refused.
+    private let declaredSupportFacts: ArrayList<CjguiGeneratedUiSupportFact>
     // Application composites: the declared kind/elements and the compiled
     // factory. Both are registered together, so a kind that claims the COMPOSITE
     // presentation can never exist without a real implementation.
@@ -715,6 +871,7 @@ public class CjguiGeneratedUiCapabilityCatalog {
     // Application image resources: ONE declaration per logical key, published
     // through the same capability text the external caller already reads.
     private let imageResources: ArrayList<CjguiGeneratedUiImageResourceSpec>
+    private let fontResources: ArrayList<CjguiFontResourceReference>
     // Raster each published `(key, version)` identity has already denoted. ONE
     // published identity must keep denoting ONE resolved resource: replacing the
     // actual description behind it would let an accepted instance (still holding
@@ -748,9 +905,12 @@ public class CjguiGeneratedUiCapabilityCatalog {
         this.components = ArrayList<CjguiGeneratedUiComponentSpec>()
         this.actions = ArrayList<CjguiGeneratedUiActionSpec>()
         this.fields = ArrayList<CjguiGeneratedUiFieldSpec>()
+        this.deliveryEvidenceDeclarations = ArrayList<CjguiGeneratedUiDeliveryEvidence>()
+        this.declaredSupportFacts = ArrayList<CjguiGeneratedUiSupportFact>()
         this.composites = ArrayList<CjguiCompositeComponentSpec>()
         this.compositeFactories = ArrayList<CjguiCompositeComponentFactory>()
         this.imageResources = ArrayList<CjguiGeneratedUiImageResourceSpec>()
+        this.fontResources = ArrayList<CjguiFontResourceReference>()
         this.imageContentIdentities = HashMap<String, String>()
         this.liveImageIdentities = HashMap<String, Int64>()
         this.imageContentIdentityOrder = ArrayList<String>()
@@ -1125,6 +1285,38 @@ public class CjguiGeneratedUiCapabilityCatalog {
 
     /// The application's named-style registry. The same object is consumed by the
     /// application's handwritten helpers and by the generated resolution below.
+    /// Publish the SAME application font reference; this catalog never opens a
+    /// font path or owns another registration. A new version replaces discovery,
+    /// while accepted generated structures keep their resolved binding snapshot.
+    public func registerFontResource(reference: CjguiFontResourceReference): Bool {
+        lastRegistrationIssue = ""
+        if (!reference.isRegistered()) { lastRegistrationIssue = "font_resource_withdrawn"; return false }
+        var index = 0
+        while (index < fontResources.size) {
+            let old = fontResources[index]
+            if (old.key == reference.key) {
+                if (reference.version < old.version || (reference.version == old.version &&
+                    reference.fontFamily != old.fontFamily)) {
+                    lastRegistrationIssue = "font_resource_identity_conflict"; return false
+                }
+                fontResources[index] = reference
+                return true
+            }
+            index += 1
+        }
+        if (fontResources.size >= 128) { lastRegistrationIssue = "font_resource_capacity"; return false }
+        fontResources.add(reference); return true
+    }
+    public func fontResourceFor(key: String, version: Int64): ?CjguiFontResourceReference {
+        for (reference in fontResources) {
+            if (reference.key == key && reference.version == version && reference.isRegistered()) { return Some(reference) }
+        }
+        return None
+    }
+    public func fontResourceSpecs(): ArrayList<CjguiFontResourceReference> {
+        return ArrayList<CjguiFontResourceReference>(fontResources)
+    }
+
     public func namedStyles(): CjguiComposableUiNamedStyleCatalog {
         return namedStyleCatalog
     }
@@ -1313,6 +1505,56 @@ public class CjguiGeneratedUiCapabilityCatalog {
             }
             return
         }
+        if (role == CJGUI_COMPOSITE_ELEMENT_PROJECTION) {
+            // A projection presents ONE owner fact and never writes, so it must
+            // carry a readable source, must name the fact's owner object, and must
+            // not smuggle a writer, argument or preset through the declaration.
+            if (element.source.isEmpty()) {
+                lastRegistrationIssue = "composite_projection_source_required:${spec.kind}:${element.elementKey}"
+                return
+            }
+            if (!element.argumentName.isEmpty() || !element.presetValue.isEmpty()) {
+                lastRegistrationIssue = "composite_projection_is_read_only:${spec.kind}:${element.elementKey}"
+                return
+            }
+            if (element.source == CJGUI_COMPOSITE_PROJECTION_FIELD_ERROR || element.source ==
+                CJGUI_COMPOSITE_PROJECTION_FIELD_REASON) {
+                if (element.fieldId.isEmpty()) {
+                    lastRegistrationIssue = "composite_projection_field_required:${spec.kind}:${element.elementKey}"
+                    return
+                }
+                if (let None <- fieldFor(element.fieldId)) {
+                    lastRegistrationIssue = "unknown_field:${spec.kind}:${element.fieldId}"
+                    return
+                }
+                if (!element.actionName.isEmpty()) {
+                    lastRegistrationIssue = "composite_projection_field_action:${spec.kind}:${element.elementKey}"
+                }
+                return
+            }
+            if (element.source == CJGUI_COMPOSITE_PROJECTION_ACTION_REASON) {
+                if (element.actionName.isEmpty()) {
+                    lastRegistrationIssue = "composite_projection_action_required:${spec.kind}:${element.elementKey}"
+                    return
+                }
+                if (let None <- actionFor(element.actionName)) {
+                    lastRegistrationIssue = "unknown_action:${spec.kind}:${element.actionName}"
+                    return
+                }
+                if (!element.fieldId.isEmpty()) {
+                    lastRegistrationIssue = "composite_projection_action_field:${spec.kind}:${element.elementKey}"
+                }
+                return
+            }
+            if (element.source == CJGUI_COMPOSITE_PROJECTION_OWNER_STATUS) {
+                if (!element.fieldId.isEmpty() || !element.actionName.isEmpty()) {
+                    lastRegistrationIssue = "composite_projection_status_binding:${spec.kind}:${element.elementKey}"
+                }
+                return
+            }
+            lastRegistrationIssue = "composite_unknown_projection_source:${spec.kind}:${element.source}"
+            return
+        }
         lastRegistrationIssue = "composite_unknown_role:${spec.kind}:${element.elementKey}"
     }
 
@@ -1409,6 +1651,177 @@ public class CjguiGeneratedUiCapabilityCatalog {
 
     public func fieldSpecs(): ArrayList<CjguiGeneratedUiFieldSpec> {
         return ArrayList<CjguiGeneratedUiFieldSpec>(fields)
+    }
+
+    /// Publishes the app's own delivery evidence for one discovered item
+    /// (`backend:<token>`, `component:<kind>`, `command:<id>`, ...). The state
+    /// is a closed set; the framework never upgrades it by inference.
+    public func declareDeliveryEvidence(item: String, state: String, reason: String): Bool {
+        if (!cjguiGeneratedUiDiscoveryTextIsValid(item, CJGUI_GENERATED_UI_EVIDENCE_ITEM_MAX_BYTES) ||
+            !cjguiGeneratedUiDiscoveryTextIsValid(reason, CJGUI_GENERATED_UI_EVIDENCE_REASON_MAX_BYTES) ||
+            !cjguiGeneratedUiEvidenceStateIsKnown(state)) {
+            lastRegistrationIssue = "invalid_delivery_evidence:${item}:${state}"
+            return false
+        }
+        var index: Int64 = 0
+        while (index < deliveryEvidenceDeclarations.size) {
+            if (deliveryEvidenceDeclarations[index].item == item) {
+                deliveryEvidenceDeclarations[index] = CjguiGeneratedUiDeliveryEvidence(item, state, reason)
+                lastRegistrationIssue = ""
+                return true
+            }
+            index += 1
+        }
+        deliveryEvidenceDeclarations.add(CjguiGeneratedUiDeliveryEvidence(item, state, reason))
+        lastRegistrationIssue = ""
+        return true
+    }
+
+    public func deliveryEvidenceFacts(): ArrayList<CjguiGeneratedUiDeliveryEvidence> {
+        return ArrayList<CjguiGeneratedUiDeliveryEvidence>(deliveryEvidenceDeclarations)
+    }
+
+    private func supportFactKindIsKnown(kind: String): Bool {
+        return kind == "component" || kind == "action" || kind == "field" || kind == "composite" ||
+            kind == "image_resource" || kind == "font_resource" || kind == "capability"
+    }
+
+    /// Admission, not bare registration: a registered component whose
+    /// presentation this build cannot build is not "available" on this target.
+    private func supportItemRegistered(kind: String, item: String): Bool {
+        if (kind == "component") {
+            for (spec in components) { if (spec.kind == item && spec.isImplemented()) { return true } }
+        } else if (kind == "action") {
+            for (spec in actions) { if (spec.name == item) { return true } }
+        } else if (kind == "field") {
+            for (spec in fields) { if (spec.fieldId == item) { return true } }
+        } else if (kind == "composite") {
+            for (spec in composites) { if (spec.kind == item) { return true } }
+        } else if (kind == "image_resource") {
+            for (spec in imageResources) { if (spec.key == item) { return true } }
+        } else if (kind == "font_resource") {
+            for (reference in fontResources) {
+                if (reference.key == item && reference.isRegistered()) { return true }
+            }
+        } else if (kind == "capability" && item == "window_background") {
+            return windowBackgroundEnabledValue
+        }
+        return false
+    }
+
+    /// Declares a capability this application knows is reduced (`fallback`) or
+    /// unavailable, with a reason an external client can display. `available`
+    /// is NOT declarable: it comes from registration/admission. A declaration
+    /// that contradicts that table is refused instead of producing two
+    /// discovery answers for the same item.
+    public func declareSupportFact(kind: String, item: String, state: String, reason: String): Bool {
+        lastRegistrationIssue = ""
+        if (!cjguiGeneratedUiDiscoveryTextIsValid(item, CJGUI_GENERATED_UI_SUPPORT_ITEM_MAX_BYTES)) {
+            lastRegistrationIssue = "support_fact_item_invalid"
+            return false
+        }
+        if (!cjguiGeneratedUiDiscoveryTextIsValid(reason, CJGUI_GENERATED_UI_SUPPORT_REASON_MAX_BYTES)) {
+            lastRegistrationIssue = "support_fact_reason_invalid"
+            return false
+        }
+        if (state != "fallback" && state != "unavailable") {
+            lastRegistrationIssue = "support_fact_state_not_declarable:${state}"
+            return false
+        }
+        if (!supportFactKindIsKnown(kind)) {
+            lastRegistrationIssue = "support_fact_kind_unknown:${kind}"
+            return false
+        }
+        let admitted = supportItemRegistered(kind, item)
+        if (state == "unavailable" && admitted) {
+            lastRegistrationIssue = "support_fact_unavailable_but_admitted:${item}"
+            return false
+        }
+        if (state == "fallback" && !admitted) {
+            lastRegistrationIssue = "support_fact_fallback_without_admission:${item}"
+            return false
+        }
+        for (fact in declaredSupportFacts) {
+            if (fact.kind == kind && fact.item == item) {
+                lastRegistrationIssue = "support_fact_duplicate:${item}"
+                return false
+            }
+        }
+        declaredSupportFacts.add(
+            CjguiGeneratedUiSupportFact(kind, item, state, reason, "application_declaration"))
+        return true
+    }
+
+    public func declaredSupportFactsSnapshot(): ArrayList<CjguiGeneratedUiSupportFact> {
+        return ArrayList<CjguiGeneratedUiSupportFact>(declaredSupportFacts)
+    }
+
+    /// One support fact per item that admission actually knows. `available` is
+    /// derived from the same registered tables the validator/acceptance path
+    /// reads, so discovery cannot advertise an item that admission would reject.
+    /// One effective fact per (kind,item). A registered item is `available`
+    /// only when this build's admission accepts it; an application declaration
+    /// replaces that fact instead of being appended beside it. The client also
+    /// refuses a duplicate, so a producer cannot hide a conflict behind order.
+    public func supportFacts(): ArrayList<CjguiGeneratedUiSupportFact> {
+        let facts = ArrayList<CjguiGeneratedUiSupportFact>()
+        for (spec in components) {
+            if (spec.isImplemented()) {
+                addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("component", spec.kind, "available",
+                    "admission_accepted", "catalog_admission"))
+            } else {
+                addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("component", spec.kind, "unavailable",
+                    "component_not_implemented", "catalog_admission"))
+            }
+        }
+        for (spec in actions) {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("action", spec.name, "available",
+                "admission_accepted", "catalog_admission"))
+        }
+        for (field in fields) {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("field", field.fieldId, "available",
+                "admission_accepted", "catalog_admission"))
+        }
+        for (spec in composites) {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("composite", spec.kind, "available",
+                "admission_accepted", "catalog_admission"))
+        }
+        for (spec in imageResources) {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("image_resource", spec.key, "available",
+                "admission_accepted", "catalog_admission"))
+        }
+        for (reference in fontResources) {
+            if (reference.isRegistered()) {
+                addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("font_resource", reference.key,
+                    "available", "admission_accepted", "catalog_admission"))
+            }
+        }
+        if (windowBackgroundEnabledValue) {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("capability", "window_background",
+                "available", "enabled", "catalog_opt_in"))
+        } else {
+            addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("capability", "window_background",
+                "unavailable", "window_background_not_enabled", "catalog_opt_in"))
+        }
+        addOrReplaceSupportFact(facts, CjguiGeneratedUiSupportFact("backend",
+            CjguiComposableUiRuntimeBackend.TOKEN, "available", "build_target", "platform_build"))
+        for (fact in declaredSupportFacts) {
+            addOrReplaceSupportFact(facts, fact)
+        }
+        return facts
+    }
+
+    private func addOrReplaceSupportFact(facts: ArrayList<CjguiGeneratedUiSupportFact>,
+        fact: CjguiGeneratedUiSupportFact): Unit {
+        var index: Int64 = 0
+        while (index < facts.size) {
+            if (facts[index].kind == fact.kind && facts[index].item == fact.item) {
+                facts[index] = fact
+                return
+            }
+            index += 1
+        }
+        facts.add(fact)
     }
 }
 
@@ -1614,12 +2027,49 @@ public class CjguiGeneratedUiValidator {
                     return CjguiGeneratedUiValidation.reject(reason, "${path}/${node.key}")
                 }
             }
+            let fontKey = node.property("fontResource")
+            let fontVersion = Int64.tryParse(node.property("fontVersion")) ?? 0
+            if (fontKey.size > 0 || fontVersion > 0) {
+                if (fontKey.isEmpty() || fontVersion < 1) {
+                    return CjguiGeneratedUiValidation.reject("font_resource_reference_incomplete", "${path}/${node.key}")
+                }
+                if (catalog.fontResourceFor(fontKey, fontVersion).isNone()) {
+                    return CjguiGeneratedUiValidation.reject("font_resource_unavailable_or_version_mismatch", "${path}/${node.key}")
+                }
+            }
+            if (!node.property("textRuns").isEmpty()) {
+                if (spec.presentation != CJGUI_GENERATED_PRESENTATION_LABEL || cjguiStyledTextSupportVersion() < 1) {
+                    return CjguiGeneratedUiValidation.reject("text_runs_backend_unsupported", "${path}/${node.key}")
+                }
+                let decoded = cjguiDecodeGeneratedTextRuns(node.property("text"), node.property("textRuns"),
+                    CjguiComposableUiStyle(), { key, version => catalog.fontResourceFor(key, version) })
+                if (!decoded.reason.isEmpty()) {
+                    return CjguiGeneratedUiValidation.reject(decoded.reason, "${path}/${node.key}")
+                }
+            }
             let bindingIssue = validateBinding(node, spec, path)
             if (let Some(reason) <- bindingIssue) {
                 return CjguiGeneratedUiValidation.reject(reason, "${path}/${node.key}")
             }
             if (spec.presentation == CJGUI_GENERATED_PRESENTATION_SPLIT && node.children.size != 2) {
                 return CjguiGeneratedUiValidation.reject("split_requires_two_children", "${path}/${node.key}")
+            }
+            if (spec.presentation == CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO) {
+                if (node.children.size != 1) {
+                    return CjguiGeneratedUiValidation.reject("aspect_ratio_requires_one_child", "${path}/${node.key}")
+                }
+                let width = match (parseGeneratedInteger(node.property("aspectWidth"))) {
+                    case Some(value) => value
+                    case None => 16
+                }
+                let height = match (parseGeneratedInteger(node.property("aspectHeight"))) {
+                    case Some(value) => value
+                    case None => 9
+                }
+                if (width <= 0 || height <= 0 || width > CJGUI_COMPOSABLE_UI_MAX_ASPECT_TERM ||
+                    height > CJGUI_COMPOSABLE_UI_MAX_ASPECT_TERM) {
+                    return CjguiGeneratedUiValidation.reject("invalid_aspect_ratio", "${path}/${node.key}")
+                }
             }
             if (spec.presentation == CJGUI_GENERATED_PRESENTATION_TABS) {
                 // A bounded working set of pages, each with a STABLE page key: the
@@ -1752,6 +2202,13 @@ public class CjguiGeneratedUiValidator {
             if (property.maxLength > 0 && value.size > property.maxLength) {
                 return "property_too_long"
             }
+            // Scalar vocabularies are an acceptance contract, including the
+            // registered references of compiled composites. Structured tokens
+            // (shadow/gradient, etc.) have their own declared grammar and may
+            // also publish a named `none` form; those keep their parser below.
+            if (property.encoding.isEmpty() && property.values.size > 0 && !property.values.contains(value)) {
+                return "property_value_not_allowed"
+            }
             if (property.name == "style" || property.name == "titleStyle") {
                 if (catalog.namedStyles().forName(value).isNone()) {
                     return "style_reference_not_registered"
@@ -1759,6 +2216,10 @@ public class CjguiGeneratedUiValidator {
             } else if (property.name == "textOverflow") {
                 if (value != "clip" && value != "ellipsis") {
                     return "text_overflow_value_invalid"
+                }
+            } else if (property.name == "letterSpacing" || property.name == "lineHeight") {
+                if (cjguiComposableUiParseTypographyScalar(value, property.name == "lineHeight").isNone()) {
+                    return "typography_value_invalid"
                 }
             } else if (property.name == "translateX" || property.name == "translateY") {
                 if (value.size > 0 && cjguiComposableUiParseTranslationScalar(value).isNone()) {
@@ -1951,9 +2412,60 @@ private func generatedSemanticActionIncarnation(actionName: String): Int64 {
     return result
 }
 
+/// Experimental, immutable projection of ONE existing form-owner read. It
+/// owns no editable draft, rule, queue or lifetime. Missing feedback is unknown.
+public class CjguiGeneratedUiFormFeedback {
+    public let snapshot: CjguiSharedFormSnapshot
+    public let declarations: CjguiSharedFormBinding
+    public let ownerResourceId: Int64
+    private let fieldStates: HashMap<String, CjguiSharedAvailability>
+    private let actionStates: HashMap<String, CjguiSharedAvailability>
+
+    public init(snapshot: CjguiSharedFormSnapshot, declarations: CjguiSharedFormBinding, ownerResourceId: Int64,
+        fieldStates: HashMap<String, CjguiSharedAvailability>, actionStates: HashMap<String, CjguiSharedAvailability>) {
+        this.snapshot = snapshot
+        this.declarations = declarations
+        this.ownerResourceId = ownerResourceId
+        this.fieldStates = HashMap<String, CjguiSharedAvailability>(fieldStates)
+        this.actionStates = HashMap<String, CjguiSharedAvailability>(actionStates)
+    }
+
+    public func fieldFor(fieldId: String): ?CjguiSharedFormFieldProjection {
+        for (field in snapshot.allFields()) {
+            if (field.fieldId == fieldId) { return Some(field) }
+        }
+        return None
+    }
+    public func descriptorFor(fieldId: String): ?CjguiSharedFormFieldDescriptor {
+        for (field in declarations.allFields()) {
+            if (field.fieldId == fieldId) { return Some(field) }
+        }
+        return None
+    }
+    public func fieldAvailability(fieldId: String): CjguiSharedAvailability {
+        return fieldStates.get(fieldId) ?? CjguiSharedAvailability.unknown()
+    }
+    public func actionAvailability(actionName: String): CjguiSharedAvailability {
+        return actionStates.get(actionName) ?? CjguiSharedAvailability.unknown()
+    }
+}
+
 /// Application-owned bindings for generated fields and actions. Implementors
 /// read live business state; the generated description never stores values.
 public interface CjguiGeneratedUiBindingProvider {
+    /// Experimental opt-in. Values, validation and action conditions come from
+    /// the SAME immutable owner snapshot. None means validation is UNKNOWN,
+    /// even when a legacy producer previously emitted ERROR none.
+    func formFeedback(): ?CjguiGeneratedUiFormFeedback { return None }
+    /// Per-instance owner feedback for composites. All values in the returned
+    /// object MUST belong to ONE snapshot of that instance's owner (draft and
+    /// applied values, errors, dirty/canApply, action availability). The
+    /// default answers "unknown": legacy single-owner providers keep the call
+    /// above and never receive a guessed per-instance projection.
+    func formFeedback(instanceKey: String): ?CjguiGeneratedUiFormFeedback {
+        let _ = instanceKey
+        return None
+    }
     /// The shared field resource id for a field id, so a generated input
     /// references exactly the same field the handwritten form binds. Returns
     /// a negative value when the field is unknown.
@@ -1962,18 +2474,36 @@ public interface CjguiGeneratedUiBindingProvider {
     /// selected record id). A negative value means the field is not editable
     /// right now, and the generated input must not accept text.
     func fieldOperationResourceId(fieldId: String): Int64
+    /// Instance-aware owner resolution for application composites. Two
+    /// instances of the SAME kind can edit the same declared field while owning
+    /// different business objects; the default delegates to the legacy method
+    /// so existing providers keep their exact behavior.
+    func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
+        let _ = instanceKey
+        return fieldOperationResourceId(fieldId)
+    }
     /// Draft text for a field ("", when the field has no text value).
     func draftText(fieldId: String): String
+    /// Instance-aware draft projection for composites. The default preserves
+    /// the single-owner provider contract.
+    func draftText(fieldId: String, instanceKey: String): String {
+        let _ = instanceKey
+        return draftText(fieldId)
+    }
     /// Applied text for a field.
     func appliedText(fieldId: String): String
     /// Draft boolean value and whether the field is a boolean field.
     func draftBoolean(fieldId: String): ?Bool
+    /// Instance-aware boolean draft projection for composites.
+    func draftBoolean(fieldId: String, instanceKey: String): ?Bool {
+        let _ = instanceKey
+        return draftBoolean(fieldId)
+    }
     /// Executes an application action; returns the human-readable outcome and
     /// whether the domain applied it.
     func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult
     /// Whether the action is currently executable.
-    func actionAvailable(actionName: String): Bool
-    /// CURRENT, dynamic availability of one field's write: may it be edited
+    func actionAvailable(actionName: String): Bool    /// CURRENT, dynamic availability of one field's write: may it be edited
     /// right now, and if not, why. It must come from the SAME owner condition the
     /// write path enforces, so an editor's enabled state never promises a write
     /// the owner will refuse (the owner still re-checks inside its transaction).
@@ -1982,10 +2512,60 @@ public interface CjguiGeneratedUiBindingProvider {
     func fieldAvailability(fieldId: String): CjguiSharedAvailability {
         return CjguiSharedAvailability.unknown()
     }
+    /// Instance-aware availability for a composite instance's field. The
+    /// default preserves the owner-wide answer.
+    func fieldAvailability(fieldId: String, instanceKey: String): CjguiSharedAvailability {
+        let _ = instanceKey
+        return fieldAvailability(fieldId)
+    }
     /// CURRENT, dynamic availability of one action, from the same owner
     /// condition. The default answers "unknown".
     func actionAvailability(actionName: String): CjguiSharedAvailability {
         return CjguiSharedAvailability.unknown()
+    }
+    /// Instance-aware action availability for a composite instance. The default
+    /// preserves the owner-wide answer for existing single-owner providers.
+    func actionAvailability(actionName: String, instanceKey: String): CjguiSharedAvailability {
+        let _ = instanceKey
+        return actionAvailability(actionName)
+    }
+    /// The owner target an instance's action operates on, or a negative value
+    /// when the provider has no per-instance target (legacy single owner).
+    func actionOperationResourceId(actionName: String, instanceKey: String): Int64 {
+        let _ = actionName
+        let _ = instanceKey
+        return -1
+    }
+    /// Instance-aware action execution. The default preserves the exact
+    /// single-owner behaviour; a multi-object provider routes by the accepted
+    /// instance key and must refuse a target that moved.
+    func executeAction(actionName: String, nodeKey: String,
+        instanceKey: String): CjguiGeneratedUiActionResult {
+        let _ = instanceKey
+        return executeAction(actionName, nodeKey)
+    }
+    /// Instance action execution with the ORIGINAL accepted owner target and
+    /// instance generation. The framework verifies the accepted element first;
+    /// a multi-object provider must additionally refuse when its own binding no
+    /// longer resolves the key to `ownerTargetResourceId` (returned as
+    /// `owner_target_retired`) instead of executing on the new object.
+    ///
+    /// The default preserves legacy single-owner behaviour: a provider that
+    /// declares no per-instance target (`actionOperationResourceId` keeps its
+    /// -1 default) has nothing to prove by owner, so it keeps dispatching
+    /// through the older overloads exactly as before. When the accepted
+    /// element DOES carry a real owner target, the default cannot deliver that
+    /// target to an older overload; silently re-resolving the instance key
+    /// could act on a newer object, so it refuses by name and the caller sees
+    /// no write instead of a wrong one.
+    func executeAction(actionName: String, nodeKey: String, instanceKey: String,
+        ownerTargetResourceId: Int64, instanceIncarnation: Int64): CjguiGeneratedUiActionResult {
+        if (ownerTargetResourceId >= 0) {
+            return CjguiGeneratedUiActionResult(false,
+                CJGUI_GENERATED_ACTION_OWNER_TARGET_UNSUPPORTED)
+        }
+        let _ = instanceIncarnation
+        return executeAction(actionName, nodeKey, instanceKey)
     }
 
     /// R3（h-source-preview-followup 2026-10-02）：生成 TEXT 字段的 owned 范围
@@ -1997,11 +2577,21 @@ public interface CjguiGeneratedUiBindingProvider {
         let _ = fieldId
         return false
     }
+    /// Instance-aware text session probe. The default preserves the single
+    /// owner contract; a multi-object provider opts in per instance.
+    func rangeTextEditSupported(fieldId: String, instanceKey: String): Bool {
+        let _ = instanceKey
+        return rangeTextEditSupported(fieldId)
+    }
     /// 该字段文本所属的 owner 版本（applyTextEdit 校验的同一版本序列）。
     /// 默认 -1 表示不可用（配合默认不支持，不参与绑定）。
     func fieldTextVersion(fieldId: String): Int64 {
         let _ = fieldId
         return -1
+    }
+    func fieldTextVersion(fieldId: String, instanceKey: String): Int64 {
+        let _ = instanceKey
+        return fieldTextVersion(fieldId)
     }
     /// owner 事务内的文本写：`newText` 是框架桥按 `expectedVersion` 版本的
     /// 现值精确重组出的**完整新值**（范围语义由桥保证）；owner 必须在事务内
@@ -2012,6 +2602,11 @@ public interface CjguiGeneratedUiBindingProvider {
         let _ = newText
         return CjguiRangeTextEditOutcome.rejected(-1, "text_edit_unsupported")
     }
+    func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String,
+        instanceKey: String): CjguiRangeTextEditOutcome {
+        let _ = instanceKey
+        return applyTextEdit(fieldId, expectedVersion, newText)
+    }
     /// 与写串行的版本确认（会话恢复的原子采纳用）：版本仍为 expectedVersion
     /// 时执行 action 并返回其结果，否则 false。默认 false（恢复按具名失败
     /// 走有界重试，不影响普通输入链）。
@@ -2020,6 +2615,11 @@ public interface CjguiGeneratedUiBindingProvider {
         let _ = expectedVersion
         let _ = action
         return false
+    }
+    func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool,
+        instanceKey: String): Bool {
+        let _ = instanceKey
+        return confirmFieldTextVersion(fieldId, expectedVersion, action)
     }
     /// 把该字段源字节选区从 fromVersion 映射到当前版本；返回
     /// (当前版本, 新start, 新end)，无法无歧义映射时 None。默认 None
@@ -2031,6 +2631,11 @@ public interface CjguiGeneratedUiBindingProvider {
         let _ = startByte
         let _ = endByte
         return None
+    }
+    func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64, endByte: Int64,
+        instanceKey: String): ?(Int64, Int64, Int64) {
+        let _ = instanceKey
+        return rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
     }
 }
 
@@ -2207,6 +2812,19 @@ public class CjguiGeneratedUiRefreshIdentity {
     }
 }
 
+/// One accepted composite instance's real binding identity. The owner target
+/// is part of the identity on purpose: returning a key to an owner it used
+/// before (A→B→A) is a NEW binding and must not revive an old session.
+class CjguiCompositeInstanceIdentity {
+    let ownerResourceId: Int64
+    let incarnation: Int64
+
+    init(ownerResourceId: Int64, incarnation: Int64) {
+        this.ownerResourceId = ownerResourceId
+        this.incarnation = incarnation
+    }
+}
+
 public class CjguiGeneratedUiStructureHolder {
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let validator: CjguiGeneratedUiValidator
@@ -2247,6 +2865,10 @@ public class CjguiGeneratedUiStructureHolder {
     // catalog and stage their own bindings until the scene accepts them.
     private var acceptedImageBindings: HashMap<String, CjguiGeneratedUiImageResourceSpec>
     private var candidateImageBindings: HashMap<String, CjguiGeneratedUiImageResourceSpec>
+    // Immutable accepted/candidate resource resolution, alongside the existing
+    // image/style bindings. Business values remain in the original form owner.
+    private var acceptedFontBindings: HashMap<String, CjguiFontResourceReference>
+    private var candidateFontBindings: HashMap<String, CjguiFontResourceReference>
     // ONE public viewport per stable generated instance key. It is view state,
     // not a business value: a legal reorder or an ordinary field refresh keeps
     // the human's scroll position, and two windows never share it.
@@ -2300,6 +2922,19 @@ public class CjguiGeneratedUiStructureHolder {
     // consumer re-derives it from a control type or a field name.
     private var acceptedCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
     private var candidateCompositeElements: HashMap<Int64, CjguiCompositeElementBinding>
+    // While an immediate ACCEPTED render rebuilds the interface (the fallback
+    // after a rejected candidate), these are the bindings that were actually
+    // accepted. Matching elements keep them instead of re-resolving the live
+    // provider, so a mapping that changed after acceptance cannot rebind an
+    // object no scene accepted. Cleared as soon as the render settles.
+    private var preservedAcceptedCompositeElements: ?HashMap<Int64, CjguiCompositeElementBinding> = None
+    // Per-instance acceptance generation. It stays stable across a pure
+    // reorder and changes when the instance key is rebound, removed, or
+    // removed and re-added. Range/action sessions freeze this value so a held
+    // session can never follow a key to a different accepted object.
+    private var compositeInstanceIncarnations: HashMap<String, CjguiCompositeInstanceIdentity>
+    private var candidateCompositeInstanceIncarnations: HashMap<String, CjguiCompositeInstanceIdentity>
+    private var nextCompositeInstanceIncarnation: Int64
     // Motion references are staged with the generated candidate and promoted
     // only when the corresponding scene transaction commits.
     private var acceptedMotionRules: HashMap<String, CjguiGeneratedMotionRule>
@@ -2337,7 +2972,9 @@ public class CjguiGeneratedUiStructureHolder {
         this.candidateNodeIdToKey = HashMap<Int64, String>()
         this.refreshIdentities = HashMap<String, CjguiGeneratedUiRefreshIdentity>()
         this.acceptedImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
+        this.acceptedFontBindings = HashMap<String, CjguiFontResourceReference>()
         this.candidateImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
+        this.candidateFontBindings = HashMap<String, CjguiFontResourceReference>()
         this.instanceScrollViewports = HashMap<String, CjguiComposableUiScrollViewport>()
         this.instanceSplitStates = HashMap<String, CjguiComposableUiSplitState>()
         this.instanceTabsStates = HashMap<String, CjguiComposableUiTabsState>()
@@ -2346,6 +2983,9 @@ public class CjguiGeneratedUiStructureHolder {
         this.imageResourceStates = HashMap<String, String>()
         this.acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
         this.candidateCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        this.compositeInstanceIncarnations = HashMap<String, CjguiCompositeInstanceIdentity>()
+        this.candidateCompositeInstanceIncarnations = HashMap<String, CjguiCompositeInstanceIdentity>()
+        this.nextCompositeInstanceIncarnation = 1
         this.acceptedMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
         this.candidateMotionRules = HashMap<String, CjguiGeneratedMotionRule>()
         this.lastExpandedNodeCount = 0
@@ -2699,7 +3339,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// candidate while its identity transaction is open, otherwise the accepted
     /// structure. The candidate's identities are used for the scene, but the
     /// accepted identity table is only replaced by `commitCandidateRefresh`.
-    public func buildRefreshNode(provider: CjguiGeneratedUiBindingProvider): CjguiComposableUiNode {
+    public func buildRefreshNode(provider: CjguiGeneratedUiBindingProvider, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiComposableUiNode {
         if (let Some(structure) <- candidate) {
             // A SECOND build of the SAME pending candidate must start a fresh
             // identity composition: the first pass already claimed these keys and
@@ -2713,11 +3353,11 @@ public class CjguiGeneratedUiStructureHolder {
                     rejectPendingWith(lastSceneOutcomeValue, registry.lastIssue())
                     candidatePrepared = false
                     candidateCompositionUsed = false
-                    return buildAccepted(provider)
+                    return buildAccepted(provider, feedback: feedback)
                 }
             }
             candidateCompositionUsed = true
-            let rendered = renderIntoCandidate(structure, provider)
+            let rendered = renderIntoCandidate(structure, provider, feedback: feedback)
             if (!rendered.ok) {
                 // A candidate that cannot be built must not take the scene down
                 // with it: roll its identity transaction back and keep the
@@ -2727,12 +3367,12 @@ public class CjguiGeneratedUiStructureHolder {
                 candidateCompositionUsed = false
                 lastSceneOutcomeValue = "scene_rejected:${rendered.reason}"
                 rejectPendingWith(lastSceneOutcomeValue, rendered.reason)
-                return buildAccepted(provider)
+                return buildAccepted(provider, feedback: feedback)
             }
             candidatePrepared = true
             return rendered.node
         }
-        return buildAccepted(provider)
+        return buildAccepted(provider, feedback: feedback)
     }
 
     /// Completes the candidate declaration before layout/native submission, so
@@ -2786,7 +3426,9 @@ public class CjguiGeneratedUiStructureHolder {
             // it and release an accepted reference through its own rollback.
             releaseAcceptedImageHolds()
             acceptedImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>(candidateImageBindings)
+            acceptedFontBindings = HashMap<String, CjguiFontResourceReference>(candidateFontBindings)
             candidateImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
+            candidateFontBindings = HashMap<String, CjguiFontResourceReference>()
             nodeIdToKey = candidateNodeIdToKey
             // Removing or re-identifying an element releases its per-instance
             // view state in the SAME transaction that accepts the new structure:
@@ -2808,6 +3450,7 @@ public class CjguiGeneratedUiStructureHolder {
             // transaction: an event on a composite element resolves its owner
             // binding only from the accepted table.
             acceptedCompositeElements = candidateCompositeElements
+            publishCompositeInstanceIncarnations(candidateCompositeElements, true)
             // The attempt that produced this scene becomes the accepted one, and
             // only now does its ticket settle as ACCEPTED.
             if (let Some(record) <- candidateRecord(pendingCandidateTokenValue)) {
@@ -2839,7 +3482,16 @@ public class CjguiGeneratedUiStructureHolder {
     /// structure, version, identity table and component instances are
     /// untouched, so the old interface stays addressable and editable.
     public func rollbackCandidateRefresh(): Unit {
+        rollbackCandidateRefresh("")
+    }
+
+    /// A scene carrier may be cancelled for a known source/viewport reason.
+    /// Settle only its pending ticket; an older terminal refusal wins.
+    public func rollbackCandidateRefresh(reason: String): Unit {
         refreshIdentities.clear()
+        // The candidate's staged identities die with it: a failed candidate
+        // must never change the accepted binding a live session is using.
+        candidateCompositeInstanceIncarnations = HashMap<String, CjguiCompositeInstanceIdentity>()
         rollbackStyleRefresh()
         releaseCandidateImageHolds()
         // Give back every instance view state this CANDIDATE build created or
@@ -2848,7 +3500,13 @@ public class CjguiGeneratedUiStructureHolder {
         restoreStagedInstanceViewStates()
         if (!candidate.isNone()) {
             if (lastSceneOutcomeValue.isEmpty() || lastSceneOutcomeValue == "scene_pending") {
-                lastSceneOutcomeValue = "scene_rejected:layout_or_native"
+                if (let Some(record) <- candidateRecord(pendingCandidateTokenValue)) {
+                    if (record.terminalState() == "REJECTED") { lastSceneOutcomeValue = record.sceneState() }
+                }
+                if (lastSceneOutcomeValue.isEmpty() || lastSceneOutcomeValue == "scene_pending") {
+                    lastSceneOutcomeValue = "scene_rejected:" +
+                        if (reason.isEmpty() || reason == "none") { "layout_or_native" } else { reason }
+                }
             }
             registry.rollbackTransaction()
             // Keep the SPECIFIC reason a failed build or prepare already
@@ -2875,9 +3533,9 @@ public class CjguiGeneratedUiStructureHolder {
 
     /// Renders the currently accepted structure (empty group when none was
     /// accepted yet).
-    public func buildAccepted(provider: CjguiGeneratedUiBindingProvider): CjguiComposableUiNode {
+    public func buildAccepted(provider: CjguiGeneratedUiBindingProvider, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiComposableUiNode {
         if (let Some(structure) <- accepted) {
-            let rendered = renderInto(structure, provider, true)
+            let rendered = renderInto(structure, provider, true, feedback: feedback)
             if (rendered.ok) {
                 return rendered.node
             }
@@ -2895,33 +3553,61 @@ public class CjguiGeneratedUiStructureHolder {
     /// Renders the accepted structure through the immediate composition path
     /// (begin/finish). Used outside a refresh transaction only.
     private func renderInto(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
-        intoAcceptedTable: Bool): CjguiGeneratedUiRendered {
+        intoAcceptedTable: Bool, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = true
         refreshIdentities.clear()
+        // Publish the accepted route/binding/identity tables only when the WHOLE
+        // render succeeds. An immediate rebuild that fails (for example the
+        // accepted fallback after a rejected candidate) must leave the accepted
+        // interface exactly as it was, not a half-populated or empty table.
+        let previousNodeIdToKey = nodeIdToKey
+        let previousCompositeElements = acceptedCompositeElements
+        let previousIncarnations = compositeInstanceIncarnations
         nodeIdToKey = HashMap<Int64, String>()
         acceptedCompositeElements = HashMap<Int64, CjguiCompositeElementBinding>()
+        compositeInstanceIncarnations = HashMap<String, CjguiCompositeInstanceIdentity>(previousIncarnations)
+        preservedAcceptedCompositeElements = if (previousCompositeElements.size > 0) {
+            Some(previousCompositeElements)
+        } else {
+            None
+        }
         lastExpandedNodeCount = 0
         lastExpandedDepth = 0
         renderFailureReason = ""
         renderFailurePath = ""
         if (!registry.begin()) {
+            restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
             return CjguiGeneratedUiRendered(false, "component_composition_failed", "",
                 cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4)))
         }
-        let node = nodeFor(structure, provider, intoAcceptedTable)
+        let frozenFeedback = if (feedback.isSome()) { feedback } else { provider.formFeedback() }
+        let node = nodeFor(structure, provider, intoAcceptedTable, frozenFeedback)
         if (!registry.finish()) {
+            restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
             return CjguiGeneratedUiRendered(false, "component_composition_commit_failed", "", node)
         }
         if (!renderFailureReason.isEmpty()) {
+            restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
             return CjguiGeneratedUiRendered(false, renderFailureReason, renderFailurePath, node)
         }
+        preservedAcceptedCompositeElements = None
+        publishCompositeInstanceIncarnations(acceptedCompositeElements, false)
         return CjguiGeneratedUiRendered(true, "", "", node)
+    }
+
+    private func restoreAcceptedIdentityTables(nodeIdToKeyTable: HashMap<Int64, String>,
+        elements: HashMap<Int64, CjguiCompositeElementBinding>,
+        incarnations: HashMap<String, CjguiCompositeInstanceIdentity>): Unit {
+        nodeIdToKey = nodeIdToKeyTable
+        acceptedCompositeElements = elements
+        compositeInstanceIncarnations = incarnations
+        preservedAcceptedCompositeElements = None
     }
 
     /// Renders the pending candidate inside the identity transaction already
     /// opened by `beginCandidateRefresh`. It never commits and never destroys
     /// an accepted instance.
-    private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider): CjguiGeneratedUiRendered {
+    private func renderIntoCandidate(structure: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = false
         refreshIdentities.clear()
         candidateNodeIdToKey = HashMap<Int64, String>()
@@ -2934,7 +3620,8 @@ public class CjguiGeneratedUiStructureHolder {
         releaseCandidateImageHolds()
         renderFailureReason = ""
         renderFailurePath = ""
-        let node = nodeFor(structure, provider, false)
+        let frozenFeedback = if (feedback.isSome()) { feedback } else { provider.formFeedback() }
+        let node = nodeFor(structure, provider, false, frozenFeedback)
         if (!renderFailureReason.isEmpty()) {
             return CjguiGeneratedUiRendered(false, renderFailureReason, renderFailurePath, node)
         }
@@ -2979,6 +3666,161 @@ public class CjguiGeneratedUiStructureHolder {
         return acceptedCompositeElements.get(nodeId)
     }
 
+    /// Accepted instance key for a composite element node, or empty for an
+    /// ordinary generated node. Derived from the same accepted binding that
+    /// routed the target, not from a window-global "selected object".
+    public func compositeInstanceKeyForNodeId(nodeId: Int64): String {
+        if (let Some(element) <- acceptedCompositeElements.get(nodeId)) {
+            return element.instanceKey
+        }
+        return ""
+    }
+
+    /// Framework-assigned generation of one accepted composite instance. It is
+    /// stable for a reorder of the same key and becomes a new value after the
+    /// key was rebound, removed, or removed and re-added.
+    public func compositeInstanceIncarnationForNodeId(nodeId: Int64): Int64 {
+        if (let Some(element) <- acceptedCompositeElements.get(nodeId)) {
+            return element.instanceIncarnation
+        }
+        return 0
+    }
+
+    /// True only while the accepted element for `nodeId` is still the exact
+    /// binding an action intent was resolved from. The dispatcher checks this
+    /// AFTER resolution and BEFORE the owner transaction, so an owner mapping
+    /// that moved in between cannot be followed by the old press.
+    public func compositeActionIntentIsBound(nodeId: Int64, actionName: String, instanceKey: String,
+        ownerTargetResourceId: Int64, instanceIncarnation: Int64): Bool {
+        let element = match (acceptedCompositeElements.get(nodeId)) {
+            case Some(value) => value
+            case None => return false
+        }
+        return element.role == CJGUI_COMPOSITE_ELEMENT_ACTION && element.actionName == actionName &&
+            element.instanceKey == instanceKey && element.ownerTargetResourceId == ownerTargetResourceId &&
+            element.instanceIncarnation == instanceIncarnation
+    }
+
+    /// True only when `key` is an instance the ACCEPTED scene still contains.
+    /// A provider map entry alone is not enough: a removed or retired card must
+    /// read as unknown rather than as a live object.
+    public func isAcceptedCompositeInstanceKey(key: String): Bool {
+        if (key.isEmpty()) {
+            return false
+        }
+        for ((_, element) in acceptedCompositeElements) {
+            if (element.instanceKey == key) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether any composite binding is accepted. Used to keep the legacy
+    /// single-owner projection only for a scene that has no composites at all.
+    public func hasAcceptedCompositeBindings(): Bool {
+        return acceptedCompositeElements.size > 0
+    }
+
+    /// The accepted instance key that uniquely binds `ownerResourceId`, or ""
+    /// when no accepted instance (or more than one) does. Owner-addressed
+    /// feedback must never guess between siblings.
+    public func compositeInstanceKeyForOwnerTarget(ownerResourceId: Int64): String {
+        var matched = ""
+        for ((_, element) in acceptedCompositeElements) {
+            if (element.instanceOwnerTargetResourceId != ownerResourceId || element.instanceKey.isEmpty()) {
+                continue
+            }
+            if (!matched.isEmpty() && matched != element.instanceKey) {
+                return ""
+            }
+            matched = element.instanceKey
+        }
+        return matched
+    }
+
+    /// Accepted owner target for one instance key, or -1 when the key has no
+    /// accepted composite element. Used to authorize/route per-owner reads.
+    public func compositeOwnerTargetForInstance(key: String): Int64 {
+        for ((_, element) in acceptedCompositeElements) {
+            if (element.instanceKey == key && element.instanceOwnerTargetResourceId >= 0) {
+                return element.instanceOwnerTargetResourceId
+            }
+        }
+        return -1
+    }
+
+    /// The owner target an instance currently binds, derived from the same
+    /// resolved field/action targeting the elements use. -1 keeps the legacy
+    /// single-owner identity.
+    private func compositeOwnerTargetFor(composite: CjguiCompositeComponentSpec, instanceKey: String,
+        provider: CjguiGeneratedUiBindingProvider): Int64 {
+        for (element in composite.elements) {
+            if (element.role == CJGUI_COMPOSITE_ELEMENT_FIELD && element.fieldId.size > 0) {
+                let target = provider.fieldOperationResourceId(element.fieldId, instanceKey)
+                if (target >= 0) {
+                    return target
+                }
+            } else if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION && element.actionName.size > 0) {
+                let target = provider.actionOperationResourceId(element.actionName, instanceKey)
+                if (target >= 0) {
+                    return target
+                }
+            }
+        }
+        return -1
+    }
+
+    /// Stable generation for the SAME key + SAME owner target; a changed owner
+    /// target is a real rebind and allocates a NEW generation, so A→B→A can
+    /// never revive the binding that existed before B. A candidate only stages
+    /// its identity: a rejected candidate leaves the accepted table intact.
+    private func compositeIncarnationForInstance(key: String, ownerResourceId: Int64,
+        intoAcceptedTable: Bool): Int64 {
+        if (let Some(value) <- compositeInstanceIncarnations.get(key)) {
+            if (value.ownerResourceId == ownerResourceId) {
+                return value.incarnation
+            }
+        }
+        if (!intoAcceptedTable) {
+            if (let Some(value) <- candidateCompositeInstanceIncarnations.get(key)) {
+                if (value.ownerResourceId == ownerResourceId) {
+                    return value.incarnation
+                }
+            }
+        }
+        let value = nextCompositeInstanceIncarnation
+        nextCompositeInstanceIncarnation += 1
+        let identity = CjguiCompositeInstanceIdentity(ownerResourceId, value)
+        if (intoAcceptedTable) {
+            compositeInstanceIncarnations.add(key, identity)
+        } else {
+            candidateCompositeInstanceIncarnations.add(key, identity)
+        }
+        return value
+    }
+
+    /// Publishes the identity table of the bindings that just became accepted.
+    /// Removed keys lose their generation, so a later re-add is a NEW instance
+    /// rather than the old session's target.
+    private func publishCompositeInstanceIncarnations(
+        bindings: HashMap<Int64, CjguiCompositeElementBinding>, fromCandidate: Bool): Unit {
+        let published = HashMap<String, CjguiCompositeInstanceIdentity>()
+        for ((_, binding) in bindings) {
+            // The instance owner target is resolved once and carried by every
+            // element; a container element never decides the instance identity.
+            if (!published.contains(binding.instanceKey)) {
+                published.add(binding.instanceKey,
+                    CjguiCompositeInstanceIdentity(binding.instanceOwnerTargetResourceId,
+                        binding.instanceIncarnation))
+            }
+        }
+        compositeInstanceIncarnations = published
+        if (fromCandidate) {
+            candidateCompositeInstanceIncarnations = HashMap<String, CjguiCompositeInstanceIdentity>()
+        }
+    }
+
     /// Accepted composite element bindings belonging to one instance key, so a
     /// consumer (or a test) can address an element without knowing its node id.
     public func compositeElementNodeIdsForKey(key: String): ArrayList<CjguiCompositeElementBinding> {
@@ -3021,8 +3863,11 @@ public class CjguiGeneratedUiStructureHolder {
         }
         if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
             // The declared action reaches the owner through the adapter, so the
-            // control itself must be the framework's generic action button.
-            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON && node.actionName == "GENERATED_ACTION"
+            // control itself must be the framework's generic action button. A
+            // resolved owner target means a late press from an older object must
+            // also carry the SAME target; a legacy -1 keeps the old shape.
+            return node.nodeKind == CJGUI_COMPOSABLE_UI_BUTTON && node.actionName == "GENERATED_ACTION" &&
+                (element.ownerTargetResourceId < 0 || node.operationResourceId == element.ownerTargetResourceId)
         }
         // A container element carries no owner binding; its identity is the check.
         return true
@@ -3065,7 +3910,8 @@ public class CjguiGeneratedUiStructureHolder {
                 }
                 return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: element.fieldId,
                     writerOperation: element.writerOperation, ownerTargetResourceId: element.ownerTargetResourceId,
-                    argumentName: element.argumentName, value: value)
+                    argumentName: element.argumentName, value: value, instanceKey: element.instanceKey,
+                    nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation)
             }
             if (element.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
                 if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
@@ -3076,13 +3922,18 @@ public class CjguiGeneratedUiStructureHolder {
                 // clamped here.
                 return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: element.fieldId,
                     writerOperation: element.writerOperation, ownerTargetResourceId: element.ownerTargetResourceId,
-                    argumentName: element.argumentName, value: CjguiSharedOperationValue.string(element.presetValue))
+                    argumentName: element.argumentName, value: CjguiSharedOperationValue.string(element.presetValue),
+                    instanceKey: element.instanceKey, nodeId: element.nodeId,
+                    instanceIncarnation: element.instanceIncarnation)
             }
             if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
                 if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
                     return CjguiGeneratedUiIntent.none("event_not_an_activation")
                 }
-                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "", actionName: element.actionName)
+                return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_ACTION, key, "",
+                    ownerTargetResourceId: element.ownerTargetResourceId,
+                    actionName: element.actionName, instanceKey: element.instanceKey,
+                    nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation)
             }
             return CjguiGeneratedUiIntent.none("composite_container_event")
         }
@@ -3142,13 +3993,24 @@ public class CjguiGeneratedUiStructureHolder {
         return CjguiGeneratedUiIntent.none("unrouted_event")
     }
 
+    // Only a CURRENT accepted generated slider may enter the shared field
+    // adapter. A manually composed field uses the same adapter directly.
+    func matchesFieldSlider(node: CjguiComposableUiLayoutNode): Bool {
+        let key = keyForNodeId(node.nodeId)
+        let spec = match (acceptedNodeForKey(key)) { case Some(value) => value; case None => return false }
+        let component = match (catalog.componentFor(spec.kind)) { case Some(value) => value; case None => return false }
+        if (component.presentation != "FIELD_SLIDER" || spec.fieldId != node.fieldId) { return false }
+        let step = Int64.tryParse(spec.property("step")) ?? 1
+        return node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER && node.pointerControlStep == step
+    }
+
     /// Expands one node into ordinary components through the presentation its
     /// registered kind declares. An unregistered or unimplemented kind is an
     /// explicit render failure - it never degrades into a label. `nodeIdToKey`
     /// is updated for whichever table this render targets (accepted or
     /// candidate), so a candidate never mutates the accepted identity table.
     private func nodeFor(spec: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
-        intoAcceptedTable: Bool): CjguiComposableUiNode {
+        intoAcceptedTable: Bool, feedback: ?CjguiGeneratedUiFormFeedback): CjguiComposableUiNode {
         let declared = match (catalog.componentFor(spec.kind)) {
             case Some(value) => value
             case None => CjguiGeneratedUiComponentSpec("__unregistered__", ArrayList<CjguiGeneratedUiPropertySpec>(),
@@ -3179,7 +4041,58 @@ public class CjguiGeneratedUiStructureHolder {
         let style = styleFor(spec, intoAcceptedTable)
         let presentation = declared.presentation
         if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
-            return compositeFor(spec, provider, instance, intoAcceptedTable)
+            return compositeFor(spec, provider, instance, intoAcceptedTable, feedback)
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_STACK) {
+            let group = cjguiComposableStack(nodeId, semanticId, style)
+            for (child in spec.children) {
+                group.add(nodeFor(child, provider, intoAcceptedTable, feedback))
+            }
+            return group
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_WRAP) {
+            let rowGap = match (parseGeneratedInteger(spec.property("rowGap"))) {
+                case Some(value) => value
+                case None => 0
+            }
+            let group = cjguiComposableWrap(nodeId, semanticId, style, rowGap: rowGap)
+            for (child in spec.children) {
+                group.add(nodeFor(child, provider, intoAcceptedTable, feedback))
+            }
+            return group
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO) {
+            if (spec.children.size != 1) {
+                noteRenderFailure("aspect_ratio_requires_one_child", spec.key)
+                return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+            }
+            let aspectWidth = match (parseGeneratedInteger(spec.property("aspectWidth"))) {
+                case Some(value) => value
+                case None => 16
+            }
+            let aspectHeight = match (parseGeneratedInteger(spec.property("aspectHeight"))) {
+                case Some(value) => value
+                case None => 9
+            }
+            let frame = cjguiComposableAspectRatio(nodeId, semanticId, aspectWidth, aspectHeight, style)
+            frame.add(nodeFor(spec.children[0], provider, intoAcceptedTable, feedback))
+            return frame
+        }
+        if (presentation == CJGUI_GENERATED_PRESENTATION_SPACER) {
+            let axis = if (spec.property("axis") == "vertical") {
+                CjguiComposableUiSplitAxis.VERTICAL
+            } else {
+                CjguiComposableUiSplitAxis.HORIZONTAL
+            }
+            let minimum = match (parseGeneratedInteger(spec.property("minimum"))) {
+                case Some(value) => value
+                case None => 0
+            }
+            let weight = match (parseGeneratedInteger(spec.property("weight"))) {
+                case Some(value) => value
+                case None => 1
+            }
+            return cjguiComposableSpacer(nodeId, semanticId, axis: axis, grow: weight, minimumSize: minimum)
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
             CJGUI_GENERATED_PRESENTATION_HORIZONTAL) {
@@ -3189,7 +4102,7 @@ public class CjguiGeneratedUiStructureHolder {
                 cjguiComposableHorizontal(nodeId, semanticId, style)
             }
             for (child in spec.children) {
-                group.add(nodeFor(child, provider, intoAcceptedTable))
+                group.add(nodeFor(child, provider, intoAcceptedTable, feedback))
             }
             return group
         }
@@ -3200,7 +4113,7 @@ public class CjguiGeneratedUiStructureHolder {
                 noteRenderFailure("tabs_page_requires_one_content", spec.key)
                 return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
             }
-            return nodeFor(spec.children[0], provider, intoAcceptedTable)
+            return nodeFor(spec.children[0], provider, intoAcceptedTable, feedback)
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_TABS) {
             if (spec.children.size < 2 || spec.children.size > 3) {
@@ -3224,7 +4137,7 @@ public class CjguiGeneratedUiStructureHolder {
                 let enabled = !(pageSpec.property("disabled") == "true")
                 keys.add(pageKey)
                 pages.add(
-                    CjguiComposableUiTabPage(pageKey, pageTitle, nodeFor(pageSpec, provider, intoAcceptedTable),
+                    CjguiComposableUiTabPage(pageKey, pageTitle, nodeFor(pageSpec, provider, intoAcceptedTable, feedback),
                         enabled: enabled))
             }
             if (candidateViewStateStagingActive && !intoAcceptedTable) {
@@ -3255,8 +4168,8 @@ public class CjguiGeneratedUiStructureHolder {
                 noteRenderFailure("split_requires_two_children", spec.key)
                 return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
             }
-            let first = nodeFor(spec.children[0], provider, intoAcceptedTable)
-            let second = nodeFor(spec.children[1], provider, intoAcceptedTable)
+            let first = nodeFor(spec.children[0], provider, intoAcceptedTable, feedback)
+            let second = nodeFor(spec.children[1], provider, intoAcceptedTable, feedback)
             let firstSize = match (parseGeneratedInteger(spec.property("firstSize"))) {
                 case Some(value) => value
                 case None => 0
@@ -3299,7 +4212,7 @@ public class CjguiGeneratedUiStructureHolder {
                 scroll.semanticLabel = spec.property("semanticLabel")
             }
             for (child in spec.children) {
-                scroll.add(nodeFor(child, provider, intoAcceptedTable))
+                scroll.add(nodeFor(child, provider, intoAcceptedTable, feedback))
             }
             return scroll
         }
@@ -3353,8 +4266,13 @@ public class CjguiGeneratedUiStructureHolder {
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_LABEL) {
+            let decoded = cjguiDecodeGeneratedTextRuns(spec.property("text"), spec.property("textRuns"), style,
+                { key, version => resolvedFontReference(key, version, intoAcceptedTable) })
+            if (!decoded.reason.isEmpty()) {
+                return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+            }
             return cjguiComposableText(nodeId, semanticId, spec.property("text"), style,
-                interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+                textStyleRuns: decoded.runs, interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_ACTION) {
             let label = if (spec.property("label").size > 0) {
@@ -3365,7 +4283,7 @@ public class CjguiGeneratedUiStructureHolder {
                 spec.actionName
             }
             let action = cjguiComposableButton(nodeId, semanticId, label, "GENERATED_ACTION", nodeId, style,
-                enabled: actionEnabledFor(provider, spec.actionName) && spec.property("disabled") != "true",
+                enabled: actionEnabledFor(provider, spec.actionName, feedback: feedback) && spec.property("disabled") != "true",
                 operationActionName: spec.actionName, interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
             action.semanticIncarnation = generatedSemanticActionIncarnation(spec.actionName)
             if (spec.property("semanticRole") == "row") {
@@ -3411,7 +4329,51 @@ public class CjguiGeneratedUiStructureHolder {
         } else {
             nodeId
         }
-        let ownerTarget = provider.fieldOperationResourceId(spec.fieldId)
+        let ownerTarget = match (feedback) {
+            case Some(state) => state.ownerResourceId
+            case None => provider.fieldOperationResourceId(spec.fieldId)
+        }
+        if (presentation == "FIELD_SLIDER") {
+            let appearance = CjguiComposableUiSliderAppearance(
+                track: declaredColor(spec.properties, "trackColor", CjguiComposableUiSliderAppearance().track),
+                fill: declaredColor(spec.properties, "fillColor", CjguiComposableUiSliderAppearance().fill),
+                thumb: declaredColor(spec.properties, "thumbColor", CjguiComposableUiSliderAppearance().thumb),
+                thumbDiameter: Int64.tryParse(spec.property("thumbDiameter")) ?? 16,
+                trackThickness: Int64.tryParse(spec.property("trackThickness")) ?? 4)
+            let slider = cjguiComposableFieldSlider(nodeId, semanticId, field, provider, style,
+                step: Int64.tryParse(spec.property("step")) ?? 1, appearance: appearance,
+                interactionStyle: if (spec.property("style").size == 0) { cjguiComposableSliderInteractionStyle() }
+                    else { interactionStyleFor(spec, intoAcceptedTable) })
+            if (spec.property("label").size > 0) { slider.semanticLabel = spec.property("label") }
+            return slider
+        }
+        if (let Some(state) <- feedback) {
+            if (let Some(descriptor) <- state.descriptorFor(spec.fieldId)) {
+                if (let Some(value) <- state.fieldFor(spec.fieldId)) {
+                    if (value.resourceId == bindingResourceId && state.ownerResourceId == ownerTarget) {
+                        let availability = state.fieldAvailability(spec.fieldId)
+                        let enabled = availability.known && availability.isAvailable && ownerTarget >= 0
+                        // Reserve stable local slots even while no error is visible.
+                        // The original editor identity remains the input/event target.
+                        return cjguiComposableBoundFormField(
+                            allocatedElementNodeId(instance, "form-feedback"), instance.semanticId("form-feedback"),
+                            nodeId, allocatedElementNodeId(instance, "form-validation"), descriptor, value, ownerTarget,
+                            style, cjguiComposableFormValidationStyle(), editorSemanticId: semanticId,
+                            validationSemanticId: instance.semanticId("form-validation"),
+                            // The owner's exact validation fact, the same one
+                            // the handwritten form and the public fields read
+                            // return; a generic paraphrase would make the two
+                            // projections disagree about the same object.
+                            validationDisplayMessage: value.validationError,
+                            enabled: enabled,
+                            editorLabel: spec.property("label"),
+                            textOperationActionName: field.writeActionName,
+                            booleanOperationActionName: field.writeActionName,
+                            interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+                    }
+                }
+            }
+        }
         // The declared field value comes from the application's live draft,
         // exactly like the handwritten form: a legally empty draft is a draft
         // and must not be replaced by the applied value.
@@ -3447,8 +4409,16 @@ public class CjguiGeneratedUiStructureHolder {
     /// provider reports it cannot evaluate a condition. The control keeps its
     /// target and its draft either way: becoming unavailable must not silently
     /// move the edit to another object or discard what was typed.
-    private func fieldEnabledFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String, ownerTarget: Int64): Bool {
-        let availability = provider.fieldAvailability(fieldId)
+    private func fieldEnabledFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String, ownerTarget: Int64,
+        instanceKey!: String = "", feedback!: ?CjguiGeneratedUiFormFeedback = None): Bool {
+        let availability = match (feedback) {
+            case Some(value) => value.fieldAvailability(fieldId)
+            case None => if (instanceKey.size > 0) {
+                provider.fieldAvailability(fieldId, instanceKey)
+            } else {
+                provider.fieldAvailability(fieldId)
+            }
+        }
         if (availability.known) {
             // The enabled state is the projection of the owner's answer AND the
             // visible-control constraint (with no owner target there is nothing
@@ -3459,29 +4429,118 @@ public class CjguiGeneratedUiStructureHolder {
     }
 
     /// The enabled projection of one action, on the same terms.
-    private func actionEnabledFor(provider: CjguiGeneratedUiBindingProvider, actionName: String): Bool {
-        let availability = provider.actionAvailability(actionName)
+    private func actionEnabledFor(provider: CjguiGeneratedUiBindingProvider, actionName: String,
+        instanceKey!: String = "", feedback!: ?CjguiGeneratedUiFormFeedback = None): Bool {
+        let availability = match (feedback) {
+            case Some(value) => value.actionAvailability(actionName)
+            case None => if (instanceKey.size > 0) {
+                provider.actionAvailability(actionName, instanceKey)
+            } else {
+                provider.actionAvailability(actionName)
+            }
+        }
         if (availability.known) {
             return availability.isAvailable
         }
+        if (feedback.isSome()) { return false }
         return provider.actionAvailable(actionName)
     }
 
     /// The owner's reason when a field is currently blocked ("" otherwise), so a
     /// frozen control can explain itself while staying readable.
-    private func fieldBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String): String {
-        let availability = provider.fieldAvailability(fieldId)
+    private func fieldBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, fieldId: String,
+        instanceKey!: String = "", feedback!: ?CjguiGeneratedUiFormFeedback = None): String {
+        let availability = match (feedback) {
+            case Some(value) => value.fieldAvailability(fieldId)
+            case None => if (instanceKey.size > 0) {
+                provider.fieldAvailability(fieldId, instanceKey)
+            } else {
+                provider.fieldAvailability(fieldId)
+            }
+        }
         if (availability.known && !availability.isAvailable) {
             return availability.reason
         }
         return ""
     }
 
-    private func actionBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, actionName: String): String {
-        let availability = provider.actionAvailability(actionName)
+    private func actionBlockedReasonFor(provider: CjguiGeneratedUiBindingProvider, actionName: String,
+        instanceKey!: String = "", feedback!: ?CjguiGeneratedUiFormFeedback = None): String {
+        let availability = match (feedback) {
+            case Some(value) => value.actionAvailability(actionName)
+            case None => if (instanceKey.size > 0) {
+                provider.actionAvailability(actionName, instanceKey)
+            } else {
+                provider.actionAvailability(actionName)
+            }
+        }
         if (availability.known && !availability.isAvailable) {
             return availability.reason
         }
+        return ""
+    }
+
+    /// The draft the ONE instance snapshot publishes for a field. Falls back to
+    /// the provider only when that snapshot carries no projection for it.
+    private func compositeDraftText(provider: CjguiGeneratedUiBindingProvider, fieldId: String,
+        instanceKey: String, feedback: ?CjguiGeneratedUiFormFeedback): String {
+        if (let Some(value) <- feedback) {
+            if (let Some(field) <- value.fieldFor(fieldId)) {
+                return field.draftText
+            }
+        }
+        return provider.draftText(fieldId, instanceKey)
+    }
+
+    /// The BOOLEAN draft of the SAME frozen snapshot a TEXT field already reads.
+    /// A boolean used to take the live provider value while its availability and
+    /// reason came from the frozen feedback, which could show one generation's
+    /// value beside another generation's error. When the snapshot carries the
+    /// field, its draft text is authoritative ("true" = checked); the live
+    /// provider is only the legacy fallback for a provider that publishes no
+    /// per-instance feedback (or no projection for that field).
+    private func compositeDraftBoolean(provider: CjguiGeneratedUiBindingProvider, fieldId: String,
+        instanceKey: String, feedback: ?CjguiGeneratedUiFormFeedback): Bool {
+        if (let Some(value) <- feedback) {
+            if (let Some(field) <- value.fieldFor(fieldId)) {
+                return field.draftText == "true"
+            }
+        }
+        return provider.draftBoolean(fieldId, instanceKey) ?? false
+    }
+
+    /// The text ONE projection element presents, resolved from the SAME frozen
+    /// snapshot the instance's fields and actions are resolved from. Every source
+    /// is an owner fact the owner itself publishes; the framework never invents
+    /// wording. A legacy provider that publishes no per-instance feedback falls
+    /// back to the very availability calls the field/action projection uses, so
+    /// the text can never disagree with the control state beside it.
+    private func compositeProjectionText(provider: CjguiGeneratedUiBindingProvider, source: String,
+        fieldId: String, actionName: String, instanceKey: String,
+        feedback: ?CjguiGeneratedUiFormFeedback): String {
+        if (source == CJGUI_COMPOSITE_PROJECTION_FIELD_ERROR) {
+            if (let Some(value) <- feedback) {
+                if (let Some(field) <- value.fieldFor(fieldId)) {
+                    return field.validationError
+                }
+            }
+            return ""
+        }
+        if (source == CJGUI_COMPOSITE_PROJECTION_FIELD_REASON) {
+            return fieldBlockedReasonFor(provider, fieldId, instanceKey: instanceKey, feedback: feedback)
+        }
+        if (source == CJGUI_COMPOSITE_PROJECTION_ACTION_REASON) {
+            return actionBlockedReasonFor(provider, actionName, instanceKey: instanceKey, feedback: feedback)
+        }
+        if (source == CJGUI_COMPOSITE_PROJECTION_OWNER_STATUS) {
+            if (let Some(value) <- feedback) {
+                return value.snapshot.statusMessage
+            }
+            return ""
+        }
+        // Registration refuses an unknown source, so an accepted element can only
+        // reach this branch through a stale/foreign binding: show nothing rather
+        // than a guess.
         return ""
     }
 
@@ -3496,14 +4555,101 @@ public class CjguiGeneratedUiStructureHolder {
         return -1
     }
 
+    /// Rebuilds one preserved element binding for a data refresh: every
+    /// identity fact (key, node, generation, writer, accepted owner target)
+    /// stays exactly as accepted, while the live projection of THIS instance's
+    /// snapshot (draft, availability, blocked reason, action enabled) is read
+    /// again. The accepted binding is never reused wholesale for a render that
+    /// is only a value / error / availability update.
+    private func reprojectCompositeElement(preserved: CjguiCompositeElementBinding,
+        provider: CjguiGeneratedUiBindingProvider,
+        feedback: ?CjguiGeneratedUiFormFeedback): CjguiCompositeElementBinding {
+        if (preserved.role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
+            // A container carries no live values; its accepted identity is all
+            // it has.
+            return preserved
+        }
+        if (preserved.role == CJGUI_COMPOSITE_ELEMENT_PROJECTION) {
+            // Owner text is a live projection of the SAME snapshot as the fields
+            // and actions beside it: identity stays, the string is read again.
+            return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
+                preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
+                instanceIncarnation: preserved.instanceIncarnation, fieldId: preserved.fieldId,
+                actionName: preserved.actionName,
+                ownerTargetResourceId: preserved.ownerTargetResourceId,
+                instanceOwnerTargetResourceId: preserved.instanceOwnerTargetResourceId,
+                projectionText: compositeProjectionText(provider, preserved.projectionSource,
+                    preserved.fieldId, preserved.actionName, preserved.instanceKey, feedback),
+                projectionSource: preserved.projectionSource)
+        }
+        if (preserved.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
+            return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
+                preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
+                instanceIncarnation: preserved.instanceIncarnation, actionName: preserved.actionName,
+                actionEnabled: actionEnabledFor(provider, preserved.actionName,
+                    instanceKey: preserved.instanceKey, feedback: feedback),
+                ownerTargetResourceId: preserved.ownerTargetResourceId,
+                instanceOwnerTargetResourceId: preserved.instanceOwnerTargetResourceId,
+                blockedReason: actionBlockedReasonFor(provider, preserved.actionName,
+                    instanceKey: preserved.instanceKey, feedback: feedback))
+        }
+        if (preserved.editorKind == "BOOLEAN") {
+            return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
+                preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
+                instanceIncarnation: preserved.instanceIncarnation, fieldId: preserved.fieldId,
+                argumentName: preserved.argumentName, writerOperation: preserved.writerOperation,
+                ownerTargetResourceId: preserved.ownerTargetResourceId,
+                instanceOwnerTargetResourceId: preserved.instanceOwnerTargetResourceId,
+                bindingResourceId: preserved.bindingResourceId, editorKind: preserved.editorKind,
+                presetValue: preserved.presetValue,
+                // SAME resolution as the first build: the instance's frozen
+                // snapshot when it projects the field, the legacy provider only
+                // as the fallback. A data refresh must never mix one
+                // generation's live value with the frozen availability/reason.
+                draftBoolean: compositeDraftBoolean(provider, preserved.fieldId, preserved.instanceKey, feedback),
+                ownerAvailable: fieldEnabledFor(provider, preserved.fieldId, preserved.ownerTargetResourceId,
+                    instanceKey: preserved.instanceKey, feedback: feedback),
+                blockedReason: fieldBlockedReasonFor(provider, preserved.fieldId,
+                    instanceKey: preserved.instanceKey, feedback: feedback))
+        }
+        return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
+            preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
+            instanceIncarnation: preserved.instanceIncarnation, fieldId: preserved.fieldId,
+            argumentName: preserved.argumentName, writerOperation: preserved.writerOperation,
+            ownerTargetResourceId: preserved.ownerTargetResourceId,
+            instanceOwnerTargetResourceId: preserved.instanceOwnerTargetResourceId,
+            bindingResourceId: preserved.bindingResourceId, editorKind: preserved.editorKind,
+            presetValue: preserved.presetValue,
+            draftText: compositeDraftText(provider, preserved.fieldId, preserved.instanceKey, feedback),
+            ownerAvailable: fieldEnabledFor(provider, preserved.fieldId, preserved.ownerTargetResourceId,
+                instanceKey: preserved.instanceKey, feedback: feedback),
+            blockedReason: fieldBlockedReasonFor(provider, preserved.fieldId,
+                instanceKey: preserved.instanceKey, feedback: feedback))
+    }
+
     /// Resolves one composite element from the registered field/action
     /// definitions and the live provider. The factory never sees the catalog, so
     /// it cannot substitute a different owner or writer.
-    private func resolveCompositeElement(element: CjguiCompositeElementSpec, instanceKey: String, nodeId: Int64,
-        semanticId: String, provider: CjguiGeneratedUiBindingProvider): CjguiCompositeElementBinding {
+    private func resolveCompositeElement(element: CjguiCompositeElementSpec, instanceKey: String,
+        instanceIncarnation: Int64, instanceOwnerTarget: Int64, nodeId: Int64,
+        semanticId: String, provider: CjguiGeneratedUiBindingProvider,
+        feedback: ?CjguiGeneratedUiFormFeedback): CjguiCompositeElementBinding {
         if (element.role == CJGUI_COMPOSITE_ELEMENT_CONTAINER) {
             return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, element.label,
-                instanceKey: instanceKey)
+                instanceKey: instanceKey, instanceIncarnation: instanceIncarnation,
+                instanceOwnerTargetResourceId: instanceOwnerTarget)
+        }
+        if (element.role == CJGUI_COMPOSITE_ELEMENT_PROJECTION) {
+            // A projection carries the owner's OWN text for one declared fact and
+            // nothing else: no writer, no target, no preset. Its identity is the
+            // element's, so a value/error/lock update refreshes the same text node.
+            return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId,
+                element.label, instanceKey: instanceKey, instanceIncarnation: instanceIncarnation,
+                fieldId: element.fieldId, actionName: element.actionName,
+                instanceOwnerTargetResourceId: instanceOwnerTarget,
+                projectionText: compositeProjectionText(provider, element.source, element.fieldId,
+                    element.actionName, instanceKey, feedback),
+                projectionSource: element.source)
         }
         if (element.role == CJGUI_COMPOSITE_ELEMENT_ACTION) {
             let label = if (element.label.size > 0) {
@@ -3514,9 +4660,13 @@ public class CjguiGeneratedUiStructureHolder {
                 element.actionName
             }
             return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
-                instanceKey: instanceKey, actionName: element.actionName,
-                actionEnabled: actionEnabledFor(provider, element.actionName),
-                blockedReason: actionBlockedReasonFor(provider, element.actionName))
+                instanceKey: instanceKey, instanceIncarnation: instanceIncarnation, actionName: element.actionName,
+                actionEnabled: actionEnabledFor(provider, element.actionName, instanceKey: instanceKey,
+                    feedback: feedback),
+                ownerTargetResourceId: provider.actionOperationResourceId(element.actionName, instanceKey),
+                instanceOwnerTargetResourceId: instanceOwnerTarget,
+                blockedReason: actionBlockedReasonFor(provider, element.actionName, instanceKey: instanceKey,
+                    feedback: feedback))
         }
         let field = match (catalog.fieldFor(element.fieldId)) {
             case Some(value) => value
@@ -3527,7 +4677,9 @@ public class CjguiGeneratedUiStructureHolder {
         } else {
             nodeId
         }
-        let ownerTarget = provider.fieldOperationResourceId(element.fieldId)
+        // The instance key participates in owner resolution: two instances of
+        // one kind can name the same field and still write different owners.
+        let ownerTarget = provider.fieldOperationResourceId(element.fieldId, instanceKey)
         let label = if (element.label.size > 0) {
             element.label
         } else {
@@ -3535,20 +4687,28 @@ public class CjguiGeneratedUiStructureHolder {
         }
         if (field.editorKind == "BOOLEAN") {
             return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
-                instanceKey: instanceKey, fieldId: element.fieldId, argumentName: element.argumentName,
+                instanceKey: instanceKey, instanceIncarnation: instanceIncarnation, fieldId: element.fieldId,
+                argumentName: element.argumentName,
                 writerOperation: field.writeActionName, ownerTargetResourceId: ownerTarget,
+                instanceOwnerTargetResourceId: instanceOwnerTarget,
                 bindingResourceId: resourceId, editorKind: field.editorKind, presetValue: element.presetValue,
-                draftBoolean: provider.draftBoolean(element.fieldId) ?? false,
-                ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget),
-                blockedReason: fieldBlockedReasonFor(provider, element.fieldId))
+                draftBoolean: compositeDraftBoolean(provider, element.fieldId, instanceKey, feedback),
+                ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget, instanceKey: instanceKey,
+                    feedback: feedback),
+                blockedReason: fieldBlockedReasonFor(provider, element.fieldId, instanceKey: instanceKey,
+                    feedback: feedback))
         }
         return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
-            instanceKey: instanceKey, fieldId: element.fieldId, argumentName: element.argumentName,
-            writerOperation: field.writeActionName, ownerTargetResourceId: ownerTarget, bindingResourceId: resourceId,
-            editorKind: field.editorKind, presetValue: element.presetValue,
-            draftText: provider.draftText(element.fieldId),
-            ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget),
-            blockedReason: fieldBlockedReasonFor(provider, element.fieldId))
+            instanceKey: instanceKey, instanceIncarnation: instanceIncarnation, fieldId: element.fieldId,
+            argumentName: element.argumentName,
+            writerOperation: field.writeActionName, ownerTargetResourceId: ownerTarget,
+            instanceOwnerTargetResourceId: instanceOwnerTarget,
+            bindingResourceId: resourceId, editorKind: field.editorKind, presetValue: element.presetValue,
+            draftText: compositeDraftText(provider, element.fieldId, instanceKey, feedback),
+            ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget, instanceKey: instanceKey,
+                feedback: feedback),
+            blockedReason: fieldBlockedReasonFor(provider, element.fieldId, instanceKey: instanceKey,
+                feedback: feedback))
     }
 
     /// Renders one application composite. The framework allocates every
@@ -3557,7 +4717,7 @@ public class CjguiGeneratedUiStructureHolder {
     /// identity table is published. A failure keeps the previously accepted
     /// scene and its routes.
     private func compositeFor(spec: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
-        instance: CjguiComposableUiComponentInstance, intoAcceptedTable: Bool): CjguiComposableUiNode {
+        instance: CjguiComposableUiComponentInstance, intoAcceptedTable: Bool, feedback: ?CjguiGeneratedUiFormFeedback): CjguiComposableUiNode {
         if (let None <- catalog.compositeFor(spec.kind)) {
             noteRenderFailure("composite_not_registered", spec.key)
             return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
@@ -3581,6 +4741,46 @@ public class CjguiGeneratedUiStructureHolder {
         }
         let bindings = ArrayList<CjguiCompositeElementBinding>()
         let allocated = HashSet<Int64>()
+        let resolvedOwner = compositeOwnerTargetFor(composite, spec.key, provider)
+        // An immediate ACCEPTED render carries the bindings that were actually
+        // accepted. The live provider may already map this key to another owner
+        // (an external change no scene has accepted); that must not rebind an
+        // object the accepted interface is still operating.
+        let preserved: ?HashMap<Int64, CjguiCompositeElementBinding> = if (intoAcceptedTable) {
+            preservedAcceptedCompositeElements
+        } else {
+            None
+        }
+        var preservedSource: ?CjguiCompositeElementBinding = None
+        if (let Some(table) <- preserved) {
+            for ((_, binding) in table) {
+                if (binding.instanceKey == spec.key) {
+                    preservedSource = Some(binding)
+                    break
+                }
+            }
+        }
+        var instanceOwnerTarget = resolvedOwner
+        var instanceIncarnation = 0
+        var instanceFeedback: ?CjguiGeneratedUiFormFeedback = None
+        if (let Some(source) <- preservedSource) {
+            instanceOwnerTarget = source.instanceOwnerTargetResourceId
+            instanceIncarnation = source.instanceIncarnation
+            // Feedback belongs to an owner: show the live snapshot only while
+            // the provider still resolves this instance to the accepted owner.
+            // Otherwise the facts are unknown, never another object's.
+            if (resolvedOwner == instanceOwnerTarget) {
+                instanceFeedback = provider.formFeedback(spec.key)
+            }
+        } else {
+            instanceIncarnation = compositeIncarnationForInstance(spec.key, instanceOwnerTarget,
+                intoAcceptedTable)
+            // ONE snapshot per instance: drafts, availability, blocking reasons
+            // and the context handed to the factory all read this same
+            // projection, so a card never shows one object's draft beside
+            // another's error.
+            instanceFeedback = provider.formFeedback(spec.key)
+        }
         for (element in composite.elements) {
             let elementNodeId = allocatedElementNodeId(instance, element.elementKey)
             if (elementNodeId <= 0) {
@@ -3588,13 +4788,34 @@ public class CjguiGeneratedUiStructureHolder {
                 return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
             }
             allocated.add(elementNodeId)
-            bindings.add(
-                resolveCompositeElement(element, spec.key, elementNodeId, instance.semanticId(element.elementKey),
-                    provider))
+            var preservedBinding: ?CjguiCompositeElementBinding = None
+            if (let Some(table) <- preserved) {
+                if (let Some(value) <- table.get(elementNodeId)) {
+                    if (value.instanceKey == spec.key && value.elementKey == element.elementKey) {
+                        preservedBinding = Some(value)
+                    }
+                }
+            }
+            if (let Some(value) <- preservedBinding) {
+                // Identity stays accepted; the live projection is refreshed only
+                // while the provider still resolves this instance to the same
+                // accepted owner. A mapping that moved ahead of the accepted
+                // scene keeps the frozen facts instead of borrowing another
+                // object's values.
+                if (resolvedOwner == instanceOwnerTarget) {
+                    bindings.add(reprojectCompositeElement(value, provider, instanceFeedback))
+                } else {
+                    bindings.add(value)
+                }
+            } else {
+                bindings.add(
+                    resolveCompositeElement(element, spec.key, instanceIncarnation, instanceOwnerTarget,
+                        elementNodeId, instance.semanticId(element.elementKey), provider, instanceFeedback))
+            }
         }
         let children = ArrayList<CjguiComposableUiNode>()
         for (child in spec.children) {
-            children.add(nodeFor(child, provider, intoAcceptedTable))
+            children.add(nodeFor(child, provider, intoAcceptedTable, feedback))
         }
         if (!renderFailureReason.isEmpty()) {
             return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
@@ -3604,7 +4825,8 @@ public class CjguiGeneratedUiStructureHolder {
         // the one shared conversion instead of re-parsing them.
         let context = CjguiCompositeBuildContext(spec.key, properties, bindings, children: children,
             resolvedStyle: styleFromDeclaredProperties(properties, false, intoAcceptedTable),
-            resolvedInteraction: interactionStyleFor(spec, intoAcceptedTable))
+            resolvedInteraction: interactionStyleFor(spec, intoAcceptedTable),
+            ownerFeedback: instanceFeedback)
         let built = factory.buildComposite(context)
         let audit = CjguiCompositeExpansionAudit()
         // Caller-provided children carry identities another instance allocated:
@@ -3617,6 +4839,15 @@ public class CjguiGeneratedUiStructureHolder {
         if (audit.issue.isEmpty()) {
             for (allocatedId in allocated) {
                 if (!audit.seen.contains(allocatedId)) {
+                    // A projection is OPTIONAL presentation of an owner fact: the
+                    // fact itself is already part of the accepted binding, and a
+                    // factory may have shown it elsewhere or have nothing to show.
+                    // Every other element must be mounted - a dropped editor or
+                    // action would silently remove the control the declaration
+                    // promises.
+                    if (compositeElementIsProjection(bindings, allocatedId)) {
+                        continue
+                    }
                     audit.issue = "composite_element_missing"
                     break
                 }
@@ -3700,6 +4931,21 @@ public class CjguiGeneratedUiStructureHolder {
         }
     }
 
+    /// Whether the element bound to this node id is a read-only owner-text
+    /// projection. Only such an element may be absent from the built subtree: the
+    /// alternative would reserve a blank line for every error that is not present
+    /// (or repeat a reason the factory already showed). A MOUNTED projection is
+    /// still checked against the owner's exact text.
+    private func compositeElementIsProjection(bindings: ArrayList<CjguiCompositeElementBinding>,
+        nodeId: Int64): Bool {
+        for (binding in bindings) {
+            if (binding.nodeId == nodeId) {
+                return binding.role == CJGUI_COMPOSITE_ELEMENT_PROJECTION
+            }
+        }
+        return false
+    }
+
     /// Checks that every framework-allocated element node really carries the
     /// binding the framework resolved for that element: a factory may not mount
     /// an element with another field, writer, owner target or action. The
@@ -3709,7 +4955,13 @@ public class CjguiGeneratedUiStructureHolder {
         for (binding in bindings) {
             let node = match (audit.nodesById.get(binding.nodeId)) {
                 case Some(value) => value
-                case None => return "composite_element_missing"
+                case None =>
+                    // Same rule as the expansion check: a read-only projection is
+                    // optional, every other element must be mounted.
+                    if (binding.role == CJGUI_COMPOSITE_ELEMENT_PROJECTION) {
+                        continue
+                    }
+                    return "composite_element_missing"
             }
             if (binding.role == CJGUI_COMPOSITE_ELEMENT_FIELD) {
                 // A field element must really carry the resolved field binding,
@@ -3720,6 +4972,22 @@ public class CjguiGeneratedUiStructureHolder {
                     node.operationResourceId != binding.ownerTargetResourceId || node.resourceId != binding
                     .bindingResourceId) {
                     return "composite_element_binding_mismatch"
+                }
+                // The owner's CURRENT answer is a FACT the factory may not paint
+                // over: an EDITABLE control the owner has blocked would promise a
+                // write the owner will refuse (the exact state a human cannot tell
+                // apart from a working field). A read-only copy of the value is not
+                // "editable" and keeps whatever enabled state its maker chose.
+                if (CjguiCompositeElementIsEditableFieldControl(node.nodeKind) &&
+                    !binding.ownerAvailable && node.isEnabled) {
+                    return "composite_element_availability_mismatch"
+                }
+            } else if (binding.role == CJGUI_COMPOSITE_ELEMENT_PROJECTION) {
+                // The text is the OWNER's, so the mounted node must be the
+                // framework's read-only text carrying exactly the resolved string.
+                // A factory may place and paint the projection, never re-word it.
+                if (node.nodeKind != CJGUI_COMPOSABLE_UI_TEXT || node.value != binding.projectionText) {
+                    return "composite_element_projection_mismatch"
                 }
             } else if (binding.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
                 // A preset is a BUTTON: the adapter resolves its press from the
@@ -3739,8 +5007,11 @@ public class CjguiGeneratedUiStructureHolder {
                 // action button in the declared enabled state. A raw
                 // business-action token or a different enabled state would mean
                 // the control the user sees disagrees with the declaration.
+                // A resolved instance target must also be carried by the control.
                 if (node.nodeKind != CJGUI_COMPOSABLE_UI_BUTTON || node.actionName != "GENERATED_ACTION" ||
-                    node.isEnabled != binding.actionEnabled) {
+                    node.isEnabled != binding.actionEnabled ||
+                    (binding.ownerTargetResourceId >= 0 &&
+                        node.operationResourceId != binding.ownerTargetResourceId)) {
                     return "composite_element_binding_mismatch"
                 }
             }
@@ -3980,6 +5251,7 @@ public class CjguiGeneratedUiStructureHolder {
         releaseCandidateImageHolds()
         releaseAcceptedImageHolds()
         acceptedImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
+        acceptedFontBindings = HashMap<String, CjguiFontResourceReference>()
     }
 
     /// Releases the holds the ACCEPTED set owns. Used by the commit transfer and
@@ -3998,6 +5270,7 @@ public class CjguiGeneratedUiStructureHolder {
             catalog.releaseImageIdentity(spec.key, spec.version)
         }
         candidateImageBindings = HashMap<String, CjguiGeneratedUiImageResourceSpec>()
+        candidateFontBindings = HashMap<String, CjguiFontResourceReference>()
     }
 
     /// Opens the style staging area for the refresh about to be built.
@@ -4146,8 +5419,28 @@ public class CjguiGeneratedUiStructureHolder {
     /// explicit properties -> (later, at paint time) the interaction-state
     /// overrides. Only a DECLARED property overrides the named base, so a
     /// reference does not reset values the author did not mention.
+    private func resolvedFontReference(key: String, version: Int64, intoAcceptedTable: Bool): ?CjguiFontResourceReference {
+        let identity = "${key}:${version}"
+        let bindings = if (intoAcceptedTable) { acceptedFontBindings } else { candidateFontBindings }
+        if (let Some(frozen) <- bindings.get(identity)) { return Some(frozen) }
+        if (let Some(reference) <- catalog.fontResourceFor(key, version)) {
+            bindings[identity] = reference
+            return Some(reference)
+        }
+        return None
+    }
+    private func resolvedFontFamily(properties: HashMap<String, String>, fallback: String,
+        intoAcceptedTable: Bool): String {
+        let key = propertyOf(properties, "fontResource")
+        let version = Int64.tryParse(propertyOf(properties, "fontVersion")) ?? 0
+        if (key.isEmpty() || version < 1) { return fallback }
+        return if (let Some(reference) <- resolvedFontReference(key, version, intoAcceptedTable)) {
+            reference.fontFamily
+        } else { fallback }
+    }
+
     private func styleFromDeclaredProperties(properties: HashMap<String, String>, container: Bool,
-        intoAcceptedTable: Bool): CjguiComposableUiStyle {
+        intoAcceptedTable: Bool, interactive!: Bool = false): CjguiComposableUiStyle {
         let named = namedBaseStyle(properties, intoAcceptedTable)
         let base = match (named) {
             case Some(value) => value
@@ -4215,8 +5508,13 @@ public class CjguiGeneratedUiStructureHolder {
             border: declaredColor(properties, "border", base.border),
             textColor: declaredColor(properties, "textColor", base.textColor), padding: padding, gap: gap,
             fixedWidth: fixedWidth, fixedHeight: fixedHeight, growX: growX, growY: growY, borderWidth: borderWidth,
-            fontSize: fontSize, fontWeight: fontWeight, fontFamily: base.fontFamily,
-            letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
+            fontSize: fontSize, fontWeight: fontWeight, fontFamily: resolvedFontFamily(properties, base.fontFamily, intoAcceptedTable),
+            letterSpacing: if (let Some(token) <- properties.get("letterSpacing")) {
+                cjguiComposableUiParseTypographyScalar(token, false) ?? base.letterSpacing
+            } else { base.letterSpacing },
+            lineHeight: if (let Some(token) <- properties.get("lineHeight")) {
+                cjguiComposableUiParseTypographyScalar(token, true) ?? base.lineHeight
+            } else { base.lineHeight },
             textMaxLines: declaredStyleValue(properties, "textMaxLines", base.textMaxLines),
             textOverflow: if (propertyOf(properties, "textOverflow").size > 0) {
                 propertyOf(properties, "textOverflow")
@@ -4225,7 +5523,7 @@ public class CjguiGeneratedUiStructureHolder {
             }, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight, alignX: alignX,
             alignY: alignY, cornerRadius: base.cornerRadius, cornerRadii: base.cornerRadii, offsetX: base.offsetX, offsetY: base.offsetY,
             translateX: translateX, translateY: translateY, wheelScrollable: base.wheelScrollable,
-            scrollContentAlignY: base.scrollContentAlignY, pointerInteractive: base.pointerInteractive,
+            scrollContentAlignY: base.scrollContentAlignY, pointerInteractive: interactive || base.pointerInteractive,
             clipsContent: base.clipsContent, shadow: declaredShadowOf(properties, base.shadow),
             gradient: declaredGradientOf(properties, base.gradient),
             effectGroup: declaredEffectGroupOf(properties, base.effectGroup), effectRejection: base.effectRejection,
@@ -4276,7 +5574,9 @@ public class CjguiGeneratedUiStructureHolder {
             return CjguiComposableUiStyle()
         }
         let isContainer = presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
-            CJGUI_GENERATED_PRESENTATION_HORIZONTAL
+            CJGUI_GENERATED_PRESENTATION_HORIZONTAL || presentation == CJGUI_GENERATED_PRESENTATION_STACK ||
+            presentation == CJGUI_GENERATED_PRESENTATION_WRAP || presentation ==
+            CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO
         // The scroll container and the generated split consume the shared leaf
         // style vocabulary exactly like a label (`consumesStyleProperty` accepts
         // it for them), so their RESOLUTION must not silently drop it: a declared
@@ -4287,10 +5587,18 @@ public class CjguiGeneratedUiStructureHolder {
         }
         if (!isContainer && presentation != CJGUI_GENERATED_PRESENTATION_LABEL && presentation !=
             CJGUI_GENERATED_PRESENTATION_ACTION && presentation != CJGUI_GENERATED_PRESENTATION_IMAGE && presentation !=
-            "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN") {
+            "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN" &&
+            presentation != "FIELD_SLIDER") {
             return CjguiComposableUiStyle()
         }
-        return styleFromDeclaredProperties(spec.properties, isContainer, intoAcceptedTable)
+        // Generated buttons and editors are real pointer targets. Their kind is
+        // not one of the input kinds that pointer capture admits implicitly, so
+        // the style must opt in exactly like a handwritten interactive node;
+        // otherwise every generated press is rejected before the controller sees
+        // it even though the same scene renders and the binding is live.
+        let interactive = presentation == CJGUI_GENERATED_PRESENTATION_ACTION || presentation == "FIELD_TEXT" ||
+            presentation == "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER"
+        return styleFromDeclaredProperties(spec.properties, isContainer, intoAcceptedTable, interactive: interactive)
     }
 
     /// The accepted spec for a stable key, or None when that key is not part
@@ -4405,13 +5713,18 @@ public class CjguiGeneratedUiAcceptedInstance {
     public let controlLevel: Int64
     public let controlRowKey: String
     public let controlParentKey: String
+    /// Owner target this accepted element was bound to. A public client uses it
+    /// with the existing invoke/read path to address the SAME object instance;
+    /// it does not derive a target from a field name or a window-global state.
+    public let ownerTargetResourceId: Int64
 
     public init(key: String, elementKey: String, role: String, nodeId: Int64, semanticId: String, kindToken: String,
         fieldId: String, actionName: String, label: String, visible: Bool, bounds: CjguiComposableUiRect,
         imageResourceId!: String = "", imageResourceVersion!: Int64 = 0, imageResourceState!: String = "unrequested",
         effectGroupToken!: String = "none", controlRole!: String = "none", controlSelected!: Bool = false,
         controlExpandable!: Bool = false, controlExpanded!: Bool = false, controlEnabled!: Bool = true,
-        controlLevel!: Int64 = 0, controlRowKey!: String = "", controlParentKey!: String = "") {
+        controlLevel!: Int64 = 0, controlRowKey!: String = "", controlParentKey!: String = "",
+        ownerTargetResourceId!: Int64 = -1) {
         this.key = key
         this.elementKey = elementKey
         this.role = role
@@ -4435,6 +5748,7 @@ public class CjguiGeneratedUiAcceptedInstance {
         this.controlLevel = controlLevel
         this.controlRowKey = controlRowKey
         this.controlParentKey = controlParentKey
+        this.ownerTargetResourceId = ownerTargetResourceId
     }
 }
 
@@ -4442,6 +5756,7 @@ public class CjguiGeneratedUiAcceptedInstance {
 /// whether an accepted instance is an editor, a button or a container without
 /// interpreting a private numeric enum.
 public func cjguiGeneratedUiKindToken(nodeKind: Int64): String {
+    if (nodeKind == CJGUI_COMPOSABLE_UI_SLIDER) { return "slider" }
     if (nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
         return "vertical"
     }
@@ -4510,9 +5825,15 @@ public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow, h
         }
         var elementKey = ""
         var role = ""
+        var ownerTarget = node.operationResourceId
         if (let Some(element) <- holder.compositeElementForNodeId(node.nodeId)) {
             elementKey = element.elementKey
             role = element.role
+            // Every element of one accepted instance addresses the SAME
+            // instance target. A container carries no element-level writer, so
+            // reporting its node binding (-1) would make a public client
+            // discover the instance through a row that claims no owner.
+            ownerTarget = element.instanceOwnerTargetResourceId
         }
         let publicActionName = if (node.actionName == "GENERATED_ACTION" && elementKey.size == 0) {
             holder.actionNameForKey(key)
@@ -4532,7 +5853,8 @@ public func cjguiGeneratedUiAcceptedInstances(window: CjguiComposableUiWindow, h
                 }, controlRole: cjguiGeneratedUiControlRoleToken(node.semanticRole),
                 controlSelected: node.semanticSelected, controlExpandable: node.semanticExpandable,
                 controlExpanded: node.semanticExpanded, controlEnabled: node.isEnabled, controlLevel: node.semanticLevel,
-                controlRowKey: node.semanticKey, controlParentKey: node.semanticParentKey))
+                controlRowKey: node.semanticKey, controlParentKey: node.semanticParentKey,
+                ownerTargetResourceId: ownerTarget))
     }
     return result
 }
@@ -4590,6 +5912,14 @@ public class CjguiGeneratedUiEncoding {
     public static func describe(catalog: CjguiGeneratedUiCapabilityCatalog): String {
         let builder = StringBuilder()
         builder.append("GENERATED_UI 1\n")
+        // The first public surface declaration. Old readers ignore this line;
+        // new readers get the version/stability/compatibility facts from the
+        // same payload that carries the registered catalog.
+        builder.append(
+            "SURFACE version=${CJGUI_GENERATED_UI_SURFACE_VERSION} " +
+                "stability=${CJGUI_GENERATED_UI_SURFACE_STABILITY} " +
+                "compatibility=${CJGUI_GENERATED_UI_SURFACE_COMPATIBILITY} " +
+                "protocol=2 subset=${CJGUI_GENERATED_UI_PUBLIC_SUBSET}\n")
         builder.append("STYLE_REVISION ${catalog.namedStyles().revision()}\n")
         builder.append(catalog.namedStyles().describe())
         builder.append(
@@ -4688,8 +6018,12 @@ public class CjguiGeneratedUiEncoding {
                             "field=${if (element.fieldId.size > 0) { element.fieldId } else { "none" }} " +
                             "argument=${if (element.argumentName.size > 0) { element.argumentName } else { "none" }} " +
                             "preset=${if (element.presetValue.size > 0) { element.presetValue } else { "none" }} " +
-                            "action=${if (element.actionName.size > 0) { element.actionName } else { "none" }} " +
-                            "label=${element.label}\n")
+                            "action=${if (element.actionName.size > 0) { element.actionName } else { "none" }}" +
+                            // The projection source token is ADDITIVE: a
+                            // non-projection element's published line stays
+                            // exactly what existing readers already parse.
+                            (if (element.source.size > 0) { " source=${element.source}" } else { "" }) +
+                            " label=${element.label}\n")
                 }
             }
         }
@@ -4744,6 +6078,29 @@ public class CjguiGeneratedUiEncoding {
             // application: an external caller references the key, never a path.
             builder.append("IMAGE_RESOURCE ${spec.key} ${spec.contentType} ${spec.version} ${spec.name}\n")
         }
+        for (font in catalog.fontResourceSpecs()) {
+            builder.append("FONT_RESOURCE ${font.key} ${font.version} " +
+                "${if (font.isRegistered()) { font.state } else { "withdrawn" }} u8:${cjguiGeneratedUiHexEncode(font.resolvedFamily)}|u8:${cjguiGeneratedUiHexEncode(font.name)}\n")
+        }
+        // Support facts are derived from the registered tables, not from a
+        // second hand-maintained list. Evidence is a separate delivery state.
+        for (fact in catalog.supportFacts()) {
+            builder.append("SUPPORT ${fact.kind} ${cjguiGeneratedUiEncodeTextToken(fact.item)} " +
+                "state=${fact.state} reason=${cjguiGeneratedUiEncodeTextToken(fact.reason)} " +
+                "source=${fact.source}\n")
+        }
+        var backendEvidencePublished = false
+        for (fact in catalog.deliveryEvidenceFacts()) {
+            builder.append("EVIDENCE ${cjguiGeneratedUiEncodeTextToken(fact.item)} state=${fact.state} " +
+                "reason=${cjguiGeneratedUiEncodeTextToken(fact.reason)}\n")
+            if (fact.item == "backend:${CjguiComposableUiRuntimeBackend.TOKEN}") {
+                backendEvidencePublished = true
+            }
+        }
+        if (!backendEvidencePublished) {
+            builder.append("EVIDENCE backend:${CjguiComposableUiRuntimeBackend.TOKEN} " +
+                "state=unverified reason=delivery_evidence_not_declared\n")
+        }
         builder.append("END")
         return builder.toString()
     }
@@ -4783,6 +6140,7 @@ public class CjguiGeneratedUiEncoding {
                     "row_key=${if (instance.controlRowKey.size > 0) { instance.controlRowKey } else { "-" }} " +
                     "parent_key=${if (instance.controlParentKey.size > 0) { instance.controlParentKey } else { "-" }} " +
                     "visible=${if (instance.visible) { 1 } else { 0 }} " +
+                    "owner=${instance.ownerTargetResourceId} " +
                     "bounds=${instance.bounds.x},${instance.bounds.y}," +
                     "${instance.bounds.width},${instance.bounds.height} " +
                     "label_hex=${if (instance.label.size > 0) { cjguiGeneratedUiHexEncode(instance.label) } else { "-" }}")
@@ -5487,6 +6845,44 @@ private func fingerprintText(text: String): Int64 {
         hash = fingerprintAccumulate(hash, Int64(byte))
     }
     return hash
+}
+
+private func cjguiBackdropIdHasSeparator(text: String): Bool {
+    let bytes = text.toArray()
+    let marker = "-backdrop-".toArray()
+    if (bytes.size < marker.size) { return false }
+    var start = 0
+    while (start + marker.size <= bytes.size) {
+        var index = 0
+        var matched = true
+        while (index < marker.size) {
+            if (bytes[start + index] != marker[index]) {
+                matched = false
+                break
+            }
+            index += 1
+        }
+        if (matched) { return true }
+        start += 1
+    }
+    return false
+}
+
+/// Bounded public semantic identity for a framework-generated layer backdrop.
+/// Declaration names are never truncated: a long or separator-bearing host/layer
+/// pair is represented by fingerprints of a length-prefixed tuple, plus its
+/// sibling ordinal. Length-prefixing keeps distinct pairs distinct even when
+/// simple concatenation would spell the same string (`a` / `x-backdrop-y` versus
+/// `a-backdrop-x` / `y`). Where the readable spelled form is unambiguous and
+/// fits the 64-character contract, it is kept.
+func cjguiBoundedLayerBackdropSemanticId(hostSemanticId: String, layerId: String,
+    ordinal: Int64): String {
+    let full = "${hostSemanticId}-backdrop-${layerId}"
+    if (full.size <= 64 && !cjguiBackdropIdHasSeparator(hostSemanticId)) { return full }
+    let canonical = "${hostSemanticId.size}:${hostSemanticId}|${layerId.size}:${layerId}"
+    let first = fingerprintText(canonical)
+    let second = fingerprintText("${canonical}|sibling")
+    return "backdrop-${first}-${second}-${ordinal}"
 }
 
 /// Fingerprint of what the window ACCEPTED as the generated geometry: the

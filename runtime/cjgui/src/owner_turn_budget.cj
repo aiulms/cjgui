@@ -5,16 +5,56 @@ import std.env.*
 import std.collection.*
 import std.time.*
 
+// Observation only for ordinary serialized hosts that have no active shared
+// allowance. Reuses the original outer boundary/cost sink; it never attaches a
+// budget, admits work, changes a wait or retains a window/controller.
+class CjguiOrdinaryOwnerCostObservation {
+    let enabled = getVariable("CJGUI_OWNER_TURN_COST") == Some("1")
+    private var active = false
+    private var turn: UInt64 = 0x4000000000000000u64
+    private var idleNs: UInt64 = 0u64
+
+    func begin(): Bool {
+        if (!enabled || active || turn == UInt64.Max) { return false }
+        turn += 1u64
+        idleNs = 0u64
+        active = true
+        cjguiOwnerTraceSetTurn(turn)
+        cjguiOwnerTraceBoundary(0u64, turn, 144u32, 0u32, 0u32, 0u64, UInt64.Max)
+        return true
+    }
+
+    func creditIdle(nanoseconds: UInt64): Unit {
+        if (active) { idleNs = idleNs.saturatingAdd(nanoseconds) }
+    }
+
+    func identity(): UInt64 { return if (active) { turn } else { UInt64.Max } }
+
+    func finish(): Unit {
+        if (!active) { return }
+        cjguiOwnerTraceBoundary(0u64, turn, 400u32, 0u32, 0u32, idleNs, UInt64.Max)
+        cjguiOwnerTraceBoundary(0u64, turn, 145u32, 0u32, 0u32, 0u64, UInt64.Max)
+        active = false
+        cjguiOwnerTraceSetTurn(0u64)
+    }
+}
+
+let cjguiOrdinaryOwnerCostObservation = CjguiOrdinaryOwnerCostObservation()
+
 @When[os == "macOS"]
 func cjguiSchedulingWorkRevision(): UInt64 {
     return unsafe { cjgui_internal_renderer_owner_work_revision() }
 }
 
-// Linux 显式并入 Windows 支：都没有 macOS 的原生调度工作修订计数。
-// Linux 的 owner 调度收尾因此不计量（审计文档 §3.8），预算责任仍由
-// begin -> pumpOneTurn -> end 承担，不伪造空步骤。
-@When[os == "Windows" || os == "Linux"]
+// Linux uses the same native revision/notify/wait contract as macOS, backed by
+// the existing self-pipe + X11 poll. Windows remains a no-op here.
+@When[os == "Windows"]
 func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
+
+@When[os == "Linux"]
+func cjguiSchedulingWorkRevision(): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_work_revision_linux() }
+}
 
 @When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
@@ -22,8 +62,11 @@ func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
 @When[os == "macOS"]
 func cjguiCommonSchedulingEnabled(): Bool { return true }
 
-@When[os == "Windows" || os == "Linux"]
+@When[os == "Windows"]
 func cjguiCommonSchedulingEnabled(): Bool { return false }
+
+@When[os == "Linux"]
+func cjguiCommonSchedulingEnabled(): Bool { return true }
 
 @When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiCommonSchedulingEnabled(): Bool { return false }
@@ -35,8 +78,66 @@ func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
     return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
 }
 
-@When[os == "Windows" || os == "Linux"]
+// Normal event-driven waiting uses the same native revision/predicate, without
+// changing the original budgeted wait's 16ms bound. No window is captured by
+// the transport wake callback, including after endpoint or window retirement.
+@When[os == "macOS"]
+func cjguiNotifySchedulingWork(): Unit {
+    unsafe { cjgui_internal_renderer_owner_notify_work() }
+}
+
+@When[os == "Linux"]
+func cjguiNotifySchedulingWork(): Unit {
+    unsafe { cjgui_internal_renderer_owner_notify_work_linux() }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiNotifySchedulingWork(): Unit {}
+
+@When[os == "macOS"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_idle_work(revision, deadline, inout idle) }
+    cjguiOrdinaryOwnerCostObservation.creditIdle(idle)
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os == "Linux"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_idle_work_linux(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "macOS"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 {
+    return if (waitMs == UInt32.Max) { UInt64.Max } else {
+        unsafe { cjgui_internal_renderer_owner_clock_ns() } + UInt64(waitMs) * 1000000u64
+    }
+}
+
+@When[os == "Linux"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 {
+    return if (waitMs == UInt32.Max) { UInt64.Max } else {
+        unsafe { cjgui_internal_renderer_owner_clock_ns() } + UInt64(waitMs) * 1000000u64
+    }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 { return 0u64 }
+
+@When[os == "Windows"]
 func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "Linux"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_work_linux(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
 
 @When[os != "macOS" && os != "Windows" && os != "Linux"]
 func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }

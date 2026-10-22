@@ -13,38 +13,124 @@ package cjgui
 public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRangeTextEditSink {
     private let binding: CjguiGeneratedUiBindingProvider
     private let fieldId: String
+    /// Empty keeps the single-owner contract. A composite instance carries its
+    /// accepted instance key into EVERY provider call of this session, so two
+    /// objects that declare the same field never share body/version/selection.
+    private let instanceKey: String
+    /// Accepted owner target frozen when the framework bound this session.
+    /// A negative value keeps the strict single-owner contract where the
+    /// provider is the only target authority.
+    private let ownerTarget: Int64
+    /// Optional accepted-binding guard supplied by the generated region. It
+    /// answers whether the exact accepted composite element (including its
+    /// instance generation) still exists.
+    private let bindingCurrent: ?(() -> Bool)
 
-    public init(binding: CjguiGeneratedUiBindingProvider, fieldId: String) {
+    public init(binding: CjguiGeneratedUiBindingProvider, fieldId: String, instanceKey!: String = "",
+        ownerTarget!: Int64 = -1, bindingCurrent!: ?(() -> Bool) = None) {
         this.binding = binding
         this.fieldId = fieldId
+        this.instanceKey = instanceKey
+        this.ownerTarget = ownerTarget
+        this.bindingCurrent = bindingCurrent
     }
 
     public func targetFieldId(): String {
         return this.fieldId
     }
 
+    public func targetInstanceKey(): String {
+        return this.instanceKey
+    }
+
+    /// Empty means the session still belongs to the exact accepted object it
+    /// was bound for. A removed/rebound accepted binding or a provider that now
+    /// resolves the key to another owner retires the session BEFORE any read or
+    /// write, so a matching numeric version cannot keep it alive.
+    private func retiredReason(): String {
+        if (let Some(current) <- bindingCurrent) {
+            if (!current()) {
+                return "binding_retired"
+            }
+        }
+        if (ownerTarget >= 0) {
+            let resolved = if (instanceKey.size > 0) {
+                binding.fieldOperationResourceId(fieldId, instanceKey)
+            } else {
+                binding.fieldOperationResourceId(fieldId)
+            }
+            if (resolved != ownerTarget) {
+                return "owner_target_retired"
+            }
+        }
+        return ""
+    }
+
+    private func currentTextVersion(): Int64 {
+        return if (instanceKey.size > 0) {
+            binding.fieldTextVersion(fieldId, instanceKey)
+        } else {
+            binding.fieldTextVersion(fieldId)
+        }
+    }
+
+    private func currentDraftText(): String {
+        return if (instanceKey.size > 0) {
+            binding.draftText(fieldId, instanceKey)
+        } else {
+            binding.draftText(fieldId)
+        }
+    }
+
     // ---- CjguiRangeTextSource ----
 
     public func rangeTextVersion(): Int64 {
-        return binding.fieldTextVersion(fieldId)
+        if (!retiredReason().isEmpty()) {
+            return -1
+        }
+        return currentTextVersion()
     }
 
     public func confirmRangeTextVersion(expectedVersion: Int64, action: () -> Bool): Bool {
-        return binding.confirmFieldTextVersion(fieldId, expectedVersion, action)
+        if (!retiredReason().isEmpty()) {
+            return false
+        }
+        return if (instanceKey.size > 0) {
+            binding.confirmFieldTextVersion(fieldId, expectedVersion, action, instanceKey)
+        } else {
+            binding.confirmFieldTextVersion(fieldId, expectedVersion, action)
+        }
     }
 
     public func rebaseRangeTextSelection(fromVersion: Int64, startByte: Int64,
         endByte: Int64): ?(Int64, Int64, Int64) {
-        return binding.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
+        // The provider owns the mapping decision, including a refusal. The
+        // bridge never substitutes a generic caret policy for None.
+        if (!retiredReason().isEmpty()) {
+            return None
+        }
+        return if (instanceKey.size > 0) {
+            binding.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte, instanceKey)
+        } else {
+            binding.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
+        }
     }
 
     public func rangeTextByteLength(): Int64 {
-        return cjguiUtf8Length(binding.draftText(fieldId))
+        if (!retiredReason().isEmpty()) {
+            return 0
+        }
+        return cjguiUtf8Length(currentDraftText())
     }
 
     public func readRangeText(startByte: Int64, maxBytes: Int64): CjguiRangeTextSlice {
-        let version = binding.fieldTextVersion(fieldId)
-        let bytes = binding.draftText(fieldId).toArray()
+        let retired = retiredReason()
+        if (!retired.isEmpty()) {
+            return CjguiRangeTextSlice(startByte, startByte, "", -1, 0, false, retired)
+        }
+        let version = currentTextVersion()
+        let current = currentDraftText()
+        let bytes = current.toArray()
         var start = startByte
         if (start < 0) {
             start = 0
@@ -65,7 +151,7 @@ public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRang
         return CjguiRangeTextSlice(
             startByte,
             start,
-            sliceByBytes(binding.draftText(fieldId), start, validEnd),
+            sliceByBytes(current, start, validEnd),
             version,
             bytes.size,
             true,
@@ -79,12 +165,16 @@ public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRang
         startByte: Int64,
         endByte: Int64,
         inserted: String): CjguiRangeTextEditOutcome {
+        let retired = retiredReason()
+        if (!retired.isEmpty()) {
+            return CjguiRangeTextEditOutcome.rejected(baseVersion, retired)
+        }
         // owner 版本已前进（外部改版/其他编辑面写入）：按冲突拒绝，会话镜像
         // 重建后以新版本重试；不以旧版本的坐标改写新正文。
-        if (binding.fieldTextVersion(fieldId) != baseVersion) {
+        if (currentTextVersion() != baseVersion) {
             return CjguiRangeTextEditOutcome.conflict(baseVersion, "owner_version_moved")
         }
-        let current = binding.draftText(fieldId)
+        let current = currentDraftText()
         let bytes = current.toArray()
         if (startByte < 0 || endByte < startByte || endByte > bytes.size) {
             return CjguiRangeTextEditOutcome.rejected(baseVersion, "invalid_range")
@@ -97,7 +187,11 @@ public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRang
         let prefix = sliceByBytes(current, 0, startByte)
         let suffix = sliceByBytes(current, endByte, bytes.size)
         let newText = prefix + inserted + suffix
-        return binding.applyTextEdit(fieldId, baseVersion, newText)
+        return if (instanceKey.size > 0) {
+            binding.applyTextEdit(fieldId, baseVersion, newText, instanceKey)
+        } else {
+            binding.applyTextEdit(fieldId, baseVersion, newText)
+        }
     }
 
     /// 按字节区间切片（两端必须已是标量边界），以标量串接保持 UTF-8 精确。

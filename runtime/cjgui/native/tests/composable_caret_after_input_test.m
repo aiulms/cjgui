@@ -1038,9 +1038,9 @@ static void CaretInstalledHistorySuccessorFixture(id<MTLDevice> device,BOOL redo
         // actual native menu projection, rather than its undeclared fallback.
         CHECK(cjgui_internal_renderer_configure_composable_command_menu(token,2,2)==0 &&
             cjgui_internal_renderer_set_composable_command_menu_item(token,0,"fixture.undo","Undo","Edit",
-                "shortcut:command+z",0,0,1,0)==0 &&
+                "shortcut:command+z",0,0,1,0,0)==0 &&
             cjgui_internal_renderer_set_composable_command_menu_item(token,1,"fixture.redo","Redo","Edit",
-                "shortcut:shift+command+z",0,0,1,0)==0 &&
+                "shortcut:shift+command+z",0,0,1,0,0)==0 &&
             cjgui_internal_renderer_commit_composable_command_menu(token)==0,
             "history_installed_successor_real_declared_command_projection");
     }

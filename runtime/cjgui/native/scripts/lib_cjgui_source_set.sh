@@ -1,7 +1,7 @@
 #!/usr/bin/env zsh
-# Shared ordered source closure for standalone CJGUI consumers and preview
-# exports. Keep this as names relative to src/ so probes, fingerprints and
-# exports all resolve the same files from their own runtime root.
+# The arrays below are the existing selective standalone-cjc probe profiles.
+# They are intentionally NOT a cjpm package manifest. Package exports use the
+# filesystem-derived functions below so new public modules ship automatically.
 
 typeset -ga CJGUI_FRAMEWORK_SOURCE_NAMES
 CJGUI_FRAMEWORK_SOURCE_NAMES=(
@@ -35,6 +35,7 @@ text_session.cj
   macos_application_cleanup.cj
   runtime_renderer_text_geometry_query.cj
   async_multiline_measure.cj
+  native_text_typography.cj
   runtime_renderer_session.cj
   composable_ui_selection_completion.cj
   composable_ui_source_recovery.cj
@@ -84,4 +85,33 @@ cjgui_framework_source_paths() {
       print -r -- "$runtime_dir/src/$source_name"
     done
   fi
+}
+
+# Both current cjpm packages declare src-dir="src". Match their production
+# directory rather than a second list of public module names. Test sources and
+# separate probe/examples directories are not package production inputs.
+cjgui_package_source_paths() {
+  local package_dir="$1" source_path
+  [[ -f "$package_dir/cjpm.toml" && -d "$package_dir/src" ]] || return 2
+  for source_path in "$package_dir/src/"*.cj(N); do
+    [[ "${source_path:t}" == *_test.cj ]] && continue
+    if [[ -L "$source_path" || ! -f "$source_path" ]]; then
+      print -u2 -- "cjgui package source is not a regular local file: $source_path"
+      return 2
+    fi
+    print -r -- "$source_path"
+  done
+}
+
+# The normal macOS runner builds the top-level native translation units and
+# their headers. Native tests and generated native/lib remain outside this set.
+cjgui_macos_native_source_paths() {
+  local native_dir="$1" source_path
+  for source_path in "$native_dir/"*.(m|h)(N); do
+    if [[ -L "$source_path" || ! -f "$source_path" ]]; then
+      print -u2 -- "cjgui native source is not a regular local file: $source_path"
+      return 2
+    fi
+    print -r -- "$source_path"
+  done
 }

@@ -40,6 +40,16 @@ public class CjguiComposableUiDiagnosticNode {
     public let nativeOutputBounds: ?CjguiComposableUiDiagnosticFloatRect
     public let nativeBackdropSampleBounds: ?CjguiComposableUiDiagnosticFloatRect
     public let backdropCacheDisposition: String
+    /// Read-only metadata from this accepted layout. No label/value/body text.
+    public let semanticId: String
+    public let parentSceneIndex: Int64
+    public let parentIdentityKey: String
+    public let depth: Int64
+    public let styleSummary: String
+    public let fieldId: String
+    public let actionName: String
+    public let ownerTargetResourceId: Int64
+    public let semanticIncarnation: Int64
 
     public init(sceneIndex: Int64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
         identityKey: String, identityAvailable: Bool, bounds: CjguiComposableUiRect,
@@ -48,7 +58,10 @@ public class CjguiComposableUiDiagnosticNode {
         nativeGeometryState: String, nativeGeometrySceneVersion: Int64,
         nativeGeometryFrameIndex: Int64, nativeOutputBounds: ?CjguiComposableUiDiagnosticFloatRect,
         nativeBackdropSampleBounds: ?CjguiComposableUiDiagnosticFloatRect,
-        backdropCacheDisposition: String) {
+        backdropCacheDisposition: String, semanticId!: String = "", parentSceneIndex!: Int64 = -1,
+        parentIdentityKey!: String = "", depth!: Int64 = -1, styleSummary!: String = "",
+        fieldId!: String = "", actionName!: String = "", ownerTargetResourceId!: Int64 = -1,
+        semanticIncarnation!: Int64 = -1) {
         this.sceneIndex = sceneIndex
         this.nodeId = nodeId
         this.resourceId = resourceId
@@ -66,6 +79,15 @@ public class CjguiComposableUiDiagnosticNode {
         this.nativeOutputBounds = nativeOutputBounds
         this.nativeBackdropSampleBounds = nativeBackdropSampleBounds
         this.backdropCacheDisposition = backdropCacheDisposition
+        this.semanticId = semanticId
+        this.parentSceneIndex = parentSceneIndex
+        this.parentIdentityKey = parentIdentityKey
+        this.depth = depth
+        this.styleSummary = styleSummary
+        this.fieldId = fieldId
+        this.actionName = actionName
+        this.ownerTargetResourceId = ownerTargetResourceId
+        this.semanticIncarnation = semanticIncarnation
     }
 }
 
@@ -287,10 +309,134 @@ public class CjguiComposableUiDiagnosticOverlayOptions {
     public let effectOutput: Bool
     public let backdropSample: Bool
     public let selectedIdentityKey: String
+    /// Optional pinned accepted snapshot. Legacy overlays remain unpinned.
+    public let expectedSessionIdentity: String
+    public let expectedAcceptedSceneVersion: Int64
+    /// Caller-owned tag; conditional clear cannot erase another tool's layer.
+    public let ownerKey: String
     public init(enabled: Bool, layout!: Bool = true, clip!: Bool = true,
-        effectOutput!: Bool = true, backdropSample!: Bool = true, selectedIdentityKey!: String = "") {
+        effectOutput!: Bool = true, backdropSample!: Bool = true, selectedIdentityKey!: String = "",
+        expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1,
+        ownerKey!: String = "") {
         this.enabled = enabled; this.layout = layout; this.clip = clip
         this.effectOutput = effectOutput; this.backdropSample = backdropSample
         this.selectedIdentityKey = selectedIdentityKey
+        this.expectedSessionIdentity = expectedSessionIdentity
+        this.expectedAcceptedSceneVersion = expectedAcceptedSceneVersion
+        this.ownerKey = ownerKey
+    }
+
+    public func matchesAccepted(sessionIdentity: String, acceptedSceneVersion: Int64): Bool {
+        return (expectedSessionIdentity.isEmpty() || expectedSessionIdentity == sessionIdentity) &&
+            (expectedAcceptedSceneVersion < 0 || expectedAcceptedSceneVersion == acceptedSceneVersion)
+    }
+}
+
+/// One accepted command declaration plus its resolution against the accepted
+/// scene. This is a read-only projection: building it never invokes a command,
+/// resolves a candidate scene, or copies business text. `resolution` is one of
+/// "resolved", "unresolved" or "rejected"; `unavailableReason` is empty only
+/// when the target resolves and the declaration is enabled.
+public class CjguiComposableUiDiagnosticCommand {
+    public let id: String
+    public let displayName: String
+    public let scopeId: String
+    public let targetReference: String
+    public let resolvedNodeId: Int64
+    public let resolvedNodeKind: Int64
+    public let resolution: String
+    public let enabled: Bool
+    public let checked: Bool
+    /// The declaration's own checkable bit. An unchecked checkable command
+    /// (`checked=false, checkable=true`) and a plain action
+    /// (`checked=false, checkable=false`) are different facts.
+    public let checkable: Bool
+    public let shortcut: String
+    public let menuGroup: String
+    public let menuSection: Int64
+    public let acceptedSceneVersion: Int64
+    public let publicationRevision: Int64
+    public let unavailableReason: String
+
+    public init(id: String, displayName: String, scopeId: String, targetReference: String,
+        resolvedNodeId: Int64, resolvedNodeKind: Int64, resolution: String, enabled: Bool, checked: Bool,
+        checkable: Bool, shortcut: String, menuGroup: String, menuSection: Int64, acceptedSceneVersion: Int64,
+        publicationRevision: Int64, unavailableReason: String) {
+        this.id = id
+        this.displayName = displayName
+        this.scopeId = scopeId
+        this.targetReference = targetReference
+        this.resolvedNodeId = resolvedNodeId
+        this.resolvedNodeKind = resolvedNodeKind
+        this.resolution = resolution
+        this.enabled = enabled
+        this.checked = checked
+        this.checkable = checkable
+        this.shortcut = shortcut
+        this.menuGroup = menuGroup
+        this.menuSection = menuSection
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.publicationRevision = publicationRevision
+        this.unavailableReason = unavailableReason
+    }
+
+    public func searchText(): String {
+        return "${id} ${displayName} ${scopeId} ${targetReference} ${resolution} ${shortcut}"
+    }
+}
+
+/// Bounded command view for the existing inspector. `totalCommands` is the
+/// number of accepted bindings at read time; `commands` covers
+/// `[startIndex, nextIndex)` of that order and `truncated` says more pages
+/// exist. `publicationRevision` is the accepted command publication the page
+/// was read against; window identity and scene version alone cannot see a
+/// same-scene replace/revoke. No snapshot retains the window or the controller.
+public class CjguiComposableUiCommandDiagnosticSnapshot {
+    public let status: String
+    public let sessionIdentity: String
+    public let acceptedSceneVersion: Int64
+    public let publicationRevision: Int64
+    public let totalCommands: Int64
+    public let truncated: Bool
+    public let startIndex: Int64
+    public let nextIndex: Int64
+    public let commands: ArrayList<CjguiComposableUiDiagnosticCommand>
+
+    public init(status: String, sessionIdentity: String, acceptedSceneVersion: Int64,
+        publicationRevision: Int64, totalCommands: Int64, truncated: Bool, startIndex: Int64,
+        nextIndex: Int64, commands: ArrayList<CjguiComposableUiDiagnosticCommand>) {
+        this.status = status
+        this.sessionIdentity = sessionIdentity
+        this.acceptedSceneVersion = acceptedSceneVersion
+        this.publicationRevision = publicationRevision
+        this.totalCommands = totalCommands
+        this.truncated = truncated
+        this.startIndex = startIndex
+        this.nextIndex = nextIndex
+        this.commands = ArrayList<CjguiComposableUiDiagnosticCommand>(commands)
+    }
+}
+
+/// Walk the accepted layout's actual preorder spans, never rectangle enclosure.
+/// Output paging can omit ancestors; their absolute scene indices remain facts.
+class CjguiDiagnosticHierarchyCursor {
+    private let nodes: ArrayList<CjguiComposableUiLayoutNode>
+    private let stack = ArrayList<Int64>()
+    private var cursor: Int64 = 0
+    var parentIndex: Int64 = -1
+    var depth: Int64 = 0
+    init(nodes: ArrayList<CjguiComposableUiLayoutNode>) { this.nodes = nodes }
+    func advanceTo(index: Int64): Unit {
+        while (cursor <= index && cursor < nodes.size) {
+            while (!stack.isEmpty()) {
+                let parent = stack[stack.size - 1]
+                if (parent + nodes[parent].subtreeNodeCount > cursor) { break }
+                let _ = stack.remove(at: stack.size - 1)
+            }
+            parentIndex = if (stack.isEmpty()) { -1 } else { stack[stack.size - 1] }
+            depth = stack.size
+            stack.add(cursor)
+            cursor += 1
+        }
     }
 }

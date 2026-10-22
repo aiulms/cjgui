@@ -6,7 +6,7 @@ import Foundation
 // only traverses one flat level on some macOS releases and therefore misses
 // controls under a tab group or outline.
 guard CommandLine.arguments.count >= 3, let pid = pid_t(CommandLine.arguments[1]) else {
-    fputs("usage: control_ax_driver <pid> dump|find-id|find-label|press-id|focus-id [value]\n", stderr)
+    fputs("usage: control_ax_driver <pid> dump|find-id|find-label|press-id|focus-id|inspect-id|increment-id|decrement-id [value]\n", stderr)
     exit(2)
 }
 let operation = CommandLine.arguments[2]
@@ -73,13 +73,31 @@ while !queue.isEmpty && count < 4096 {
     let frame = "\(Int(position.x)),\(Int(position.y)),\(Int(dimensions.width)),\(Int(dimensions.height))"
     let summary = "AX_NODE role=\(role) id=\(identifier.isEmpty ? "-" : identifier) " +
         "label_hex=\(label.isEmpty ? "-" : hex(label)) enabled=\(enabled) selected=\(selected) " +
-        "expanded=\(expanded) parent=\(parent) frame=\(frame)"
-    let matched = (operation == "find-id" || operation == "press-id" || operation == "focus-id")
+        "expanded=\(expanded) parent=\(parent) frame=\(frame) " +
+        "help_hex=\(hex(string(element, kAXHelpAttribute))) value_hex=\(hex(string(element, kAXValueAttribute)))"
+    let matched = (["find-id", "press-id", "focus-id", "inspect-id", "increment-id", "decrement-id"].contains(operation))
         ? identifier == wanted : operation == "find-label" ? label == wanted : false
     if operation == "dump" || matched {
         print(summary)
     }
     if matched {
+        if ["inspect-id", "increment-id", "decrement-id"].contains(operation) {
+            var names: CFArray?
+            let namesResult = AXUIElementCopyActionNames(element, &names)
+            let actions = names as? [String] ?? []
+            var valueSettable: DarwinBoolean = false
+            let writable = AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &valueSettable)
+            print("AX_VALUE_SETTABLE query=\(writable.rawValue) value=\(valueSettable.boolValue ? 1 : 0)")
+            func numeric(_ name: String) -> String { (attribute(element, name) as? NSNumber)?.stringValue ?? "-" }
+            print("AX_RANGE value=\(numeric(kAXValueAttribute)) min=\(numeric(kAXMinValueAttribute)) max=\(numeric(kAXMaxValueAttribute)) actions=\(actions.joined(separator: ",")) query=\(namesResult.rawValue)")
+            if operation != "inspect-id" {
+                let action = operation == "increment-id" ? kAXIncrementAction : kAXDecrementAction
+                guard role == kAXSliderRole, actions.contains(action) else { exit(3) }
+                let result = AXUIElementPerformAction(element, action as CFString)
+                print("AX_ADJUST action=\(action) result=\(result.rawValue)")
+                exit(result == .success ? 0 : 1)
+            }
+        }
         if operation == "press-id" {
             let result = AXUIElementPerformAction(element, kAXPressAction as CFString)
             print("AX_PRESS result=\(result.rawValue)")

@@ -7,6 +7,10 @@
 
 typedef uint64_t CjguiAsyncMultilineMeasureHandle;
 
+// Internal resource ownership only. The scalar FFI and completion protocol are
+// unchanged. Attach before publishing a newly admitted handle to its caller.
+int CjguiAsyncMeasureRetainFontLease(CjguiAsyncMultilineMeasureHandle handle, id lease);
+
 // Private scalar ABI; no TextKit object crosses the worker boundary.
 typedef struct {
     uint32_t width;
@@ -14,6 +18,9 @@ typedef struct {
     uint32_t lineHeight;
     uint32_t baseline;
 } CjguiAsyncTextMetrics;
+// Private immutable-attribute calculation in the SAME bounded job/receipt.
+// The block owns its font leases/snapshot; it cannot publish application state.
+typedef int (^CjguiAsyncPreparedTextWork)(CjguiAsyncTextMetrics *metrics);
 
 typedef enum {
     CJGUI_ASYNC_MEASURE_STARTED = 0,
@@ -68,6 +75,16 @@ CjguiAsyncMultilineMeasureStatus CjguiAsyncMultilineMeasureRelease(
     CjguiAsyncMultilineMeasureHandle handle,
     CjguiAsyncMultilineMeasureReleaseDisposition disposition);
 
+CjguiAsyncMultilineMeasureStatus CjguiAsyncMultilineMeasureBeginTypography(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, double letterSpacing, double lineHeightPoints,
+    CjguiAsyncMultilineMeasureHandle *outHandle);
+CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsBeginTypography(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, double letterSpacing, double lineHeightPoints,
+    CjguiAsyncMultilineMeasureHandle *outHandle);
+CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsBeginPrepared(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, size_t additionalInputCharge,
+    CjguiAsyncPreparedTextWork work, CjguiAsyncMultilineMeasureHandle *outHandle);
+
 #ifdef CJGUI_ASYNC_MULTILINE_MEASURE_TESTING
 typedef struct {
     uint32_t occupiedSlots;
@@ -98,6 +115,7 @@ void CjguiAsyncMultilineMeasureTestFailNextPrepareAfterCopy(void);
 uint64_t CjguiAsyncMultilineMeasureTestServiceStartNs(
     CjguiAsyncMultilineMeasureHandle handle);
 void CjguiAsyncMultilineMeasureTestGetStats(CjguiAsyncMultilineMeasureTestStats *outStats);
+
 #endif
 
 #endif

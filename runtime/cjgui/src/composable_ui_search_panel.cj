@@ -12,9 +12,15 @@ public class CjguiSearchableSelectionItem {
     public let keywords: String
     public let isEnabled: Bool
     public let disabledReason: String
+    /// Owner-declared check state. It is presentation data, never a second
+    /// business value; navigation highlight stays in the list state below.
+    public let checked: Bool
+    /// Owner-declared checkability. It alone decides the semantic role the row
+    /// button reports; a checked value on a plain action never does.
+    public let checkable: Bool
 
     public init(key: String, title: String, detail!: String = "", shortcut!: String = "", keywords!: String = "",
-        isEnabled!: Bool = true, disabledReason!: String = "") {
+        isEnabled!: Bool = true, disabledReason!: String = "", checked!: Bool = false, checkable!: Bool = false) {
         this.key = key
         this.title = title
         this.detail = detail
@@ -22,6 +28,8 @@ public class CjguiSearchableSelectionItem {
         this.keywords = keywords
         this.isEnabled = isEnabled
         this.disabledReason = disabledReason
+        this.checked = checked
+        this.checkable = checkable
     }
 }
 
@@ -119,6 +127,42 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
         revisionValue += 1
     }
 
+    private func sameItem(left: CjguiSearchableSelectionItem, right: CjguiSearchableSelectionItem): Bool {
+        return left.key == right.key && left.title == right.title && left.detail == right.detail &&
+            left.shortcut == right.shortcut && left.keywords == right.keywords && left.isEnabled == right.isEnabled &&
+            left.disabledReason == right.disabledReason && left.checked == right.checked &&
+            left.checkable == right.checkable
+    }
+
+    /// Re-project owner declarations while the panel stays open. The query is
+    /// preserved and the current navigation key survives when it is still a
+    /// result; unchanged projections do not advance the revision.
+    public func updateItems(items: ArrayList<CjguiSearchableSelectionItem>): Unit {
+        if (!openValue) {
+            return
+        }
+        let keys = HashSet<String>()
+        for (item in items) {
+            if (item.key.size == 0 || !keys.add(item.key)) {
+                throw IllegalArgumentException("search_panel_duplicate_or_empty_key")
+            }
+        }
+        var changed = items.size != entries.size
+        var index = 0
+        while (!changed && index < items.size) {
+            if (!sameItem(entries[index], items[index])) {
+                changed = true
+            }
+            index += 1
+        }
+        if (!changed) {
+            return
+        }
+        entries = ArrayList<CjguiSearchableSelectionItem>(items)
+        filterResults()
+        revisionValue += 1
+    }
+
     private func filterResults(): Unit {
         results.clear()
         var index: Int64 = 0
@@ -186,7 +230,7 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
     }
 
     public func takeConfirmed(window: CjguiComposableUiWindow): ?CjguiSearchableSelectionItem {
-        if (openValue || !awaitingReturn || window.hasAcceptedLayer(layer)) {
+        if (openValue || !awaitingReturn) {
             return None
         }
         if (!window.isOpen()) {
@@ -199,9 +243,12 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
             case None => return None
         }
         let state = window.modalReturnPositionState(target)
-        if (state == "pending") {
+        if (state == "pending" || state == "none") {
             return None
         }
+        // A rejected closing candidate preserves the visible old layer. Its
+        // known return failure must still release this confirmation as failed.
+        if (window.hasAcceptedLayer(layer) && (state == "installed" || state == "focused")) { return None }
         awaitingReturn = false
         if (state != "installed" && state != "focused") {
             pending = None
@@ -356,6 +403,18 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
         let entry = entries[original]
         return CjguiComposableUiVirtualListItem(entry.key, original, entry.title)
     }
+    private func disabledTextColor(): CjguiComposableUiColor {
+        return match (theme.bodyInteraction.disabled.textColor) {
+            case Some(value) => value
+            case None => theme.body.textColor
+        }
+    }
+    private func checkedMarkColor(): CjguiComposableUiColor {
+        return match (theme.inputInteraction.checked.border) {
+            case Some(value) => value
+            case None => theme.body.textColor
+        }
+    }
     public func buildRow(item: CjguiComposableUiVirtualListItem, isSelected: Bool, isFocused: Bool): CjguiComposableUiNode {
         let entry = entries[item.resourceId]
         // The immutable source ordinal names the row for this open lifecycle;
@@ -371,6 +430,20 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
         let heading = CjguiComposableUiNode(-1, prefix + "-heading-${item.resourceId}", CJGUI_COMPOSABLE_UI_HORIZONTAL,
             "", "", "", -1, CjguiComposableUiStyle(fixedHeight: 28, gap: 4),
             identity: Some(rows.local("heading-${item.resourceId}")))
+        // Checked is the owner's declaration and stays independent of the
+        // row's navigation highlight, which only follows list focus.
+        heading.add(
+            cjguiComposableText(-1, prefix + "-checked-${item.resourceId}", if (entry.checked) {
+                "✓"
+            } else {
+                ""
+            },
+                CjguiComposableUiStyle(fixedWidth: 16, fixedHeight: 28, fontSize: 14.0,
+                    textColor: if (selected) {
+                        theme.primaryAction.textColor
+                    } else {
+                        checkedMarkColor()
+                    }), identity: Some(rows.local("checked-${item.resourceId}"))))
         heading.add(
             cjguiComposableButton(-1, prefix + "-choose-${item.resourceId}", entry.title, prefix + "-choose",
                 item.resourceId,
@@ -379,7 +452,18 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
                         theme.primaryAction.textColor
                     } else {
                         theme.body.textColor
-                    }), enabled: entry.isEnabled, identity: Some(rows.local("choose-${item.resourceId}"))))
+                    }), enabled: entry.isEnabled,
+                ownerInteractionState: if (entry.checked) {
+                    CjguiComposableUiInteractionState.CHECKED
+                } else {
+                    CjguiComposableUiInteractionState.NONE
+                },
+                semanticRole: if (entry.checkable) {
+                    CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX
+                } else {
+                    CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON
+                }, semanticHelp: if (entry.isEnabled) { "" } else { entry.disabledReason },
+                identity: Some(rows.local("choose-${item.resourceId}"))))
         if (entry.shortcut.size > 0) {
             heading.add(
                 cjguiComposableText(-1, prefix + "-shortcut-${item.resourceId}", entry.shortcut,
@@ -400,8 +484,10 @@ public class CjguiSearchableSelectionPanel <: CjguiComposableUiVirtualListSource
                 CjguiComposableUiStyle(fixedHeight: 20, textMaxLines: 1, textOverflow: "ellipsis", fontSize: 11.0,
                     textColor: if (selected) {
                         theme.primaryAction.textColor
-                    } else {
+                    } else if (entry.isEnabled) {
                         theme.body.textColor
+                    } else {
+                        disabledTextColor()
                     }), identity: Some(rows.local("detail-${item.resourceId}"))))
         return row
     }

@@ -28,6 +28,22 @@ int cjgui_linux_session_slot(uint64_t token);
 void cjgui_linux_aux_on_create(int slot);
 void cjgui_linux_aux_on_destroy(int slot);
 
+// 已接受命令菜单中是否存在该快捷键声明。focusScope=0 表示不限定作用域；
+// 非 0 时只接受同一作用域的条目（条目自身 scope 为 0 视为全局）。
+// 只回答"声明存在"，执行仍由共同层 invokeCommand 校验。
+int cjgui_linux_aux_shortcut_declared(uint64_t token, const char *shortcut, uint64_t focusScope);
+
+// 是否存在等待与场景一起提交的完整菜单 staging。present 在真正接受场景时
+// 用它决定是否提升菜单；没有 staging 的普通帧不触碰已接受菜单。
+int cjgui_linux_aux_command_menu_staged(uint64_t token);
+
+// 提升 staging 为已接受菜单（定义在 aux.c，同时是 Cangjie FFI 入口）。
+CjguiInternalRendererStatus cjgui_internal_renderer_commit_composable_command_menu(uint64_t session);
+
+// 当前已接受上下文菜单请求的 id；无守卫时为 0。native 把它拼进
+// `escape:<requestId>`，共同层据此只结束这个请求。
+uint64_t cjgui_linux_aux_context_menu_request(uint64_t token);
+
 #ifdef __cplusplus
 }
 #endif

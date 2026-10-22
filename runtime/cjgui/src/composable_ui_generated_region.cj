@@ -7,6 +7,7 @@ import cjgui_shared_operation_core.*
 import std.collection.*
 import std.sync.*
 import std.time.*
+import std.env.*
 
 /// Owner-specific operations needed by a generated region. Draft and applied
 /// values are read from the application, never stored in the description.
@@ -31,6 +32,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let binding: CjguiGeneratedUiRegionBinding
     private let holder: CjguiGeneratedUiStructureHolder
+    private let fieldSliders: CjguiFieldSliderAdapter
     private let tracker: CjguiGeneratedUiObservationTracker
     private let lock: Mutex
     private var attachedWindow: ?CjguiComposableUiWindow
@@ -68,12 +70,15 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     private var rangeSessionWriterOperation: String = ""
     private var rangeSessionFieldResource: Int64 = -1
     private var rangeSessionOwnerTarget: Int64 = -1
+    private var rangeSessionInstanceKey: String = ""
+    private var rangeSessionInstanceIncarnation: Int64 = 0
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog, binding: CjguiGeneratedUiRegionBinding,
                 rootScopeName: String) {
         this.catalog = catalog
         this.binding = binding
         this.holder = CjguiGeneratedUiStructureHolder(catalog, rootScope: CjguiComposableUiIdentityScope(rootScopeName))
+        this.fieldSliders = CjguiFieldSliderAdapter(binding, {id => catalog.fieldFor(id)})
         this.tracker = CjguiGeneratedUiObservationTracker()
         this.lock = Mutex()
         this.attachedWindow = None
@@ -127,16 +132,17 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
     }
 
-    public func buildNode(): CjguiComposableUiNode {
+    public func buildNode(feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiComposableUiNode {
         return synchronized(lock) {
             sceneBuilds += 1
-            pendingOwnerStamp = binding.ownerRevision()
+            let frozenFeedback = if (feedback.isSome()) { feedback } else { binding.formFeedback() }
+            pendingOwnerStamp = feedbackRevision(frozenFeedback)
             match (attachedWindow) {
                 case Some(window) => holder.sampleImageResourceStates(window)
                 case None => ()
             }
             let started = MonoTime.now()
-            let node = holder.buildRefreshNode(binding)
+            let node = holder.buildRefreshNode(binding, feedback: frozenFeedback)
             buildNanoseconds += (MonoTime.now() - started).toNanoseconds()
             node
         }
@@ -172,12 +178,16 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     }
 
     public func rollbackSceneRefresh(): Unit {
+        rollbackSceneRefresh("")
+    }
+
+    public func rollbackSceneRefresh(reason: String): Unit {
         synchronized(lock) {
             sceneRollbacks += 1
             let hadCandidate = holder.hasPendingCandidate()
             let started = MonoTime.now()
             if (hadCandidate) {
-                holder.rollbackCandidateRefresh()
+                holder.rollbackCandidateRefresh(reason)
             } else {
                 holder.rollbackStyleRefresh()
             }
@@ -205,18 +215,87 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     }
 
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER) {
+            let current = synchronized(lock) { holder.matchesFieldSlider(event.node) }
+            return if (current) { fieldSliders.handle(event) } else { CjguiComposableUiDispatchResult(false) }
+        }
         synchronized(lock) {
             bindFieldRangeSessionIfFocused(event)
         }
         let intent = synchronized(lock) { holder.resolveIntent(event.node, event.eventKind, event.text) }
         if (intent.isFieldEdit()) {
+            let observation = synchronized(lock) { wholeTextIsOwnedObservation(event, intent) }
+            if (observation) {
+                if (getVariable("CJGUI_RANGE_ROUTE_TRACE").isSome()) {
+                    println("CJGUI_GEN_RANGE_OBSERVE event=28 node=${event.node.nodeId} field=${intent.fieldId} owner_version=${binding.ownerRevision()}")
+                }
+                return CjguiComposableUiDispatchResult(false)
+            }
             return binding.applyFieldIntent(intent)
         }
         if (intent.isAction()) {
+            if (intent.instanceKey.size > 0) {
+                // Resolution and execution are separate steps: the owner
+                // mapping can change in between. Re-check the SAME accepted
+                // element first, then hand the ORIGINAL target and generation
+                // to the owner transaction. Never re-resolve the key here.
+                let stillBound = synchronized(lock) {
+                    holder.compositeActionIntentIsBound(intent.nodeId, intent.actionName, intent.instanceKey,
+                        intent.ownerTargetResourceId, intent.instanceIncarnation)
+                }
+                if (!stillBound) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                let outcome = binding.executeAction(intent.actionName, intent.nodeKey, intent.instanceKey,
+                    intent.ownerTargetResourceId, intent.instanceIncarnation)
+                return CjguiComposableUiDispatchResult(outcome.applied)
+            }
             let outcome = binding.executeAction(intent.actionName, intent.nodeKey)
             return CjguiComposableUiDispatchResult(outcome.applied)
         }
         return CjguiComposableUiDispatchResult(false)
+    }
+
+    /// Manual and generated INTEGER sliders use this same field writer.
+    public func handleFieldSliderEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return fieldSliders.handle(event)
+    }
+    public func sliderCaptureVersion(): Int64 { return fieldSliders.version() }
+    public func sliderCaptureMapping(node: CjguiComposableUiLayoutNode): ?CjguiComposableUiSliderCaptureMapping {
+        return fieldSliders.mapping(node)
+    }
+
+    // Native can report a whole-value projection beside the original range
+    // delta. Only the current, fully matching owned TEXT binding observes it;
+    // the range channel remains the one owner submission/receipt source.
+    private func wholeTextIsOwnedObservation(event: CjguiComposableUiEvent,
+        intent: CjguiGeneratedUiIntent): Bool {
+        let node = event.node
+        if (event.eventKind != CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED ||
+            node.nodeKind != CJGUI_COMPOSABLE_UI_TEXT_INPUT || node.fieldId != intent.fieldId ||
+            node.resourceId != binding.fieldResourceId(intent.fieldId) ||
+            node.operationResourceId != binding.fieldOperationResourceId(intent.fieldId, intent.instanceKey) ||
+            node.operationResourceId != intent.ownerTargetResourceId ||
+            node.operationActionName != intent.writerOperation ||
+            !binding.rangeTextEditSupported(intent.fieldId, intent.instanceKey)) {
+            return false
+        }
+        let window = match (attachedWindow) { case Some(value) => value; case None => return false }
+        if (!window.isTextRangeEditDeltaDeliveryEnabled() || window.ownedTextSessionBoundNodeId() != node.nodeId ||
+            rangeSessionNodeId != node.nodeId || rangeSessionSemanticId != node.semanticId ||
+            rangeSessionNodeKind != node.nodeKind || rangeSessionFieldId != intent.fieldId ||
+            rangeSessionWriterOperation != intent.writerOperation || rangeSessionFieldResource != node.resourceId ||
+            rangeSessionOwnerTarget != node.operationResourceId ||
+            rangeSessionInstanceKey != intent.instanceKey) { return false }
+        for (accepted in window.acceptedSceneNodes()) {
+            if (accepted.nodeId == node.nodeId) {
+                return accepted.semanticId == node.semanticId && accepted.semanticIncarnation == node.semanticIncarnation &&
+                    accepted.nodeKind == node.nodeKind && accepted.resourceId == node.resourceId &&
+                    accepted.fieldId == node.fieldId && accepted.operationResourceId == node.operationResourceId &&
+                    accepted.operationActionName == node.operationActionName
+            }
+        }
+        return false
     }
 
     /// R3/R3补轮：生成 TEXT 字段在**编辑聚焦**（kind 31 FOCUS）时绑定通用范围
@@ -247,6 +326,10 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             case Some(value) => value
             case None => return
         }
+        // Whole-value windows keep their original form writer. Declaring an
+        // owned range session here would make that writer suppress the only
+        // text event even though this window cannot deliver range deltas.
+        if (!window.isTextRangeEditDeltaDeliveryEnabled()) { return }
         if (catalog.fieldFor(node.fieldId).isNone()) {
             generatedRegionDiagLog(
                 "GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} reason=unknown_field")
@@ -265,9 +348,10 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 "ownerTarget=${node.operationResourceId}")
             return
         }
-        if (!binding.rangeTextEditSupported(field.fieldId)) {
-            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${node.fieldId} " +
-                "reason=provider_unsupported")
+        let instanceKey = holder.compositeInstanceKeyForNodeId(node.nodeId)
+        if (!binding.rangeTextEditSupported(field.fieldId, instanceKey)) {
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${field.fieldId} " +
+                "instance=${instanceKey} reason=provider_unsupported")
             return
         }
         var acceptedMatched = false
@@ -292,10 +376,18 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             rangeSessionNodeKind == node.nodeKind && rangeSessionFieldId == field.fieldId &&
             rangeSessionWriterOperation == field.writeActionName &&
             rangeSessionFieldResource == field.resourceId &&
-            rangeSessionOwnerTarget == node.operationResourceId) {
+            rangeSessionOwnerTarget == node.operationResourceId &&
+            rangeSessionInstanceKey == instanceKey &&
+            rangeSessionInstanceIncarnation == holder.compositeInstanceIncarnationForNodeId(node.nodeId)) {
             return // 同一绑定的重复聚焦：不重建会话，组合态/选区保留
         }
-        let session = CjguiGeneratedFieldRangeSession(binding, field.fieldId)
+        let acceptedIncarnation = holder.compositeInstanceIncarnationForNodeId(node.nodeId)
+        let bindingCurrent = { =>
+            holder.compositeInstanceIncarnationForNodeId(node.nodeId) == acceptedIncarnation &&
+                holder.compositeInstanceKeyForNodeId(node.nodeId) == instanceKey
+        }
+        let session = CjguiGeneratedFieldRangeSession(binding, field.fieldId, instanceKey: instanceKey,
+            ownerTarget: node.operationResourceId, bindingCurrent: bindingCurrent)
         let _ = window.bindRangeTextSession(node.nodeId, node.semanticId, session, session,
             field.resourceId, node.nodeKind)
         rangeSessionNodeId = node.nodeId
@@ -305,6 +397,8 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         rangeSessionWriterOperation = field.writeActionName
         rangeSessionFieldResource = field.resourceId
         rangeSessionOwnerTarget = node.operationResourceId
+        rangeSessionInstanceKey = instanceKey
+        rangeSessionInstanceIncarnation = acceptedIncarnation
     }
     public func capabilitiesPayload(): String {
         return CjguiGeneratedUiEncoding.describe(catalog)
@@ -343,37 +437,142 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         return "FOCUS 0 SELECTION 0 0"
     }
 
-    private func fieldsPayloadUnlocked(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): String {
+    private func feedbackRevision(feedback: ?CjguiGeneratedUiFormFeedback): Int64 {
+        return match (feedback) {
+            case Some(value) => value.snapshot.contextVersion
+            case None => binding.ownerRevision()
+        }
+    }
+    private func availabilityPayload(value: CjguiSharedAvailability): String {
+        let available = if (!value.known) { "unknown" } else if (value.isAvailable) { "1" } else { "0" }
+        let reason = if (value.known && !value.isAvailable) { hexValue(value.reason) } else { "-" }
+        return "AVAILABLE ${available} REASON_HEX ${reason} TARGET ${value.ownerResourceId} STATE_VERSION ${value.stateVersion}"
+    }
+    private func fieldsPayloadUnlocked(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>,
+        feedback: ?CjguiGeneratedUiFormFeedback, version: Int64): String {
         fieldsSerializations += 1
         let builder = StringBuilder()
+        let header = match (feedback) {
+            case Some(value) =>
+                let snapshot = value.snapshot
+                "FORM_STATE KNOWN 1 CONSISTENT 1 VERSION ${version} DRAFT_VERSION ${snapshot.draftVersion} " +
+                    "APPLIED_VERSION ${snapshot.appliedConfigVersion} CAN_APPLY ${if (snapshot.canApply) { "1" } else { "0" }} " +
+                    "MESSAGE_HEX ${hexValue(snapshot.statusMessage)} TARGET ${value.ownerResourceId}"
+            case None => "FORM_STATE KNOWN 0 CONSISTENT 1 VERSION ${version} DRAFT_VERSION -1 APPLIED_VERSION -1 CAN_APPLY unknown MESSAGE_HEX - TARGET -1"
+        }
+        builder.append(header + "\n")
         for (spec in catalog.fieldSpecs()) {
-            let draft = if (spec.editorKind == "BOOLEAN") {
-                CjguiSharedOperationValue.boolean(binding.draftBoolean(spec.fieldId) ?? false).displayText()
+            var draft = ""
+            var applied = ""
+            var validation = "unknown"
+            var message = ""
+            var validationVersion: Int64 = -1
+            var fieldVersion: Int64 = -1
+            var draftVersion = version
+            var availability = CjguiSharedAvailability.unknown()
+            if (let Some(value) <- feedback) {
+                if (let Some(field) <- value.fieldFor(spec.fieldId)) {
+                    if (field.resourceId == spec.resourceId) {
+                        draft = field.draftText
+                        applied = field.appliedValue.displayText()
+                        validation = if (field.validationError.isEmpty()) { "valid" } else { "invalid" }
+                        message = field.validationError
+                        validationVersion = value.snapshot.contextVersion
+                        fieldVersion = field.draftFieldVersion
+                        draftVersion = value.snapshot.draftVersion
+                        availability = value.fieldAvailability(spec.fieldId)
+                    }
+                }
             } else {
-                binding.draftText(spec.fieldId)
+                draft = if (spec.editorKind == "BOOLEAN") {
+                    CjguiSharedOperationValue.boolean(binding.draftBoolean(spec.fieldId) ?? false).displayText()
+                } else { binding.draftText(spec.fieldId) }
+                applied = if (spec.editorKind == "BOOLEAN") {
+                    CjguiSharedOperationValue.boolean(binding.appliedBoolean(spec.fieldId) ?? false).displayText()
+                } else { binding.appliedText(spec.fieldId) }
+                availability = binding.fieldAvailability(spec.fieldId)
             }
-            let applied = if (spec.editorKind == "BOOLEAN") {
-                CjguiSharedOperationValue.boolean(binding.appliedBoolean(spec.fieldId) ?? false).displayText()
-            } else {
-                binding.appliedText(spec.fieldId)
-            }
-            let availability = binding.fieldAvailability(spec.fieldId)
-            let available = if (!availability.known) { "unknown" } else if (availability.isAvailable) { "1" } else { "0" }
-            let reason = if (availability.known && !availability.isAvailable) {
-                hexValue(availability.reason)
-            } else { "-" }
+            let legacyError = if (validation == "valid") { "none" } else { validation }
+            let source = if (feedback.isSome()) { "owner_projection" } else { binding.draftSource(spec.fieldId) }
             builder.append("FIELD ${spec.fieldId} ${spec.resourceId} DRAFT_HEX ${hexValue(draft)} " +
-                "APPLIED_HEX ${hexValue(applied)} ERROR none ${focusToken(spec.fieldId, instances)} " +
-                "AVAILABLE ${available} REASON_HEX ${reason} TARGET ${availability.ownerResourceId} " +
-                "STATE_VERSION ${availability.stateVersion} DRAFT_SOURCE ${binding.draftSource(spec.fieldId)} " +
-                "VERSION ${binding.ownerRevision()}\n")
+                "APPLIED_HEX ${hexValue(applied)} ERROR ${legacyError} ${focusToken(spec.fieldId, instances)} " +
+                availabilityPayload(availability) + " DRAFT_SOURCE ${source} VERSION ${draftVersion} " +
+                "VALIDATION_STATE ${validation} VALIDATION_MESSAGE_HEX ${hexValue(message)} " +
+                "VALIDATION_VERSION ${validationVersion} FIELD_VERSION ${fieldVersion}\n")
+        }
+        for (name in catalog.actionNames()) {
+            let state = match (feedback) {
+                case Some(value) => value.actionAvailability(name)
+                case None => binding.actionAvailability(name)
+            }
+            builder.append("ACTION_STATE ${name} " + availabilityPayload(state) + "\n")
+        }
+        // Legacy providers retain their read path, but a moving owner cannot
+        // publish a mixture as one state. No retries, guessed values or ticket.
+        if (feedback.isNone() && binding.ownerRevision() != version) {
+            return "FORM_STATE KNOWN 0 CONSISTENT 0 VERSION ${version} DRAFT_VERSION -1 APPLIED_VERSION -1 CAN_APPLY unknown MESSAGE_HEX - TARGET -1\nEND"
         }
         builder.append("END")
         return builder.toString()
     }
 
     public func fieldsPayload(): String {
-        return synchronized(lock) { fieldsPayloadUnlocked(acceptedInstances()) }
+        return synchronized(lock) {
+            let feedback = binding.formFeedback()
+            fieldsPayloadUnlocked(acceptedInstances(), feedback, feedbackRevision(feedback))
+        }
+    }
+
+    /// ONE instance's complete owner projection (draft/applied, validation,
+    /// dirty/canApply and action conditions) sampled from its own snapshot.
+    /// Empty means the provider does not publish per-instance feedback; the
+    /// transport turns that into a named refusal instead of a guessed state.
+    public func fieldsPayload(instanceKey: String): String {
+        return synchronized(lock) {
+            if (!holder.isAcceptedCompositeInstanceKey(instanceKey)) {
+                return ""
+            }
+            let feedback = match (binding.formFeedback(instanceKey)) {
+                case Some(value) => value
+                case None => return ""
+            }
+            // The accepted owner target and the returned projection must name
+            // the SAME object; a provider that drifted is unknown, not a
+            // projection silently attributed to another owner.
+            let acceptedOwner = holder.compositeOwnerTargetForInstance(instanceKey)
+            if (acceptedOwner >= 0 && feedback.ownerResourceId != acceptedOwner) {
+                return ""
+            }
+            fieldsPayloadUnlocked(acceptedInstances(), feedback, feedbackRevision(feedback))
+        }
+    }
+
+    /// The same projection addressed by business owner id. The accepted
+    /// composite binding table is the only authority; an owner no accepted
+    /// instance binds is unknown, never redirected to a live sibling. An owner
+    /// bound by more than one instance is ambiguous and also stays unknown.
+    public func fieldsPayloadForOwner(ownerResourceId: Int64): String {
+        return synchronized(lock) {
+            let instances = acceptedInstances()
+            let key = holder.compositeInstanceKeyForOwnerTarget(ownerResourceId)
+            if (!key.isEmpty()) {
+                if (let Some(feedback) <- binding.formFeedback(key)) {
+                    if (feedback.ownerResourceId == ownerResourceId) {
+                        return fieldsPayloadUnlocked(instances, feedback, feedbackRevision(feedback))
+                    }
+                }
+            }
+            if (let Some(feedback) <- binding.formFeedback()) {
+                if (feedback.ownerResourceId == ownerResourceId && !holder.hasAcceptedCompositeBindings()) {
+                    return fieldsPayloadUnlocked(instances, feedback, feedbackRevision(feedback))
+                }
+            }
+            return ""
+        }
+    }
+
+    public func instanceOwnerResourceId(instanceKey: String): Int64 {
+        return synchronized(lock) { holder.compositeOwnerTargetForInstance(instanceKey) }
     }
 
     private func structurePayloadUnlocked(): String {
@@ -470,7 +669,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
     }
 
-    private func observationSource(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): CjguiGeneratedUiObservationSource {
+    private func observationSource(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>, ownerVersion!: Int64 = -1): CjguiGeneratedUiObservationSource {
         var identity = ""
         var sceneVersion: Int64 = 0
         var interactionRevision: Int64 = 0
@@ -482,7 +681,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 interactionRevision = progress.interactionVersion
             case None => ()
         }
-        let ownerRevision = binding.ownerRevision()
+        let ownerRevision = if (ownerVersion >= 0) { ownerVersion } else { binding.ownerRevision() }
         return CjguiGeneratedUiObservationSource(identity, ownerRevision, ownerRevision,
             cjguiGeneratedUiBindingRevision(instances), holder.structureVersion(),
             holder.latestCandidateToken(), sceneOutcomeUnlocked(), sceneVersion,
@@ -498,9 +697,11 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     public func snapshotPayload(): String {
         return synchronized(lock) {
             let instances = acceptedInstances()
-            let source = observationSource(instances)
+            let feedback = binding.formFeedback()
+            let version = feedbackRevision(feedback)
+            let source = observationSource(instances, ownerVersion: version)
             let _ = tracker.observeSource(source)
-            cjguiGeneratedUiSnapshotPayload(tracker, source, fieldsPayloadUnlocked(instances),
+            cjguiGeneratedUiSnapshotPayload(tracker, source, fieldsPayloadUnlocked(instances, feedback, version),
                 structurePayloadUnlocked(), instancesPayloadUnlocked(instances),
                 stylesPayload: CjguiGeneratedUiEncoding.stylesPayload(catalog))
         }
@@ -516,12 +717,14 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     public func sectionPayload(section: String, expectedCursor: Int64): String {
         return synchronized(lock) {
             let instances = acceptedInstances()
-            let _ = tracker.observeSource(observationSource(instances))
+            let feedback = binding.formFeedback()
+            let version = feedbackRevision(feedback)
+            let _ = tracker.observeSource(observationSource(instances, ownerVersion: version))
             if (tracker.currentCursor() != expectedCursor) {
                 return cjguiGeneratedUiSectionPayload(tracker, section, expectedCursor, "")
             }
             let payload = if (section == "FIELDS") {
-                fieldsPayloadUnlocked(instances)
+                fieldsPayloadUnlocked(instances, feedback, version)
             } else if (section == "STRUCTURE") {
                 structurePayloadUnlocked()
             } else if (section == "INSTANCES") {

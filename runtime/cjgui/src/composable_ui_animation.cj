@@ -2308,30 +2308,33 @@ public class CjguiGeneratedMotionRegistry {
         return builder.toString()
     }
 
-    private static func frameworkRules(): CjguiGeneratedMotionRegistry {
-        let registry = CjguiGeneratedMotionRegistry()
-        let _ = registry.registerRule(opacityTransitionRule())
-        let _ = registry.registerRule(interactionTransitionRule())
-        let _ = registry.registerRule(positionTransitionRule())
-        return registry
-    }
-
     // Compatibility discovery functions used by existing framework callers.
-    // Generated catalogs use the instance methods above.
+    // Generated catalogs use the instance methods above. Resolve framework
+    // constants directly through the SAME rule factories: a per-node paint
+    // query must not allocate/register/validate an unrelated three-rule map.
     public static func motionRuleFor(name: String): ?CjguiGeneratedMotionRule {
-        return frameworkRules().ruleFor(name)
+        if (name == OPACITY_TRANSITION) { return Some(opacityTransitionRule()) }
+        if (name == INTERACTION_TRANSITION) { return Some(interactionTransitionRule()) }
+        if (name == POSITION_TRANSITION) { return Some(positionTransitionRule()) }
+        return None
     }
 
     public static func specFor(name: String): ?CjguiComposableUiAnimationSpec {
-        return frameworkRules().specForName(name)
+        return match (motionRuleFor(name)) {
+            case Some(rule) => rule.spec()
+            case None => None
+        }
     }
 
     public static func rejectionReasonFor(name: String): String {
-        return frameworkRules().rejectionReasonForName(name)
+        return match (motionRuleFor(name)) {
+            case Some(rule) => rule.rejectionReason()
+            case None => "motion_rule_unregistered"
+        }
     }
 
     public static func interactionSpec(): CjguiComposableUiAnimationSpec {
-        return match (frameworkRules().specForName(INTERACTION_TRANSITION)) {
+        return match (specFor(INTERACTION_TRANSITION)) {
             case Some(spec) => spec
             case None => CjguiComposableUiAnimationSpec.tween(durationMs: 0,
                 easing: CjguiComposableUiAnimationEasing.EASE_OUT)
@@ -2339,7 +2342,7 @@ public class CjguiGeneratedMotionRegistry {
     }
 
     public static func supportedRuleNames(): ArrayList<String> {
-        return frameworkRules().ruleNames()
+        return ArrayList<String>([OPACITY_TRANSITION, INTERACTION_TRANSITION, POSITION_TRANSITION])
     }
 
     public static func capabilityLine(): String {

@@ -85,15 +85,16 @@ prepare_app_activator() {
 }
 
 # real_input_preflight
-# Prints "post_event_access=granted|refused" (the driver's own measurement of
-# the synthetic-event post permission) and returns 0 only when posting is
-# permitted. Callers record this so a segment that loses input can be told
-# apart from a product failure.
+# Prints the driver's own measurement of the synthetic-event post permission
+# (its first line is "post_event_access=granted|refused"; later lines describe
+# driver facts) and returns 0 only when posting is permitted. Callers record
+# this so a segment that loses input can be told apart from a product failure.
 real_input_preflight() {
-  local out
+  local out first
   out="$("$DRIVER" preflight 2>/dev/null)"
   print -r -- "$out"
-  [[ "$out" == "post_event_access=granted" ]]
+  first="${out%%$'\n'*}"
+  [[ "$first" == "post_event_access=granted" ]]
 }
 hex_to_text() {
   python3 -c 'import sys; raw=sys.stdin.read().strip(); print("" if raw in ("", "-") else bytes.fromhex(raw).decode("utf-8","replace"))'

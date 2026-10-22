@@ -41,6 +41,8 @@ int main(void) { @autoreleasepool {
     CjguiRebuildComposableCommandMenuForKeyWindow();
     NSMenu *first=app.mainMenu; NSMenuItem *old=command();
     CHECK(old && old.enabled,"real_menu_built");
+    NSMenuItem *close=CjguiFindMenuItemWithAction(app.mainMenu,@selector(performClose:));
+    CHECK(close && [close.keyEquivalent isEqual:@"w"],"normal_window_has_standard_close_equivalent");
     ctx.composableSceneVersion=2;
     CjguiRebuildComposableCommandMenuForKeyWindow();
     CHECK(app.mainMenu==first,"unchanged_projection_reuses_actual_menu_across_body_version");
@@ -71,6 +73,16 @@ int main(void) { @autoreleasepool {
     NSMenu *foreign=[[NSMenu alloc]initWithTitle:@"foreign"];[app setMainMenu:foreign];
     CjguiRebuildComposableCommandMenuForKeyWindow();
     CHECK(app.mainMenu!=foreign && command()!=nil,"external_main_menu_replacement_cannot_hit_cache");
+    overlay.fixtureActive=nil; // Window-scoped enabled declaration in this case.
+    entry.shortcut=@"shortcut:command+w";CjguiRebuildComposableCommandMenuForKeyWindow();
+    close=CjguiFindMenuItemWithAction(app.mainMenu,@selector(performClose:));
+    CHECK(close && close.keyEquivalent.length==0 && [command().keyEquivalent isEqual:@"w"],
+        "declared_close_keeps_owner_and_suppresses_responder_equivalent");
+    entry.enabled=NO;CjguiRebuildComposableCommandMenuForKeyWindow();
+    close=CjguiFindMenuItemWithAction(app.mainMenu,@selector(performClose:));
+    CHECK(close.keyEquivalent.length==0 && !command().enabled,
+        "disabled_declared_close_does_not_fall_through_owner_admission");
+    entry.enabled=YES;
     entry.shortcut=@"shortcut:command+z";
     overlay.fixtureActive=nil;
     ctx.composableSceneVersion=4;

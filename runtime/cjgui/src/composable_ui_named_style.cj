@@ -58,10 +58,11 @@ public class CjguiComposableUiNamedStyle {
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
         fontFamily!: ?String = None, translateX!: ?Float64 = None, translateY!: ?Float64 = None,
-        textMaxLines!: ?Int64 = None, textOverflow!: ?String = None): CjguiComposableUiStyle {
+        textMaxLines!: ?Int64 = None, textOverflow!: ?String = None,
+        letterSpacing!: ?Float64 = None, lineHeight!: ?Float64 = None): CjguiComposableUiStyle {
         return CjguiComposableUiStyle(textMaxLines: textMaxLines ?? base.textMaxLines,
-            textOverflow: textOverflow ?? base.textOverflow, letterSpacing: base.letterSpacing,
-            lineHeight: base.lineHeight, cornerRadii: base.cornerRadii, background: base.background, border: base.border,
+            textOverflow: textOverflow ?? base.textOverflow, letterSpacing: letterSpacing ?? base.letterSpacing,
+            lineHeight: lineHeight ?? base.lineHeight, cornerRadii: base.cornerRadii, background: base.background, border: base.border,
             textColor: base.textColor, padding: match (padding) {
                 case Some(value) => value
                 case None => base.padding
@@ -135,13 +136,14 @@ public class CjguiComposableUiNamedStyle {
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
         fontFamily!: ?String = None, translateX!: ?Float64 = None, translateY!: ?Float64 = None,
-        textMaxLines!: ?Int64 = None, textOverflow!: ?String = None): CjguiComposableUiBoundStyle {
+        textMaxLines!: ?Int64 = None, textOverflow!: ?String = None,
+        letterSpacing!: ?Float64 = None, lineHeight!: ?Float64 = None): CjguiComposableUiBoundStyle {
         return CjguiComposableUiBoundStyle(
             localStyle(fontSize: fontSize, fontWeight: fontWeight, padding: padding, gap: gap, fixedWidth: fixedWidth,
                 fixedHeight: fixedHeight, growX: growX, growY: growY, minWidth: minWidth, maxWidth: maxWidth,
                 minHeight: minHeight, maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: cornerRadius,
                 fontFamily: fontFamily, translateX: translateX, translateY: translateY, textMaxLines: textMaxLines,
-                textOverflow: textOverflow), interaction)
+                textOverflow: textOverflow, letterSpacing: letterSpacing, lineHeight: lineHeight), interaction)
     }
 }
 
@@ -305,6 +307,20 @@ private func cjguiComposableUiParseEffectInt(token: String): ?Int64 {
 /// Strict generated translation scalar: signed decimal logical points with at
 /// most three fractional digits. Handwritten Style accepts any bounded finite
 /// Float64; this token format makes public generated requests deterministic.
+// Typography uses the existing bounded decimal grammar; only its semantic
+// bounds differ. Empty explicitly clears a generated override to natural/0.
+func cjguiComposableUiParseTypographyScalar(token: String, lineHeight: Bool): ?Float64 {
+    if (token.size == 0) { return Some(0.0) }
+    let parsed = cjguiComposableUiParseTranslationScalar(token)
+    if (let Some(value) <- parsed) {
+        if (lineHeight) {
+            return if (value >= 0.0 && value < 1000.0) { Some(value) } else { None }
+        }
+        return if (value > -1000.0 && value < 1000.0) { Some(value) } else { None }
+    }
+    return None
+}
+
 public func cjguiComposableUiParseTranslationScalar(token: String): ?Float64 {
     if (token.size == 0 || token.size > 12) {
         return None
@@ -812,7 +828,7 @@ public class CjguiComposableUiNamedStyleCatalog {
                     hash = (hash * 131 + value) % 2147483647
                 }
                 hash = (hash * 131 + Int64(base.fontSize * 100.0)) % 2147483647
-                for (byte in "overflow=${base.textOverflow};translate=${base.translateX},${base.translateY}".toArray()) {
+                for (byte in "overflow=${base.textOverflow};translate=${base.translateX},${base.translateY};typography=${base.letterSpacing},${base.lineHeight}".toArray()) {
                     hash = (hash * 131 + Int64(byte)) % 2147483647
                 }
                 hash = (hash * 131 + if (base.clipsContent) {
@@ -943,6 +959,7 @@ public class CjguiComposableUiNamedStyleCatalog {
                     "fixedWidth=${base.fixedWidth} fixedHeight=${base.fixedHeight} " +
                     "growX=${base.growX} growY=${base.growY} fontSize=${Int64(base.fontSize)} " +
                     "fontWeight=${base.fontWeight} minWidth=${base.minWidth} maxWidth=${base.maxWidth} " +
+                    "letterSpacing=${base.letterSpacing} lineHeight=${base.lineHeight} " +
                     "minHeight=${base.minHeight} maxHeight=${base.maxHeight} " +
                     "alignX=${namedStyleAlignmentToken(base.alignX)} " +
                     "alignY=${namedStyleAlignmentToken(base.alignY)} " +

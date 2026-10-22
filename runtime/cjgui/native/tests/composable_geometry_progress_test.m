@@ -1,5 +1,6 @@
 #import <AppKit/AppKit.h>
 #import "../cjgui_internal_renderer.h"
+#include <string.h>
 
 static int check(BOOL ok, const char *what) {
     if (ok) return 0;
@@ -26,8 +27,10 @@ static CjguiInternalRendererStatus submit(uint64_t session, uint64_t version,
     return cjgui_internal_renderer_present_composable_scene(session, frame);
 }
 
-int main(void) {
+int main(int argc, const char *argv[]) {
     @autoreleasepool {
+        [NSApplication sharedApplication];
+        [NSApp finishLaunching];
         CjguiInternalRendererConfig config = {.windowWidth = 320, .windowHeight = 180,
             .clearColorRed = 0.08, .clearColorGreen = 0.1, .clearColorBlue = 0.12,
             .clearColorAlpha = 1.0};
@@ -46,6 +49,20 @@ int main(void) {
                   before.currentDrawableWidthPixels == before.submittedDrawableWidthPixels &&
                   before.currentBackingScale == before.submittedBackingScale,
                   "first_current_and_committed_same_version")) return 1;
+        if (argc == 2 && strcmp(argv[1], "--lifecycle-only") == 0) {
+            // This bounded entry checks the existing real first-frame contract
+            // and close only. The full backing/recovery test below stays separate.
+            NSEvent *event;
+            while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast]
+                    inMode:NSDefaultRunLoopMode dequeue:YES])) [NSApp sendEvent:event];
+            [NSApp updateWindows];
+            if (check(cjgui_internal_renderer_destroy(session) == CJGUI_INTERNAL_RENDERER_OK, "close")) return 1;
+            fprintf(stdout, "window_lifecycle submitted_scene=%llu frame=%llu current_geometry=%llu close=ok\n",
+                (unsigned long long)before.submittedSceneVersion,
+                (unsigned long long)before.submittedFrameIndex,
+                (unsigned long long)before.currentGeometryRevision);
+            return 0;
+        }
         CjguiInternalRendererStatus otherStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         uint64_t other = cjgui_internal_renderer_create(&config, &otherStatus);
         CjguiInternalRendererFrameObservation otherFrame = {0};

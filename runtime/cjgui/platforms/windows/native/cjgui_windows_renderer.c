@@ -14850,7 +14850,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_command_menu_
     uint64_t token, uint32_t itemIndex, const char *commandId,
     const char *title, const char *menuGroup, const char *shortcut,
     uint32_t menuSection, uint64_t focusScope, uint8_t enabled,
-    uint8_t checked) {
+    uint8_t checked, uint8_t presentationOnly) {
+    (void)presentationOnly;
     CjguiWindowsMenuCtx *ctx =
         (CjguiWindowsMenuCtx *)calloc(1u, sizeof(CjguiWindowsMenuCtx));
     if (!ctx) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;

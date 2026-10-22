@@ -475,6 +475,16 @@ static void cjgui_linux_ime_preedit_draw_cb(XIC ic, XPointer client, XIMPreeditD
                       ? draw->text->string.multi_byte
                       : "<wchar/none>");
     cjgui_linux_ime_apply_draw(window, draw);
+    // IBus delivers the caret in the same draw callback. SDL's X11 backend
+    // consumes it here too; relying only on the separate caret callback leaves
+    // the caret at 0 for engines that never send one.
+    if (draw->caret >= 0) {
+        window->ime_preedit_caret = (int)draw->caret;
+        if (window->ime_preedit_caret > (int)window->ime_preedit_length) {
+            window->ime_preedit_caret = (int)window->ime_preedit_length;
+        }
+        CJGUI_IME_LOG("preedit draw caret pos=%d\n", window->ime_preedit_caret);
+    }
 }
 
 static void cjgui_linux_ime_preedit_caret_cb(XIC ic, XPointer client, XIMPreeditCaretCallbackStruct *caret) {
@@ -806,10 +816,12 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
                 event.y = py;
                 event.button = button;
                 switch (button) {
-                    case 4u: event.scrollY = -1.0; break;   // 上滚：内容向上
-                    case 5u: event.scrollY = 1.0; break;    // 下滚：内容向下
-                    case 6u: event.scrollX = -1.0; break;   // 左滚
-                    case 7u: event.scrollX = 1.0; break;    // 右滚
+                    // 与 macOS/Windows 的观察增量同号：正值 = 向顶部滚动
+                    // （内容向下，viewport offset 减小），负值 = 向底部滚动。
+                    case 4u: event.scrollY = 1.0; break;    // 上滚
+                    case 5u: event.scrollY = -1.0; break;   // 下滚
+                    case 6u: event.scrollX = 1.0; break;    // 左滚
+                    case 7u: event.scrollX = -1.0; break;   // 右滚
                     default: break;
                 }
                 cjgui_linux_deliver(window, &event, out_events, limit, out_count);
@@ -851,11 +863,13 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
             int composing_before = window->ime_preedit_active && window->ime_preedit_length > 0u;
             int filtered = 0;
             if (window->xic != NULL) {
-                filtered = XFilterEvent(xevent, window->window);
+                // XIM 自己决定过滤窗口；传客户端窗口会让 IBus 的提交/翻页
+                // 转发事件走错路由（SDL 同样传 None）。
+                filtered = XFilterEvent(xevent, None);
             }
             if (filtered) {
                 // XFilterEvent 返回 True 表示输入法已消费这次按键。此时不能再
-                // XmbLookupString：IBus 会把当前 preedit 当作提交文本返回，
+                // lookup：IBus 会把当前 preedit 当作提交文本返回，
                 // 造成组合态提前落字。提交文本由未被过滤的按键取出（SDL 同序）。
                 CJGUI_IME_LOG("key filtered=1 composing_before=%d\n", composing_before);
                 cjgui_linux_ime_flush(window, time_ms, out_events, limit, out_count);
@@ -868,8 +882,11 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
             if (window->xic != NULL) {
                 KeySym looked = NoSymbol;
                 Status status = XLookupNone;
-                int n = XmbLookupString(window->xic, &xevent->xkey, committed,
-                                        (int)sizeof(committed) - 1, &looked, &status);
+                // Xutf8LookupString 固定按 UTF-8 返回，不依赖进程 locale 的
+                // Xmb 转换；IBus 的提交文本经此路径取出。XmbLookupString 会把
+                // 已选候选报成 XLookupKeySym 且不带正文（本机 ibus-libpinyin 反例）。
+                int n = Xutf8LookupString(window->xic, &xevent->xkey, committed,
+                                          (int)sizeof(committed) - 1, &looked, &status);
                 if (status == XBufferOverflow) {
                     // 整条拒绝而不是截断：提交文本拿不全时绝不提交半截。
                     fprintf(stderr,
@@ -935,7 +952,7 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
         }
         case KeyRelease: {
             uint64_t time_ms = cjgui_linux_event_time(window, xevent->xkey.time);
-            if (window->xic != NULL && XFilterEvent(xevent, window->window)) {
+            if (window->xic != NULL && XFilterEvent(xevent, None)) {
                 break;
             }
             cjgui_linux_fill_key_text(window, &xevent->xkey, 0, &event);
@@ -1355,15 +1372,16 @@ void cjgui_linux_window_destroy(CjguiLinuxWindow *window) {
         return;
     }
     if (window->display != NULL) {
-        if (window->window != None && window->window_destroyed == 0) {
-            XDestroyWindow(window->display, window->window);
-            window->window = None;
-        }
-        if (window->colormap != None) {
-            XFreeColormap(window->display, window->colormap);
-            window->colormap = None;
-        }
+        // Tear down the input context before the client window disappears.
+        // Destroying a still-focused XIC after its client window is already
+        // gone lets IBus race the focus-out path (observed as a heap abort in
+        // the XIM client on preview close). Unfocus, destroy IC, close IM,
+        // then destroy the window and display in that order.
         if (window->xic != NULL) {
+            if (window->ime_focused) {
+                XUnsetICFocus(window->xic);
+                window->ime_focused = 0;
+            }
             XDestroyIC(window->xic);
             window->xic = NULL;
         }
@@ -1373,6 +1391,15 @@ void cjgui_linux_window_destroy(CjguiLinuxWindow *window) {
         }
         window->ime_available = 0;
         window->ime_focused = 0;
+        XSync(window->display, False);
+        if (window->window != None && window->window_destroyed == 0) {
+            XDestroyWindow(window->display, window->window);
+            window->window = None;
+        }
+        if (window->colormap != None) {
+            XFreeColormap(window->display, window->colormap);
+            window->colormap = None;
+        }
         XSync(window->display, False);
         XCloseDisplay(window->display);
         window->display = NULL;
@@ -1420,6 +1447,11 @@ int cjgui_linux_window_pump(CjguiLinuxWindow *window, CjguiLinuxWindowEvent *out
             *out_count = 0;
         }
         return CJGUI_LINUX_WINDOW_INVALID;
+    }
+    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_PUMP window=%p pending=%u timeout=%u\n", (void *)window,
+                window->pending_count, timeout_ms);
+        fflush(stderr);
     }
     if (out_events == NULL) {
         max_events = 0;   // 没有缓冲就没有容量
@@ -1567,6 +1599,15 @@ int cjgui_linux_window_close_requested(CjguiLinuxWindow *window) {
     return window->close_requested != 0 ? 1 : 0;
 }
 
+void cjgui_linux_window_request_close(CjguiLinuxWindow *window) {
+    if (window == NULL) {
+        return;
+    }
+    // 只关闭这个窗口：核心在这之后 destroy 本会话，窗口资源按既有销毁顺序
+    // 释放。进程级 application-stop 属于 stopApplicationLoop，不属于某窗口。
+    window->close_requested = 1;
+}
+
 int cjgui_linux_window_take_input_overflow(CjguiLinuxWindow *window) {
     if (window == NULL) {
         return 0;
@@ -1591,6 +1632,125 @@ void cjgui_linux_window_wake(CjguiLinuxWindow *window) {
         written = write(window->wake_write_fd, &byte, 1);
     } while (written < 0 && errno == EINTR);
     (void)written;
+}
+
+static uint64_t cjgui_linux_wait_now_ns(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+// Wait on the same two descriptors as the pump, but never take an event. X11
+// readability returns to the caller so the normal pump keeps event order; a
+// wake byte is drained here because the revision, not the byte, is the signal.
+int cjgui_linux_window_wait_ready(CjguiLinuxWindow *window, uint64_t deadline_ns, uint64_t *out_idle_ns) {
+    if (out_idle_ns != NULL) *out_idle_ns = 0u;
+    if (window == NULL || window->display == NULL || window->wake_read_fd < 0) return 0;
+    const uint64_t started = cjgui_linux_wait_now_ns();
+    int result = 0;
+    for (;;) {
+        // Xlib may already hold events read from the fd; do not sleep past them.
+        if (XPending(window->display) > 0) { result = 1; break; }
+        const uint64_t now = cjgui_linux_wait_now_ns();
+        if (now >= deadline_ns) { result = 0; break; }
+        uint64_t remaining_ns = deadline_ns - now;
+        uint64_t remaining_ms = remaining_ns / 1000000u;
+        if ((remaining_ns % 1000000u) != 0u) remaining_ms += 1u;
+        int wait_ms = (remaining_ms > 2147483647u) ? 2147483647 : (int)remaining_ms;
+
+        struct pollfd fds[2];
+        fds[0].fd = ConnectionNumber(window->display);
+        fds[0].events = POLLIN;
+        fds[0].revents = 0;
+        fds[1].fd = window->wake_read_fd;
+        fds[1].events = POLLIN;
+        fds[1].revents = 0;
+
+        int ready;
+        do {
+            ready = poll(fds, 2, wait_ms);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0) { result = -1; break; }
+        if (ready == 0) { continue; }
+        if ((fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) { result = -1; break; }
+        if ((fds[0].revents & POLLIN) != 0) { result = 1; break; }
+        if ((fds[1].revents & POLLIN) != 0) {
+            cjgui_linux_drain_wake_pipe(window);
+            result = 2;
+            break;
+        }
+    }
+    if (out_idle_ns != NULL) *out_idle_ns = cjgui_linux_wait_now_ns() - started;
+    return result;
+}
+
+#define CJGUI_LINUX_WAIT_MULTI_CAP 16u
+
+// One poll covers every registered window's X11 connection and wake pipe.
+// Unlike waiting on each window in turn, a quiet window cannot hide a ready
+// one behind its own timeout. Returns 1 (X11 ready), 2 (wake byte), 0
+// (deadline or no live window), -1 (X11 connection error).
+int cjgui_linux_window_wait_ready_multi(CjguiLinuxWindow **windows, uint32_t count,
+                                        uint64_t deadline_ns, uint64_t *out_idle_ns) {
+    if (out_idle_ns != NULL) *out_idle_ns = 0u;
+    if (windows == NULL || count == 0u) return 0;
+    if (count > CJGUI_LINUX_WAIT_MULTI_CAP) count = CJGUI_LINUX_WAIT_MULTI_CAP;
+    const uint64_t started = cjgui_linux_wait_now_ns();
+    int result = 0;
+    for (;;) {
+        uint32_t live = 0u;
+        CjguiLinuxWindow *active[CJGUI_LINUX_WAIT_MULTI_CAP];
+        int already_ready = 0;
+        for (uint32_t i = 0u; i < count; i += 1u) {
+            CjguiLinuxWindow *window = windows[i];
+            if (window == NULL || window->display == NULL || window->wake_read_fd < 0) continue;
+            // Xlib may already hold events read from the fd; do not sleep past them.
+            if (XPending(window->display) > 0) { result = 1; already_ready = 1; break; }
+            active[live] = window;
+            live += 1u;
+        }
+        if (already_ready) break;
+        if (live == 0u) break;
+        const uint64_t now = cjgui_linux_wait_now_ns();
+        if (now >= deadline_ns) break;
+        uint64_t remaining_ns = deadline_ns - now;
+        uint64_t remaining_ms = remaining_ns / 1000000u;
+        if ((remaining_ns % 1000000u) != 0u) remaining_ms += 1u;
+        int wait_ms = (remaining_ms > 2147483647u) ? 2147483647 : (int)remaining_ms;
+
+        struct pollfd fds[CJGUI_LINUX_WAIT_MULTI_CAP * 2u];
+        for (uint32_t i = 0u; i < live; i += 1u) {
+            fds[i].fd = ConnectionNumber(active[i]->display);
+            fds[i].events = POLLIN;
+            fds[i].revents = 0;
+            fds[live + i].fd = active[i]->wake_read_fd;
+            fds[live + i].events = POLLIN;
+            fds[live + i].revents = 0;
+        }
+        int ready;
+        do {
+            ready = poll(fds, (nfds_t)(live * 2u), wait_ms);
+        } while (ready < 0 && errno == EINTR);
+        if (ready < 0) { result = -1; break; }
+        if (ready == 0) { continue; }
+        int any_error = 0;
+        int any_x11 = 0;
+        int any_wake = 0;
+        for (uint32_t i = 0u; i < live; i += 1u) {
+            if ((fds[i].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) any_error = 1;
+            if ((fds[i].revents & POLLIN) != 0) any_x11 = 1;
+            if ((fds[live + i].revents & POLLIN) != 0) {
+                cjgui_linux_drain_wake_pipe(active[i]);
+                any_wake = 1;
+            }
+        }
+        if (any_error) { result = -1; break; }
+        if (any_x11) { result = 1; break; }
+        if (any_wake) { result = 2; break; }
+        // Only non-delivery events: keep waiting inside the same deadline.
+    }
+    if (out_idle_ns != NULL) *out_idle_ns = cjgui_linux_wait_now_ns() - started;
+    return result;
 }
 
 int cjgui_linux_window_set_title(CjguiLinuxWindow *window, const char *title) {
@@ -1628,20 +1788,12 @@ void cjgui_linux_window_set_ime_spot(CjguiLinuxWindow *window, double x, double 
         fflush(stderr);
     }
     if (window->xic == NULL || window->ime_focused == 0) return;
-    Window child = None;
-    int root_x = 0;
-    int root_y = 0;
-    int pixel_x = (int)(x * window->scale);
-    int pixel_y = (int)((y + height) * window->scale);
-    if (XTranslateCoordinates(window->display, window->window,
-                              DefaultRootWindow(window->display), pixel_x, pixel_y,
-                              &root_x, &root_y, &child) == 0) {
-        root_x = pixel_x;
-        root_y = pixel_y;
-    }
+    // ibus-x11 自己把 spot 从 client window 平移到 root（x11-ic 的
+    // XTranslateCoordinates）；这里再预翻译会让候选窗多加一次窗口原点，
+    // 滚动到下方字段后整窗落到屏幕外。XNSpotLocation 按窗口内像素发送。
     XPoint spot;
-    spot.x = (short)root_x;
-    spot.y = (short)root_y;
+    spot.x = (short)(int)(x * window->scale);
+    spot.y = (short)(int)((y + height) * window->scale);
     XVaNestedList preedit = XVaCreateNestedList(0, XNSpotLocation, &spot, NULL);
     if (preedit != NULL) {
         XSetICValues(window->xic, XNPreeditAttributes, preedit, NULL);

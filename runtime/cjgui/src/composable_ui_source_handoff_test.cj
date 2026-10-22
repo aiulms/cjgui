@@ -379,6 +379,22 @@ private func sourceHandoffMonotonicMicros(): UInt64 {
     return if (status == CJGUI_INTERNAL_RENDERER_OK) { micros } else { 0u64 }
 }
 
+// One refresh() is not a scene-established signal: when native range-text
+// preparation is in flight the owner turn legitimately returns false with a
+// prepared candidate and no failure. `pump(0)` is not a substitute here: with
+// no queued event it never calls refreshIfNeeded, so an already-requested
+// startup scene would never advance. Drive the public refresh entry each turn
+// until the candidate is actually accepted, under a bound.
+private func sourceHandoffDriveInitialAcceptance(window: CjguiComposableUiWindow): Bool {
+    let deadline = sourceHandoffMonotonicMicros() + 5000000u64
+    while (window.windowProgress().acceptedSceneVersion == 0 &&
+        sourceHandoffMonotonicMicros() < deadline) {
+        let _ = window.refreshIfNeeded()
+        sourceHandoffPump(window)
+    }
+    return window.windowProgress().acceptedSceneVersion > 0
+}
+
 private func sourceHandoffNativeSelection(window: CjguiComposableUiWindow): (Int32, UInt32, UInt32) {
     var start: UInt32 = 0
     var end: UInt32 = 0
@@ -3518,7 +3534,7 @@ private func runActualAXCommandDispatch(fault: UInt32, declared!: Bool = true,
             8802, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
         controller.attach(window, session)
         @Assert(window.start(), true)
-        @Assert(window.refresh(), true)
+        @Assert(sourceHandoffDriveInitialAcceptance(window), true)
         @Assert(window.focusAcceptedNodeById(8002), true)
         session.setSelection16(1, 4)
         let initial = window.requestTextSelectionRestore(8002, 8802,

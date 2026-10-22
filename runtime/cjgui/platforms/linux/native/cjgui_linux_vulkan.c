@@ -46,13 +46,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <stdint.h>
+#include <sys/mman.h>
 
 // ---------------------------------------------------------------------------
 // 编译期常量
 // ---------------------------------------------------------------------------
 
 #define CJGUI_VK_IN_FLIGHT 2u        // 在途帧数（契约要求固定 2）
-#define CJGUI_VK_UPLOAD_SLOTS 3u     // 图集上传 staging 环长
+#define CJGUI_VK_UPLOAD_SLOTS 3u     // 图集/图片上传 staging 环长
+#define CJGUI_VK_IMAGE_SLOTS CJGUI_LINUX_GPU_IMAGE_SLOTS
+#define CJGUI_VK_IMAGE_DESCRIPTOR_SETS 64u
 #define CJGUI_VK_VERTEX_MIN_BYTES (256u * 1024u)
 #define CJGUI_VK_PUSH_BYTES 16u      // vec2 viewport + float textured + float pad
 
@@ -192,6 +197,8 @@ typedef struct CjguiVkDrawRange {
     uint32_t firstVertex;
     uint32_t vertexCount;
     float textured;
+    // VK_NULL_HANDLE = 字形图集；否则为本 draw 专用的图片采样描述集。
+    VkDescriptorSet descriptor;
 } CjguiVkDrawRange;
 
 // 一个在途帧 slot：命令缓冲 / fence / image-available 信号量同一时点回收。
@@ -200,6 +207,10 @@ typedef struct CjguiVkFrame {
     VkFence fence;
     VkSemaphore imageAvailable;
     int fencePending;              // 已提交且 fence 尚未回收
+    int hasSubmitted;              // 本 slot 至少提交过一次
+    uint64_t submittedSerial;      // 该次提交对应的 frameSerial
+    int hasCompleted;              // submittedSerial 的 fence 已实际等到
+    uint64_t completedSerial;      // 已由真实 fence 证明完成的提交序号
 
     VkBuffer vertexBuffer;         // host-visible，持久映射，按需增长
     VkDeviceMemory vertexMemory;
@@ -216,7 +227,9 @@ typedef struct CjguiVkFrame {
     uint32_t drawCount;
 } CjguiVkFrame;
 
-// 图集上传 staging slot：持久映射 + 自己的 fence。
+// 上传 staging slot：持久映射 + 自己的 fence。fence 会随 slot 复用，
+// submittedSerial/completedSerial 是该 fence 当前那次提交的全局序号；
+// 只有 completedSerial 覆盖某个上传序号，才证明那次上传已完成。
 typedef struct CjguiVkUpload {
     VkCommandBuffer cmd;
     VkFence fence;
@@ -226,7 +239,31 @@ typedef struct CjguiVkUpload {
     VkDeviceSize bytes;
     int coherent;
     int fencePending;
+    uint64_t submittedSerial;
+    uint64_t completedSerial;
 } CjguiVkUpload;
+
+// 一个已上传的图片纹理代。staging 在它自己的上传提交完成后即可单独释放；
+// image/view/descriptor 要等最后一次实际绘制提交完成。旧代进入 retire 链后
+// 只有上传与最后使用都有具体提交证明才释放。
+typedef struct CjguiVkImageTexture {
+    VkImage image;
+    VkDeviceMemory memory;
+    VkImageView view;
+    VkDescriptorSet descriptor;
+    VkBuffer staging;
+    VkDeviceMemory stagingMemory;
+    void *stagingMapped;
+    VkDeviceSize stagingBytes;
+    uint32_t width;
+    uint32_t height;
+    uint32_t uploadSlot;
+    uint64_t uploadSerial;
+    uint32_t lastUseSlot;
+    uint64_t lastUseSerial;
+    int hasLastUse;
+    struct CjguiVkImageTexture *nextRetired;
+} CjguiVkImageTexture;
 
 typedef struct CjguiVkSwapchain {
     VkSwapchainKHR handle;
@@ -265,6 +302,15 @@ struct CjguiLinuxGpu {
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSets[CJGUI_VK_IN_FLIGHT];
+    VkDescriptorPool imageDescriptorPool;
+
+    CjguiVkImageTexture *imageSlots[CJGUI_VK_IMAGE_SLOTS];
+    CjguiVkImageTexture *retiredImages;
+    uint64_t imageRetireCount;
+    uint64_t imageReclaimCount;
+    uint64_t lastReclaimSerial;
+    uint64_t imageStagingBytes;
+    uint64_t imageStagingReleaseCount;
 
     VkSampler sampler;
     VkImage atlasImage;
@@ -278,6 +324,7 @@ struct CjguiLinuxGpu {
     CjguiVkFrame frames[CJGUI_VK_IN_FLIGHT];
     CjguiVkUpload uploads[CJGUI_VK_UPLOAD_SLOTS];
     uint32_t uploadNext;
+    uint64_t uploadSerial;        // 全局上传提交序号；fence 复用时仍单调递增
 
     VkCommandBuffer drainCmd;
     VkFence drainFence;
@@ -287,12 +334,45 @@ struct CjguiLinuxGpu {
     double windowScale;
 
     uint64_t frameSerial;          // begin_frame 次数（用于 slot 轮转）
+    uint64_t presentCount;         // 成功 vkQueuePresentKHR 次数（ABI trace 收尾报告）
     uint64_t frameIndex;           // 成功 present 的次数
     int frameActive;
     uint32_t currentSlot;
     uint32_t currentImage;
     float clearColor[4];
 };
+
+// CPU 顶点数组走带尾页保护的匿名映射，而不是 malloc：越过数据末端的写入会立刻
+// SIGSEGV。这只证明当前布局下该次运行没有触发该保护，**不**证明原 malloc 布局
+// 中的堆损坏已经归因：glibc 的 (!prev) 既可能来自本数组的重复释放/越界，也可能
+// 来自相邻 chunk 的其它生命周期问题。brk 探针只排除了 top-chunk 裁剪，不能推出
+// “数组本身无越界”。该映射暂按缓解措施保留，根因结论须由专门反例给出
+// （2026-10-22）。
+static void *cjgui_vk_vertex_map(size_t bytes)
+{
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) page = 4096;
+    size_t dataLen = ((bytes + (size_t)page - 1u) / (size_t)page) * (size_t)page;
+    size_t total = dataLen + (size_t)page;
+    void *base = mmap(NULL, total, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (base == MAP_FAILED) return NULL;
+    // 数据末端紧贴保护页：向右对齐，任何越过 bytes 的写入都落在 PROT_NONE 上。
+    void *data = (char *)base + (dataLen - bytes);
+    if (mprotect((char *)base + dataLen, (size_t)page, PROT_NONE) != 0) {
+        munmap(base, total);
+        return NULL;
+    }
+    return data;
+}
+
+static void cjgui_vk_vertex_unmap(void *data, size_t bytes)
+{
+    if (data == NULL || bytes == 0u) return;
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) page = 4096;
+    size_t dataLen = ((bytes + (size_t)page - 1u) / (size_t)page) * (size_t)page;
+    munmap((char *)data - (dataLen - bytes), dataLen + (size_t)page);
+}
 
 // ---------------------------------------------------------------------------
 // 诊断 / 错误
@@ -866,6 +946,8 @@ static int cjgui_vk_drain_queue(CjguiLinuxGpu *gpu)
         r = vkResetFences(gpu->device, 1, &f->fence);
         if (r != VK_SUCCESS) return cjgui_vk_fail("vkResetFences(frame)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
         f->fencePending = 0;
+        f->hasCompleted = f->hasSubmitted;
+        f->completedSerial = f->submittedSerial;
     }
 
     if (gpu->drainCmd == VK_NULL_HANDLE || gpu->drainFence == VK_NULL_HANDLE) {
@@ -1193,6 +1275,19 @@ static int cjgui_vk_create_atlas(CjguiLinuxGpu *gpu)
 // 上传一段 RGBA 到图集。内部给 upload slot 用，也可被 upload 2x2 白纹素调用。
 static int cjgui_vk_atlas_upload(CjguiLinuxGpu *gpu, int x, int y, int width, int height,
                                  const uint8_t *rgba);
+
+// 回收上传与最后使用都有具体提交证明的图片纹理代。维护点只轮询真实 fence，
+// 不等待设备，也不依赖额外绘制帧。
+static void cjgui_vk_reclaim_images(CjguiLinuxGpu *gpu);
+static void cjgui_vk_image_texture_destroy(CjguiLinuxGpu *gpu, CjguiVkImageTexture *texture);
+static int cjgui_vk_image_trace_enabled(void);
+static CjguiVkUpload *cjgui_vk_claim_upload_slot(CjguiLinuxGpu *gpu);
+static void cjgui_vk_upload_note_completed(CjguiVkUpload *u);
+static void cjgui_vk_release_texture_staging(CjguiLinuxGpu *gpu,
+                                             CjguiVkImageTexture *texture);
+void cjgui_linux_gpu_pump_image_resources(CjguiLinuxGpu *gpu);
+static int cjgui_vk_texture_upload_complete(const CjguiLinuxGpu *gpu,
+                                             const CjguiVkImageTexture *texture);
 
 // ---------------------------------------------------------------------------
 // 顶点缓冲
@@ -1552,6 +1647,23 @@ static int cjgui_vk_create_descriptor_sets(CjguiLinuxGpu *gpu)
         write.pImageInfo = &image;
         vkUpdateDescriptorSets(gpu->device, 1, &write, 0, NULL);
     }
+
+    // 图片采样描述集按纹理代分配；允许显式释放，使旧代能在对应 fence
+    // 完成后归还池，而不是无限增长或提前复用正在被在途帧读取的集合。
+    VkDescriptorPoolSize imageSize;
+    memset(&imageSize, 0, sizeof imageSize);
+    imageSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    imageSize.descriptorCount = CJGUI_VK_IMAGE_DESCRIPTOR_SETS;
+
+    VkDescriptorPoolCreateInfo imagePci;
+    memset(&imagePci, 0, sizeof imagePci);
+    imagePci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    imagePci.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    imagePci.maxSets = CJGUI_VK_IMAGE_DESCRIPTOR_SETS;
+    imagePci.poolSizeCount = 1;
+    imagePci.pPoolSizes = &imageSize;
+    r = vkCreateDescriptorPool(gpu->device, &imagePci, NULL, &gpu->imageDescriptorPool);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkCreateDescriptorPool(image)", r, CJGUI_LINUX_GPU_PIPELINE_FAILED);
     return CJGUI_LINUX_GPU_OK;
 }
 
@@ -1559,11 +1671,34 @@ static int cjgui_vk_create_descriptor_sets(CjguiLinuxGpu *gpu)
 static void cjgui_vk_teardown(CjguiLinuxGpu *gpu)
 {
     if (gpu == NULL) return;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_VK_TEARDOWN gpu=%p f0=%p/%u f1=%p/%u draws0=%p draws1=%p\n",
+                (void *)gpu, (void *)gpu->frames[0].cpuVerts, gpu->frames[0].cpuCapacity,
+                (void *)gpu->frames[1].cpuVerts, gpu->frames[1].cpuCapacity,
+                (void *)gpu->frames[0].draws, (void *)gpu->frames[1].draws);
+        fflush(stderr);
+    }
 
     if (gpu->device != VK_NULL_HANDLE) {
         // 契约：vkDeviceWaitIdle 只在销毁序列里调用一次。
         VkResult r = vkDeviceWaitIdle(gpu->device);
         if (r != VK_SUCCESS) cjgui_vk_fail("vkDeviceWaitIdle", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+    }
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_VK_PRESENT gpu=%p presents=%llu\n", (void *)gpu,
+                (unsigned long long)gpu->presentCount);
+        fflush(stderr);
+    }
+    if (cjgui_vk_image_trace_enabled()) {
+        fprintf(stderr,
+                "CJGUI_LINUX_GPU image_usage active_bytes=%llu retired_bytes=%llu "
+                "staging_bytes=%llu retire_count=%llu reclaim_count=%llu staging_releases=%llu\n",
+                (unsigned long long)cjgui_linux_gpu_image_texture_bytes(gpu),
+                (unsigned long long)cjgui_linux_gpu_image_retired_bytes(gpu),
+                (unsigned long long)cjgui_linux_gpu_image_staging_bytes(gpu),
+                (unsigned long long)cjgui_linux_gpu_image_retire_count(gpu),
+                (unsigned long long)cjgui_linux_gpu_image_reclaim_count(gpu),
+                (unsigned long long)cjgui_linux_gpu_image_staging_release_count(gpu));
     }
 
     if (gpu->device != VK_NULL_HANDLE) {
@@ -1574,8 +1709,11 @@ static void cjgui_vk_teardown(CjguiLinuxGpu *gpu)
             cjgui_vk_destroy_mapped_buffer(gpu, &f->vertexBuffer, &f->vertexMemory, &f->vertexMapped);
             if (f->imageAvailable != VK_NULL_HANDLE) vkDestroySemaphore(gpu->device, f->imageAvailable, NULL);
             if (f->fence != VK_NULL_HANDLE) vkDestroyFence(gpu->device, f->fence, NULL);
-            free(f->cpuVerts);
+            cjgui_vk_vertex_unmap(f->cpuVerts, sizeof(CjguiLinuxGpuVertex) * (size_t)f->cpuCapacity);
+            f->cpuVerts = NULL;
+            f->cpuCapacity = 0u;
             free(f->draws);
+            f->draws = NULL;
         }
         for (uint32_t i = 0; i < CJGUI_VK_UPLOAD_SLOTS; ++i) {
             CjguiVkUpload *u = &gpu->uploads[i];
@@ -1583,6 +1721,21 @@ static void cjgui_vk_teardown(CjguiLinuxGpu *gpu)
             if (u->fence != VK_NULL_HANDLE) vkDestroyFence(gpu->device, u->fence, NULL);
         }
         if (gpu->drainFence != VK_NULL_HANDLE) vkDestroyFence(gpu->device, gpu->drainFence, NULL);
+        for (uint32_t i = 0; i < CJGUI_VK_IMAGE_SLOTS; ++i) {
+            if (gpu->imageSlots[i] != NULL) {
+                cjgui_vk_image_texture_destroy(gpu, gpu->imageSlots[i]);
+                gpu->imageSlots[i] = NULL;
+            }
+        }
+        while (gpu->retiredImages != NULL) {
+            CjguiVkImageTexture *texture = gpu->retiredImages;
+            gpu->retiredImages = texture->nextRetired;
+            cjgui_vk_image_texture_destroy(gpu, texture);
+        }
+        if (gpu->imageDescriptorPool != VK_NULL_HANDLE) {
+            vkDestroyDescriptorPool(gpu->device, gpu->imageDescriptorPool, NULL);
+            gpu->imageDescriptorPool = VK_NULL_HANDLE;
+        }
         if (gpu->pipeline != VK_NULL_HANDLE) vkDestroyPipeline(gpu->device, gpu->pipeline, NULL);
         if (gpu->pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(gpu->device, gpu->pipelineLayout, NULL);
         if (gpu->descriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(gpu->device, gpu->descriptorPool, NULL);
@@ -1760,6 +1913,10 @@ fail:
 void cjgui_linux_gpu_destroy(CjguiLinuxGpu *gpu)
 {
     if (gpu == NULL) return;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_VK_DESTROY gpu=%p\n", (void *)gpu);
+        fflush(stderr);
+    }
     cjgui_vk_teardown(gpu);
     free(gpu);
 }
@@ -1814,7 +1971,16 @@ int cjgui_linux_gpu_begin_frame(CjguiLinuxGpu *gpu, const float clear[4])
             return cjgui_vk_fail("vkResetFences(slot)", rr, CJGUI_LINUX_GPU_DEVICE_FAILED);
         }
         f->fencePending = 0;
+        // 只有这里等到 fence，才把该 slot 的提交记成“真实完成”。帧序号本身
+        // 不是完成证明：上传可能在上一帧提交之后、下一帧提交之前发生。
+        f->hasCompleted = f->hasSubmitted;
+        f->completedSerial = f->submittedSerial;
     }
+
+    // 统一维护图片资源：轮询各帧/上传 fence 的具体提交序号，释放已完成的
+    // staging，并回收上传与最后使用都有证明的纹理代。这里不需要额外绘制帧，
+    // 也不等待设备。
+    cjgui_linux_gpu_pump_image_resources(gpu);
 
     cjgui_vk_frame_reset_cpu_state(f);
 
@@ -1847,8 +2013,9 @@ int cjgui_linux_gpu_begin_frame(CjguiLinuxGpu *gpu, const float clear[4])
     return CJGUI_LINUX_GPU_OK;
 }
 
-int cjgui_linux_gpu_draw_triangles(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex *vertices,
-                                   uint32_t vertexCount)
+static int cjgui_vk_draw_triangles_internal(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex *vertices,
+                                            uint32_t vertexCount, VkDescriptorSet descriptor,
+                                            int forceTextured)
 {
     if (gpu == NULL || vertices == NULL) return CJGUI_LINUX_GPU_INVALID;
     if (vertexCount == 0u) return CJGUI_LINUX_GPU_OK;
@@ -1862,13 +2029,18 @@ int cjgui_linux_gpu_draw_triangles(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex
     if (f->vertexCount + vertexCount > f->cpuCapacity) {
         uint32_t want = f->cpuCapacity > 0u ? f->cpuCapacity : 4096u;
         while (want < f->vertexCount + vertexCount) want *= 2u;
-        CjguiLinuxGpuVertex *grown =
-            (CjguiLinuxGpuVertex *)realloc(f->cpuVerts, sizeof(CjguiLinuxGpuVertex) * (size_t)want);
+        size_t grownBytes = sizeof(CjguiLinuxGpuVertex) * (size_t)want;
+        CjguiLinuxGpuVertex *grown = (CjguiLinuxGpuVertex *)cjgui_vk_vertex_map(grownBytes);
         if (grown == NULL) {
             fprintf(stderr, "cjgui_linux_vulkan: out of memory growing CPU vertex array (%u -> %u)\n",
                     f->cpuCapacity, want);
             gpu->swapchainUsable = 0;
             return CJGUI_LINUX_GPU_DEVICE_FAILED;
+        }
+        if (f->cpuVerts != NULL && f->cpuCapacity > 0u) {
+            size_t oldBytes = sizeof(CjguiLinuxGpuVertex) * (size_t)f->cpuCapacity;
+            memcpy(grown, f->cpuVerts, oldBytes);
+            cjgui_vk_vertex_unmap(f->cpuVerts, oldBytes);
         }
         f->cpuVerts = grown;
         f->cpuCapacity = want;
@@ -1878,18 +2050,21 @@ int cjgui_linux_gpu_draw_triangles(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex
     // 纹理开关：几何整体指向左上角保留白色纹素时等价于"纯顶点色"，可跳过采样；
     // 契约的 draw_triangles 没有 textured 形参，所以这里按 UV 判定。
     const float whiteBound = (float)CJGUI_VK_WHITE_TEXEL_SIDE / (float)CJGUI_LINUX_ATLAS_SIDE;
-    float textured = 0.0f;
-    for (uint32_t i = 0; i < vertexCount; ++i) {
-        const CjguiLinuxGpuVertex *v = &vertices[i];
-        if (v->u > whiteBound || v->v > whiteBound) {
-            textured = 1.0f;
-            break;
+    float textured = forceTextured ? 1.0f : 0.0f;
+    if (descriptor == VK_NULL_HANDLE) {
+        for (uint32_t i = 0; i < vertexCount; ++i) {
+            const CjguiLinuxGpuVertex *v = &vertices[i];
+            if (v->u > whiteBound || v->v > whiteBound) {
+                textured = 1.0f;
+                break;
+            }
         }
     }
 
     if (f->drawCount > 0u) {
         CjguiVkDrawRange *last = &f->draws[f->drawCount - 1u];
         if (last->firstVertex + last->vertexCount == f->vertexCount &&
+            last->descriptor == descriptor &&
             ((last->textured > 0.5f) == (textured > 0.5f))) {
             last->vertexCount += vertexCount;
             f->vertexCount += vertexCount;
@@ -1911,9 +2086,25 @@ int cjgui_linux_gpu_draw_triangles(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex
     f->draws[f->drawCount].firstVertex = f->vertexCount;
     f->draws[f->drawCount].vertexCount = vertexCount;
     f->draws[f->drawCount].textured = textured;
+    f->draws[f->drawCount].descriptor = descriptor;
     f->drawCount += 1u;
     f->vertexCount += vertexCount;
     return CJGUI_LINUX_GPU_OK;
+}
+
+int cjgui_linux_gpu_draw_triangles(CjguiLinuxGpu *gpu, const CjguiLinuxGpuVertex *vertices,
+                                   uint32_t vertexCount)
+{
+    return cjgui_vk_draw_triangles_internal(gpu, vertices, vertexCount, VK_NULL_HANDLE, 0);
+}
+
+int cjgui_linux_gpu_draw_image_triangles(CjguiLinuxGpu *gpu, uint32_t slot,
+                                         const CjguiLinuxGpuVertex *vertices, uint32_t vertexCount)
+{
+    if (gpu == NULL || slot >= CJGUI_VK_IMAGE_SLOTS) return CJGUI_LINUX_GPU_INVALID;
+    CjguiVkImageTexture *texture = gpu->imageSlots[slot];
+    if (texture == NULL) return CJGUI_LINUX_GPU_INVALID;
+    return cjgui_vk_draw_triangles_internal(gpu, vertices, vertexCount, texture->descriptor, 1);
 }
 
 static int cjgui_vk_record_frame(CjguiLinuxGpu *gpu, CjguiVkFrame *f)
@@ -1966,8 +2157,9 @@ static int cjgui_vk_record_frame(CjguiLinuxGpu *gpu, CjguiVkFrame *f)
         vkCmdSetScissor(f->cmd, 0, 1, &scissor);
 
         vkCmdBindPipeline(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pipeline);
+        VkDescriptorSet boundDescriptor = gpu->descriptorSets[gpu->currentSlot];
         vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pipelineLayout, 0, 1,
-                                &gpu->descriptorSets[gpu->currentSlot], 0, NULL);
+                                &boundDescriptor, 0, NULL);
         VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(f->cmd, 0, 1, &f->vertexBuffer, &offset);
 
@@ -1976,6 +2168,14 @@ static int cjgui_vk_record_frame(CjguiLinuxGpu *gpu, CjguiVkFrame *f)
         push.viewportWidth = (float)gpu->swapchain.extent.width;
         push.viewportHeight = (float)gpu->swapchain.extent.height;
         for (uint32_t i = 0; i < f->drawCount; ++i) {
+            VkDescriptorSet wanted = f->draws[i].descriptor != VK_NULL_HANDLE
+                                         ? f->draws[i].descriptor
+                                         : gpu->descriptorSets[gpu->currentSlot];
+            if (wanted != boundDescriptor) {
+                vkCmdBindDescriptorSets(f->cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, gpu->pipelineLayout, 0, 1,
+                                        &wanted, 0, NULL);
+                boundDescriptor = wanted;
+            }
             push.textured = f->draws[i].textured;
             vkCmdPushConstants(f->cmd, gpu->pipelineLayout,
                                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -1988,6 +2188,39 @@ static int cjgui_vk_record_frame(CjguiLinuxGpu *gpu, CjguiVkFrame *f)
     r = vkEndCommandBuffer(f->cmd);
     if (r != VK_SUCCESS) return cjgui_vk_fail("vkEndCommandBuffer(frame)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
     return CJGUI_LINUX_GPU_OK;
+}
+
+// 只有提交成功的帧才把图片代记为“最后使用于该提交”。描述集与纹理代一一
+// 对应；图集描述集（VK_NULL_HANDLE）不算图片使用。
+static void cjgui_vk_note_frame_image_uses(CjguiLinuxGpu *gpu, CjguiVkFrame *f)
+{
+    for (uint32_t d = 0u; d < f->drawCount; d += 1u) {
+        VkDescriptorSet descriptor = f->draws[d].descriptor;
+        if (descriptor == VK_NULL_HANDLE) continue;
+        for (uint32_t slot = 0u; slot < CJGUI_VK_IMAGE_SLOTS; slot += 1u) {
+            CjguiVkImageTexture *texture = gpu->imageSlots[slot];
+            if (texture != NULL && texture->descriptor == descriptor) {
+                texture->hasLastUse = 1;
+                texture->lastUseSlot = (uint32_t)(f - gpu->frames);
+                texture->lastUseSerial = f->submittedSerial;
+            }
+        }
+    }
+}
+
+static void cjgui_vk_note_active_frame_use(CjguiLinuxGpu *gpu, CjguiVkImageTexture *texture)
+{
+    if (!gpu->frameActive || texture == NULL) return;
+    CjguiVkFrame *f = &gpu->frames[gpu->currentSlot];
+    for (uint32_t d = 0u; d < f->drawCount; d += 1u) {
+        if (f->draws[d].descriptor != VK_NULL_HANDLE &&
+            f->draws[d].descriptor == texture->descriptor) {
+            texture->hasLastUse = 1;
+            texture->lastUseSlot = gpu->currentSlot;
+            texture->lastUseSerial = gpu->frameSerial;
+            return;
+        }
+    }
 }
 
 int cjgui_linux_gpu_end_frame(CjguiLinuxGpu *gpu)
@@ -2044,6 +2277,11 @@ int cjgui_linux_gpu_end_frame(CjguiLinuxGpu *gpu)
         return cjgui_vk_fail("vkQueueSubmit(frame)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
     }
     f->fencePending = 1;
+    // 记录本次提交的真实序号；下一次复用该 slot 等到的 fence 完成的就是它。
+    f->submittedSerial = gpu->frameSerial;
+    f->hasSubmitted = 1;
+    // 提交已成功，才把本帧引用的图片代绑定到这个具体序号。
+    cjgui_vk_note_frame_image_uses(gpu, f);
 
     VkPresentInfoKHR pi;
     memset(&pi, 0, sizeof pi);
@@ -2059,11 +2297,13 @@ int cjgui_linux_gpu_end_frame(CjguiLinuxGpu *gpu)
 
     if (pr == VK_SUCCESS) {
         gpu->frameIndex += 1u;
+        gpu->presentCount += 1u;
         return CJGUI_LINUX_GPU_OK;
     }
     if (pr == VK_SUBOPTIMAL_KHR) {
         // 本帧已经呈现，交换链需要在随后重建。
         gpu->frameIndex += 1u;
+        gpu->presentCount += 1u;
         return CJGUI_LINUX_GPU_SUBOPTIMAL;
     }
     if (pr == VK_ERROR_OUT_OF_DATE_KHR) {
@@ -2094,34 +2334,8 @@ static int cjgui_vk_atlas_upload(CjguiLinuxGpu *gpu, int x, int y, int width, in
     if (width <= 0 || height <= 0) return CJGUI_LINUX_GPU_OK;
 
     // 选一个 staging slot：优先已回收的，全在途时只等最老的那个（不 vkQueueWaitIdle）。
-    CjguiVkUpload *u = NULL;
-    for (uint32_t i = 0; i < CJGUI_VK_UPLOAD_SLOTS; ++i) {
-        CjguiVkUpload *cand = &gpu->uploads[gpu->uploadNext];
-        gpu->uploadNext = (gpu->uploadNext + 1u) % CJGUI_VK_UPLOAD_SLOTS;
-        if (!cand->fencePending) {
-            u = cand;
-            break;
-        }
-        VkResult sr = vkGetFenceStatus(gpu->device, cand->fence);
-        if (sr == VK_SUCCESS) {
-            cand->fencePending = 0;
-            u = cand;
-            break;
-        }
-        if (sr != VK_NOT_READY) {
-            return cjgui_vk_fail("vkGetFenceStatus(upload)", sr, CJGUI_LINUX_GPU_DEVICE_FAILED);
-        }
-        u = cand;   // 兜底：全部都还在途时用最后看过的那个，下面会等待
-    }
-    if (u == NULL) u = &gpu->uploads[0];
-
-    if (u->fencePending) {
-        VkResult wr = vkWaitForFences(gpu->device, 1, &u->fence, VK_TRUE, UINT64_MAX);
-        if (wr != VK_SUCCESS) return cjgui_vk_fail("vkWaitForFences(upload)", wr, CJGUI_LINUX_GPU_DEVICE_FAILED);
-        VkResult rr = vkResetFences(gpu->device, 1, &u->fence);
-        if (rr != VK_SUCCESS) return cjgui_vk_fail("vkResetFences(upload)", rr, CJGUI_LINUX_GPU_DEVICE_FAILED);
-        u->fencePending = 0;
-    }
+    CjguiVkUpload *u = cjgui_vk_claim_upload_slot(gpu);
+    if (u == NULL) return cjgui_vk_fail("upload slot", VK_ERROR_UNKNOWN, CJGUI_LINUX_GPU_DEVICE_FAILED);
 
     // 持久映射内存：整块写进 staging，再由 GPU 拷进图集。
     uint8_t *dst = (uint8_t *)u->mapped;
@@ -2203,6 +2417,7 @@ static int cjgui_vk_atlas_upload(CjguiLinuxGpu *gpu, int x, int y, int width, in
     if (r != VK_SUCCESS) return cjgui_vk_fail("vkQueueSubmit(upload)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
     // 该命令缓冲已在同一队列上排在后续提交之前，布局跟踪随之更新。
     gpu->atlasLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    u->submittedSerial = ++gpu->uploadSerial;
     u->fencePending = 1;
     return CJGUI_LINUX_GPU_OK;
 }
@@ -2213,6 +2428,481 @@ int cjgui_linux_gpu_upload_atlas(CjguiLinuxGpu *gpu, int x, int y, int width, in
     if (gpu == NULL) return CJGUI_LINUX_GPU_INVALID;
     if (gpu->device == VK_NULL_HANDLE || gpu->atlasImage == VK_NULL_HANDLE) return CJGUI_LINUX_GPU_INVALID;
     return cjgui_vk_atlas_upload(gpu, x, y, width, height, rgba);
+}
+
+// ---------------------------------------------------------------------------
+// 图片纹理槽
+// ---------------------------------------------------------------------------
+
+static void cjgui_vk_image_texture_destroy(CjguiLinuxGpu *gpu, CjguiVkImageTexture *texture)
+{
+    if (gpu == NULL || texture == NULL) return;
+    if (texture->descriptor != VK_NULL_HANDLE && gpu->imageDescriptorPool != VK_NULL_HANDLE) {
+        (void)vkFreeDescriptorSets(gpu->device, gpu->imageDescriptorPool, 1, &texture->descriptor);
+    }
+    if (texture->view != VK_NULL_HANDLE) vkDestroyImageView(gpu->device, texture->view, NULL);
+    if (texture->image != VK_NULL_HANDLE) vkDestroyImage(gpu->device, texture->image, NULL);
+    if (texture->memory != VK_NULL_HANDLE) vkFreeMemory(gpu->device, texture->memory, NULL);
+    if (texture->stagingBytes > 0u) {
+        if (gpu->imageStagingBytes >= texture->stagingBytes) {
+            gpu->imageStagingBytes -= texture->stagingBytes;
+        }
+        texture->stagingBytes = 0u;
+    }
+    cjgui_vk_destroy_mapped_buffer(gpu, &texture->staging, &texture->stagingMemory, &texture->stagingMapped);
+    free(texture);
+}
+
+static int cjgui_vk_image_trace_enabled(void)
+{
+    return getenv("CJGUI_LINUX_GPU_TRACE") != NULL;
+}
+
+static void cjgui_vk_reclaim_images(CjguiLinuxGpu *gpu)
+{
+    if (gpu == NULL) return;
+    CjguiVkImageTexture **link = &gpu->retiredImages;
+    while (*link != NULL) {
+        CjguiVkImageTexture *texture = *link;
+        // image 的 upload 若尚未由具体上传序号证明完成，不能销毁；staging
+        // 也只在该证明成立后才释放。
+        if (!cjgui_vk_texture_upload_complete(gpu, texture)) {
+            link = &texture->nextRetired;
+            continue;
+        }
+        // 只有实际被绘制过才需要帧完成证明；证明必须来自提交该次绘制的
+        // 同一个 frame slot，并覆盖该次提交序号。slot/fence 复用后旧序号
+        // 仍按已记录的 completedSerial 比较，不会把新提交当旧代的证明。
+        if (texture->hasLastUse) {
+            if (texture->lastUseSlot >= CJGUI_VK_IN_FLIGHT) {
+                link = &texture->nextRetired;
+                continue;
+            }
+            CjguiVkFrame *useFrame = &gpu->frames[texture->lastUseSlot];
+            if (!useFrame->hasCompleted ||
+                useFrame->completedSerial < texture->lastUseSerial) {
+                link = &texture->nextRetired;
+                continue;
+            }
+        }
+        *link = texture->nextRetired;
+        gpu->imageReclaimCount += 1u;
+        gpu->lastReclaimSerial = texture->hasLastUse ? texture->lastUseSerial : 0u;
+        if (cjgui_vk_image_trace_enabled()) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_GPU reclaim_image size=%ux%u has_use=%d last_use_slot=%u "
+                    "last_use_serial=%llu upload_serial=%llu\n",
+                    texture->width, texture->height, texture->hasLastUse,
+                    texture->lastUseSlot,
+                    (unsigned long long)texture->lastUseSerial,
+                    (unsigned long long)texture->uploadSerial);
+        }
+        cjgui_vk_image_texture_destroy(gpu, texture);
+    }
+}
+
+// 图片资源维护点：只轮询真实 fence，不等待设备。上传 fence 覆盖具体上传序号；
+// 帧 fence 覆盖具体 frame 提交序号。即使 slot/fence 已复用，已完成序号仍可
+// 用来证明旧代的上传/最后使用。
+void cjgui_linux_gpu_pump_image_resources(CjguiLinuxGpu *gpu)
+{
+    if (gpu == NULL || gpu->device == VK_NULL_HANDLE) return;
+
+    for (uint32_t i = 0u; i < CJGUI_VK_IN_FLIGHT; i += 1u) {
+        CjguiVkFrame *f = &gpu->frames[i];
+        if (!f->fencePending) continue;
+        VkResult r = vkGetFenceStatus(gpu->device, f->fence);
+        if (r == VK_SUCCESS) {
+            if (f->submittedSerial > f->completedSerial) {
+                f->completedSerial = f->submittedSerial;
+            }
+            f->hasCompleted = 1;
+            f->fencePending = 0;   // 提交路径复用前会自行 reset
+        } else if (r != VK_NOT_READY) {
+            fprintf(stderr, "cjgui_linux_vulkan: vkGetFenceStatus(frame) failed (%d)\n", (int)r);
+        }
+    }
+
+    for (uint32_t i = 0u; i < CJGUI_VK_UPLOAD_SLOTS; i += 1u) {
+        CjguiVkUpload *u = &gpu->uploads[i];
+        if (!u->fencePending) continue;
+        VkResult r = vkGetFenceStatus(gpu->device, u->fence);
+        if (r == VK_SUCCESS) {
+            cjgui_vk_upload_note_completed(u);
+        } else if (r != VK_NOT_READY) {
+            fprintf(stderr, "cjgui_linux_vulkan: vkGetFenceStatus(upload) failed (%d)\n", (int)r);
+        }
+    }
+
+    for (uint32_t i = 0u; i < CJGUI_VK_IMAGE_SLOTS; i += 1u) {
+        cjgui_vk_release_texture_staging(gpu, gpu->imageSlots[i]);
+    }
+    for (CjguiVkImageTexture *texture = gpu->retiredImages; texture != NULL;
+         texture = texture->nextRetired) {
+        cjgui_vk_release_texture_staging(gpu, texture);
+    }
+    cjgui_vk_reclaim_images(gpu);
+}
+
+static void cjgui_vk_upload_note_completed(CjguiVkUpload *u)
+{
+    if (u->submittedSerial > u->completedSerial) u->completedSerial = u->submittedSerial;
+    u->fencePending = 0;
+}
+
+static CjguiVkUpload *cjgui_vk_claim_upload_slot(CjguiLinuxGpu *gpu)
+{
+    // 优先已回收的；全在途时只等最老的一个（与图集上传同一策略，不等待设备）。
+    CjguiVkUpload *chosen = NULL;
+    for (uint32_t i = 0; i < CJGUI_VK_UPLOAD_SLOTS; ++i) {
+        CjguiVkUpload *cand = &gpu->uploads[gpu->uploadNext];
+        gpu->uploadNext = (gpu->uploadNext + 1u) % CJGUI_VK_UPLOAD_SLOTS;
+        if (!cand->fencePending) {
+            chosen = cand;
+            break;
+        }
+        VkResult sr = vkGetFenceStatus(gpu->device, cand->fence);
+        if (sr == VK_SUCCESS) {
+            cjgui_vk_upload_note_completed(cand);
+            chosen = cand;
+            break;
+        }
+        if (sr != VK_NOT_READY) return NULL;
+        chosen = cand;
+    }
+    if (chosen == NULL) chosen = &gpu->uploads[0];
+    if (chosen->fencePending) {
+        VkResult wr = vkWaitForFences(gpu->device, 1, &chosen->fence, VK_TRUE, UINT64_MAX);
+        if (wr != VK_SUCCESS) return NULL;
+        VkResult rr = vkResetFences(gpu->device, 1, &chosen->fence);
+        if (rr != VK_SUCCESS) return NULL;
+        cjgui_vk_upload_note_completed(chosen);
+    }
+    return chosen;
+}
+
+// 某纹理的上传提交是否已由对应 slot 的真实 fence 证明完成。slot 会复用，
+// 所以比较的是该次上传的全局序号，而不是“fence 现在是否 signaled”。
+static int cjgui_vk_texture_upload_complete(const CjguiLinuxGpu *gpu,
+                                             const CjguiVkImageTexture *texture)
+{
+    if (gpu == NULL || texture == NULL || texture->uploadSerial == 0u) return 0;
+    if (texture->uploadSlot >= CJGUI_VK_UPLOAD_SLOTS) return 0;
+    return gpu->uploads[texture->uploadSlot].completedSerial >= texture->uploadSerial;
+}
+
+static void cjgui_vk_release_texture_staging(CjguiLinuxGpu *gpu, CjguiVkImageTexture *texture)
+{
+    if (gpu == NULL || texture == NULL || texture->staging == VK_NULL_HANDLE) return;
+    if (!cjgui_vk_texture_upload_complete(gpu, texture)) return;
+    uint64_t bytes = (uint64_t)texture->stagingBytes;
+    texture->stagingBytes = 0u;
+    if (gpu->imageStagingBytes >= bytes) gpu->imageStagingBytes -= bytes;
+    gpu->imageStagingReleaseCount += 1u;
+    if (cjgui_vk_image_trace_enabled()) {
+        fprintf(stderr,
+                "CJGUI_LINUX_GPU release_staging size=%ux%u bytes=%llu upload_serial=%llu "
+                "completed_serial=%llu\n",
+                texture->width, texture->height, (unsigned long long)bytes,
+                (unsigned long long)texture->uploadSerial,
+                (unsigned long long)gpu->uploads[texture->uploadSlot].completedSerial);
+    }
+    cjgui_vk_destroy_mapped_buffer(gpu, &texture->staging, &texture->stagingMemory,
+                                   &texture->stagingMapped);
+}
+
+static int cjgui_vk_image_submit(CjguiLinuxGpu *gpu, CjguiVkImageTexture *texture,
+                                 uint32_t width, uint32_t height, const uint8_t *rgba)
+{
+    VkDeviceSize bytes = (VkDeviceSize)width * (VkDeviceSize)height * 4u;
+    int coherent = 0;
+    int st = cjgui_vk_create_mapped_buffer(gpu, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                           "vkCreateBuffer(image staging)", &texture->staging,
+                                           &texture->stagingMemory, &texture->stagingMapped, &coherent);
+    if (st != CJGUI_LINUX_GPU_OK) return st;
+    texture->stagingBytes = bytes;
+    gpu->imageStagingBytes += (uint64_t)bytes;
+    memcpy(texture->stagingMapped, rgba, (size_t)bytes);
+    cjgui_vk_flush_range(gpu, texture->stagingMemory, 0, bytes, coherent);
+
+    CjguiVkUpload *u = cjgui_vk_claim_upload_slot(gpu);
+    if (u == NULL) return cjgui_vk_fail("upload slot", VK_ERROR_UNKNOWN, CJGUI_LINUX_GPU_DEVICE_FAILED);
+
+    VkResult r = vkResetCommandBuffer(u->cmd, 0);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkResetCommandBuffer(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+    VkCommandBufferBeginInfo bi;
+    memset(&bi, 0, sizeof bi);
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    r = vkBeginCommandBuffer(u->cmd, &bi);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkBeginCommandBuffer(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+
+    VkImageMemoryBarrier barrier;
+    memset(&barrier, 0, sizeof barrier);
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = texture->image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    vkCmdPipelineBarrier(u->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         0, 0, NULL, 0, NULL, 1, &barrier);
+
+    VkBufferImageCopy region;
+    memset(&region, 0, sizeof region);
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent.width = width;
+    region.imageExtent.height = height;
+    region.imageExtent.depth = 1;
+    vkCmdCopyBufferToImage(u->cmd, texture->staging, texture->image,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    vkCmdPipelineBarrier(u->cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         0, 0, NULL, 0, NULL, 1, &barrier);
+
+    r = vkEndCommandBuffer(u->cmd);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkEndCommandBuffer(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+
+    VkSubmitInfo si;
+    memset(&si, 0, sizeof si);
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &u->cmd;
+    r = vkResetFences(gpu->device, 1, &u->fence);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkResetFences(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+    r = vkQueueSubmit(gpu->queue, 1, &si, u->fence);
+    if (r != VK_SUCCESS) return cjgui_vk_fail("vkQueueSubmit(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+    // 把这次上传绑定到具体提交序号：slot/fence 之后会复用，只有该序号被
+    // completedSerial 覆盖，才能释放本代 staging 或销毁其 image。
+    u->submittedSerial = ++gpu->uploadSerial;
+    u->fencePending = 1;
+    texture->uploadSlot = (uint32_t)(u - gpu->uploads);
+    texture->uploadSerial = u->submittedSerial;
+    return CJGUI_LINUX_GPU_OK;
+}
+
+static CjguiVkImageTexture *cjgui_vk_create_image_texture(CjguiLinuxGpu *gpu, uint32_t width,
+                                                          uint32_t height, const uint8_t *rgba,
+                                                          int *outStatus)
+{
+    if (outStatus) *outStatus = CJGUI_LINUX_GPU_DEVICE_FAILED;
+    CjguiVkImageTexture *texture = (CjguiVkImageTexture *)calloc(1, sizeof(CjguiVkImageTexture));
+    if (texture == NULL) return NULL;
+    texture->width = width;
+    texture->height = height;
+
+    VkImageCreateInfo ici;
+    memset(&ici, 0, sizeof ici);
+    ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ici.imageType = VK_IMAGE_TYPE_2D;
+    ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+    ici.extent.width = width;
+    ici.extent.height = height;
+    ici.extent.depth = 1;
+    ici.mipLevels = 1;
+    ici.arrayLayers = 1;
+    ici.samples = VK_SAMPLE_COUNT_1_BIT;
+    ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+    ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkResult r = vkCreateImage(gpu->device, &ici, NULL, &texture->image);
+    if (r != VK_SUCCESS) {
+        cjgui_vk_fail("vkCreateImage(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(gpu->device, texture->image, &req);
+    uint32_t typeIndex = 0;
+    if (cjgui_vk_find_memory_type(gpu, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                  0u, &typeIndex) != 0 &&
+        cjgui_vk_find_memory_type(gpu, req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
+                                  0u, &typeIndex) != 0) {
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+    VkMemoryAllocateInfo mai;
+    memset(&mai, 0, sizeof mai);
+    mai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mai.allocationSize = req.size;
+    mai.memoryTypeIndex = typeIndex;
+    r = vkAllocateMemory(gpu->device, &mai, NULL, &texture->memory);
+    if (r != VK_SUCCESS) {
+        cjgui_vk_fail("vkAllocateMemory(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+    r = vkBindImageMemory(gpu->device, texture->image, texture->memory, 0);
+    if (r != VK_SUCCESS) {
+        cjgui_vk_fail("vkBindImageMemory(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+
+    VkImageViewCreateInfo vci;
+    memset(&vci, 0, sizeof vci);
+    vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vci.image = texture->image;
+    vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vci.subresourceRange.levelCount = 1;
+    vci.subresourceRange.layerCount = 1;
+    r = vkCreateImageView(gpu->device, &vci, NULL, &texture->view);
+    if (r != VK_SUCCESS) {
+        cjgui_vk_fail("vkCreateImageView(image)", r, CJGUI_LINUX_GPU_DEVICE_FAILED);
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+
+    // 这里没有“覆盖退休点”的 fence 完成信息（上传点在帧外，frameSerial 只能
+    // 说明提交过哪些帧），不能借此回收旧代。回收统一放在 begin_frame 等到真实
+    // 提交 fence 之后；池 64 套对 16 个活跃槽 + 每帧回收量足够。
+    VkDescriptorSetAllocateInfo ai;
+    memset(&ai, 0, sizeof ai);
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = gpu->imageDescriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &gpu->descriptorSetLayout;
+    r = vkAllocateDescriptorSets(gpu->device, &ai, &texture->descriptor);
+    if (r != VK_SUCCESS) {
+        cjgui_vk_fail("vkAllocateDescriptorSets(image)", r, CJGUI_LINUX_GPU_PIPELINE_FAILED);
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+    VkDescriptorImageInfo imageInfo;
+    memset(&imageInfo, 0, sizeof imageInfo);
+    imageInfo.sampler = gpu->sampler;
+    imageInfo.imageView = texture->view;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    VkWriteDescriptorSet write;
+    memset(&write, 0, sizeof write);
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = texture->descriptor;
+    write.dstBinding = 0;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.pImageInfo = &imageInfo;
+    vkUpdateDescriptorSets(gpu->device, 1, &write, 0, NULL);
+
+    int submit = cjgui_vk_image_submit(gpu, texture, width, height, rgba);
+    if (submit != CJGUI_LINUX_GPU_OK) {
+        cjgui_vk_image_texture_destroy(gpu, texture);
+        return NULL;
+    }
+    if (outStatus) *outStatus = CJGUI_LINUX_GPU_OK;
+    return texture;
+}
+
+int cjgui_linux_gpu_upload_image(CjguiLinuxGpu *gpu, uint32_t slot, uint32_t width, uint32_t height,
+                                 const uint8_t *rgba)
+{
+    if (gpu == NULL || gpu->device == VK_NULL_HANDLE || rgba == NULL) return CJGUI_LINUX_GPU_INVALID;
+    if (slot >= CJGUI_VK_IMAGE_SLOTS || width == 0u || height == 0u) return CJGUI_LINUX_GPU_INVALID;
+    if (gpu->frameActive) {
+        fprintf(stderr, "cjgui_linux_vulkan: image upload inside a frame\n");
+        return CJGUI_LINUX_GPU_INVALID;
+    }
+    int status = CJGUI_LINUX_GPU_DEVICE_FAILED;
+    CjguiVkImageTexture *texture = cjgui_vk_create_image_texture(gpu, width, height, rgba, &status);
+    if (texture == NULL) return status;
+    CjguiVkImageTexture *previous = gpu->imageSlots[slot];
+    if (previous != NULL) {
+        previous->nextRetired = gpu->retiredImages;
+        gpu->retiredImages = previous;
+        gpu->imageRetireCount += 1u;
+        if (cjgui_vk_image_trace_enabled()) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_GPU retire_image slot=%u size=%ux%u has_use=%d "
+                    "last_use_serial=%llu upload_serial=%llu\n",
+                    slot, previous->width, previous->height, previous->hasLastUse,
+                    (unsigned long long)previous->lastUseSerial,
+                    (unsigned long long)previous->uploadSerial);
+        }
+    }
+    gpu->imageSlots[slot] = texture;
+    return CJGUI_LINUX_GPU_OK;
+}
+
+void cjgui_linux_gpu_release_image(CjguiLinuxGpu *gpu, uint32_t slot)
+{
+    if (gpu == NULL || slot >= CJGUI_VK_IMAGE_SLOTS) return;
+    CjguiVkImageTexture *texture = gpu->imageSlots[slot];
+    if (texture == NULL) return;
+    // 在帧内释放属于异常调用：仍把当前帧已记录的引用算作最后使用，不能让
+    // 旧代在本帧提交/完成前被回收。
+    cjgui_vk_note_active_frame_use(gpu, texture);
+    gpu->imageSlots[slot] = NULL;
+    texture->nextRetired = gpu->retiredImages;
+    gpu->retiredImages = texture;
+    gpu->imageRetireCount += 1u;
+    if (cjgui_vk_image_trace_enabled()) {
+        fprintf(stderr,
+                "CJGUI_LINUX_GPU retire_image slot=%u size=%ux%u has_use=%d "
+                "last_use_serial=%llu upload_serial=%llu\n",
+                slot, texture->width, texture->height, texture->hasLastUse,
+                (unsigned long long)texture->lastUseSerial,
+                (unsigned long long)texture->uploadSerial);
+    }
+}
+
+uint64_t cjgui_linux_gpu_image_texture_bytes(CjguiLinuxGpu *gpu)
+{
+    if (gpu == NULL) return 0u;
+    uint64_t total = 0u;
+    for (uint32_t i = 0u; i < CJGUI_VK_IMAGE_SLOTS; i += 1u) {
+        CjguiVkImageTexture *texture = gpu->imageSlots[i];
+        if (texture != NULL) total += (uint64_t)texture->width * (uint64_t)texture->height * 4u;
+    }
+    return total;
+}
+
+uint64_t cjgui_linux_gpu_image_retired_bytes(CjguiLinuxGpu *gpu)
+{
+    if (gpu == NULL) return 0u;
+    uint64_t total = 0u;
+    for (CjguiVkImageTexture *texture = gpu->retiredImages; texture != NULL;
+         texture = texture->nextRetired) {
+        total += (uint64_t)texture->width * (uint64_t)texture->height * 4u;
+    }
+    return total;
+}
+
+uint64_t cjgui_linux_gpu_image_staging_bytes(CjguiLinuxGpu *gpu)
+{
+    return gpu != NULL ? gpu->imageStagingBytes : 0u;
+}
+
+uint64_t cjgui_linux_gpu_image_staging_release_count(CjguiLinuxGpu *gpu)
+{
+    return gpu != NULL ? gpu->imageStagingReleaseCount : 0u;
+}
+
+uint64_t cjgui_linux_gpu_image_retire_count(CjguiLinuxGpu *gpu)
+{
+    return gpu != NULL ? gpu->imageRetireCount : 0u;
+}
+
+uint64_t cjgui_linux_gpu_image_reclaim_count(CjguiLinuxGpu *gpu)
+{
+    return gpu != NULL ? gpu->imageReclaimCount : 0u;
+}
+
+uint64_t cjgui_linux_gpu_image_last_reclaim_serial(CjguiLinuxGpu *gpu)
+{
+    return gpu != NULL ? gpu->lastReclaimSerial : UINT64_MAX;
 }
 
 // ---------------------------------------------------------------------------

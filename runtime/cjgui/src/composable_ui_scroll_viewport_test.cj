@@ -1149,3 +1149,299 @@ func scrollOriginOwnerRebaseRejectsChangeGapDeletionAndGeometryChange(): Unit {
     @Assert(cjguiRebaseScrollOriginFromSource(removedViewport, removedTicket, b, 4,
         removedSession, 7u64, { => true }).isNone(), true)
 }
+
+// A compact nested-viewport case for the common wheel handoff: the inner list
+// consumes its own range first, the outer viewport receives ONLY the remainder,
+// and rebuilt content/container sizes publish the new range without moving an
+// offset that is still legal.
+private func wheelHandoffTree(inner: CjguiComposableUiScrollViewport,
+    outer: CjguiComposableUiScrollViewport, innerContent: Int64, innerHeight: Int64,
+    tail: Int64, outerHeight: Int64): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(800100, "handoff-root", CjguiComposableUiStyle())
+    let outerScroll = cjguiComposableScrollArea(800101, "handoff-outer", outer,
+        CjguiComposableUiStyle(fixedWidth: 300, fixedHeight: outerHeight))
+    let outerContent = cjguiComposableVertical(800102, "handoff-outer-content",
+        CjguiComposableUiStyle())
+    let innerScroll = cjguiComposableScrollArea(800103, "handoff-inner", inner,
+        CjguiComposableUiStyle(fixedWidth: 280, fixedHeight: innerHeight))
+    let innerContentNode = cjguiComposableVertical(800104, "handoff-inner-content",
+        CjguiComposableUiStyle(fixedHeight: innerContent))
+    innerScroll.add(innerContentNode)
+    outerContent.add(innerScroll)
+    outerContent.add(cjguiComposableVertical(800105, "handoff-tail",
+        CjguiComposableUiStyle(fixedHeight: tail)))
+    outerScroll.add(outerContent)
+    root.add(outerScroll)
+    return root
+}
+
+private func commitWheelHandoffLayout(inner: CjguiComposableUiScrollViewport,
+    outer: CjguiComposableUiScrollViewport, innerContent: Int64, innerHeight: Int64,
+    tail: Int64, outerHeight: Int64, revision: Int64): Unit {
+    let scene = CjguiComposableUiLayoutEngine.layout(
+        wheelHandoffTree(inner, outer, innerContent, innerHeight, tail, outerHeight),
+        CjguiComposableUiRect(0, 0, 320, 620), revision)
+    @Assert(scene.isValid(), true)
+    inner.commitStagedExtents()
+    outer.commitStagedExtents()
+}
+
+private func applyWheelHandoff(inner: CjguiComposableUiScrollViewport,
+    outer: CjguiComposableUiScrollViewport, deltaY: Float64,
+    innerState: CjguiPreciseWheelState, outerState: CjguiPreciseWheelState): Bool {
+    let wheel = CjguiComposableUiWheelDelta(0.0, deltaY, true, 0, 0)
+    let step = cjguiApplyWheelToViewport(inner, wheel.legacyText(), wheel, Some(innerState))
+    return cjguiRouteWheelStep(step, { coarse, precise, pixels =>
+        let ancestors = ArrayList<CjguiComposableUiScrollViewport>()
+        ancestors.add(outer)
+        let (outerMoved, _, _) = cjguiApplyWheelRemainder(ancestors, coarse, precise, pixels,
+            { _, viewport, forwarded =>
+                cjguiPreciseWheelAncestorStep(viewport, forwarded, Some(outerState))
+            })
+        outerMoved
+    })
+}
+
+private func applyPixelHandoff(inner: CjguiComposableUiScrollViewport,
+    outer: CjguiComposableUiScrollViewport, requested: Int64): Bool {
+    let step = cjguiApplyWheelToViewport(inner, "by:${requested}", None, None)
+    return cjguiRouteWheelStep(step, { coarse, precise, pixels =>
+        let ancestors = ArrayList<CjguiComposableUiScrollViewport>()
+        ancestors.add(outer)
+        let (outerMoved, _, _) = cjguiApplyWheelRemainder(ancestors, coarse, precise, pixels,
+            { _, viewport, forwarded => cjguiPreciseWheelAncestorStep(viewport, forwarded, None) })
+        outerMoved
+    })
+}
+
+private func applyCoarseHandoff(inner: CjguiComposableUiScrollViewport,
+    outer: CjguiComposableUiScrollViewport, direction: String): Bool {
+    let step = cjguiApplyWheelToViewport(inner, direction, None, None)
+    return cjguiRouteWheelStep(step, { coarse, precise, pixels =>
+        let ancestors = ArrayList<CjguiComposableUiScrollViewport>()
+        ancestors.add(outer)
+        let (outerMoved, _, _) = cjguiApplyWheelRemainder(ancestors, coarse, precise, pixels,
+            { _, viewport, forwarded => cjguiPreciseWheelAncestorStep(viewport, forwarded, None) })
+        outerMoved
+    })
+}
+
+@Test
+func wheelHandoffConsumesEachPixelOnceAndTracksRebuiltExtents(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    let innerState = CjguiPreciseWheelState()
+    let outerState = CjguiPreciseWheelState()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+    @Assert(inner.viewportExtent(), 100)
+    @Assert(inner.contentExtent(), 300)
+    @Assert(inner.maximumOffset(), 200)
+    // The outer range is the inner list's own height plus the tail, not the
+    // viewport height copied onto the content.
+    @Assert(outer.viewportExtent(), 200)
+    @Assert(outer.contentExtent(), 550)
+    @Assert(outer.maximumOffset(), 350)
+
+    // The inner list still has room: the outer viewport must not move.
+    @Assert(applyWheelHandoff(inner, outer, -150.0, innerState, outerState), true)
+    @Assert(inner.offset(), 150)
+    @Assert(outer.offset(), 0)
+    // 50 points remain inside the inner list; the other 50 reach the outer.
+    @Assert(applyWheelHandoff(inner, outer, -100.0, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 50)
+    // The inner list is at its boundary. Only the 300 points the outer can
+    // still accept are consumed; the last 100 inflate neither offset.
+    @Assert(applyWheelHandoff(inner, outer, -400.0, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 350)
+
+    // The inner content shrinks: its offset clamps from 200 to 20, while the
+    // still-legal outer offset stays put.
+    commitWheelHandoffLayout(inner, outer, 120, 100, 450, 200, 2)
+    @Assert(inner.maximumOffset(), 20)
+    @Assert(inner.offset(), 20)
+    @Assert(outer.maximumOffset(), 350)
+    @Assert(outer.offset(), 350)
+
+    // The tail shrinks below the outer viewport: only now does the outer range
+    // collapse and its offset return to the top.
+    commitWheelHandoffLayout(inner, outer, 120, 100, 50, 200, 3)
+    @Assert(outer.maximumOffset(), 0)
+    @Assert(outer.offset(), 0)
+
+    // A taller container and content publish the new range. The still-legal
+    // inner offset stays put; the next wheel continues from it and gives the
+    // outer only the 160 points the inner could not use.
+    commitWheelHandoffLayout(inner, outer, 420, 140, 500, 300, 4)
+    @Assert(inner.viewportExtent(), 140)
+    @Assert(inner.maximumOffset(), 280)
+    @Assert(inner.offset(), 20)
+    @Assert(outer.viewportExtent(), 300)
+    @Assert(outer.maximumOffset(), 340)
+    @Assert(outer.offset(), 0)
+    @Assert(applyWheelHandoff(inner, outer, -420.0, innerState, outerState), true)
+    @Assert(inner.offset(), 280)
+    @Assert(outer.offset(), 160)
+}
+
+@Test
+func preciseWheelKeepsFractionWithInnerViewportUntilItsEdge(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    let innerState = CjguiPreciseWheelState()
+    let outerState = CjguiPreciseWheelState()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+
+    // Below one point the inner viewport keeps the fraction: it still owns
+    // room in that direction, so the ancestor must not move.
+    @Assert(applyWheelHandoff(inner, outer, -0.6, innerState, outerState), false)
+    @Assert(inner.offset(), 0)
+    @Assert(outer.offset(), 0)
+    // The retained 0.6 joins this packet, so the integer boundary is crossed
+    // exactly once and nothing reaches the ancestor.
+    @Assert(applyWheelHandoff(inner, outer, -1.0, innerState, outerState), true)
+    @Assert(inner.offset(), 1)
+    @Assert(outer.offset(), 0)
+}
+
+@Test
+func preciseWheelHandsOffFractionLeftByPartialConsumption(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    let innerState = CjguiPreciseWheelState()
+    let outerState = CjguiPreciseWheelState()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+
+    // Stop half a point short of the inner edge, leaving 0.5 inside this
+    // continuous binding.
+    @Assert(applyWheelHandoff(inner, outer, -199.5, innerState, outerState), true)
+    @Assert(inner.offset(), 199)
+    @Assert(outer.offset(), 0)
+    // The inner consumes its last point only after a partial move. The 0.5
+    // that preceded this packet is part of what its edge releases; dropping
+    // it here would lose half of the user's displacement.
+    @Assert(applyWheelHandoff(inner, outer, -1.0, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 0)
+    // The outer received 0.5, then 0.5; the fractions cross its integer
+    // boundary exactly once.
+    @Assert(applyWheelHandoff(inner, outer, -0.5, innerState, outerState), true)
+    @Assert(outer.offset(), 1)
+}
+
+@Test
+func preciseWheelAtInnerEdgeAccumulatesAcrossPacketsInAncestor(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    let innerState = CjguiPreciseWheelState()
+    let outerState = CjguiPreciseWheelState()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+
+    // The inner is already at its edge; each whole pixel request now belongs
+    // to the outer, while each sub-pixel packet must be accumulated there.
+    @Assert(applyWheelHandoff(inner, outer, -200.0, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 0)
+    var index = 0
+    while (index < 3) {
+        @Assert(applyWheelHandoff(inner, outer, -0.3, innerState, outerState), false)
+        index += 1
+    }
+    @Assert(outer.offset(), 0)
+    @Assert(applyWheelHandoff(inner, outer, -0.3, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 1)
+}
+
+@Test
+func preciseWheelReverseForwardsOnlyTheNetUnspentDirection(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    let innerState = CjguiPreciseWheelState()
+    let outerState = CjguiPreciseWheelState()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+
+    @Assert(applyWheelHandoff(inner, outer, -200.0, innerState, outerState), true)
+    @Assert(inner.offset(), 200)
+    // One upward packet leaves 0.6 upward unspent inside the inner viewport.
+    @Assert(applyWheelHandoff(inner, outer, 0.6, innerState, outerState), false)
+    @Assert(inner.offset(), 200)
+    // Reversing nets +0.4 downward. Forwarding the whole 1.0 would move the
+    // wrong amount and discard the fraction the previous packet left.
+    @Assert(applyWheelHandoff(inner, outer, -1.0, innerState, outerState), false)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 0)
+    // The outer kept the net 0.4; the next 0.6 completes one real point.
+    @Assert(applyWheelHandoff(inner, outer, -0.6, innerState, outerState), true)
+    @Assert(outer.offset(), 1)
+}
+
+@Test
+func pixelStepUsesScrollByDirectionAndForwardsOnlyAtItsOwnEdge(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+
+    let prepared = cjguiApplyWheelToViewport(outer, "by:100", None, None)
+    @Assert(prepared.moved, true)
+    @Assert(outer.offset(), 100)
+    // A negative request means a smaller offset (scrollBy semantics). At the
+    // inner minimum nothing is consumed there and -30 travels outward.
+    @Assert(applyPixelHandoff(inner, outer, -30), true)
+    @Assert(inner.offset(), 0)
+    @Assert(outer.offset(), 70)
+    // Inward movement consumes the entire request and forwards nothing.
+    @Assert(applyPixelHandoff(inner, outer, 30), true)
+    @Assert(inner.offset(), 30)
+    @Assert(outer.offset(), 70)
+    // The inner fills to its maximum; the outer receives only the unconsumed
+    // 330, accepts 280 and stops at its own edge.
+    @Assert(applyPixelHandoff(inner, outer, 500), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 350)
+    // A negative request at the inner maximum is inward and stays local.
+    @Assert(applyPixelHandoff(inner, outer, -30), true)
+    @Assert(inner.offset(), 170)
+    @Assert(outer.offset(), 350)
+
+    // Only the requested direction's edge can stop the request.
+    @Assert(cjguiScrollByAtBoundary(-1, 0, 0, 200), true)
+    @Assert(cjguiScrollByAtBoundary(-1, 5, 0, 200), false)
+    @Assert(cjguiScrollByAtBoundary(1, 200, 0, 200), true)
+    @Assert(cjguiScrollByAtBoundary(1, 150, 0, 200), false)
+}
+
+@Test
+func coarseWheelHandsOffToAncestorOnlyWhenInnerViewportCannotMove(): Unit {
+    let inner = CjguiComposableUiScrollViewport()
+    let outer = CjguiComposableUiScrollViewport()
+    commitWheelHandoffLayout(inner, outer, 300, 100, 450, 200, 1)
+    @Assert(outer.scrollBy(150), true)
+
+    // The inner list has room, so this next step belongs to the inner and
+    // must not move the outer viewport.
+    @Assert(applyCoarseHandoff(inner, outer, "next"), true)
+    @Assert(inner.offset(), 50)
+    @Assert(outer.offset(), 150)
+
+    // At its end the inner cannot move down; the same next step is released
+    // to the outer, which accepts its own half-viewport step.
+    @Assert(inner.scrollBy(1000), true)
+    @Assert(inner.offset(), 200)
+    @Assert(applyCoarseHandoff(inner, outer, "next"), true)
+    @Assert(inner.offset(), 200)
+    @Assert(outer.offset(), 250)
+
+    // At its start the inner cannot move up; previous is released upward.
+    @Assert(inner.scrollBy(-1000), true)
+    @Assert(inner.offset(), 0)
+    @Assert(applyCoarseHandoff(inner, outer, "previous"), true)
+    @Assert(inner.offset(), 0)
+    @Assert(outer.offset(), 150)
+
+    // An unknown direction is neither a scroll nor a valid handoff.
+    @Assert(applyCoarseHandoff(inner, outer, "left"), false)
+    @Assert(inner.offset(), 0)
+    @Assert(outer.offset(), 150)
+}

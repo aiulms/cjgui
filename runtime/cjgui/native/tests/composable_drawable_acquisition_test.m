@@ -77,6 +77,7 @@ static BOOL waitCandidateDrawable(uint64_t token,uint64_t prep,uint64_t projecti
     return ready!=0;
 }
 
+#ifndef CJGUI_DRAWABLE_ACQUISITION_HELPERS_ONLY
 int main(int argc,char **argv) { @autoreleasepool {
     [NSApplication sharedApplication];
     if(argc>1 && argv[1][0]=='/') setenv("CJGUI_FRAME_CADENCE_TRACE_PATH",argv[1],1);
@@ -224,3 +225,4 @@ int main(int argc,char **argv) { @autoreleasepool {
         failures,(unsigned long long)redElapsed,(unsigned long long)mainElapsed);
     return failures?1:0;
 } }
+#endif

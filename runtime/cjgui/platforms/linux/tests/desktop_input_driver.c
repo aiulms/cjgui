@@ -141,7 +141,7 @@ static void send_button(int x, int y, unsigned int button, int press) {
     XFlush(display);
 }
 
-static void send_motion(int x, int y) {
+static void send_motion_mod(int x, int y, unsigned int state) {
     XMotionEvent event;
     memset(&event, 0, sizeof(event));
     event.display = display;
@@ -154,10 +154,14 @@ static void send_motion(int x, int y) {
     event.x_root = x;
     event.y_root = y;
     event.same_screen = True;
-    event.state = 0;
+    event.state = state;
     event.type = MotionNotify;
     XSendEvent(display, target, True, PointerMotionMask, (XEvent *)&event);
     XFlush(display);
+}
+
+static void send_motion(int x, int y) {
+    send_motion_mod(x, y, 0);
 }
 
 static KeySym keysym_for_char(char c) {
@@ -253,6 +257,23 @@ int main(int argc, char **argv) {
         send_button(x, y, button, 0);
     } else if (strcmp(command, "move") == 0 && argc >= 4) {
         send_motion(atoi(argv[2]), atoi(argv[3]));
+    } else if (strcmp(command, "drag") == 0 && argc >= 6) {
+        // drag <x1> <y1> <x2> <y2> [steps]：按下、带 Button1Mask 分步移动、抬起。
+        int x1 = atoi(argv[2]), y1 = atoi(argv[3]);
+        int x2 = atoi(argv[4]), y2 = atoi(argv[5]);
+        int steps = argc >= 7 ? atoi(argv[6]) : 12;
+        if (steps < 1) steps = 1;
+        send_motion(x1, y1);
+        driver_sleep_us(10000);
+        send_button(x1, y1, 1u, 1);
+        driver_sleep_us(30000);
+        for (int i = 1; i <= steps; i += 1) {
+            send_motion_mod(x1 + (x2 - x1) * i / steps, y1 + (y2 - y1) * i / steps, Button1Mask);
+            driver_sleep_us(15000);
+        }
+        driver_sleep_us(30000);
+        send_button(x2, y2, 1u, 0);
+        driver_sleep_us(30000);
     } else if (strcmp(command, "scroll") == 0 && argc >= 3) {
         // scroll <up|down> <count> [x] [y]：默认落在 (10,10) 是错的——滚轮命中
         // 由坐标决定，必须能指定落点（例如滚动区中心）。

@@ -90,6 +90,31 @@ int cjgui_linux_gpu_end_frame(CjguiLinuxGpu *gpu);
 int cjgui_linux_gpu_upload_atlas(CjguiLinuxGpu *gpu, int x, int y, int width, int height,
                                  const uint8_t *rgba);
 
+// 有界图片纹理槽。上传/释放只能在帧外调用；同一槽位的新内容替换旧内容时，
+// 旧纹理进入 retire 队列。上传提交完成后即可单独释放 staging；image/view/
+// descriptor 要等最后一次实际绘制提交完成。两者都由维护点轮询真实 fence
+// 证明，不依赖额外绘制帧，也不等待设备。
+#define CJGUI_LINUX_GPU_IMAGE_SLOTS 16u
+int cjgui_linux_gpu_upload_image(CjguiLinuxGpu *gpu, uint32_t slot, uint32_t width, uint32_t height,
+                                 const uint8_t *rgba);
+void cjgui_linux_gpu_release_image(CjguiLinuxGpu *gpu, uint32_t slot);
+int cjgui_linux_gpu_draw_image_triangles(CjguiLinuxGpu *gpu, uint32_t slot,
+                                         const CjguiLinuxGpuVertex *vertices, uint32_t vertexCount);
+uint64_t cjgui_linux_gpu_image_texture_bytes(CjguiLinuxGpu *gpu);
+uint64_t cjgui_linux_gpu_image_retired_bytes(CjguiLinuxGpu *gpu);
+uint64_t cjgui_linux_gpu_image_staging_bytes(CjguiLinuxGpu *gpu);
+// 图片纹理代的生命周期诊断：进入 retire 链的次数、经真实 fence 完成回收的
+// 次数、staging 释放次数，以及最近一次回收所依据的提交序号。
+uint64_t cjgui_linux_gpu_image_retire_count(CjguiLinuxGpu *gpu);
+uint64_t cjgui_linux_gpu_image_reclaim_count(CjguiLinuxGpu *gpu);
+uint64_t cjgui_linux_gpu_image_staging_release_count(CjguiLinuxGpu *gpu);
+uint64_t cjgui_linux_gpu_image_last_reclaim_serial(CjguiLinuxGpu *gpu);
+
+// 图片上传/纹理代维护点：只轮询真实 fence，不等待设备；由图片 pump 与
+// begin_frame 调用。释放已证明完成的上传 staging，并回收上传与最后使用
+// 都有具体提交证明的退休代。
+void cjgui_linux_gpu_pump_image_resources(CjguiLinuxGpu *gpu);
+
 // 当前交换链的可绘制像素尺寸（设备像素，非逻辑点）。
 uint32_t cjgui_linux_gpu_drawable_width(CjguiLinuxGpu *gpu);
 uint32_t cjgui_linux_gpu_drawable_height(CjguiLinuxGpu *gpu);

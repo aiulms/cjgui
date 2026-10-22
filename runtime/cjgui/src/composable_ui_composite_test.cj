@@ -26,6 +26,10 @@ class CompositeTestFactory <: CjguiCompositeComponentFactory {
     var buildCount: Int64 = 0
     // Knobs for the negative cases.
     var extraNodes: Int64 = 0
+    // Fail exactly ONE build. A rejected candidate must then still be able to
+    // rebuild the accepted scene, which is what proves the fallback carries the
+    // accepted binding instead of re-resolving the live provider.
+    var extraNodesOnce: Int64 = 0
     var dropElement: Bool = false
     var foreignId: Int64 = -1
     /// Negative knob: mount the field element with a DIFFERENT field binding than
@@ -62,6 +66,9 @@ class CompositeTestFactory <: CjguiCompositeComponentFactory {
                 let editorResource = if (breakEditorResource) { 999999 } else { field.bindingResourceId }
                 container.add(cjguiComposableIntegerInput(field.nodeId, field.semanticId, field.label,
                     field.draftText, editorResource, CjguiComposableUiStyle(fixedHeight: 26),
+                    // The owner's answer must reach the real control: an editor the
+                    // owner has blocked may not stay enabled (the audit refuses it).
+                    enabled: field.ownerAvailable,
                     fieldId: boundFieldId, operationActionName: field.writerOperation,
                     operationResourceId: field.ownerTargetResourceId, displayValueRole: "draft"))
             }
@@ -76,12 +83,17 @@ class CompositeTestFactory <: CjguiCompositeComponentFactory {
                 let actionToken = if (breakActionToken) { "APPLY_DRAFT" } else { "GENERATED_ACTION" }
                 let actionEnabled = if (breakActionEnabled) { !action.actionEnabled } else { action.actionEnabled }
                 container.add(cjguiComposableButton(action.nodeId, action.semanticId, action.label,
-                    actionToken, action.nodeId, CjguiComposableUiStyle(fixedHeight: 26),
-                    enabled: actionEnabled))
+                    actionToken, action.ownerTargetResourceId, CjguiComposableUiStyle(fixedHeight: 26),
+                    enabled: actionEnabled, operationResourceId: action.ownerTargetResourceId))
             }
         }
+        var extra = extraNodes
+        if (extraNodesOnce > 0) {
+            extraNodesOnce -= 1
+            extra += 1
+        }
         var index: Int64 = 0
-        while (index < extraNodes) {
+        while (index < extra) {
             // Deliberately reuses an allocated id: the audit must catch the
             // duplicate rather than letting an unbounded expansion through.
             container.add(cjguiComposableText(root.nodeId, "extra-${index}", "x", CjguiComposableUiStyle()))
@@ -614,6 +626,34 @@ func compositeRebindRefusesLateEventsFromTheOldInstance(): Unit {
 /// A provider whose owner target and binding resource can differ between two
 /// generations of the SAME stable key: that is what makes a same-key rebind
 /// observable instead of an identical replacement.
+/// Resolves owner target and draft per composite INSTANCE, not only per field.
+/// This is the seam that lets two instances of one kind write different owners.
+private class CompositePerInstanceProvider <: CjguiGeneratedUiBindingProvider {
+    private let targets: HashMap<String, Int64>
+    private let drafts: HashMap<String, String>
+
+    init(targets: HashMap<String, Int64>, drafts: HashMap<String, String>) {
+        this.targets = targets
+        this.drafts = drafts
+    }
+
+    public func fieldResourceId(fieldId: String): Int64 { return 81003 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return -1 }
+    public func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
+        return targets.get(instanceKey) ?? -1
+    }
+    public func draftText(fieldId: String): String { return "" }
+    public func draftText(fieldId: String, instanceKey: String): String {
+        return drafts.get(instanceKey) ?? ""
+    }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(true, "")
+    }
+    public func actionAvailable(actionName: String): Bool { return true }
+}
+
 private class CompositeTargetProvider <: CjguiGeneratedUiBindingProvider {
     private let target: Int64
     private let resource: Int64
@@ -672,6 +712,16 @@ private func compositeLayoutNode(binding: CjguiCompositeElementBinding): CjguiCo
         CjguiComposableUiRect(0, 0, 100, 26), CjguiComposableUiRect(0, 0, 100, 26))
 }
 
+/// The control an ACTION element presents once its factory carries the resolved
+/// enabled state and per-instance owner target (the shape the audit enforces).
+private func compositeActionLayoutNode(binding: CjguiCompositeElementBinding): CjguiComposableUiLayoutNode {
+    return CjguiComposableUiLayoutNode(
+        cjguiComposableButton(binding.nodeId, binding.semanticId, binding.label, "GENERATED_ACTION",
+            binding.ownerTargetResourceId, CjguiComposableUiStyle(), enabled: binding.actionEnabled,
+            operationResourceId: binding.ownerTargetResourceId),
+        CjguiComposableUiRect(0, 0, 100, 26), CjguiComposableUiRect(0, 0, 100, 26))
+}
+
 @Test
 func compositeElementResourceAndActionDriftIsRefused(): Unit {
     let catalog = compositeCatalog()
@@ -714,6 +764,62 @@ func compositeElementResourceAndActionDriftIsRefused(): Unit {
         // The previously accepted composite still carries its own bindings.
         @Assert(holder.compositeElementNodeIdsForKey("editor").size >= 4, true)
     }
+}
+
+@Test
+func compositeTwoInstancesKeepTheirOwnOwnerAcrossReorderAndReplacement(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    targets.add("cardB", 20)
+    let drafts = HashMap<String, String>()
+    drafts.add("cardA", "A")
+    drafts.add("cardB", "B")
+    let provider = CompositePerInstanceProvider(targets, drafts)
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit")
+        ]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let a = compositeFieldBinding(holder, "cardA")
+    let b = compositeFieldBinding(holder, "cardB")
+    @Assert(a.ownerTargetResourceId, 10)
+    @Assert(b.ownerTargetResourceId, 20)
+    @Assert(a.draftText, "A")
+    @Assert(b.draftText, "B")
+    @Assert(holder.resolveIntent(compositeLayoutNode(a), CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED, "45")
+        .ownerTargetResourceId, 10)
+    @Assert(holder.resolveIntent(compositeLayoutNode(b), CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED, "46")
+        .ownerTargetResourceId, 20)
+
+    // Physical reorder: the same two stable keys, B first. Each key keeps its
+    // own owner instead of inheriting the other instance's target.
+    let reordered = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit")
+        ]))
+    @Assert(holder.submit(reordered, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(compositeFieldBinding(holder, "cardA").ownerTargetResourceId, 10)
+    @Assert(compositeFieldBinding(holder, "cardB").ownerTargetResourceId, 20)
+
+    // Replacement: both keys now denote new owner objects. The bindings follow
+    // the keys, and the old instance objects cannot write the replacement.
+    let replacementTargets = HashMap<String, Int64>()
+    replacementTargets.add("cardA", 30)
+    replacementTargets.add("cardB", 40)
+    let replacement = CompositePerInstanceProvider(replacementTargets, drafts)
+    @Assert(holder.submit(reordered, replacement).candidateAccepted, true)
+    @Assert(generatedCommit(holder, replacement), true)
+    @Assert(compositeFieldBinding(holder, "cardA").ownerTargetResourceId, 30)
+    @Assert(compositeFieldBinding(holder, "cardB").ownerTargetResourceId, 40)
+    let oldLate = holder.resolveIntent(compositeLayoutNode(a), CJGUI_COMPOSABLE_UI_EVENT_TEXT_CHANGED, "45")
+    @Assert(oldLate.kind, CJGUI_GENERATED_INTENT_NONE)
 }
 
 @Test
@@ -774,6 +880,315 @@ func compositeSameKeyRebindRefusesTheOldObjectsLateEvent(): Unit {
     @Assert(reorderedIntent.ownerTargetResourceId, 2)
 }
 
+/// The accepted binding must carry a framework-owned instance generation: a
+/// pure reorder keeps it, a same-key rebind keeps the key but changes the
+/// target, and a remove + re-add of the same key is a NEW instance.
+@Test
+func compositeInstanceIncarnationSeparatesReorderRebindAndReAdd(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    targets.add("cardB", 20)
+    let drafts = HashMap<String, String>()
+    drafts.add("cardA", "same")
+    drafts.add("cardB", "same")
+    let provider = CompositePerInstanceProvider(targets, drafts)
+    let two = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit")
+        ]))
+    @Assert(holder.submit(two, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let a1 = compositeFieldBinding(holder, "cardA")
+    let b1 = compositeFieldBinding(holder, "cardB")
+    @Assert(a1.instanceIncarnation > 0, true)
+    @Assert(a1.instanceIncarnation != b1.instanceIncarnation, true)
+
+    // Reorder: same keys, same owners, SAME generation.
+    let reordered = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit")
+        ]))
+    @Assert(holder.submit(reordered, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let a2 = compositeFieldBinding(holder, "cardA")
+    @Assert(a2.instanceIncarnation, a1.instanceIncarnation)
+    @Assert(a2.ownerTargetResourceId, 10)
+
+    // Same-key rebind: the key stays but the bound object changes, so this is a
+    // REAL binding change. Its generation must be new; a session or intent held
+    // for the old target can never be revived by comparing the key alone.
+    targets.add("cardA", 30)
+    @Assert(holder.submit(reordered, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let a3 = compositeFieldBinding(holder, "cardA")
+    @Assert(a3.instanceIncarnation != a1.instanceIncarnation, true)
+    @Assert(a3.instanceIncarnation > a1.instanceIncarnation, true)
+    @Assert(a3.ownerTargetResourceId, 30)
+    @Assert(a3.instanceOwnerTargetResourceId, 30)
+
+    // Remove cardA, then re-add the SAME key and owner. The new acceptance is a
+    // new instance generation, so an old held session cannot resume.
+    let onlyB = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("cardB", "integerEdit")]))
+    @Assert(holder.submit(onlyB, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(holder.compositeElementNodeIdsForKey("cardA").size, 0)
+    @Assert(holder.submit(reordered, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let a4 = compositeFieldBinding(holder, "cardA")
+    @Assert(a4.ownerTargetResourceId, 30)
+    @Assert(a4.instanceIncarnation > a1.instanceIncarnation, true)
+    @Assert(a4.instanceIncarnation != a3.instanceIncarnation, true)
+}
+
+/// A multi-object provider with a real versioned text owner, so range sessions
+/// can be exercised end to end (same text and same numeric version across
+/// A→B→A is the counterexample that a version alone cannot separate).
+private class CompositeRangeProvider <: CjguiGeneratedUiBindingProvider {
+    private let targets: HashMap<String, Int64>
+    private let drafts: HashMap<String, String>
+    var writes: ArrayList<String> = ArrayList<String>()
+
+    init(targets: HashMap<String, Int64>, drafts: HashMap<String, String>) {
+        this.targets = targets
+        this.drafts = drafts
+    }
+
+    public func fieldResourceId(fieldId: String): Int64 { return 81003 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return -1 }
+    public func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
+        return targets.get(instanceKey) ?? -1
+    }
+    public func draftText(fieldId: String): String { return "" }
+    public func draftText(fieldId: String, instanceKey: String): String {
+        return drafts.get(instanceKey) ?? ""
+    }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(false, "instance_required")
+    }
+    public func actionAvailable(actionName: String): Bool { return true }
+    public func rangeTextEditSupported(fieldId: String, instanceKey: String): Bool {
+        return (targets.get(instanceKey) ?? -1) >= 0
+    }
+    public func fieldTextVersion(fieldId: String, instanceKey: String): Int64 { return 5 }
+    public func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String,
+        instanceKey: String): CjguiRangeTextEditOutcome {
+        let target = targets.get(instanceKey) ?? -1
+        if (target < 0) {
+            return CjguiRangeTextEditOutcome.rejected(expectedVersion, "unknown_instance")
+        }
+        if (expectedVersion != 5) {
+            return CjguiRangeTextEditOutcome.conflict(expectedVersion, "owner_version_moved")
+        }
+        writes.add("${instanceKey}:${target}:${newText}")
+        return CjguiRangeTextEditOutcome.accepted(expectedVersion, expectedVersion + 1)
+    }
+}
+
+/// Resolution and execution are separate steps. If the provider's mapping moves
+/// in between, the resolved ACTION must be bound to the exact accepted element
+/// it came from - never re-resolved by key - and the owner transaction must see
+/// the ORIGINAL target and refuse a key that now denotes another object.
+@Test
+func compositeResolvedActionCannotFollowAMappingChangeBeforeDispatch(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    let availability = HashMap<String, CjguiSharedAvailability>()
+    availability.add("cardA", CjguiSharedAvailability.allowed(10, 3))
+    let provider = CompositeActionProvider(targets, availability)
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("cardA", "integerEdit")]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let action = compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    let resolved = holder.resolveIntent(compositeActionLayoutNode(action),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(resolved.isAction(), true)
+    @Assert(resolved.ownerTargetResourceId, 10)
+    @Assert(holder.compositeActionIntentIsBound(resolved.nodeId, resolved.actionName, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation), true)
+
+    // The mapping changes AFTER resolution, and the new scene is accepted.
+    targets.add("cardA", 30)
+    availability.add("cardA", CjguiSharedAvailability.allowed(30, 5))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(holder.compositeActionIntentIsBound(resolved.nodeId, resolved.actionName, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation), false)
+
+    // Even handed to the provider, the retired target is refused: the owner
+    // transaction never silently follows the key to the new object.
+    let stale = provider.executeAction(resolved.actionName, resolved.nodeKey, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation)
+    @Assert(stale.applied, false)
+    @Assert(stale.reason, "owner_target_retired")
+    @Assert(provider.executed.size, 0)
+
+    // The new accepted object resolves and executes immediately.
+    let current = compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    let fresh = holder.resolveIntent(compositeActionLayoutNode(current),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(holder.compositeActionIntentIsBound(fresh.nodeId, fresh.actionName, fresh.instanceKey,
+        fresh.ownerTargetResourceId, fresh.instanceIncarnation), true)
+    @Assert(provider.executeAction(fresh.actionName, fresh.nodeKey, fresh.instanceKey,
+        fresh.ownerTargetResourceId, fresh.instanceIncarnation).applied, true)
+    @Assert(provider.executed[0], "cardA:30:APPLY_DRAFT")
+
+    // A stale target is refused even with the CURRENT generation.
+    @Assert(provider.executeAction(fresh.actionName, fresh.nodeKey, fresh.instanceKey, 10,
+        fresh.instanceIncarnation).applied, false)
+    @Assert(provider.executed.size, 1)
+}
+
+/// "Same text, same version, A→B→A": neither the instance key nor the owner
+/// version separates the old session from the new object, so the accepted
+/// generation must. A legitimate session still reads and writes at every step.
+@Test
+func compositeRangeSessionIsRetiredAcrossARebindAndReturningToTheOldOwner(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    let drafts = HashMap<String, String>()
+    drafts.add("cardA", "same")
+    let provider = CompositeRangeProvider(targets, drafts)
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("cardA", "integerEdit")]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+
+    let elementA1 = compositeFieldBinding(holder, "cardA")
+    let nodeA1 = elementA1.nodeId
+    let incarnationA1 = elementA1.instanceIncarnation
+    let sessionA1 = CjguiGeneratedFieldRangeSession(provider, "retentionCount", instanceKey: "cardA",
+        ownerTarget: 10,
+        bindingCurrent: { => holder.compositeInstanceIncarnationForNodeId(nodeA1) == incarnationA1 })
+    @Assert(sessionA1.readRangeText(0, 4).pendingReason, "")
+    @Assert(sessionA1.rangeTextVersion(), 5)
+    @Assert(sessionA1.applyRangeTextEdit(5, 0, 0, "9").applied, true)
+    @Assert(provider.writes[0], "cardA:10:9same")
+
+    // B: the same key, the same text and the same numeric version, a new object.
+    targets.add("cardA", 30)
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(sessionA1.readRangeText(0, 1).pendingReason, "binding_retired")
+    let elementB = compositeFieldBinding(holder, "cardA")
+    @Assert(elementB.ownerTargetResourceId, 30)
+    @Assert(elementB.instanceIncarnation != incarnationA1, true)
+    let sessionB = CjguiGeneratedFieldRangeSession(provider, "retentionCount", instanceKey: "cardA",
+        ownerTarget: 30,
+        bindingCurrent: { => holder.compositeInstanceIncarnationForNodeId(elementB.nodeId) ==
+            elementB.instanceIncarnation })
+    @Assert(sessionB.rangeTextVersion(), 5)
+    @Assert(sessionB.applyRangeTextEdit(5, 0, 0, "8").applied, true)
+    @Assert(provider.writes[1], "cardA:30:8same")
+
+    // Back to A: same key, same text, same version - and a NEW generation. The
+    // old sessions stay retired instead of becoming valid again.
+    targets.add("cardA", 10)
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(sessionA1.readRangeText(0, 1).pendingReason, "binding_retired")
+    @Assert(sessionB.readRangeText(0, 1).pendingReason, "binding_retired")
+    let elementA2 = compositeFieldBinding(holder, "cardA")
+    @Assert(elementA2.ownerTargetResourceId, 10)
+    @Assert(elementA2.instanceIncarnation != incarnationA1, true)
+    @Assert(elementA2.instanceIncarnation != elementB.instanceIncarnation, true)
+    let sessionA2 = CjguiGeneratedFieldRangeSession(provider, "retentionCount", instanceKey: "cardA",
+        ownerTarget: 10,
+        bindingCurrent: { => holder.compositeInstanceIncarnationForNodeId(elementA2.nodeId) ==
+            elementA2.instanceIncarnation })
+    @Assert(sessionA2.readRangeText(0, 4).pendingReason, "")
+    @Assert(sessionA2.applyRangeTextEdit(5, 0, 0, "7").applied, true)
+    @Assert(provider.writes[2], "cardA:10:7same")
+}
+
+/// A rejected candidate must not consume or move the accepted identity: the old
+/// generation stays authoritative until a scene really commits, and only then
+/// does the new target become a new binding.
+@Test
+func compositeRejectedCandidateKeepsTheAcceptedBindingAndGeneration(): Unit {
+    let catalog = compositeCatalog()
+    let factory = CompositeTestFactory()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), factory), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    let provider = CompositeActionProvider(targets, HashMap<String, CjguiSharedAvailability>())
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("cardA", "integerEdit")]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let before = compositeFieldBinding(holder, "cardA")
+    let actionBefore = compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    let resolved = holder.resolveIntent(compositeActionLayoutNode(actionBefore),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(resolved.ownerTargetResourceId, 10)
+    @Assert(holder.compositeInstanceKeyForOwnerTarget(10), "cardA")
+
+    // The candidate maps the same key to a new owner but fails its expansion.
+    // The failure is transient, so the accepted fallback really rebuilds the
+    // card: that rebuild must carry the ACCEPTED binding (owner 10, generation
+    // unchanged) instead of resolving the provider's new mapping.
+    targets.add("cardA", 30)
+    factory.extraNodesOnce = 1
+    let buildsBefore = factory.buildCount
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), false)
+    @Assert(factory.buildCount, buildsBefore + 2)
+    @Assert(holder.structureVersion(), 1)
+    @Assert(holder.nodeIdForKey("cardA") > 0, true)
+    @Assert(holder.compositeElementNodeIdsForKey("cardA").size >= 4, true)
+    let afterFailure = compositeFieldBinding(holder, "cardA")
+    @Assert(afterFailure.instanceIncarnation, before.instanceIncarnation)
+    @Assert(afterFailure.ownerTargetResourceId, 10)
+    @Assert(afterFailure.instanceOwnerTargetResourceId, 10)
+    @Assert(holder.compositeOwnerTargetForInstance("cardA"), 10)
+    @Assert(holder.compositeInstanceKeyForOwnerTarget(10), "cardA")
+    @Assert(holder.compositeInstanceKeyForOwnerTarget(30), "")
+    @Assert(holder.compositeActionIntentIsBound(resolved.nodeId, resolved.actionName, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation), true)
+    // While the provider itself resolves the key elsewhere, its owner-side
+    // guard refuses the old target: the accepted binding is kept, it is not a
+    // licence to write a different object.
+    @Assert(provider.executeAction(resolved.actionName, resolved.nodeKey, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation).applied, false)
+    @Assert(provider.executed.size, 0)
+
+    // The external mapping returns to the accepted owner (it never became a
+    // scene). The SAME accepted intent is live again and its owner transaction
+    // really executes.
+    targets.add("cardA", 10)
+    @Assert(provider.executeAction(resolved.actionName, resolved.nodeKey, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation).applied, true)
+    @Assert(provider.executed[0], "cardA:10:APPLY_DRAFT")
+
+    // A later legal rebind commits and DOES retire the old binding.
+    targets.add("cardA", 30)
+    factory.extraNodes = 0
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let rebound = compositeFieldBinding(holder, "cardA")
+    @Assert(rebound.ownerTargetResourceId, 30)
+    @Assert(rebound.instanceIncarnation != before.instanceIncarnation, true)
+    @Assert(holder.compositeActionIntentIsBound(resolved.nodeId, resolved.actionName, resolved.instanceKey,
+        resolved.ownerTargetResourceId, resolved.instanceIncarnation), false)
+    @Assert(holder.compositeInstanceKeyForOwnerTarget(10), "")
+    @Assert(holder.compositeInstanceKeyForOwnerTarget(30), "cardA")
+}
+
 @Test
 func compositeSameKeyRebindRefusesTheOldPresetPress(): Unit {
     let catalog = compositeCatalog()
@@ -829,6 +1244,187 @@ func compositeSameKeyRebindRefusesTheOldPresetPress(): Unit {
         CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
     @Assert(reorderedIntent.kind, CJGUI_GENERATED_INTENT_FIELD_EDIT)
     @Assert(reorderedIntent.ownerTargetResourceId, 2)
+}
+
+/// A provider whose ACTION availability, owner target and execution route are
+/// resolved per composite INSTANCE. Two instances of one kind therefore see
+/// their own enabled state and act on their own owner object.
+private class CompositeActionProvider <: CjguiGeneratedUiBindingProvider {
+    private let targets: HashMap<String, Int64>
+    private let availability: HashMap<String, CjguiSharedAvailability>
+    var executed: ArrayList<String> = ArrayList<String>()
+
+    init(targets: HashMap<String, Int64>, availability: HashMap<String, CjguiSharedAvailability>) {
+        this.targets = targets
+        this.availability = availability
+    }
+
+    public func fieldResourceId(fieldId: String): Int64 { return 81003 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return -1 }
+    public func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
+        return targets.get(instanceKey) ?? -1
+    }
+    public func draftText(fieldId: String): String { return "" }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func actionAvailability(actionName: String): CjguiSharedAvailability {
+        return CjguiSharedAvailability.unknown()
+    }
+    public func actionAvailability(actionName: String, instanceKey: String): CjguiSharedAvailability {
+        return availability.get(instanceKey) ?? CjguiSharedAvailability.unknown()
+    }
+    public func actionOperationResourceId(actionName: String, instanceKey: String): Int64 {
+        return targets.get(instanceKey) ?? -1
+    }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(false, "instance_required")
+    }
+    public func actionAvailable(actionName: String): Bool { return true }
+    public func executeAction(actionName: String, nodeKey: String,
+        instanceKey: String): CjguiGeneratedUiActionResult {
+        let target = targets.get(instanceKey) ?? -1
+        return executeAction(actionName, nodeKey, instanceKey, target, 0)
+    }
+    public func executeAction(actionName: String, nodeKey: String, instanceKey: String,
+        ownerTargetResourceId: Int64, instanceIncarnation: Int64): CjguiGeneratedUiActionResult {
+        let _ = instanceIncarnation
+        let target = targets.get(instanceKey) ?? -1
+        if (target < 0) {
+            return CjguiGeneratedUiActionResult(false, "unknown_instance")
+        }
+        // The ORIGINAL accepted target must still be this key's object. A key
+        // that moved is a retired binding, not a reason to follow it.
+        if (target != ownerTargetResourceId) {
+            return CjguiGeneratedUiActionResult(false, "owner_target_retired")
+        }
+        let fact = availability.get(instanceKey) ?? CjguiSharedAvailability.unknown()
+        if (fact.known && !fact.isAvailable) {
+            return CjguiGeneratedUiActionResult(false, fact.reason)
+        }
+        executed.add("${instanceKey}:${target}:${actionName}")
+        return CjguiGeneratedUiActionResult(true, "")
+    }
+}
+
+/// The public action seam must carry the INSTANCE it belongs to, not only the
+/// action name: enabled state, refusal reason and owner target are per object,
+/// survive a reorder and stay retired after a same-key rebind.
+@Test
+func compositeInstancesKeepTheirOwnActionsAcrossReorderAndRebind(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 10)
+    targets.add("cardB", 20)
+    let availability = HashMap<String, CjguiSharedAvailability>()
+    availability.add("cardA", CjguiSharedAvailability.allowed(10, 3))
+    availability.add("cardB", CjguiSharedAvailability.blocked("locked_by_owner", 20, 4))
+    let provider = CompositeActionProvider(targets, availability)
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit")
+        ]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let actionA = compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    let actionB = compositeRoleBinding(holder, "cardB", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    @Assert(actionA.ownerTargetResourceId, 10)
+    @Assert(actionB.ownerTargetResourceId, 20)
+    @Assert(actionA.actionEnabled, true)
+    @Assert(actionB.actionEnabled, false)
+    @Assert(actionA.blockedReason, "")
+    @Assert(actionB.blockedReason, "locked_by_owner")
+
+    // Each control resolves to its OWN instance and target.
+    let intentA = holder.resolveIntent(compositeActionLayoutNode(actionA),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    let intentB = holder.resolveIntent(compositeActionLayoutNode(actionB),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(intentA.isAction(), true)
+    @Assert(intentA.actionName, "APPLY_DRAFT")
+    @Assert(intentA.ownerTargetResourceId, 10)
+    @Assert(intentA.instanceKey, "cardA")
+    @Assert(intentB.ownerTargetResourceId, 20)
+    @Assert(intentB.instanceKey, "cardB")
+
+    // Execution routes by instance: A reaches its owner, B's owner refuses with
+    // its own reason and records nothing.
+    @Assert(provider.executeAction(intentA.actionName, intentA.nodeKey, intentA.instanceKey).applied, true)
+    let refusedB = provider.executeAction(intentB.actionName, intentB.nodeKey, intentB.instanceKey)
+    @Assert(refusedB.applied, false)
+    @Assert(refusedB.reason, "locked_by_owner")
+    @Assert(provider.executed.size, 1)
+    @Assert(provider.executed[0], "cardA:10:APPLY_DRAFT")
+
+    // Reorder: both instances keep their own target and enabled state.
+    let reordered = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([
+            CjguiGeneratedUiNodeSpec("cardB", "integerEdit"),
+            CjguiGeneratedUiNodeSpec("cardA", "integerEdit")
+        ]))
+    @Assert(holder.submit(reordered, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION).ownerTargetResourceId, 10)
+    @Assert(compositeRoleBinding(holder, "cardB", CJGUI_COMPOSITE_ELEMENT_ACTION).ownerTargetResourceId, 20)
+    @Assert(compositeRoleBinding(holder, "cardB", CJGUI_COMPOSITE_ELEMENT_ACTION).actionEnabled, false)
+
+    // Same-key rebind: the old control's late press is refused, while the new
+    // object's action resolves and executes against its NEW owner.
+    let reboundTargets = HashMap<String, Int64>()
+    reboundTargets.add("cardA", 30)
+    reboundTargets.add("cardB", 20)
+    let reboundAvailability = HashMap<String, CjguiSharedAvailability>()
+    reboundAvailability.add("cardA", CjguiSharedAvailability.allowed(30, 5))
+    reboundAvailability.add("cardB", CjguiSharedAvailability.allowed(20, 5))
+    let rebound = CompositeActionProvider(reboundTargets, reboundAvailability)
+    @Assert(holder.submit(reordered, rebound).candidateAccepted, true)
+    @Assert(generatedCommit(holder, rebound), true)
+    let late = holder.resolveIntent(compositeActionLayoutNode(actionA),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(late.kind, CJGUI_GENERATED_INTENT_NONE)
+    @Assert(late.reason, "element_binding_mismatch")
+    let currentA = compositeRoleBinding(holder, "cardA", CJGUI_COMPOSITE_ELEMENT_ACTION)
+    @Assert(currentA.ownerTargetResourceId, 30)
+    @Assert(currentA.actionEnabled, true)
+    let currentIntent = holder.resolveIntent(compositeActionLayoutNode(currentA),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "")
+    @Assert(currentIntent.isAction(), true)
+    @Assert(currentIntent.ownerTargetResourceId, 30)
+    @Assert(rebound.executeAction(currentIntent.actionName, currentIntent.nodeKey,
+        currentIntent.instanceKey).applied, true)
+    @Assert(rebound.executed[0], "cardA:30:APPLY_DRAFT")
+}
+
+/// Every element of one accepted instance must carry the SAME instance owner
+/// target, including a container element that has no writer of its own. The
+/// public instances projection reads this value, so a -1 there would hide the
+/// instance's object from an external client.
+@Test
+func compositeEveryElementCarriesTheInstanceOwnerTarget(): Unit {
+    let catalog = compositeCatalog()
+    @Assert(catalog.registerComposite(compositeSpec("integerEdit"), CompositeTestFactory()), true)
+    let holder = CjguiGeneratedUiStructureHolder(catalog)
+    let targets = HashMap<String, Int64>()
+    targets.add("cardA", 6200)
+    let provider = CompositeActionProvider(targets, HashMap<String, CjguiSharedAvailability>())
+    let structure = CjguiGeneratedUiNodeSpec("panel", "vertical",
+        children: ArrayList<CjguiGeneratedUiNodeSpec>([CjguiGeneratedUiNodeSpec("cardA", "integerEdit")]))
+    @Assert(holder.submit(structure, provider).candidateAccepted, true)
+    @Assert(generatedCommit(holder, provider), true)
+    let bindings = holder.compositeElementNodeIdsForKey("cardA")
+    @Assert(bindings.size >= 4, true)
+    var root: ?CjguiCompositeElementBinding = None
+    for (binding in bindings) {
+        @Assert(binding.instanceOwnerTargetResourceId, 6200)
+        if (binding.elementKey == "root") {
+            root = Some(binding)
+        }
+    }
+    @Assert(root.isSome(), true)
+    let rootBinding = root.getOrThrow()
+    @Assert(rootBinding.ownerTargetResourceId, -1)
 }
 
 /// Every `gap` value in a built subtree, so a declared layout property can be

@@ -29,6 +29,7 @@
 #include <time.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "cjgui_internal_renderer.h"
 #include "cjgui_linux_window.h"
@@ -37,6 +38,7 @@
 #include "cjgui_linux_aux.h"
 #include "cjgui_linux_services.h"
 #include "cjgui_linux_installed_range.h"
+#include "cjgui_linux_image.h"
 
 #define CJGUI_LINUX_MAX_SESSIONS 2u
 #define CJGUI_LINUX_MAX_NODES 1024u
@@ -72,6 +74,101 @@ static uint64_t cjgui_linux_now_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+// A process-wide set of windows served by the serialized owner loop. Every
+// window opened by this process registers here, so one owner wait covers all
+// of them instead of pinning the last window created. notify may run on the
+// transport thread, so both the list and the wake calls are serialized by the
+// same lock that guards unbind-before-destroy.
+#define CJGUI_LINUX_OWNER_WAKE_WINDOW_CAP 8u
+static CjguiLinuxWindow *g_ownerWakeWindows[CJGUI_LINUX_OWNER_WAKE_WINDOW_CAP];
+static uint32_t g_ownerWakeWindowCount = 0u;
+static _Atomic uint64_t g_ownerWorkRevision = 0u;
+static pthread_mutex_t g_ownerWakeLock = PTHREAD_MUTEX_INITIALIZER;
+
+static void cjgui_linux_owner_bind_window(CjguiLinuxWindow *window) {
+    if (window == NULL) return;
+    pthread_mutex_lock(&g_ownerWakeLock);
+    for (uint32_t i = 0u; i < g_ownerWakeWindowCount; i += 1u) {
+        if (g_ownerWakeWindows[i] == window) {
+            pthread_mutex_unlock(&g_ownerWakeLock);
+            return;
+        }
+    }
+    if (g_ownerWakeWindowCount < CJGUI_LINUX_OWNER_WAKE_WINDOW_CAP) {
+        g_ownerWakeWindows[g_ownerWakeWindowCount] = window;
+        g_ownerWakeWindowCount += 1u;
+    }
+    pthread_mutex_unlock(&g_ownerWakeLock);
+}
+
+static void cjgui_linux_owner_unbind_window(CjguiLinuxWindow *window) {
+    if (window == NULL) return;
+    pthread_mutex_lock(&g_ownerWakeLock);
+    for (uint32_t i = 0u; i < g_ownerWakeWindowCount; i += 1u) {
+        if (g_ownerWakeWindows[i] == window) {
+            for (uint32_t j = i + 1u; j < g_ownerWakeWindowCount; j += 1u) {
+                g_ownerWakeWindows[j - 1u] = g_ownerWakeWindows[j];
+            }
+            g_ownerWakeWindowCount -= 1u;
+            g_ownerWakeWindows[g_ownerWakeWindowCount] = NULL;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_ownerWakeLock);
+}
+
+uint64_t cjgui_internal_renderer_owner_work_revision_linux(void) {
+    return atomic_load_explicit(&g_ownerWorkRevision, memory_order_acquire);
+}
+
+void cjgui_internal_renderer_owner_notify_work_linux(void) {
+    atomic_fetch_add_explicit(&g_ownerWorkRevision, 1u, memory_order_acq_rel);
+    pthread_mutex_lock(&g_ownerWakeLock);
+    for (uint32_t i = 0u; i < g_ownerWakeWindowCount; i += 1u) {
+        cjgui_linux_window_wake(g_ownerWakeWindows[i]);
+    }
+    pthread_mutex_unlock(&g_ownerWakeLock);
+}
+
+static int cjgui_linux_owner_wait(uint64_t observedRevision, uint64_t absoluteDeadlineNs,
+                                  uint64_t *outIdleWaitNs) {
+    const uint64_t started = cjgui_linux_now_ns();
+    if (outIdleWaitNs != NULL) *outIdleWaitNs = 0u;
+    for (;;) {
+        if (atomic_load_explicit(&g_ownerWorkRevision, memory_order_acquire) != observedRevision) break;
+        if (cjgui_linux_now_ns() >= absoluteDeadlineNs) break;
+        // Snapshot under the lock, wait outside it: notify must never block on
+        // poll, and bind/unbind only happen on the owner thread.
+        CjguiLinuxWindow *windows[CJGUI_LINUX_OWNER_WAKE_WINDOW_CAP];
+        uint32_t count = 0u;
+        pthread_mutex_lock(&g_ownerWakeLock);
+        for (uint32_t i = 0u; i < g_ownerWakeWindowCount; i += 1u) {
+            windows[count] = g_ownerWakeWindows[i];
+            count += 1u;
+        }
+        pthread_mutex_unlock(&g_ownerWakeLock);
+        if (count == 0u) break;
+        uint64_t idle = 0u;
+        (void)cjgui_linux_window_wait_ready_multi(windows, count, absoluteDeadlineNs, &idle);
+        // Any readiness (X11, owner notify, or image completion) returns to the
+        // caller. The next turn pumps events/refresh; sleeping through an image
+        // wake would otherwise add a full idle interval to the frame.
+        break;
+    }
+    if (outIdleWaitNs != NULL) *outIdleWaitNs = cjgui_linux_now_ns() - started;
+    return 0;
+}
+
+int32_t cjgui_internal_renderer_owner_wait_idle_work_linux(uint64_t observedRevision, uint64_t absoluteDeadlineNs,
+                                                           uint64_t *outIdleWaitNs) {
+    return cjgui_linux_owner_wait(observedRevision, absoluteDeadlineNs, outIdleWaitNs);
+}
+
+int32_t cjgui_internal_renderer_owner_wait_work_linux(uint64_t observedRevision, uint64_t absoluteDeadlineNs,
+                                                      uint64_t *outIdleWaitNs) {
+    return cjgui_linux_owner_wait(observedRevision, absoluteDeadlineNs, outIdleWaitNs);
 }
 
 // UTF-8 <-> UTF-16 换算（BMP 之外按代理对计 2 个 UTF-16 单元）。事件里的
@@ -152,6 +249,11 @@ typedef struct CjguiLinuxScene {
 
 typedef struct CjguiLinuxActiveTextProxy {
     int active;
+    // 1 = installed by ordinary focus from the accepted scene; 0 = owned/range
+    // session. Ordinary proxies follow focus/accept reconciliation; owned
+    // proxies keep their existing source/recovery contract and are never
+    // downgraded or retired by that reconciliation.
+    int ordinary;
     uint64_t nodeId;
     int64_t resourceId;
     uint32_t nodeKind;
@@ -171,11 +273,15 @@ typedef struct CjguiLinuxSession {
     CjguiLinuxWindow *window;
     CjguiLinuxGpu *gpu;
     CjguiLinuxText *text;
+    CjguiLinuxImageDomain *image;
 
     uint32_t requestedWidth;
     uint32_t requestedHeight;
     double clear[4];
     uint64_t frameIndex;
+    // 视口几何推进代：只随真实尺寸变化推进。frameIndex 是提交帧号，不能
+    // 当 resize 版本使用，否则共同层每帧都会误判"窗口已缩放"并重建整棵树。
+    uint64_t resizeVersion;
 
     CjguiLinuxScene accepted;
     CjguiLinuxScene candidate;
@@ -183,6 +289,20 @@ typedef struct CjguiLinuxSession {
     uint64_t preparationId;
 
     CjguiLinuxActiveTextProxy proxy;
+    // Keyboard focus identity. It survives a cleared text proxy so Tab can
+    // leave a field for a button and Esc still knows which layer owns focus.
+    int focusActive;
+    uint64_t focusNodeId;
+    int64_t focusResourceId;
+    uint32_t focusNodeKind;
+    // Real owned-binding declaration. Proxy ownership is derived from this
+    // declaration, not from the restore path that happens to run: ordinary
+    // modal returns and tab bookmarks also restore a selection.
+    int ownedTextSessionEnabled;
+    uint64_t ownedTextSessionNodeId;
+    int64_t ownedTextSessionResourceId;
+    uint32_t ownedTextSessionNodeKind;
+    uint64_t ownedTextSessionBindingEpoch;
     int rangeEditDeltaEnabled;
 
     // 最近一次产生的事件所需的值载荷（在这些 getter 的契约里"借用到下一次
@@ -200,6 +320,17 @@ typedef struct CjguiLinuxSession {
 
     // 指针路由：按下时认定的目标，抬起时只有同一目标才算激活。
     int pointerDown;
+    // Left-press on an editable text node installs focus/caret directly
+    // (Windows parity); the matching release must not become ACTIVATE.
+    int pointerTextTarget;
+    // Identity frozen at press time. A drag may only continue while the proxy
+    // is still the same node/resource/kind and the same binding epoch; focus
+    // switching, rebinding or removing the node must not reuse A's anchor on B.
+    uint64_t pointerTextNodeId;
+    int64_t pointerTextResourceId;
+    uint32_t pointerTextNodeKind;
+    uint64_t pointerTextBindingEpoch;
+    int pointerTextAborted;
     uint64_t pointerNodeId;
     int64_t pointerResourceId;
     uint32_t pointerNodeKind;
@@ -231,7 +362,20 @@ typedef struct CjguiLinuxSession {
     uint32_t compositionLength16;          // 上一份 preedit 的 UTF-16 长度
     uint32_t compositionReplaceLength16;   // 组合开始时被替换的选区长度（投影用）
     char compositionText[CJGUI_LINUX_WINDOW_EVENT_TEXT_CAPACITY];
+    // Body the preedit started on. An external owner write during composition
+    // changes the accepted body; the commit must not insert its old caret into
+    // that newer value.
+    uint64_t compositionBaseHash;
     size_t compositionTextLength;
+    // Identity frozen when the preedit starts. A terminal phase may only end
+    // this target; focus/rebind/removal must never re-route it to the current
+    // proxy, even when both fields carry the same body text.
+    uint64_t compositionNodeId;
+    int64_t compositionResourceId;
+    uint32_t compositionNodeKind;
+    uint64_t compositionBindingEpoch;
+    uint32_t compositionCaret16;
+    int compositionOwned;
 
     // 异步粘贴：请求发出后普通泵继续跑，结果到达再走一次范围编辑。
     int pastePending;
@@ -241,6 +385,10 @@ typedef struct CjguiLinuxSession {
     int sourceGatePending;
     uint64_t sourceGateEpoch;
     uint64_t sourceGateRequest;
+
+    // 输入类文本的原生拖选锚点（UTF-16）。owned 输入与普通输入同一条路径；
+    // 预览类 TEXT 节点仍由共同层收 BEGIN/MOVE/END。
+    uint32_t textSelectionAnchor16;
 
     // 窗口激活状态。
     int windowKey;
@@ -269,7 +417,9 @@ typedef struct CjguiLinuxSession {
     // （见 composable_ui_window.cj:10678 的 S1 顺序），所以它必须独立于场景槽位
     // 按 nodeId 保存，并在该节点真正入库时挂上去。按"先查已入库节点"实现会
     // 在第一次安装就返回 NODE_NOT_FOUND，导致候选被拒、窗口永远出不来。
-#define CJGUI_LINUX_MAX_RUN_DECLARATIONS 64u
+    // 共同层对整棵树逐节点发布（含空声明），容量必须覆盖一个完整场景；
+    // 取 2 倍上界是为了容纳"已接受场景 + 准备中的候选"同时存在的两代 id。
+#define CJGUI_LINUX_MAX_RUN_DECLARATIONS (CJGUI_LINUX_MAX_NODES * 2u)
     struct {
         uint64_t nodeId;
         char *encoded;
@@ -415,22 +565,84 @@ static void cjgui_linux_scene_move(CjguiLinuxScene *destination, CjguiLinuxScene
 // ---------------------------------------------------------------- 绘制
 
 // 往顶点缓冲追加一个矩形（两个三角形）。坐标为设备像素。
+typedef struct CjguiLinuxPaintPoint CjguiLinuxPaintPoint;
+
+typedef struct CjguiLinuxDrawSegment {
+    uint32_t firstVertex;
+    uint32_t vertexCount;
+    uint32_t imageSlot;   // UINT32_MAX = 字形图集
+} CjguiLinuxDrawSegment;
+
 typedef struct CjguiLinuxVertexBuilder {
     CjguiLinuxGpuVertex *vertices;
     uint32_t count;
     uint32_t capacity;
     int failed;
+    // 一次绘制可能交替使用字形图集和多个图片纹理；按产生顺序分段，
+    // 结算时逐段选择 draw_triangles / draw_image_triangles。分段表与字形
+    // 结果缓冲都放在堆上：native 帧函数运行在共同层调用栈上，不能把
+    // 几十 KB 的临时数组压进该栈。
+    uint32_t desiredSlot;
+    CjguiLinuxDrawSegment *segments;
+    uint32_t segmentCount;
+    uint32_t segmentCapacity;
+    CjguiLinuxTextQuad *textQuads;
+    CjguiLinuxStyledQuad *styledQuads;
+    CjguiLinuxStyledSpan *styledSpans;
+    // Heap-resident ping-pong buffers for plane clipping. They are reused by
+    // every primitive in the frame and deliberately kept off the Cangjie
+    // call stack (the same reason textQuads lives here).
+    CjguiLinuxPaintPoint *clipA;
+    CjguiLinuxPaintPoint *clipB;
 } CjguiLinuxVertexBuilder;
+
+static void cjgui_linux_builder_release(CjguiLinuxVertexBuilder *builder) {
+    free(builder->vertices);
+    free(builder->segments);
+    free(builder->textQuads);
+    free(builder->styledQuads);
+    free(builder->styledSpans);
+    free(builder->clipA);
+    free(builder->clipB);
+    memset(builder, 0, sizeof(*builder));
+}
+
+static int cjgui_linux_builder_touch(CjguiLinuxVertexBuilder *builder) {
+    if (builder->failed) return 0;
+    uint32_t last = builder->segmentCount;
+    if (last > 0u && builder->segments[last - 1u].imageSlot == builder->desiredSlot) return 1;
+    if (last >= builder->segmentCapacity) {
+        uint32_t next = builder->segmentCapacity ? builder->segmentCapacity * 2u : 64u;
+        CjguiLinuxDrawSegment *grown = (CjguiLinuxDrawSegment *)realloc(
+            builder->segments, sizeof(CjguiLinuxDrawSegment) * (size_t)next);
+        if (grown == NULL) {
+            builder->failed = 1;
+            return 0;
+        }
+        builder->segments = grown;
+        builder->segmentCapacity = next;
+    }
+    builder->segments[last].firstVertex = builder->count;
+    builder->segments[last].vertexCount = 0u;
+    builder->segments[last].imageSlot = builder->desiredSlot;
+    builder->segmentCount += 1u;
+    return 1;
+}
 
 static int cjgui_linux_builder_reserve(CjguiLinuxVertexBuilder *builder, uint32_t extra) {
     if (builder->failed) return 0;
-    if (builder->count + extra <= builder->capacity) return 1;
+    if (!cjgui_linux_builder_touch(builder)) return 0;
+    if (builder->count + extra <= builder->capacity) {
+        builder->segments[builder->segmentCount - 1u].vertexCount += extra;
+        return 1;
+    }
     uint32_t next = builder->capacity ? builder->capacity : 4096u;
     while (next < builder->count + extra) next *= 2u;
     CjguiLinuxGpuVertex *grown = (CjguiLinuxGpuVertex *)realloc(builder->vertices, sizeof(CjguiLinuxGpuVertex) * next);
     if (!grown) { builder->failed = 1; return 0; }
     builder->vertices = grown;
     builder->capacity = next;
+    builder->segments[builder->segmentCount - 1u].vertexCount += extra;
     return 1;
 }
 
@@ -480,11 +692,107 @@ typedef struct CjguiLinuxPaintPoint {
     double y;
     double u;
     double v;
+    double r;
+    double g;
+    double b;
+    double a;
 } CjguiLinuxPaintPoint;
 
-// A quad clipped against four axis-aligned half-planes gains at most one vertex
-// per plane, so 16 slots cover the worst case with headroom.
-#define CJGUI_LINUX_PAINT_POLYGON_CAPACITY 16u
+// A rounded ancestor clip is an intersection of convex rounded rectangles.
+// The intersection is clipped down to one convex aperture polygon and then
+// applied as inward half-planes (`n·p >= d`) to every primitive of the node:
+// backgrounds, glyph quads and image quads share the same aperture, so a
+// rectangle can never stand in for a rounded clip.
+#define CJGUI_LINUX_CLIP_POINT_CAPACITY 256u
+#define CJGUI_LINUX_CLIP_PLANE_CAPACITY 192u
+#define CJGUI_LINUX_RADIUS_SEGMENTS 8u
+
+typedef struct CjguiLinuxPoint2D {
+    double x;
+    double y;
+} CjguiLinuxPoint2D;
+
+typedef struct CjguiLinuxClipPlane {
+    double nx;
+    double ny;
+    double d;
+} CjguiLinuxClipPlane;
+
+typedef struct CjguiLinuxClipAperture {
+    CjguiLinuxClipPlane planes[CJGUI_LINUX_CLIP_PLANE_CAPACITY];
+    uint32_t count;
+    int active;
+    // active == 0 can mean "no rounded ancestor" or "rounded ancestors do not
+    // intersect". The latter must paint nothing; callers use this bit instead
+    // of treating the empty aperture as an absent clip.
+    int empty;
+} CjguiLinuxClipAperture;
+
+// One convex rounded-rectangle outline. Every corner always contributes
+// CJGUI_LINUX_RADIUS_SEGMENTS points, including zero-radius corners where the
+// points coincide; that keeps outer/inner border rings pairable and makes the
+// zero-radius case a plain rectangle.
+static uint32_t cjgui_linux_rounded_outline(double x, double y, double width, double height,
+                                            double topLeft, double topRight,
+                                            double bottomRight, double bottomLeft,
+                                            CjguiLinuxPoint2D *out, uint32_t capacity) {
+    if (!(width > 0.0) || !(height > 0.0) || out == NULL) return 0u;
+    double limit = fmin(width, height) * 0.5;
+    double radii[4] = { topLeft, topRight, bottomRight, bottomLeft };
+    for (uint32_t i = 0u; i < 4u; i += 1u) {
+        if (!isfinite(radii[i]) || radii[i] < 0.0) radii[i] = 0.0;
+        if (radii[i] > limit) radii[i] = limit;
+    }
+    int anyRadius = 0;
+    for (uint32_t i = 0u; i < 4u; i += 1u) {
+        if (radii[i] > 0.0) anyRadius = 1;
+    }
+    if (!anyRadius) {
+        if (capacity < 4u) return 0u;
+        out[0].x = x;           out[0].y = y;
+        out[1].x = x + width;   out[1].y = y;
+        out[2].x = x + width;   out[2].y = y + height;
+        out[3].x = x;           out[3].y = y + height;
+        return 4u;
+    }
+    if (capacity < 4u * CJGUI_LINUX_RADIUS_SEGMENTS) return 0u;
+    // Clockwise in device coordinates (y grows down): TL 180→270, TR 270→360,
+    // BR 0→90, BL 90→180. Straight edges connect consecutive arcs.
+    const double centres[4][2] = {
+        { x + radii[0], y + radii[0] },
+        { x + width - radii[1], y + radii[1] },
+        { x + width - radii[2], y + height - radii[2] },
+        { x + radii[3], y + height - radii[3] },
+    };
+    const double starts[4] = { 180.0, 270.0, 0.0, 90.0 };
+    uint32_t count = 0u;
+    for (uint32_t corner = 0u; corner < 4u; corner += 1u) {
+        for (uint32_t step = 0u; step < CJGUI_LINUX_RADIUS_SEGMENTS; step += 1u) {
+            double degrees = starts[corner] +
+                90.0 * (double)step / (double)CJGUI_LINUX_RADIUS_SEGMENTS;
+            double radians = degrees * 3.14159265358979323846 / 180.0;
+            out[count].x = centres[corner][0] + radii[corner] * cos(radians);
+            out[count].y = centres[corner][1] + radii[corner] * sin(radians);
+            count += 1u;
+        }
+    }
+    return count;
+}
+
+// A zero-radius inner ring takes the rectangle shortcut (four points) while a
+// rounded outer ring always carries eight points per corner. Expand the inner
+// rectangle to the same corner phase so the two rings stay pairable; this is
+// the exact inset geometry when radius < stroke width, not a dropped border.
+static uint32_t cjgui_linux_expand_rectangle_ring(const CjguiLinuxPoint2D rect[4],
+                                                  CjguiLinuxPoint2D *out, uint32_t capacity) {
+    if (rect == NULL || out == NULL || capacity < 4u * CJGUI_LINUX_RADIUS_SEGMENTS) return 0u;
+    for (uint32_t corner = 0u; corner < 4u; corner += 1u) {
+        for (uint32_t step = 0u; step < CJGUI_LINUX_RADIUS_SEGMENTS; step += 1u) {
+            out[corner * CJGUI_LINUX_RADIUS_SEGMENTS + step] = rect[corner];
+        }
+    }
+    return 4u * CJGUI_LINUX_RADIUS_SEGMENTS;
+}
 
 static void cjgui_linux_paint_transform_point(const CjguiLinuxPaintTransform *transform, double x, double y,
                                               double *outX, double *outY) {
@@ -495,125 +803,198 @@ static void cjgui_linux_paint_transform_point(const CjguiLinuxPaintTransform *tr
     *outY = transform->centerY + dx * transform->sinValue + dy * transform->cosValue;
 }
 
-// Sutherland–Hodgman against one half-plane. UVs interpolate with the same
-// parameter as the position, so a clipped glyph keeps its atlas mapping.
-static uint32_t cjgui_linux_clip_polygon_axis(const CjguiLinuxPaintPoint *input, uint32_t count,
-                                              CjguiLinuxPaintPoint *output, int axis, double boundary,
-                                              int keepAtLeast) {
-    if (count == 0u || count > CJGUI_LINUX_PAINT_POLYGON_CAPACITY) return 0u;
+// Sutherland–Hodgman against one half-plane (`n·p >= d`). UVs and vertex
+// colours interpolate with the same parameter as the position, so a clipped
+// glyph keeps its atlas mapping and a clipped gradient keeps its ramp.
+static uint32_t cjgui_linux_clip_polygon_plane(const CjguiLinuxPaintPoint *input, uint32_t count,
+                                               CjguiLinuxPaintPoint *output,
+                                               const CjguiLinuxClipPlane *plane) {
+    if (count == 0u || count > CJGUI_LINUX_CLIP_POINT_CAPACITY || plane == NULL) return 0u;
     uint32_t outCount = 0u;
     for (uint32_t i = 0u; i < count; i += 1u) {
         const CjguiLinuxPaintPoint *current = &input[i];
         const CjguiLinuxPaintPoint *next = &input[(i + 1u) % count];
-        double currentValue = axis == 0 ? current->x : current->y;
-        double nextValue = axis == 0 ? next->x : next->y;
-        int currentInside = keepAtLeast ? (currentValue >= boundary) : (currentValue <= boundary);
-        int nextInside = keepAtLeast ? (nextValue >= boundary) : (nextValue <= boundary);
+        double currentValue = plane->nx * current->x + plane->ny * current->y - plane->d;
+        double nextValue = plane->nx * next->x + plane->ny * next->y - plane->d;
+        int currentInside = currentValue >= 0.0;
+        int nextInside = nextValue >= 0.0;
         if (currentInside) {
-            if (outCount >= CJGUI_LINUX_PAINT_POLYGON_CAPACITY) return 0u;
+            if (outCount >= CJGUI_LINUX_CLIP_POINT_CAPACITY) return 0u;
             output[outCount++] = *current;
         }
         if (currentInside == nextInside) continue;
         double delta = nextValue - currentValue;
         if (delta == 0.0) continue;
-        double t = (boundary - currentValue) / delta;
+        double t = -currentValue / delta;
         if (t < 0.0) t = 0.0;
         if (t > 1.0) t = 1.0;
-        if (outCount >= CJGUI_LINUX_PAINT_POLYGON_CAPACITY) return 0u;
+        if (outCount >= CJGUI_LINUX_CLIP_POINT_CAPACITY) return 0u;
         CjguiLinuxPaintPoint clipped;
         clipped.x = current->x + (next->x - current->x) * t;
         clipped.y = current->y + (next->y - current->y) * t;
         clipped.u = current->u + (next->u - current->u) * t;
         clipped.v = current->v + (next->v - current->v) * t;
+        clipped.r = current->r + (next->r - current->r) * t;
+        clipped.g = current->g + (next->g - current->g) * t;
+        clipped.b = current->b + (next->b - current->b) * t;
+        clipped.a = current->a + (next->a - current->a) * t;
         output[outCount++] = clipped;
     }
     return outCount;
 }
 
-// Submit one quad of this node after the paint-only transform, clipped to the
-// device-space clip rectangle (the unrotated ancestor aperture stays
-// axis-aligned, matching macOS where the shader clips scene points).
-static void cjgui_linux_builder_painted_quad(CjguiLinuxVertexBuilder *builder,
-                                             const CjguiLinuxPaintTransform *transform,
-                                             double x0, double y0, double x1, double y1,
-                                             double u0, double v0, double u1, double v1,
-                                             double clipLeft, double clipTop, double clipRight,
-                                             double clipBottom, double r, double g, double b, double a) {
-    if (!builder || builder->failed || !transform || !transform->active) return;
-    if (!(x1 > x0) || !(y1 > y0)) return;
-    CjguiLinuxPaintPoint quad[4];
-    double corners[4][2] = { { x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 } };
-    double minX = 0.0, minY = 0.0, maxX = 0.0, maxY = 0.0;
-    for (uint32_t i = 0u; i < 4u; i += 1u) {
-        cjgui_linux_paint_transform_point(transform, corners[i][0], corners[i][1], &quad[i].x, &quad[i].y);
-        if (i == 0u) { minX = maxX = quad[i].x; minY = maxY = quad[i].y; }
-        if (quad[i].x < minX) minX = quad[i].x;
-        if (quad[i].x > maxX) maxX = quad[i].x;
-        if (quad[i].y < minY) minY = quad[i].y;
-        if (quad[i].y > maxY) maxY = quad[i].y;
+static int cjgui_linux_builder_ensure_clip_scratch(CjguiLinuxVertexBuilder *builder) {
+    if (builder->clipA != NULL && builder->clipB != NULL) return 1;
+    builder->clipA = (CjguiLinuxPaintPoint *)malloc(
+        sizeof(CjguiLinuxPaintPoint) * CJGUI_LINUX_CLIP_POINT_CAPACITY);
+    builder->clipB = (CjguiLinuxPaintPoint *)malloc(
+        sizeof(CjguiLinuxPaintPoint) * CJGUI_LINUX_CLIP_POINT_CAPACITY);
+    if (builder->clipA == NULL || builder->clipB == NULL) {
+        builder->failed = 1;
+        return 0;
     }
-    if (maxX <= clipLeft || minX >= clipRight || maxY <= clipTop || minY >= clipBottom) return;
-    quad[0].u = u0; quad[0].v = v0;
-    quad[1].u = u1; quad[1].v = v0;
-    quad[2].u = u1; quad[2].v = v1;
-    quad[3].u = u0; quad[3].v = v1;
-    CjguiLinuxPaintPoint scratch[CJGUI_LINUX_PAINT_POLYGON_CAPACITY];
-    uint32_t count = 4u;
-    count = cjgui_linux_clip_polygon_axis(quad, count, scratch, 0, clipLeft, 1);
-    if (count < 3u) return;
-    count = cjgui_linux_clip_polygon_axis(scratch, count, quad, 0, clipRight, 0);
-    if (count < 3u) return;
-    count = cjgui_linux_clip_polygon_axis(quad, count, scratch, 1, clipTop, 1);
-    if (count < 3u) return;
-    count = cjgui_linux_clip_polygon_axis(scratch, count, quad, 1, clipBottom, 0);
+    return 1;
+}
+
+static void cjgui_linux_builder_append_fan(CjguiLinuxVertexBuilder *builder,
+                                           const CjguiLinuxPaintPoint *points, uint32_t count) {
     if (count < 3u) return;
     uint32_t triangleCount = count - 2u;
     if (!cjgui_linux_builder_reserve(builder, triangleCount * 3u)) return;
-    float fr = (float)r, fg = (float)g, fb = (float)b, fa = (float)a;
     for (uint32_t i = 1u; i + 1u < count; i += 1u) {
         CjguiLinuxGpuVertex triangle[3] = {
-            { (float)quad[0].x, (float)quad[0].y, (float)quad[0].u, (float)quad[0].v, fr, fg, fb, fa },
-            { (float)quad[i].x, (float)quad[i].y, (float)quad[i].u, (float)quad[i].v, fr, fg, fb, fa },
-            { (float)quad[i + 1u].x, (float)quad[i + 1u].y, (float)quad[i + 1u].u, (float)quad[i + 1u].v,
-              fr, fg, fb, fa },
+            { (float)points[0].x, (float)points[0].y, (float)points[0].u, (float)points[0].v,
+              (float)points[0].r, (float)points[0].g, (float)points[0].b, (float)points[0].a },
+            { (float)points[i].x, (float)points[i].y, (float)points[i].u, (float)points[i].v,
+              (float)points[i].r, (float)points[i].g, (float)points[i].b, (float)points[i].a },
+            { (float)points[i + 1u].x, (float)points[i + 1u].y, (float)points[i + 1u].u,
+              (float)points[i + 1u].v, (float)points[i + 1u].r, (float)points[i + 1u].g,
+              (float)points[i + 1u].b, (float)points[i + 1u].a },
         };
         memcpy(builder->vertices + builder->count, triangle, sizeof(triangle));
         builder->count += 3u;
     }
 }
 
-// Rect-shaped paint. An inactive transform calls the untouched legacy builder,
-// so every absent/default node keeps its historical vertex bytes.
+// Clip one convex point list to the axis aperture and then to the rounded
+// aperture shared by the whole node, then fan-triangulate it. Every painted
+// primitive (shape, glyph, image) goes through this one function.
+static void cjgui_linux_builder_emit_clipped_points(CjguiLinuxVertexBuilder *builder,
+                                                    const CjguiLinuxPaintPoint *points, uint32_t count,
+                                                    double clipLeft, double clipTop,
+                                                    double clipRight, double clipBottom,
+                                                    const CjguiLinuxClipAperture *aperture) {
+    if (!builder || builder->failed || points == NULL || count < 3u) return;
+    if (!(clipRight > clipLeft) || !(clipBottom > clipTop)) return;
+    if (count > CJGUI_LINUX_CLIP_POINT_CAPACITY) return;
+    if (!cjgui_linux_builder_ensure_clip_scratch(builder)) return;
+    CjguiLinuxPaintPoint *current = builder->clipA;
+    CjguiLinuxPaintPoint *next = builder->clipB;
+    memcpy(current, points, sizeof(CjguiLinuxPaintPoint) * count);
+    uint32_t currentCount = count;
+    CjguiLinuxClipPlane axis[4] = {
+        { 1.0, 0.0, clipLeft },
+        { -1.0, 0.0, -clipRight },
+        { 0.0, 1.0, clipTop },
+        { 0.0, -1.0, -clipBottom },
+    };
+    for (uint32_t plane = 0u; plane < 4u; plane += 1u) {
+        currentCount = cjgui_linux_clip_polygon_plane(current, currentCount, next, &axis[plane]);
+        if (currentCount < 3u) return;
+        CjguiLinuxPaintPoint *swap = current;
+        current = next;
+        next = swap;
+    }
+    if (aperture != NULL && aperture->active) {
+        for (uint32_t plane = 0u; plane < aperture->count; plane += 1u) {
+            currentCount = cjgui_linux_clip_polygon_plane(
+                current, currentCount, next, &aperture->planes[plane]);
+            if (currentCount < 3u) return;
+            CjguiLinuxPaintPoint *swap = current;
+            current = next;
+            next = swap;
+        }
+    }
+    cjgui_linux_builder_append_fan(builder, current, currentCount);
+}
+
+// Submit one quad of this node after the paint-only transform, clipped to the
+// device-space clip rectangle and the node's rounded aperture. The unrotated
+// ancestor aperture stays axis-aligned, matching macOS where the shader clips
+// scene points.
+static void cjgui_linux_builder_painted_quad(CjguiLinuxVertexBuilder *builder,
+                                             const CjguiLinuxPaintTransform *transform,
+                                             double x0, double y0, double x1, double y1,
+                                             double u0, double v0, double u1, double v1,
+                                             double clipLeft, double clipTop, double clipRight,
+                                             double clipBottom, const CjguiLinuxClipAperture *aperture,
+                                             double r, double g, double b, double a) {
+    if (!builder || builder->failed) return;
+    if (!(x1 > x0) || !(y1 > y0)) return;
+    CjguiLinuxPaintPoint quad[4];
+    double corners[4][2] = { { x0, y0 }, { x1, y0 }, { x1, y1 }, { x0, y1 } };
+    for (uint32_t i = 0u; i < 4u; i += 1u) {
+        cjgui_linux_paint_transform_point(transform, corners[i][0], corners[i][1], &quad[i].x, &quad[i].y);
+        quad[i].r = r; quad[i].g = g; quad[i].b = b; quad[i].a = a;
+    }
+    quad[0].u = u0; quad[0].v = v0;
+    quad[1].u = u1; quad[1].v = v0;
+    quad[2].u = u1; quad[2].v = v1;
+    quad[3].u = u0; quad[3].v = v1;
+    cjgui_linux_builder_emit_clipped_points(builder, quad, 4u, clipLeft, clipTop,
+                                            clipRight, clipBottom, aperture);
+}
+
+// Rect-shaped paint. An inactive transform keeps the historical geometry path;
+// rounded apertures still trim the resulting triangles identically.
 static void cjgui_linux_builder_rect_painted(CjguiLinuxVertexBuilder *builder,
                                              const CjguiLinuxPaintTransform *transform,
                                              double x, double y, double width, double height,
                                              double clipLeft, double clipTop, double clipRight,
-                                             double clipBottom, double r, double g, double b, double a) {
-    if (!transform || !transform->active) {
-        cjgui_linux_builder_rect(builder, x, y, width, height, r, g, b, a);
-        return;
-    }
+                                             double clipBottom, const CjguiLinuxClipAperture *aperture,
+                                             double r, double g, double b, double a) {
     if (width <= 0.0 || height <= 0.0) return;
     const float u = 0.5f / (float)CJGUI_LINUX_TEXT_ATLAS_SIDE;
     const float v = 0.5f / (float)CJGUI_LINUX_TEXT_ATLAS_SIDE;
     cjgui_linux_builder_painted_quad(builder, transform, x, y, x + width, y + height,
                                      (double)u, (double)v, (double)u, (double)v,
-                                     clipLeft, clipTop, clipRight, clipBottom, r, g, b, a);
+                                     clipLeft, clipTop, clipRight, clipBottom, aperture, r, g, b, a);
+}
+
+static void cjgui_linux_builder_rect_clipped(CjguiLinuxVertexBuilder *builder,
+                                             double x, double y, double width, double height,
+                                             double clipLeft, double clipTop, double clipRight,
+                                             double clipBottom, const CjguiLinuxClipAperture *aperture,
+                                             double r, double g, double b, double a) {
+    const float u = 0.5f / (float)CJGUI_LINUX_TEXT_ATLAS_SIDE;
+    const float v = 0.5f / (float)CJGUI_LINUX_TEXT_ATLAS_SIDE;
+    cjgui_linux_builder_painted_quad(builder, NULL, x, y, x + width, y + height,
+                                     (double)u, (double)v, (double)u, (double)v,
+                                     clipLeft, clipTop, clipRight, clipBottom, aperture, r, g, b, a);
 }
 
 static void cjgui_linux_builder_text(CjguiLinuxVertexBuilder *builder, CjguiLinuxText *text,
                                      const char *value, double fontSize, uint32_t fontWeight,
                                      uint32_t fontFamily, double maxWidth, double originX, double originY,
                                      double clipX, double clipY, double clipRight, double clipBottom,
+                                     const CjguiLinuxClipAperture *aperture,
                                      double r, double g, double b, double a,
-                                     const CjguiLinuxPaintTransform *transform) {
+                                     const CjguiLinuxPaintTransform *transform,
+                                     uint32_t maxLines, int ellipsis) {
     if (!text || !value || !value[0] || builder->failed) return;
-    CjguiLinuxTextQuad quads[1024];
+    if (builder->textQuads == NULL) {
+        builder->textQuads = (CjguiLinuxTextQuad *)malloc(sizeof(CjguiLinuxTextQuad) * 1024u);
+        if (builder->textQuads == NULL) {
+            builder->failed = 1;
+            return;
+        }
+    }
+    CjguiLinuxTextQuad *quads = builder->textQuads;
     uint32_t quadCount = 0u;
     double width = 0.0, height = 0.0, ascent = 0.0;
-    int status = cjgui_linux_text_layout(text, value, strlen(value), fontSize, fontWeight, fontFamily,
-                                         maxWidth, 0.0, 0.0, 1, quads, 1024u, &quadCount, &width, &height,
-                                         &ascent);
+    int status = cjgui_linux_text_layout_limited(text, value, strlen(value), fontSize, fontWeight,
+                                                 fontFamily, maxWidth, maxLines, ellipsis, 0.0, 0.0, 1,
+                                                 quads, 1024u, &quadCount, &width, &height, &ascent);
     if (status != CJGUI_LINUX_TEXT_OK && status != CJGUI_LINUX_TEXT_BUDGET_EXCEEDED) return;
     if (quadCount > 1024u) quadCount = 1024u;
     for (uint32_t i = 0u; i < quadCount; i += 1u) {
@@ -623,29 +1004,582 @@ static void cjgui_linux_builder_text(CjguiLinuxVertexBuilder *builder, CjguiLinu
         double qw = quad->width;
         double qh = quad->height;
         if (qw <= 0.0 || qh <= 0.0) continue;
-        if (transform && transform->active) {
-            // 旋转/缩放只改这一节点自己的顶点；字形 UV 保持不变，裁剪交给
-            // 多边形裁剪，字形仍随节点整体转动。
-            cjgui_linux_builder_painted_quad(builder, transform, qx, qy, qx + qw, qy + qh,
-                                             quad->u0, quad->v0, quad->u1, quad->v1,
-                                             clipX, clipY, clipRight, clipBottom, r, g, b, a);
-            continue;
+        // Both the transformed and the axis-aligned path use the same
+        // polygon aperture. A partially visible glyph is trimmed instead of
+        // being dropped or allowed to escape a rounded corner.
+        cjgui_linux_builder_painted_quad(builder, transform, qx, qy, qx + qw, qy + qh,
+                                         quad->u0, quad->v0, quad->u1, quad->v1,
+                                         clipX, clipY, clipRight, clipBottom, aperture, r, g, b, a);
+    }
+}
+
+// ---------------------------------------------------------------- 多样式文字
+//
+// The common layer already validated ranges, budget and UTF-8 boundaries.
+// This parser is the platform's bounded transport onto the SAME declaration:
+// 14 colon fields per run, later items overriding earlier ones. A 15/16-field
+// item is a selection decoration and is skipped here (Linux paints the native
+// editor selection itself). Malformed input never reaches the accepted scene,
+// so the safe reaction is the plain single-style path.
+#define CJGUI_LINUX_RUN_PARSE_CAP 128u
+
+typedef struct CjguiLinuxParsedRuns {
+    CjguiLinuxTextStyleRun runs[CJGUI_LINUX_RUN_PARSE_CAP];
+    uint32_t count;
+} CjguiLinuxParsedRuns;
+
+static int lx_field_u32(const char *s, size_t n, uint32_t *out) {
+    if (n == 0u) return 0;
+    char *end = NULL;
+    unsigned long v = strtoul(s, &end, 10);
+    if (end != s + n || v > 0xFFFFFFFFul) return 0;
+    *out = (uint32_t)v;
+    return 1;
+}
+
+static int lx_field_f64(const char *s, size_t n, double *out) {
+    if (n == 0u) return 0;
+    char *end = NULL;
+    double v = strtod(s, &end);
+    if (end != s + n || !isfinite(v)) return 0;
+    *out = v;
+    return 1;
+}
+
+static int lx_field_color(const char *s, size_t n, float *out) {
+    double v = 0.0;
+    if (!lx_field_f64(s, n, &v) || v < 0.0 || v > 1.0) return 0;
+    *out = (float)v;
+    return 1;
+}
+
+static int cjgui_linux_parse_runs(const char *encoded, const char *value, size_t textLength,
+                                  CjguiLinuxParsedRuns *out) {
+    out->count = 0u;
+    if (!encoded || !encoded[0]) return 1;
+    const char *p = encoded;
+    while (*p) {
+        const char *itemEnd = strchr(p, ';');
+        if (!itemEnd) itemEnd = p + strlen(p);
+        const char *fields[16];
+        size_t lengths[16];
+        uint32_t fieldCount = 0u;
+        const char *q = p;
+        int overflow = 0;
+        while (q < itemEnd) {
+            const char *c = (const char *)memchr(q, ':', (size_t)(itemEnd - q));
+            if (!c) c = itemEnd;
+            if (fieldCount < 16u) {
+                fields[fieldCount] = q;
+                lengths[fieldCount] = (size_t)(c - q);
+            } else {
+                overflow = 1;
+            }
+            fieldCount++;
+            q = c + 1;
         }
-        if (qx + qw <= clipX || qy + qh <= clipY || qx >= clipRight || qy >= clipBottom) continue;
-        if (!cjgui_linux_builder_reserve(builder, 6u)) return;
-        float x0 = (float)qx, y0 = (float)qy;
-        float x1 = (float)(qx + qw), y1 = (float)(qy + qh);
-        float fr = (float)r, fg = (float)g, fb = (float)b, fa = (float)a;
-        CjguiLinuxGpuVertex glyphs[6] = {
-            { x0, y0, quad->u0, quad->v0, fr, fg, fb, fa },
-            { x1, y0, quad->u1, quad->v0, fr, fg, fb, fa },
-            { x1, y1, quad->u1, quad->v1, fr, fg, fb, fa },
-            { x0, y0, quad->u0, quad->v0, fr, fg, fb, fa },
-            { x1, y1, quad->u1, quad->v1, fr, fg, fb, fa },
-            { x0, y1, quad->u0, quad->v1, fr, fg, fb, fa },
-        };
-        memcpy(builder->vertices + builder->count, glyphs, sizeof(glyphs));
-        builder->count += 6u;
+        if (overflow) return 0;
+        if (fieldCount == 15u || fieldCount == 16u) {
+            const char *last = fields[fieldCount - 1u];
+            size_t lastLen = lengths[fieldCount - 1u];
+            if ((lastLen == 1u && (last[0] == '1' || last[0] == '2'))) {
+                p = (*itemEnd == ';') ? itemEnd + 1 : itemEnd;
+                continue;
+            }
+            return 0;
+        }
+        if (fieldCount != 14u) return 0;
+        if (out->count >= CJGUI_LINUX_RUN_PARSE_CAP) return 0;
+
+        CjguiLinuxTextStyleRun run;
+        memset(&run, 0, sizeof(run));
+        uint32_t weight = 0u, family = 0u, background = 0u;
+        double size = 0.0;
+        if (!lx_field_u32(fields[0], lengths[0], &run.start) ||
+            !lx_field_u32(fields[1], lengths[1], &run.end) ||
+            !lx_field_f64(fields[2], lengths[2], &size) ||
+            !lx_field_u32(fields[3], lengths[3], &weight) ||
+            !lx_field_u32(fields[4], lengths[4], &family) ||
+            !lx_field_color(fields[5], lengths[5], &run.red) ||
+            !lx_field_color(fields[6], lengths[6], &run.green) ||
+            !lx_field_color(fields[7], lengths[7], &run.blue) ||
+            !lx_field_color(fields[8], lengths[8], &run.alpha) ||
+            !lx_field_u32(fields[9], lengths[9], &background) ||
+            !lx_field_color(fields[10], lengths[10], &run.backgroundRed) ||
+            !lx_field_color(fields[11], lengths[11], &run.backgroundGreen) ||
+            !lx_field_color(fields[12], lengths[12], &run.backgroundBlue) ||
+            !lx_field_color(fields[13], lengths[13], &run.backgroundAlpha)) {
+            return 0;
+        }
+        if (!(size > 0.0) || size > 144.0 || weight > 1000u) return 0;
+        if (run.end <= run.start || run.end > textLength) return 0;
+        const unsigned char *bytes = (const unsigned char *)value;
+        if ((run.start < textLength && (bytes[run.start] & 0xC0u) == 0x80u) ||
+            (run.end < textLength && (bytes[run.end] & 0xC0u) == 0x80u)) {
+            return 0;
+        }
+        run.fontSize = size;
+        run.fontWeight = weight;
+        run.fontFamily = family;
+        run.hasBackground = (uint8_t)(background != 0u ? 1u : 0u);
+        out->runs[out->count++] = run;
+        p = (*itemEnd == ';') ? itemEnd + 1 : itemEnd;
+    }
+    return 1;
+}
+
+static void cjgui_linux_builder_styled_text(CjguiLinuxVertexBuilder *builder, CjguiLinuxText *text,
+                                            const char *value, const char *encodedRuns,
+                                            double fontSize, uint32_t fontWeight,
+                                            uint32_t fontFamily, double maxWidth, double originX,
+                                            double originY, double clipX, double clipY,
+                                            double clipRight, double clipBottom,
+                                            const CjguiLinuxClipAperture *aperture, double r,
+                                            double g, double b, double a,
+                                            const CjguiLinuxPaintTransform *transform,
+                                            uint32_t maxLines, int ellipsis) {
+    if (!text || !value || !value[0] || builder->failed) return;
+    CjguiLinuxParsedRuns parsed;
+    size_t textLength = strlen(value);
+    if (!cjgui_linux_parse_runs(encodedRuns, value, textLength, &parsed) || parsed.count == 0u) {
+        cjgui_linux_builder_text(builder, text, value, fontSize, fontWeight, fontFamily, maxWidth,
+                                 originX, originY, clipX, clipY, clipRight, clipBottom, aperture,
+                                 r, g, b, a, transform, maxLines, ellipsis);
+        return;
+    }
+    if (builder->styledQuads == NULL) {
+        builder->styledQuads = (CjguiLinuxStyledQuad *)malloc(
+            sizeof(CjguiLinuxStyledQuad) * 2048u);
+        if (builder->styledQuads == NULL) {
+            builder->failed = 1;
+            return;
+        }
+    }
+    if (builder->styledSpans == NULL) {
+        builder->styledSpans = (CjguiLinuxStyledSpan *)malloc(
+            sizeof(CjguiLinuxStyledSpan) * 512u);
+        if (builder->styledSpans == NULL) {
+            builder->failed = 1;
+            return;
+        }
+    }
+    uint32_t quadCount = 0u, spanCount = 0u;
+    double width = 0.0, height = 0.0, ascent = 0.0, lineHeight = 0.0;
+    int status = cjgui_linux_text_styled_layout(
+        text, value, textLength, fontSize, fontWeight, fontFamily, maxWidth, maxLines, ellipsis,
+        parsed.runs, parsed.count, 0.0, 0.0, 0, NULL, 0u, NULL, 0u, &quadCount, &spanCount,
+        &width, &height, &ascent, &lineHeight);
+    if (status != CJGUI_LINUX_TEXT_OK) {
+        cjgui_linux_builder_text(builder, text, value, fontSize, fontWeight, fontFamily, maxWidth,
+                                 originX, originY, clipX, clipY, clipRight, clipBottom, aperture,
+                                 r, g, b, a, transform, maxLines, ellipsis);
+        return;
+    }
+    // Emitted quad/span coordinates are already node-relative; the paint loop
+    // below applies originX/originY exactly once, matching the plain path.
+    status = cjgui_linux_text_styled_layout(
+        text, value, textLength, fontSize, fontWeight, fontFamily, maxWidth, maxLines, ellipsis,
+        parsed.runs, parsed.count, 0.0, 0.0, 1, builder->styledQuads, 2048u,
+        builder->styledSpans, 512u, &quadCount, &spanCount, &width, &height, &ascent,
+        &lineHeight);
+    if (status != CJGUI_LINUX_TEXT_OK && status != CJGUI_LINUX_TEXT_BUDGET_EXCEEDED) {
+        cjgui_linux_builder_text(builder, text, value, fontSize, fontWeight, fontFamily, maxWidth,
+                                 originX, originY, clipX, clipY, clipRight, clipBottom, aperture,
+                                 r, g, b, a, transform, maxLines, ellipsis);
+        return;
+    }
+    if (spanCount > 512u) spanCount = 512u;
+    for (uint32_t i = 0u; i < spanCount; i += 1u) {
+        const CjguiLinuxStyledSpan *span = &builder->styledSpans[i];
+        if (span->runIndex >= parsed.count) continue;
+        const CjguiLinuxTextStyleRun *run = &parsed.runs[span->runIndex];
+        if (!run->hasBackground || run->backgroundAlpha <= 0.0f) continue;
+        if (span->x1 <= span->x0 || span->height <= 0.0) continue;
+        cjgui_linux_builder_rect_painted(builder, transform, originX + span->x0,
+                                         originY + span->top, span->x1 - span->x0,
+                                         span->height, clipX, clipY,
+                                         clipRight, clipBottom, aperture,
+                                         run->backgroundRed, run->backgroundGreen,
+                                         run->backgroundBlue,
+                                         run->backgroundAlpha * a);
+    }
+    if (quadCount > 2048u) quadCount = 2048u;
+    for (uint32_t i = 0u; i < quadCount; i += 1u) {
+        const CjguiLinuxStyledQuad *sq = &builder->styledQuads[i];
+        const CjguiLinuxTextQuad *quad = &sq->glyph;
+        double qx = originX + quad->x;
+        double qy = originY + quad->y;
+        double qw = quad->width;
+        double qh = quad->height;
+        if (qw <= 0.0 || qh <= 0.0) continue;
+        double cr = r, cg = g, cb = b, ca = a;
+        if (sq->runIndex < parsed.count) {
+            const CjguiLinuxTextStyleRun *run = &parsed.runs[sq->runIndex];
+            cr = run->red;
+            cg = run->green;
+            cb = run->blue;
+            ca = run->alpha * a;
+        }
+        if (ca <= 0.0) continue;
+        cjgui_linux_builder_painted_quad(builder, transform, qx, qy, qx + qw, qy + qh,
+                                         quad->u0, quad->v0, quad->u1, quad->v1,
+                                         clipX, clipY, clipRight, clipBottom, aperture, cr, cg,
+                                         cb, ca);
+    }
+}
+
+static int cjgui_linux_node_has_gradient(const CjguiInternalRendererComposableNode *node) {
+    return node->gradientPresent != 0u && node->gradientStopCount >= 2u &&
+           node->gradientStopCount <= 4u;
+}
+
+static void cjgui_linux_node_corner_radii(const CjguiInternalRendererComposableNode *node,
+                                          double *topLeft, double *topRight,
+                                          double *bottomRight, double *bottomLeft) {
+    if (node->cornerRadiiPresent != 0u) {
+        *topLeft = node->cornerTopLeft;
+        *topRight = node->cornerTopRight;
+        *bottomRight = node->cornerBottomRight;
+        *bottomLeft = node->cornerBottomLeft;
+    } else {
+        *topLeft = node->cornerRadius;
+        *topRight = node->cornerRadius;
+        *bottomRight = node->cornerRadius;
+        *bottomLeft = node->cornerRadius;
+    }
+    if (!isfinite(*topLeft) || *topLeft < 0.0) *topLeft = 0.0;
+    if (!isfinite(*topRight) || *topRight < 0.0) *topRight = 0.0;
+    if (!isfinite(*bottomRight) || *bottomRight < 0.0) *bottomRight = 0.0;
+    if (!isfinite(*bottomLeft) || *bottomLeft < 0.0) *bottomLeft = 0.0;
+}
+
+// Node-local gradient parameter. localX/localY are device pixels in the same
+// space as the node origin; ABI start/end are normalized against the node box.
+// Subtracting the origin here is what makes a moved node keep the same ramp.
+static double cjgui_linux_node_gradient_parameter(const CjguiInternalRendererComposableNode *node,
+                                                  double localX, double localY,
+                                                  double originX, double originY,
+                                                  double width, double height) {
+    double px = (localX - originX) / (width > 1e-6 ? width : 1e-6);
+    double py = (localY - originY) / (height > 1e-6 ? height : 1e-6);
+    double dx = node->gradientEndX - node->gradientStartX;
+    double dy = node->gradientEndY - node->gradientStartY;
+    double denominator = dx * dx + dy * dy;
+    if (denominator < 1e-6) denominator = 1e-6;
+    double t = ((px - node->gradientStartX) * dx + (py - node->gradientStartY) * dy) / denominator;
+    if (!isfinite(t)) t = 0.0;
+    // Keep the raw spatial parameter. Clamping here would move the real 0/1
+    // boundaries to the triangle vertices and lose the flat end sections.
+    return t;
+}
+
+// Same piecewise ramp as the macOS fragment shader: four stop positions and
+// colours, sRGB channels mixed independently. A triangle only reproduces this
+// exactly when it does not span a stop boundary, so the splitter below cuts at
+// every interior stop instead of evaluating just the three corners.
+static void cjgui_linux_node_gradient_color_at(const CjguiInternalRendererComposableNode *node,
+                                               double t,
+                                               double *outR, double *outG, double *outB, double *outA) {
+    if (t < 0.0) t = 0.0;
+    if (t > 1.0) t = 1.0;
+    double colours[4][4] = {
+        { node->gradientStop0Red, node->gradientStop0Green, node->gradientStop0Blue, node->gradientStop0Alpha },
+        { node->gradientStop1Red, node->gradientStop1Green, node->gradientStop1Blue, node->gradientStop1Alpha },
+        { node->gradientStop2Red, node->gradientStop2Green, node->gradientStop2Blue, node->gradientStop2Alpha },
+        { node->gradientStop3Red, node->gradientStop3Green, node->gradientStop3Blue, node->gradientStop3Alpha },
+    };
+    double positions[4] = {
+        node->gradientStop0Position, node->gradientStop1Position,
+        node->gradientStop2Position, node->gradientStop3Position,
+    };
+    double step = positions[1] - positions[0];
+    if (step < 1e-6) step = 1e-6;
+    double mix = (t - positions[0]) / step;
+    if (mix < 0.0) mix = 0.0;
+    if (mix > 1.0) mix = 1.0;
+    double result[4];
+    for (uint32_t channel = 0u; channel < 4u; channel += 1u) {
+        result[channel] = colours[0][channel] + (colours[1][channel] - colours[0][channel]) * mix;
+    }
+    if (node->gradientStopCount > 2u && t >= positions[1]) {
+        step = positions[2] - positions[1];
+        if (step < 1e-6) step = 1e-6;
+        mix = (t - positions[1]) / step;
+        if (mix < 0.0) mix = 0.0;
+        if (mix > 1.0) mix = 1.0;
+        for (uint32_t channel = 0u; channel < 4u; channel += 1u) {
+            result[channel] = colours[1][channel] + (colours[2][channel] - colours[1][channel]) * mix;
+        }
+    }
+    if (node->gradientStopCount > 3u && t >= positions[2]) {
+        step = positions[3] - positions[2];
+        if (step < 1e-6) step = 1e-6;
+        mix = (t - positions[2]) / step;
+        if (mix < 0.0) mix = 0.0;
+        if (mix > 1.0) mix = 1.0;
+        for (uint32_t channel = 0u; channel < 4u; channel += 1u) {
+            result[channel] = colours[2][channel] + (colours[3][channel] - colours[2][channel]) * mix;
+        }
+    }
+    *outR = result[0]; *outG = result[1]; *outB = result[2]; *outA = result[3];
+}
+
+// A gradient triangle may span several stop segments. Split it at every
+// interior stop with an exact half-plane clip in parameter space; each piece
+// then has a color that is affine in its three vertex colors. This is exact
+// piecewise evaluation, not a denser approximation of the ramp.
+#define CJGUI_LINUX_GRADIENT_POLYGON_CAPACITY 16u
+typedef struct CjguiLinuxGradientPoint {
+    CjguiLinuxPaintPoint point;
+    double t;
+} CjguiLinuxGradientPoint;
+
+static uint32_t cjgui_linux_clip_gradient_parameter(const CjguiLinuxGradientPoint *input,
+                                                    uint32_t count, CjguiLinuxGradientPoint *output,
+                                                    double value, int keepAbove) {
+    if (input == NULL || output == NULL || count > CJGUI_LINUX_GRADIENT_POLYGON_CAPACITY) return 0u;
+    uint32_t outCount = 0u;
+    for (uint32_t i = 0u; i < count; i += 1u) {
+        const CjguiLinuxGradientPoint *current = &input[i];
+        const CjguiLinuxGradientPoint *next = &input[(i + 1u) % count];
+        int currentInside = keepAbove ? current->t >= value : current->t <= value;
+        int nextInside = keepAbove ? next->t >= value : next->t <= value;
+        if (currentInside) {
+            if (outCount >= CJGUI_LINUX_GRADIENT_POLYGON_CAPACITY) return 0u;
+            output[outCount++] = *current;
+        }
+        if (currentInside == nextInside) continue;
+        double delta = next->t - current->t;
+        if (fabs(delta) < 1e-12) continue;
+        double alpha = (value - current->t) / delta;
+        if (alpha < 0.0) alpha = 0.0;
+        if (alpha > 1.0) alpha = 1.0;
+        CjguiLinuxGradientPoint *cross = &output[outCount++];
+        cross->point.x = current->point.x + (next->point.x - current->point.x) * alpha;
+        cross->point.y = current->point.y + (next->point.y - current->point.y) * alpha;
+        cross->point.u = current->point.u + (next->point.u - current->point.u) * alpha;
+        cross->point.v = current->point.v + (next->point.v - current->point.v) * alpha;
+        cross->point.r = current->point.r + (next->point.r - current->point.r) * alpha;
+        cross->point.g = current->point.g + (next->point.g - current->point.g) * alpha;
+        cross->point.b = current->point.b + (next->point.b - current->point.b) * alpha;
+        cross->point.a = current->point.a + (next->point.a - current->point.a) * alpha;
+        cross->t = value;
+    }
+    return outCount;
+}
+
+static void cjgui_linux_emit_gradient_triangle(CjguiLinuxVertexBuilder *builder,
+                                               const CjguiInternalRendererComposableNode *node,
+                                               const CjguiLinuxPaintPoint points[3],
+                                               const double parameters[3],
+                                               double clipLeft, double clipTop,
+                                               double clipRight, double clipBottom,
+                                               const CjguiLinuxClipAperture *aperture) {
+    double low = parameters[0], high = parameters[0];
+    for (uint32_t i = 1u; i < 3u; i += 1u) {
+        if (parameters[i] < low) low = parameters[i];
+        if (parameters[i] > high) high = parameters[i];
+    }
+    if (high - low < 1e-12) {
+        double r = 0.0, g = 0.0, b = 0.0, a = 0.0;
+        cjgui_linux_node_gradient_color_at(node, low, &r, &g, &b, &a);
+        CjguiLinuxPaintPoint flat[3] = { points[0], points[1], points[2] };
+        for (uint32_t i = 0u; i < 3u; i += 1u) {
+            flat[i].r = r; flat[i].g = g; flat[i].b = b; flat[i].a = a;
+        }
+        cjgui_linux_builder_emit_clipped_points(builder, flat, 3u, clipLeft, clipTop,
+                                                clipRight, clipBottom, aperture);
+        return;
+    }
+    double cuts[8] = { low, high, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 };
+    uint32_t cutCount = 2u;
+    // The raw parameter may run past both ends. Split at the real 0/1 bounds
+    // and at every interior stop; color sampling clamps t inside the flat
+    // end sections, so each remaining piece is still affine and exact.
+    double bounds[2] = { 0.0, 1.0 };
+    for (uint32_t b = 0u; b < 2u; b += 1u) {
+        double bound = bounds[b];
+        if (!(bound > low + 1e-9) || !(bound < high - 1e-9)) continue;
+        cuts[cutCount++] = bound;
+    }
+    for (uint32_t i = 0u; i < node->gradientStopCount && i < 4u; i += 1u) {
+        double stop = i == 0u ? node->gradientStop0Position :
+                      (i == 1u ? node->gradientStop1Position :
+                       (i == 2u ? node->gradientStop2Position : node->gradientStop3Position));
+        if (!(stop > low + 1e-9) || !(stop < high - 1e-9)) continue;
+        int duplicate = 0;
+        for (uint32_t j = 0u; j < cutCount; j += 1u) {
+            if (fabs(cuts[j] - stop) < 1e-9) { duplicate = 1; break; }
+        }
+        if (!duplicate) cuts[cutCount++] = stop;
+    }
+    for (uint32_t i = 1u; i < cutCount; i += 1u) {
+        double value = cuts[i];
+        uint32_t j = i;
+        while (j > 0u && cuts[j - 1u] > value) { cuts[j] = cuts[j - 1u]; j -= 1u; }
+        cuts[j] = value;
+    }
+    CjguiLinuxGradientPoint base[3];
+    for (uint32_t i = 0u; i < 3u; i += 1u) {
+        base[i].point = points[i];
+        base[i].t = parameters[i];
+    }
+    CjguiLinuxGradientPoint lower[CJGUI_LINUX_GRADIENT_POLYGON_CAPACITY];
+    CjguiLinuxGradientPoint upper[CJGUI_LINUX_GRADIENT_POLYGON_CAPACITY];
+    for (uint32_t interval = 0u; interval + 1u < cutCount; interval += 1u) {
+        uint32_t count = cjgui_linux_clip_gradient_parameter(base, 3u, lower,
+                                                             cuts[interval], 1);
+        if (count < 3u) continue;
+        count = cjgui_linux_clip_gradient_parameter(lower, count, upper,
+                                                    cuts[interval + 1u], 0);
+        if (count < 3u) continue;
+        for (uint32_t i = 0u; i < count; i += 1u) {
+            cjgui_linux_node_gradient_color_at(node, upper[i].t, &upper[i].point.r,
+                                               &upper[i].point.g, &upper[i].point.b,
+                                               &upper[i].point.a);
+        }
+        for (uint32_t i = 1u; i + 1u < count; i += 1u) {
+            CjguiLinuxPaintPoint triangle[3] = {
+                upper[0].point, upper[i].point, upper[i + 1u].point
+            };
+            cjgui_linux_builder_emit_clipped_points(builder, triangle, 3u, clipLeft, clipTop,
+                                                    clipRight, clipBottom, aperture);
+        }
+    }
+}
+
+static void cjgui_linux_builder_shape_triangle(CjguiLinuxVertexBuilder *builder,
+                                               const CjguiInternalRendererComposableNode *node,
+                                               const CjguiLinuxPaintTransform *transform,
+                                               const CjguiLinuxPoint2D local[3],
+                                               int gradient, double originX, double originY,
+                                               double width, double height,
+                                               double r, double g, double b, double a,
+                                               double clipLeft, double clipTop,
+                                               double clipRight, double clipBottom,
+                                               const CjguiLinuxClipAperture *aperture) {
+    CjguiLinuxPaintPoint points[3];
+    double parameters[3] = { 0.0, 0.0, 0.0 };
+    const float white = 0.5f / (float)CJGUI_LINUX_TEXT_ATLAS_SIDE;
+    for (uint32_t i = 0u; i < 3u; i += 1u) {
+        cjgui_linux_paint_transform_point(transform, local[i].x, local[i].y,
+                                          &points[i].x, &points[i].y);
+        points[i].u = (double)white;
+        points[i].v = (double)white;
+        if (gradient) {
+            parameters[i] = cjgui_linux_node_gradient_parameter(node, local[i].x, local[i].y,
+                                                                originX, originY, width, height);
+        } else {
+            points[i].r = r; points[i].g = g; points[i].b = b; points[i].a = a;
+        }
+    }
+    if (gradient) {
+        cjgui_linux_emit_gradient_triangle(builder, node, points, parameters,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
+        return;
+    }
+    cjgui_linux_builder_emit_clipped_points(builder, points, 3u, clipLeft, clipTop,
+                                            clipRight, clipBottom, aperture);
+}
+
+static void cjgui_linux_builder_rounded_fill(CjguiLinuxVertexBuilder *builder,
+                                             const CjguiInternalRendererComposableNode *node,
+                                             const CjguiLinuxPaintTransform *transform,
+                                             double x, double y, double width, double height,
+                                             double clipLeft, double clipTop,
+                                             double clipRight, double clipBottom,
+                                             const CjguiLinuxClipAperture *aperture) {
+    double topLeft = 0.0, topRight = 0.0, bottomRight = 0.0, bottomLeft = 0.0;
+    cjgui_linux_node_corner_radii(node, &topLeft, &topRight, &bottomRight, &bottomLeft);
+    CjguiLinuxPoint2D outline[4u * CJGUI_LINUX_RADIUS_SEGMENTS];
+    uint32_t count = cjgui_linux_rounded_outline(x, y, width, height, topLeft, topRight,
+                                                 bottomRight, bottomLeft, outline,
+                                                 (uint32_t)(sizeof(outline) / sizeof(outline[0])));
+    if (count < 3u) return;
+    int gradient = cjgui_linux_node_has_gradient(node);
+    if (count == 4u) {
+        CjguiLinuxPoint2D triangle[3];
+        triangle[0] = outline[0]; triangle[1] = outline[1]; triangle[2] = outline[2];
+        cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, gradient,
+                                           x, y, width, height, node->fillRed, node->fillGreen,
+                                           node->fillBlue, node->fillAlpha,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
+        triangle[0] = outline[0]; triangle[1] = outline[2]; triangle[2] = outline[3];
+        cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, gradient,
+                                           x, y, width, height, node->fillRed, node->fillGreen,
+                                           node->fillBlue, node->fillAlpha,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
+        return;
+    }
+    CjguiLinuxPoint2D centre = { x + width * 0.5, y + height * 0.5 };
+    for (uint32_t i = 0u; i < count; i += 1u) {
+        CjguiLinuxPoint2D triangle[3] = { centre, outline[i], outline[(i + 1u) % count] };
+        cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, gradient,
+                                           x, y, width, height, node->fillRed, node->fillGreen,
+                                           node->fillBlue, node->fillAlpha,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
+    }
+}
+
+static void cjgui_linux_builder_rounded_border(CjguiLinuxVertexBuilder *builder,
+                                               const CjguiInternalRendererComposableNode *node,
+                                               const CjguiLinuxPaintTransform *transform,
+                                               double x, double y, double width, double height,
+                                               double thickness,
+                                               double clipLeft, double clipTop,
+                                               double clipRight, double clipBottom,
+                                               const CjguiLinuxClipAperture *aperture) {
+    double topLeft = 0.0, topRight = 0.0, bottomRight = 0.0, bottomLeft = 0.0;
+    cjgui_linux_node_corner_radii(node, &topLeft, &topRight, &bottomRight, &bottomLeft);
+    CjguiLinuxPoint2D outer[4u * CJGUI_LINUX_RADIUS_SEGMENTS];
+    uint32_t outerCount = cjgui_linux_rounded_outline(x, y, width, height, topLeft, topRight,
+                                                      bottomRight, bottomLeft, outer,
+                                                      (uint32_t)(sizeof(outer) / sizeof(outer[0])));
+    if (outerCount < 3u) return;
+    double innerX = x + thickness;
+    double innerY = y + thickness;
+    double innerWidth = width - thickness * 2.0;
+    double innerHeight = height - thickness * 2.0;
+    if (!(innerWidth > 0.0) || !(innerHeight > 0.0)) {
+        CjguiLinuxPoint2D centre = { x + width * 0.5, y + height * 0.5 };
+        for (uint32_t i = 0u; i < outerCount; i += 1u) {
+            CjguiLinuxPoint2D triangle[3] = { centre, outer[i], outer[(i + 1u) % outerCount] };
+            cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, 0,
+                                               0.0, 0.0, width, height, node->borderRed, node->borderGreen,
+                                               node->borderBlue, node->borderAlpha,
+                                               clipLeft, clipTop, clipRight, clipBottom, aperture);
+        }
+        return;
+    }
+    double innerRadii[4] = {
+        topLeft - thickness > 0.0 ? topLeft - thickness : 0.0,
+        topRight - thickness > 0.0 ? topRight - thickness : 0.0,
+        bottomRight - thickness > 0.0 ? bottomRight - thickness : 0.0,
+        bottomLeft - thickness > 0.0 ? bottomLeft - thickness : 0.0,
+    };
+    CjguiLinuxPoint2D inner[4u * CJGUI_LINUX_RADIUS_SEGMENTS];
+    uint32_t innerCount = cjgui_linux_rounded_outline(innerX, innerY, innerWidth, innerHeight,
+                                                      innerRadii[0], innerRadii[1],
+                                                      innerRadii[2], innerRadii[3], inner,
+                                                      (uint32_t)(sizeof(inner) / sizeof(inner[0])));
+    if (innerCount != outerCount && innerCount == 4u && outerCount == 4u * CJGUI_LINUX_RADIUS_SEGMENTS) {
+        CjguiLinuxPoint2D rectangle[4] = { inner[0], inner[1], inner[2], inner[3] };
+        innerCount = cjgui_linux_expand_rectangle_ring(rectangle, inner,
+                                                       (uint32_t)(sizeof(inner) / sizeof(inner[0])));
+    }
+    if (innerCount != outerCount) return;
+    for (uint32_t i = 0u; i < outerCount; i += 1u) {
+        uint32_t next = (i + 1u) % outerCount;
+        CjguiLinuxPoint2D triangle[3] = { outer[i], outer[next], inner[next] };
+        cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, 0,
+                                           0.0, 0.0, width, height, node->borderRed, node->borderGreen,
+                                           node->borderBlue, node->borderAlpha,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
+        triangle[0] = outer[i]; triangle[1] = inner[next]; triangle[2] = inner[i];
+        cjgui_linux_builder_shape_triangle(builder, node, transform, triangle, 0,
+                                           0.0, 0.0, width, height, node->borderRed, node->borderGreen,
+                                           node->borderBlue, node->borderAlpha,
+                                           clipLeft, clipTop, clipRight, clipBottom, aperture);
     }
 }
 
@@ -653,7 +1587,125 @@ static const char *cjgui_linux_node_body(const CjguiLinuxNodeSlot *slot) {
     if (slot->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON && slot->label && slot->label[0]) {
         return slot->label;
     }
+    // Boolean inputs show their label beside the native checkbox; the value is
+    // interaction state, not a caption.
+    if (slot->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT &&
+        slot->label && slot->label[0]) {
+        return slot->label;
+    }
     return slot->value ? slot->value : "";
+}
+
+static int cjgui_linux_node_boolean_checked(const CjguiLinuxNodeSlot *slot) {
+    return slot->value != NULL &&
+           (strcmp(slot->value, "true") == 0 || strcmp(slot->value, "1") == 0);
+}
+
+// Native checkbox: square border from the node's own text colour, filled when
+// checked, tick in a contrasting channel, plus a focus ring on the session's
+// focused node. Disabled/read-only only mutes the paint; routing stays on the
+// existing interactive owner.
+static void cjgui_linux_paint_boolean(CjguiLinuxSession *session, CjguiLinuxVertexBuilder *builder,
+                                      const CjguiLinuxNodeSlot *slot,
+                                      const CjguiLinuxPaintTransform *transform,
+                                      double nodeLeft, double nodeTop, double nodeRight,
+                                      double nodeBottom, double scale,
+                                      double clipLeft, double clipTop, double clipRight,
+                                      double clipBottom, const CjguiLinuxClipAperture *aperture,
+                                      double *outTextLeft) {
+    const CjguiInternalRendererComposableNode *node = &slot->node;
+    double height = nodeBottom - nodeTop;
+    if (!(height > 0.0)) return;
+    double side = height - 6.0 * scale;
+    if (side > 18.0 * scale) side = 18.0 * scale;
+    if (side < 8.0 * scale) side = 8.0 * scale;
+    if (side > height) side = height;
+    double boxX = nodeLeft + 6.0 * scale;
+    double boxY = nodeTop + (height - side) * 0.5;
+    int checked = cjgui_linux_node_boolean_checked(slot);
+    int disabled = node->isInteractive == 0u || node->isReadOnly != 0u;
+    double accentR = node->textRed, accentG = node->textGreen, accentB = node->textBlue;
+    double accentA = disabled ? 0.45 : 0.95;
+    double border = 1.5 * scale > side * 0.12 ? side * 0.12 : 1.5 * scale;
+    if (border < 1.0 * scale) border = 1.0 * scale;
+    // Interior stays light so the box reads on the form's panel fill.
+    cjgui_linux_builder_rect_painted(builder, transform, boxX, boxY, side, side,
+                                     clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                     0.98, 0.98, 0.99, disabled ? 0.45 : 0.95);
+    if (checked) {
+        cjgui_linux_builder_rect_painted(builder, transform, boxX + border, boxY + border,
+                                         side - border * 2.0, side - border * 2.0,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         accentR, accentG, accentB, accentA);
+        double luma = 0.2126 * accentR + 0.7152 * accentG + 0.0722 * accentB;
+        double tickR = luma > 0.62 ? 0.12 : 0.98;
+        double tickG = luma > 0.62 ? 0.12 : 0.98;
+        double tickB = luma > 0.62 ? 0.12 : 0.99;
+        CjguiLinuxPoint2D p1 = { boxX + side * 0.22, boxY + side * 0.52 };
+        CjguiLinuxPoint2D p2 = { boxX + side * 0.43, boxY + side * 0.73 };
+        CjguiLinuxPoint2D p3 = { boxX + side * 0.80, boxY + side * 0.29 };
+        double thickness = side * 0.14;
+        CjguiLinuxPoint2D segments[2][2] = { { p1, p2 }, { p2, p3 } };
+        for (uint32_t s = 0u; s < 2u; s += 1u) {
+            double dx = segments[s][1].x - segments[s][0].x;
+            double dy = segments[s][1].y - segments[s][0].y;
+            double length = sqrt(dx * dx + dy * dy);
+            if (length < 1e-6) continue;
+            double nx = -dy / length * thickness * 0.5;
+            double ny = dx / length * thickness * 0.5;
+            CjguiLinuxPoint2D quad[4] = {
+                { segments[s][0].x + nx, segments[s][0].y + ny },
+                { segments[s][1].x + nx, segments[s][1].y + ny },
+                { segments[s][1].x - nx, segments[s][1].y - ny },
+                { segments[s][0].x - nx, segments[s][0].y - ny },
+            };
+            CjguiLinuxPoint2D quadA[3] = { quad[0], quad[1], quad[2] };
+            CjguiLinuxPoint2D quadB[3] = { quad[0], quad[2], quad[3] };
+            cjgui_linux_builder_shape_triangle(builder, node, transform, quadA, 0,
+                                               0.0, 0.0, side, side, tickR, tickG, tickB, 0.98,
+                                               clipLeft, clipTop, clipRight, clipBottom, aperture);
+            cjgui_linux_builder_shape_triangle(builder, node, transform, quadB, 0,
+                                               0.0, 0.0, side, side, tickR, tickG, tickB, 0.98,
+                                               clipLeft, clipTop, clipRight, clipBottom, aperture);
+        }
+    } else {
+        cjgui_linux_builder_rect_painted(builder, transform, boxX, boxY, side, border,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         accentR, accentG, accentB, accentA);
+        cjgui_linux_builder_rect_painted(builder, transform, boxX, boxY + side - border,
+                                         side, border,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         accentR, accentG, accentB, accentA);
+        cjgui_linux_builder_rect_painted(builder, transform, boxX, boxY + border, border,
+                                         side - border * 2.0,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         accentR, accentG, accentB, accentA);
+        cjgui_linux_builder_rect_painted(builder, transform, boxX + side - border,
+                                         boxY + border, border, side - border * 2.0,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         accentR, accentG, accentB, accentA);
+    }
+    if (session->focusNodeId >= 0 && (uint64_t)session->focusNodeId == node->nodeId &&
+        session->focusNodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT) {
+        double ring = 2.0 * scale;
+        double rx = boxX - 2.0 * scale, ry = boxY - 2.0 * scale;
+        double rs = side + 4.0 * scale;
+        double ringA = 0.85;
+        cjgui_linux_builder_rect_painted(builder, transform, rx, ry, rs, ring,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         0.25, 0.50, 0.85, ringA);
+        cjgui_linux_builder_rect_painted(builder, transform, rx, ry + rs - ring, rs, ring,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         0.25, 0.50, 0.85, ringA);
+        cjgui_linux_builder_rect_painted(builder, transform, rx, ry + ring, ring, rs - ring * 2.0,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         0.25, 0.50, 0.85, ringA);
+        cjgui_linux_builder_rect_painted(builder, transform, rx + rs - ring, ry + ring, ring,
+                                         rs - ring * 2.0,
+                                         clipLeft, clipTop, clipRight, clipBottom, aperture,
+                                         0.25, 0.50, 0.85, ringA);
+    }
+    if (outTextLeft) *outTextLeft = boxX + side + 8.0 * scale;
 }
 
 // ---------------------------------------------------------------- 帧呈现
@@ -835,6 +1887,182 @@ static int cjgui_linux_slot_clip_bounds(const CjguiLinuxNodeSlot *slot, double d
     return right > left && bottom > top;
 }
 
+// Convert a convex outline to inward half-planes. Orientation is derived from
+// the centroid instead of assuming a winding, so either outline direction is
+// accepted.
+static uint32_t cjgui_linux_point_polygon_planes(const CjguiLinuxPoint2D *points, uint32_t count,
+                                                 CjguiLinuxClipPlane *planes, uint32_t capacity) {
+    if (points == NULL || planes == NULL || count < 3u) return 0u;
+    double centroidX = 0.0, centroidY = 0.0;
+    for (uint32_t i = 0u; i < count; i += 1u) {
+        centroidX += points[i].x;
+        centroidY += points[i].y;
+    }
+    centroidX /= (double)count;
+    centroidY /= (double)count;
+    uint32_t planeCount = 0u;
+    for (uint32_t i = 0u; i < count; i += 1u) {
+        const CjguiLinuxPoint2D *a = &points[i];
+        const CjguiLinuxPoint2D *b = &points[(i + 1u) % count];
+        double nx = -(b->y - a->y);
+        double ny = b->x - a->x;
+        double length = sqrt(nx * nx + ny * ny);
+        if (length < 1e-9) continue;
+        nx /= length;
+        ny /= length;
+        double d = nx * a->x + ny * a->y;
+        if (nx * centroidX + ny * centroidY < d) {
+            nx = -nx; ny = -ny; d = -d;
+        }
+        if (planeCount >= capacity) return 0u;
+        planes[planeCount].nx = nx;
+        planes[planeCount].ny = ny;
+        planes[planeCount].d = d;
+        planeCount += 1u;
+    }
+    return planeCount;
+}
+
+static uint32_t cjgui_linux_clip_point_polygon_plane(const CjguiLinuxPoint2D *input, uint32_t count,
+                                                     CjguiLinuxPoint2D *output,
+                                                     const CjguiLinuxClipPlane *plane) {
+    if (input == NULL || output == NULL || plane == NULL || count == 0u) return 0u;
+    uint32_t outCount = 0u;
+    for (uint32_t i = 0u; i < count; i += 1u) {
+        const CjguiLinuxPoint2D *current = &input[i];
+        const CjguiLinuxPoint2D *next = &input[(i + 1u) % count];
+        double currentValue = plane->nx * current->x + plane->ny * current->y - plane->d;
+        double nextValue = plane->nx * next->x + plane->ny * next->y - plane->d;
+        int currentInside = currentValue >= 0.0;
+        int nextInside = nextValue >= 0.0;
+        if (currentInside) {
+            if (outCount >= CJGUI_LINUX_CLIP_POINT_CAPACITY) return 0u;
+            output[outCount++] = *current;
+        }
+        if (currentInside == nextInside) continue;
+        double delta = nextValue - currentValue;
+        if (delta == 0.0) continue;
+        double t = -currentValue / delta;
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+        if (outCount >= CJGUI_LINUX_CLIP_POINT_CAPACITY) return 0u;
+        output[outCount].x = current->x + (next->x - current->x) * t;
+        output[outCount].y = current->y + (next->y - current->y) * t;
+        outCount += 1u;
+    }
+    return outCount;
+}
+
+// The accepted layout already carries every clipping ancestor's full rounded
+// rectangle. Intersect those rounded rectangles with the conservative axis
+// bounds and expose the result as one convex aperture for all node paint.
+static int cjgui_linux_slot_clip_aperture(const CjguiLinuxNodeSlot *slot, double deviceScale,
+                                          double left, double top, double right, double bottom,
+                                          CjguiLinuxClipAperture *out) {
+    if (out == NULL) return 0;
+    memset(out, 0, sizeof(*out));
+    if (slot == NULL || !(deviceScale > 0.0)) return 0;
+    if (!(right > left) || !(bottom > top)) return 0;
+    const CjguiInternalRendererComposableNode *node = &slot->node;
+    uint32_t count = node->clipConstraintCount;
+    if (count > 4u) count = 0u;
+    int hasRounded = 0;
+    if (count == 0u) {
+        if (node->clipWidth > 0 && node->clipHeight > 0 && node->clipCornerRadius > 0.0) {
+            hasRounded = 1;
+        }
+    } else {
+        for (uint32_t index = 0u; index < count; index += 1u) {
+            double radius = 0.0;
+            switch (index) {
+                case 0u: radius = node->clip0CornerRadius; break;
+                case 1u: radius = node->clip1CornerRadius; break;
+                case 2u: radius = node->clip2CornerRadius; break;
+                default: radius = node->clip3CornerRadius; break;
+            }
+            if (radius > 0.0) hasRounded = 1;
+        }
+    }
+    if (!hasRounded) return 0;
+    CjguiLinuxPoint2D polygonA[CJGUI_LINUX_CLIP_POINT_CAPACITY];
+    CjguiLinuxPoint2D polygonB[CJGUI_LINUX_CLIP_POINT_CAPACITY];
+    CjguiLinuxPoint2D *current = polygonA;
+    CjguiLinuxPoint2D *next = polygonB;
+    current[0].x = left;  current[0].y = top;
+    current[1].x = right; current[1].y = top;
+    current[2].x = right; current[2].y = bottom;
+    current[3].x = left;  current[3].y = bottom;
+    uint32_t currentCount = 4u;
+    for (uint32_t index = 0u; index < (count == 0u ? 1u : count); index += 1u) {
+        double clipX = 0.0, clipY = 0.0, clipWidth = 0.0, clipHeight = 0.0;
+        double radius = 0.0;
+        double ownerX = 0.0, ownerY = 0.0;
+        if (count == 0u) {
+            clipX = (double)node->clipX; clipY = (double)node->clipY;
+            clipWidth = (double)node->clipWidth; clipHeight = (double)node->clipHeight;
+            radius = node->clipCornerRadius;
+        } else {
+            switch (index) {
+                case 0u:
+                    clipX = (double)node->clip0X; clipY = (double)node->clip0Y;
+                    clipWidth = (double)node->clip0Width; clipHeight = (double)node->clip0Height;
+                    radius = node->clip0CornerRadius;
+                    if (slot->geometryPresent) { ownerX = slot->geometry.clip0X; ownerY = slot->geometry.clip0Y; }
+                    break;
+                case 1u:
+                    clipX = (double)node->clip1X; clipY = (double)node->clip1Y;
+                    clipWidth = (double)node->clip1Width; clipHeight = (double)node->clip1Height;
+                    radius = node->clip1CornerRadius;
+                    if (slot->geometryPresent) { ownerX = slot->geometry.clip1X; ownerY = slot->geometry.clip1Y; }
+                    break;
+                case 2u:
+                    clipX = (double)node->clip2X; clipY = (double)node->clip2Y;
+                    clipWidth = (double)node->clip2Width; clipHeight = (double)node->clip2Height;
+                    radius = node->clip2CornerRadius;
+                    if (slot->geometryPresent) { ownerX = slot->geometry.clip2X; ownerY = slot->geometry.clip2Y; }
+                    break;
+                default:
+                    clipX = (double)node->clip3X; clipY = (double)node->clip3Y;
+                    clipWidth = (double)node->clip3Width; clipHeight = (double)node->clip3Height;
+                    radius = node->clip3CornerRadius;
+                    if (slot->geometryPresent) { ownerX = slot->geometry.clip3X; ownerY = slot->geometry.clip3Y; }
+                    break;
+            }
+        }
+        if (!(clipWidth > 0.0) || !(clipHeight > 0.0) || !(radius > 0.0)) continue;
+        CjguiLinuxPoint2D outline[4u * CJGUI_LINUX_RADIUS_SEGMENTS];
+        uint32_t outlineCount = cjgui_linux_rounded_outline(
+            (clipX + ownerX) * deviceScale, (clipY + ownerY) * deviceScale,
+            clipWidth * deviceScale, clipHeight * deviceScale,
+            radius * deviceScale, radius * deviceScale, radius * deviceScale, radius * deviceScale,
+            outline, (uint32_t)(sizeof(outline) / sizeof(outline[0])));
+        CjguiLinuxClipPlane planes[4u * CJGUI_LINUX_RADIUS_SEGMENTS + 4u];
+        uint32_t planeCount = cjgui_linux_point_polygon_planes(
+            outline, outlineCount, planes, (uint32_t)(sizeof(planes) / sizeof(planes[0])));
+        if (planeCount == 0u) continue;
+        for (uint32_t plane = 0u; plane < planeCount; plane += 1u) {
+            currentCount = cjgui_linux_clip_point_polygon_plane(current, currentCount, next,
+                                                                &planes[plane]);
+            if (currentCount < 3u) {
+                memset(out, 0, sizeof(*out));
+                out->empty = 1;
+                return 0;
+            }
+            CjguiLinuxPoint2D *swap = current;
+            current = next;
+            next = swap;
+        }
+    }
+    out->count = cjgui_linux_point_polygon_planes(current, currentCount, out->planes,
+                                                  CJGUI_LINUX_CLIP_PLANE_CAPACITY);
+    if (out->count == 0u) {
+        out->empty = 1;
+        return 0;
+    }
+    out->active = 1;
+    return 1;
+}
+
 static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVertexBuilder *builder) {
     double scale = cjgui_linux_gpu_scale(session->gpu);
     if (scale <= 0.0) scale = 1.0;
@@ -873,11 +2101,20 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
         //   backdrop (a framebuffer copy or history target). The only texture
         //   this pipeline samples is the glyph atlas, so no correct blur exists
         //   here yet.
-        // clip0CornerRadius..clip3CornerRadius: the shader has no rounded-clip
-        //   primitive (no SDF, scissor is the only clip), and even the uniform
-        //   cornerRadius is not painted; per-corner clip radii would need a
-        //   shader/geometry redesign, so they stay unpainted.
+        // Rounded fill/stroke, corner radii and the rounded ancestor aperture
+        // are painted by the CPU geometry below; the triangle pipeline itself
+        // stays unchanged and samples the same atlas.
         CjguiLinuxPaintTransform transform = cjgui_linux_slot_paint_transform(slot, scale);
+        CjguiLinuxClipAperture aperture;
+        (void)cjgui_linux_slot_clip_aperture(slot, scale, clipX, clipY, clipRight, clipBottom,
+                                             &aperture);
+        if (aperture.empty) continue;
+        double cornerTopLeft = 0.0, cornerTopRight = 0.0, cornerBottomRight = 0.0, cornerBottomLeft = 0.0;
+        cjgui_linux_node_corner_radii(node, &cornerTopLeft, &cornerTopRight,
+                                      &cornerBottomRight, &cornerBottomLeft);
+        int roundedShape = cornerTopLeft > 0.0 || cornerTopRight > 0.0 ||
+                           cornerBottomRight > 0.0 || cornerBottomLeft > 0.0;
+        int hasGradient = cjgui_linux_node_has_gradient(node);
         double left = x < clipX ? clipX : x;
         double top = y < clipY ? clipY : y;
         double right = (x + width) > clipRight ? clipRight : (x + width);
@@ -898,16 +2135,32 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
         double fillTop = y > clipY ? y : clipY;
         double fillRight = (x + width) < clipRight ? (x + width) : clipRight;
         double fillBottom = (y + height) < clipBottom ? (y + height) : clipBottom;
-        if (node->fillAlpha > 0.0) {
+        if (roundedShape || hasGradient) {
+            // The rounded outline carries both the shape and the gradient
+            // ramp; gradient replaces the flat fill exactly as on macOS.
+            if (node->fillAlpha > 0.0 || hasGradient) {
+                cjgui_linux_builder_rounded_fill(builder, node, &transform, x, y, width, height,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture);
+            }
+        } else if (node->fillAlpha > 0.0) {
             if (transform.active) {
                 // 旋转/缩放下的填充按整块四边形提交，再对设备像素 clip 做凸多边形
                 // 裁剪；未旋转节点仍走原来的"先相交再画"路径，字节不变。
                 cjgui_linux_builder_rect_painted(builder, &transform, x, y, width, height,
-                                                 clipX, clipY, clipRight, clipBottom,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
                                                  node->fillRed, node->fillGreen, node->fillBlue, node->fillAlpha);
             } else if (fillRight > fillLeft && fillBottom > fillTop) {
-                cjgui_linux_builder_rect(builder, fillLeft, fillTop, fillRight - fillLeft, fillBottom - fillTop,
-                                         node->fillRed, node->fillGreen, node->fillBlue, node->fillAlpha);
+                if (aperture.active) {
+                    cjgui_linux_builder_rect_clipped(builder, fillLeft, fillTop,
+                                                     fillRight - fillLeft, fillBottom - fillTop,
+                                                     clipX, clipY, clipRight, clipBottom, &aperture,
+                                                     node->fillRed, node->fillGreen,
+                                                     node->fillBlue, node->fillAlpha);
+                } else {
+                    cjgui_linux_builder_rect(builder, fillLeft, fillTop, fillRight - fillLeft,
+                                             fillBottom - fillTop,
+                                             node->fillRed, node->fillGreen, node->fillBlue, node->fillAlpha);
+                }
             }
         }
         if (node->borderWidth > 0u && node->borderAlpha > 0.0 && width > 0.0 && height > 0.0) {
@@ -918,50 +2171,101 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
             double by0 = y > clipY ? y : clipY;
             double bx1 = (x + width) < clipRight ? (x + width) : clipRight;
             double by1 = (y + height) < clipBottom ? (y + height) : clipBottom;
-            if (transform.active) {
+            if (roundedShape) {
+                cjgui_linux_builder_rounded_border(builder, node, &transform, x, y, width, height,
+                                                   thickness, clipX, clipY, clipRight, clipBottom,
+                                                   &aperture);
+            } else if (transform.active) {
                 // 边框四条边同样按节点自己的变换提交，并由多边形裁剪收口。
                 double tx0 = x, ty0 = y, tx1 = x + width, ty1 = y + height;
                 cjgui_linux_builder_rect_painted(builder, &transform, tx0, ty0, tx1 - tx0, thickness,
-                                                 clipX, clipY, clipRight, clipBottom,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
                                                  node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
                 cjgui_linux_builder_rect_painted(builder, &transform, tx0, ty1 - thickness, tx1 - tx0, thickness,
-                                                 clipX, clipY, clipRight, clipBottom,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
                                                  node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
                 cjgui_linux_builder_rect_painted(builder, &transform, tx0, ty0 + thickness, thickness,
                                                  (ty1 - ty0) - 2.0 * thickness,
-                                                 clipX, clipY, clipRight, clipBottom,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
                                                  node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
                 cjgui_linux_builder_rect_painted(builder, &transform, tx1 - thickness, ty0 + thickness,
                                                  thickness, (ty1 - ty0) - 2.0 * thickness,
-                                                 clipX, clipY, clipRight, clipBottom,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
                                                  node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
             } else if (bx1 > bx0 && by1 > by0) {
-                cjgui_linux_builder_rect(builder, bx0, by0, bx1 - bx0, thickness,
-                                         node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
-                cjgui_linux_builder_rect(builder, bx0, by1 - thickness, bx1 - bx0, thickness,
-                                         node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
-                cjgui_linux_builder_rect(builder, bx0, by0 + thickness, thickness, (by1 - by0) - 2.0 * thickness,
-                                         node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
-                cjgui_linux_builder_rect(builder, bx1 - thickness, by0 + thickness, thickness,
-                                         (by1 - by0) - 2.0 * thickness,
-                                         node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
+                cjgui_linux_builder_rect_clipped(builder, bx0, by0, bx1 - bx0, thickness,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
+                                                 node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
+                cjgui_linux_builder_rect_clipped(builder, bx0, by1 - thickness, bx1 - bx0, thickness,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
+                                                 node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
+                cjgui_linux_builder_rect_clipped(builder, bx0, by0 + thickness, thickness,
+                                                 (by1 - by0) - 2.0 * thickness,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
+                                                 node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
+                cjgui_linux_builder_rect_clipped(builder, bx1 - thickness, by0 + thickness, thickness,
+                                                 (by1 - by0) - 2.0 * thickness,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
+                                                 node->borderRed, node->borderGreen, node->borderBlue, node->borderAlpha);
             }
         }
+        if (node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE &&
+            slot->imageResourcePath != NULL && slot->imageResourcePath[0] != '\0') {
+            uint32_t sourceWidth = 0u, sourceHeight = 0u, imageSlot = UINT32_MAX;
+            if (cjgui_linux_image_texture(session->image, slot->imageResourcePath,
+                                          slot->imageResourceId, slot->imageResourceVersion,
+                                          &sourceWidth, &sourceHeight, &imageSlot) &&
+                imageSlot != UINT32_MAX && sourceWidth > 0u && sourceHeight > 0u) {
+                double sourceW = (double)sourceWidth;
+                double sourceH = (double)sourceHeight;
+                double fit = node->imageContentMode == 2u
+                                 ? fmax(width / sourceW, height / sourceH)
+                                 : fmin(width / sourceW, height / sourceH);
+                double drawWidth = sourceW * fit;
+                double drawHeight = sourceH * fit;
+                double drawX = x + (width - drawWidth) * 0.5;
+                double drawY = y + (height - drawHeight) * 0.5;
+                double tintRed = node->iconTintAlpha > 0.0 ? node->iconTintRed : 1.0;
+                double tintGreen = node->iconTintAlpha > 0.0 ? node->iconTintGreen : 1.0;
+                double tintBlue = node->iconTintAlpha > 0.0 ? node->iconTintBlue : 1.0;
+                double tintAlpha = node->iconTintAlpha > 0.0 ? node->iconTintAlpha : 1.0;
+                builder->desiredSlot = imageSlot;
+                cjgui_linux_builder_painted_quad(builder, &transform, drawX, drawY,
+                                                 drawX + drawWidth, drawY + drawHeight,
+                                                 0.0, 0.0, 1.0, 1.0,
+                                                 clipX, clipY, clipRight, clipBottom, &aperture,
+                                                 tintRed, tintGreen, tintBlue, tintAlpha);
+                builder->desiredSlot = UINT32_MAX;
+                // 图像纹理已覆盖节点内容；文字字段对图片节点没有正文，继续
+                // 走原有文字路径只会是空串。
+            }
+        }
+        int isBoolean = node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT;
+        double booleanTextLeft = 0.0;
+        if (isBoolean) {
+            cjgui_linux_paint_boolean(session, builder, slot, &transform, boxLeft, boxTop,
+                                      boxRight, boxBottom, scale, clipX, clipY, clipRight,
+                                      clipBottom, &aperture, &booleanTextLeft);
+        }
         const char *body = cjgui_linux_node_body(slot);
-        if (!body || !body[0] || node->textAlpha <= 0.0) continue;
+        double textAlpha = node->textAlpha;
+        if (isBoolean && (node->isInteractive == 0u || node->isReadOnly != 0u)) {
+            textAlpha *= 0.55;
+        }
+        if (!body || !body[0] || textAlpha <= 0.0) continue;
         // 全部按设备像素做，避免逻辑/设备两套坐标混算：文字模块只把 fontSize 当
         // 像素尺寸用，所以这里直接传 scale 后的值，clip 与 maxWidth 也用设备像素。
         int multiline = node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
         double deviceInset = 6.0 * scale;
-        double textLeft = boxLeft + deviceInset;
+        double textLeft = isBoolean ? booleanTextLeft : (boxLeft + deviceInset);
         double textRight = boxRight - deviceInset;
         if (textRight <= textLeft) continue;
-        // ABI 5 adds letterSpacing / lineHeightPoints / maxLines /
-        // ellipsisEnabled / cornerRadii* to the node POD. Linux currently
-        // CARRIES these fields WITHOUT painting them: the text module keeps
-        // natural tracking and line height, overflow stays on the legacy
-        // textMaxLines/textOverflow path, and corners stay uniform. Implement
-        // them here before claiming support.
+        // maxLines/textOverflow are real paint limits here: the layout prefix is
+        // cut at line maxLines and an enabled ellipsis replaces the visible tail
+        // with U+2026. The semantic node value stays the full original string.
+        uint32_t lineLimit = node->maxLines;
+        int ellipsis = node->ellipsisEnabled != 0u;
+        if (lineLimit == 0u && ellipsis) lineLimit = 1u;
         double fontSizePoints = node->fontSize > 0.0 ? node->fontSize : 14.0;
         double fontSizeDevice = fontSizePoints * scale;
         double lineHeightDevice = cjgui_linux_text_line_height(session->text, fontSizePoints,
@@ -998,7 +2302,7 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                 if (selectionRight > selectionLeft && selectionHeight > 0.0) {
                     cjgui_linux_builder_rect_painted(builder, &transform, selectionLeft, selectionTop,
                                                      selectionRight - selectionLeft, selectionHeight,
-                                                     clipX, clipY, clipRight, clipBottom,
+                                                     clipX, clipY, clipRight, clipBottom, &aperture,
                                                      0.25, 0.50, 0.85, 0.42);
                 }
             }
@@ -1032,11 +2336,22 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                 }
             }
         }
-        cjgui_linux_builder_text(builder, session->text, drawBody, fontSizeDevice, node->fontWeight,
-                                 node->fontFamily, textRight - textLeft, textLeft, originY,
-                                 clipX, clipY, clipRight, clipBottom,
-                                 node->textRed, node->textGreen, node->textBlue, node->textAlpha,
-                                 transform.active ? &transform : NULL);
+        if (composed == NULL && slot->encodedRuns != NULL && slot->encodedRuns[0] != '\0') {
+            cjgui_linux_builder_styled_text(builder, session->text, drawBody, slot->encodedRuns,
+                                            fontSizeDevice, node->fontWeight, node->fontFamily,
+                                            textRight - textLeft, textLeft, originY, clipX, clipY,
+                                            clipRight, clipBottom, &aperture,
+                                            node->textRed, node->textGreen, node->textBlue,
+                                            textAlpha, transform.active ? &transform : NULL,
+                                            lineLimit, ellipsis);
+        } else {
+            cjgui_linux_builder_text(builder, session->text, drawBody, fontSizeDevice,
+                                     node->fontWeight, node->fontFamily, textRight - textLeft,
+                                     textLeft, originY, clipX, clipY, clipRight, clipBottom,
+                                     &aperture, node->textRed, node->textGreen, node->textBlue,
+                                     textAlpha, transform.active ? &transform : NULL, lineLimit,
+                                     ellipsis);
+        }
         if (composed != NULL) {
             // preedit 下划线：让用户看得到组合段（系统 IME 的候选窗另有定位）。
             double x0 = 0.0, x1 = 0.0, top0 = 0.0, top1 = 0.0, lineHeight = 0.0;
@@ -1066,24 +2381,59 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                     cjgui_linux_builder_rect_painted(builder, &transform, underlineLeft,
                                                      originY + top0 * scale + lineHeightDevice - 2.0 * scale,
                                                      underlineRight - underlineLeft, 2.0 * scale,
-                                                     clipX, clipY, clipRight, clipBottom,
+                                                     clipX, clipY, clipRight, clipBottom, &aperture,
                                                      0.15, 0.35, 0.90, 1.0);
                 }
-                // 候选窗定位消费同一份光标几何：光标在 preedit 末尾、下一行基线。
-                // 绘制坐标是设备像素，set_ime_spot 收窗口逻辑点（内部再乘 scale）。
+                // The preedit caret is a character index inside the preedit,
+                // not "the end of the string". Map it through UTF-16 to the
+                // composed body and use the same layout position for both the
+                // visible bar and the system candidate spot.
+                uint32_t preeditUnits = cjgui_linux_utf16_length(
+                    session->compositionText, session->compositionTextLength);
+                uint32_t caret16 = session->compositionCaret16 > preeditUnits
+                                       ? preeditUnits
+                                       : session->compositionCaret16;
+                uint32_t caretAbsolute16 = session->compositionStart16 + caret16;
+                size_t caretByte = cjgui_linux_byte_offset_for_utf16(
+                    drawBody, drawLength, caretAbsolute16);
+                double xc = x1, topc = top1, lineHeightC = lineHeight;
+                uint32_t lineIndexC = 0u;
+                size_t lineStartC = 0u, lineEndC = 0u;
+                int caretMapped =
+                    cjgui_linux_text_caret_position(session->text, drawBody, drawLength, fontSizePoints,
+                                                    node->fontWeight, node->fontFamily,
+                                                    node->width - 12.0, caretByte, &xc, &topc,
+                                                    &lineHeightC, &lineIndexC, &lineStartC,
+                                                    &lineEndC) == CJGUI_LINUX_TEXT_OK;
+                if (caretMapped) {
+                    double caretHeightDevice = lineHeightC * scale;
+                    if (caretHeightDevice <= 0.0) caretHeightDevice = lineHeightDevice;
+                    cjgui_linux_builder_rect_painted(builder, &transform,
+                                                     textLeft + xc * scale,
+                                                     originY + topc * scale,
+                                                     1.5 * scale, caretHeightDevice,
+                                                     clipX, clipY, clipRight, clipBottom, &aperture,
+                                                     0.10, 0.10, 0.10, 1.0);
+                }
+                // 候选窗定位消费同一份光标几何：使用真实 preedit caret 所在行，
+                // 而不是把整个预编辑串的末尾当光标。绘制坐标是设备像素，
+                // set_ime_spot 收窗口逻辑点（内部再乘 scale）。
                 // 旋转/缩放节点的候选位置仍按未变换的光标几何上报（输入法定位不随
                 // 旋转，和 macOS 一致；这里不作为已验证能力宣传）。
                 if (scale > 0.0) {
-                    double spotX = textLeft / scale + x1;
-                    double spotY = (originY + top1 * scale + lineHeightDevice) / scale;
-                    cjgui_linux_window_set_ime_spot(session->window, spotX, spotY, lineHeight);
+                    double spotX = textLeft / scale + xc;
+                    double spotY = (originY + topc * scale + lineHeightC * scale) / scale;
+                    cjgui_linux_window_set_ime_spot(session->window, spotX, spotY, lineHeightC);
                 }
             }
             free(composed);
         }
     }
     // 输入光标条：由共同层每轮用已接受布局重新声明；nodeId<0 表示撤回。
-    if (session->caretNodeId >= 0 && session->caretWidth > 0.0 && session->caretHeight > 0.0) {
+    // 组合期间由 preedit caret 条接管，避免在替换段起点再画一条旧 caret，
+    // 让用户误以为组合光标在那里。
+    if (!session->compositionActive && session->caretNodeId >= 0 &&
+        session->caretWidth > 0.0 && session->caretHeight > 0.0) {
         cjgui_linux_builder_rect(builder, session->caretX * scale, session->caretY * scale,
                                  session->caretWidth * scale, session->caretHeight * scale,
                                  0.10, 0.10, 0.10, 1.0);
@@ -1209,10 +2559,20 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
         if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_METAL_DEVICE_UNAVAILABLE;
         return token;
     }
+    session->image = cjgui_linux_image_domain_create(session->gpu, session->window);
+    if (!session->image) {
+        cjgui_linux_gpu_destroy(session->gpu);
+        cjgui_linux_text_destroy(session->text);
+        cjgui_linux_window_destroy(session->window);
+        memset(session, 0, sizeof(*session));
+        if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_APP_INIT_FAILED;
+        return token;
+    }
     session->token = g_nextToken++;
     session->alive = 1;
     cjgui_linux_aux_on_create(slot);
     cjgui_linux_installed_range_on_create(slot);
+    cjgui_linux_owner_bind_window(session->window);
     if (outStatus) *outStatus = CJGUI_INTERNAL_RENDERER_OK;
     return session->token;
 }
@@ -1221,9 +2581,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t sessionToke
     int slot = cjgui_linux_session_slot(sessionToken);
     if (slot < 0) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     CjguiLinuxSession *session = &g_sessions[slot];
-    // 顺序固定：停止提交 → 等待设备空闲 → 销毁交换链与图像 → 管线/图集 →
-    // device → surface → instance；窗口在 GPU 之后释放（surface 依赖 X 连接）。
-    if (session->gpu) cjgui_linux_gpu_destroy(session->gpu);
+    // 顺序固定：停止图片 worker 并回收其纹理 → 停止提交 → 等待设备空闲 →
+    // 销毁交换链与图像 → 管线/图集 → device → surface → instance；窗口在
+    // GPU 之后释放（surface 依赖 X 连接）。图片域必须在 GPU/窗口之前销毁，
+    // 否则 worker 完成唤醒会触碰已释放的窗口。
+    // Unbind before the image workers and window go away: a transport notify
+    // on another thread must never write into a freed wake pipe.
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_RENDERER_DESTROY slot=%d token=%llu gpu=%p window=%p\n",
+                slot, (unsigned long long)session->token, (void *)session->gpu,
+                (void *)session->window);
+        fflush(stderr);
+    }
+    if (session->window) cjgui_linux_owner_unbind_window(session->window);
+    if (session->image) cjgui_linux_image_domain_destroy(session->image);
+    if (session->gpu) {
+        cjgui_linux_gpu_destroy(session->gpu);
+        // Ownership is released exactly once: a stale pointer must never make a
+        // second close look like a valid teardown.
+        session->gpu = NULL;
+    }
     if (session->text) cjgui_linux_text_destroy(session->text);
     if (session->window) cjgui_linux_window_destroy(session->window);
     cjgui_linux_scene_reset(&session->accepted);
@@ -1317,7 +2694,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_activate_window(uint64_t ses
 CjguiInternalRendererStatus cjgui_internal_renderer_request_close(uint64_t sessionToken) {
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    g_stopRequested = 1;
+    // requestClose 是会话级关闭：只给本窗口立闩锁。进程级 application-stop
+    // 只属于 stopApplicationLoop；在这里置位会把另一个窗口的泵变成
+    // APPLICATION_EXIT_REQUESTED，多窗口下表现为关掉预览后主窗不再处理输入。
+    cjgui_linux_window_request_close(session->window);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -1422,6 +2802,12 @@ uint32_t cjgui_internal_renderer_selection_background_version(void) {
 
 // 定义在场景暂存段，present 的提交点要用到，先声明。
 static int cjgui_linux_commit_candidate(CjguiLinuxSession *session);
+static CjguiLinuxNodeSlot *cjgui_linux_focused_slot(CjguiLinuxSession *session);
+static CjguiInternalRendererStatus cjgui_linux_hit_test_text_body(CjguiLinuxSession *session,
+                                                                  const CjguiLinuxNodeSlot *slot,
+                                                                  const char *body, double x, double y,
+                                                                  uint32_t *outByteOffset,
+                                                                  uint32_t *outAffinity);
 
 // ---------------------------------------------------------------- 呈现
 
@@ -1461,9 +2847,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_clear(uint64_t sessi
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
-    uint64_t sessionToken, CjguiInternalRendererFrameObservation *outObservation) {
-    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+// Shared paint path for the public present and the composition-only repaint.
+// The latter must not turn a styled menu or a pending scene candidate into an
+// accepted state just because a preedit update needs a frame.
+static CjguiInternalRendererStatus cjgui_linux_present_scene(
+    CjguiLinuxSession *session, CjguiInternalRendererFrameObservation *outObservation,
+    int promotePending) {
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     // 提交点。共同层有两条场景路径：
     //   * 私有准备：begin → prepare×N → advance → configure → **promote**（promote 里已提交，
@@ -1473,22 +2862,40 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
     // 通知阈值窗口 configure_scene nodes=24、measure 3185 次，但
     // `CJGUI_LINUX_PRESENT frame=0 nodes=0 vertices=6 accepted=0 candidate=1`，
     // 窗口只画出背景。任何不走私有准备的消费者都会这样。
-    if (session->candidate.valid && !session->preparationActive) {
-        (void)cjgui_linux_commit_candidate(session);
+    // 命令菜单在本代场景提交时一起提升。此前只有语义接受路径会 commit，
+    // 普通 present 只把菜单留在 staging：首帧后、下一次刷新前的真实快捷键
+    // 会被误判为未声明。先提升菜单再接受场景；两者在这里是同一接受点，
+    // 菜单失败时场景尚未接受，仍可整体拒绝。
+    if (promotePending) {
+        if (cjgui_linux_aux_command_menu_staged(session->token)) {
+            CjguiInternalRendererStatus menuStatus =
+                cjgui_internal_renderer_commit_composable_command_menu(session->token);
+            if (menuStatus != CJGUI_INTERNAL_RENDERER_OK) return menuStatus;
+        }
+        if (session->candidate.valid && !session->preparationActive) {
+            (void)cjgui_linux_commit_candidate(session);
+        }
     }
     if (getenv("CJGUI_LINUX_PRESENT_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_PRESENT_ENTER frame=%llu nodes=%u\n", (unsigned long long)session->frameIndex,
                 session->accepted.nodeCount);
     }
 
-    cjgui_linux_upload_atlas(session);
+    // 先把 worker 已完成的结果上传为纹理；上传发生在 begin_frame 之外，
+    // 不与在途帧争用命令缓冲。
+    cjgui_linux_image_pump(session->image);
 
     CjguiLinuxVertexBuilder builder;
     memset(&builder, 0, sizeof(builder));
+    builder.desiredSlot = UINT32_MAX;
     cjgui_linux_append_background(session, &builder);
     cjgui_linux_append_scene(session, &builder);
+    // 文本整形会在 append_scene 中把本帧首次出现的字形写进图集。上传必须在
+    // 整形之后：否则本轮新增字形要等下一次 present 才进纹理，而外部 owner
+    // 更新等一次性刷新之后窗口会静置，新正文就一直显示为空，直到下一次输入。
+    cjgui_linux_upload_atlas(session);
     if (builder.failed) {
-        free(builder.vertices);
+        cjgui_linux_builder_release(&builder);
         cjgui_linux_fill_observation(session, outObservation);
         return CJGUI_INTERNAL_RENDERER_READBACK_FAILED;
     }
@@ -1500,12 +2907,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
         uint32_t width = 0u, height = 0u; int resized = 0;
         (void)cjgui_linux_window_size(session->window, &width, &height, &resized);
         (void)cjgui_linux_gpu_resize(session->gpu, width, height);
-        free(builder.vertices);
+        cjgui_linux_builder_release(&builder);
         cjgui_linux_fill_observation(session, outObservation);
         return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
     }
     if (status != CJGUI_LINUX_GPU_OK) {
-        free(builder.vertices);
+        cjgui_linux_builder_release(&builder);
         cjgui_linux_fill_observation(session, outObservation);
         return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
     }
@@ -1515,14 +2922,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
                 session->accepted.valid, session->candidate.valid);
     }
     if (builder.count > 0u) {
-        int drawStatus = cjgui_linux_gpu_draw_triangles(session->gpu, builder.vertices, builder.count);
+        int drawStatus = CJGUI_LINUX_GPU_OK;
+        for (uint32_t i = 0u; i < builder.segmentCount; i += 1u) {
+            CjguiLinuxDrawSegment *segment = &builder.segments[i];
+            if (segment->vertexCount == 0u) continue;
+            const CjguiLinuxGpuVertex *vertices = builder.vertices + segment->firstVertex;
+            if (segment->imageSlot == UINT32_MAX) {
+                drawStatus = cjgui_linux_gpu_draw_triangles(session->gpu, vertices, segment->vertexCount);
+            } else {
+                drawStatus = cjgui_linux_gpu_draw_image_triangles(session->gpu, segment->imageSlot,
+                                                                  vertices, segment->vertexCount);
+            }
+            if (drawStatus != CJGUI_LINUX_GPU_OK) break;
+        }
         if (drawStatus != CJGUI_LINUX_GPU_OK) {
-            free(builder.vertices);
+            cjgui_linux_builder_release(&builder);
             cjgui_linux_fill_observation(session, outObservation);
             return CJGUI_INTERNAL_RENDERER_METAL_ENCODER_UNAVAILABLE;
         }
     }
-    free(builder.vertices);
+    cjgui_linux_builder_release(&builder);
     int endStatus = cjgui_linux_gpu_end_frame(session->gpu);
     if (endStatus == CJGUI_LINUX_GPU_OUT_OF_DATE) {
         cjgui_linux_fill_observation(session, outObservation);
@@ -1531,6 +2950,13 @@ CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
     session->frameIndex += 1u;
     cjgui_linux_fill_observation(session, outObservation);
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_present_composable_scene(
+    uint64_t sessionToken, CjguiInternalRendererFrameObservation *outObservation) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    return cjgui_linux_present_scene(session, outObservation, 1);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_query_present(uint64_t sessionToken, uint64_t ticketId,
@@ -1601,12 +3027,244 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_display_progress(
 
 // ---------------------------------------------------------------- 场景暂存
 
+static CjguiLinuxNodeSlot *cjgui_linux_accepted_slot(CjguiLinuxSession *session, uint64_t nodeId) {
+    if (!session || !session->accepted.valid) return NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        if (session->accepted.slots[i].node.nodeId == nodeId) return &session->accepted.slots[i];
+    }
+    return NULL;
+}
+
+static int cjgui_linux_is_editable_text_kind(uint32_t nodeKind) {
+    return nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+}
+
+// The same tab-stop vocabulary the macOS overlay uses. Native only carries
+// accepted identity/scope/geometry; Cangjie remains the focus semantics owner.
+static int cjgui_linux_is_keyboard_focus_kind(uint32_t nodeKind) {
+    return cjgui_linux_is_editable_text_kind(nodeKind) ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SPLIT_DIVIDER ||
+           nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER;
+}
+
+static int cjgui_linux_slot_keyboard_focusable(const CjguiLinuxNodeSlot *slot) {
+    if (!slot || !slot->node.isInteractive || slot->node.isReadOnly) return 0;
+    if (slot->node.width <= 0 || slot->node.height <= 0) return 0;
+    return cjgui_linux_is_keyboard_focus_kind(slot->node.nodeKind);
+}
+
+static void cjgui_linux_focus_clear(CjguiLinuxSession *session) {
+    session->focusActive = 0;
+    session->focusNodeId = 0u;
+    session->focusResourceId = -1;
+    session->focusNodeKind = 0u;
+}
+
+static void cjgui_linux_focus_set(CjguiLinuxSession *session, const CjguiLinuxNodeSlot *slot) {
+    session->focusActive = 1;
+    session->focusNodeId = slot->node.nodeId;
+    session->focusResourceId = slot->node.resourceId;
+    session->focusNodeKind = slot->node.nodeKind;
+}
+
+static void cjgui_linux_repaint_composition_frame(CjguiLinuxSession *session);
+
+// End the preedit identity. A stale terminal must still clear the visible
+// preedit; it may not attach the old start/length to whichever proxy is
+// current now.
+static int cjgui_linux_composition_clear(CjguiLinuxSession *session) {
+    if (session == NULL) return 0;
+    int wasActive = session->compositionActive;
+    session->compositionActive = 0;
+    session->compositionId = 0u;
+    session->compositionStart16 = 0u;
+    session->compositionLength16 = 0u;
+    session->compositionReplaceLength16 = 0u;
+    session->compositionTextLength = 0u;
+    session->compositionText[0] = '\0';
+    session->compositionBaseHash = 0u;
+    session->compositionNodeId = 0u;
+    session->compositionResourceId = -1;
+    session->compositionNodeKind = 0u;
+    session->compositionBindingEpoch = 0u;
+    session->compositionCaret16 = 0u;
+    session->compositionOwned = 0;
+    return wasActive;
+}
+
+// The frozen target must still be the live proxy, the same declaration epoch,
+// and the same accepted node. A style-only scene refresh keeps all of these;
+// focus switching, rebinding or removal does not.
+static int cjgui_linux_composition_target_matches(CjguiLinuxSession *session) {
+    if (session == NULL || !session->compositionActive || !session->proxy.active) return 0;
+    if (session->proxy.nodeId != session->compositionNodeId ||
+        session->proxy.resourceId != session->compositionResourceId ||
+        session->proxy.nodeKind != session->compositionNodeKind ||
+        session->proxy.bindingEpoch != session->compositionBindingEpoch) {
+        return 0;
+    }
+    const CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, session->compositionNodeId);
+    if (slot == NULL || slot->node.resourceId != session->compositionResourceId ||
+        slot->node.nodeKind != session->compositionNodeKind) {
+        return 0;
+    }
+    if (session->compositionOwned) {
+        if (!session->ownedTextSessionEnabled ||
+            session->ownedTextSessionNodeId != session->compositionNodeId ||
+            session->ownedTextSessionResourceId != session->compositionResourceId ||
+            session->ownedTextSessionNodeKind != session->compositionNodeKind ||
+            session->ownedTextSessionBindingEpoch != session->compositionBindingEpoch) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void cjgui_linux_proxy_release(CjguiLinuxSession *session) {
+    if (!session) return;
+    cjgui_linux_composition_clear(session);
+    cjgui_linux_strfree(&session->proxy.value);
+    memset(&session->proxy, 0, sizeof(session->proxy));
+}
+
+// A binding declaration can change without the proxy being released. End a
+// preedit whose frozen target no longer matches the live declaration; a
+// same-target declaration refresh (style/layout only) keeps it alive.
+// Returns 1 when an active preedit was dropped and needs an erase frame.
+static int cjgui_linux_composition_revalidate(CjguiLinuxSession *session) {
+    if (session == NULL || !session->compositionActive) return 0;
+    if (cjgui_linux_composition_target_matches(session)) return 0;
+    (void)cjgui_linux_composition_clear(session);
+    return 1;
+}
+
+// Ordinary focus installs the same native edit proxy an owned text session gets.
+// Identity and body come from the accepted scene; edits still flow through the
+// existing TEXT_CHANGED / RANGE_CHANGED channel. A retired, disabled, read-only
+// or identity-changed node clears the proxy so keys never reach a dead target.
+static void cjgui_linux_sync_ordinary_proxy(CjguiLinuxSession *session) {
+    if (!session || !session->proxy.active || !session->proxy.ordinary) return;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, session->proxy.nodeId);
+    if (!slot || slot->node.resourceId != session->proxy.resourceId ||
+        slot->node.nodeKind != session->proxy.nodeKind || !slot->node.isInteractive ||
+        slot->node.isReadOnly || !cjgui_linux_is_editable_text_kind(slot->node.nodeKind)) {
+        uint64_t nodeId = session->proxy.nodeId;
+        int64_t resourceId = session->proxy.resourceId;
+        uint32_t nodeKind = session->proxy.nodeKind;
+        cjgui_linux_proxy_release(session);
+        if (session->focusActive && session->focusNodeId == nodeId &&
+            session->focusResourceId == resourceId && session->focusNodeKind == nodeKind) {
+            cjgui_linux_focus_clear(session);
+        }
+        return;
+    }
+    if (slot->node.preservesActiveLocalText) {
+        // The owner just accepted this proxy's edit and intentionally did not
+        // echo the complete body; the proxy's newer text stays authoritative.
+        session->proxy.sceneVersion = session->accepted.projectionVersion;
+        return;
+    }
+    const char *accepted = slot->value ? slot->value : "";
+    if (!session->proxy.value || strcmp(session->proxy.value, accepted) != 0) {
+        cjgui_linux_replace(&session->proxy.value, accepted);
+        uint32_t units = cjgui_linux_utf16_length(accepted, strlen(accepted));
+        if (session->proxy.selectionStart16 > units) session->proxy.selectionStart16 = units;
+        if (session->proxy.selectionEnd16 > units) session->proxy.selectionEnd16 = units;
+        if (session->proxy.selectionEnd16 < session->proxy.selectionStart16)
+            session->proxy.selectionEnd16 = session->proxy.selectionStart16;
+    }
+    session->proxy.sceneVersion = session->accepted.projectionVersion;
+}
+
+static void cjgui_linux_request_slot_image(CjguiLinuxSession *session, const CjguiLinuxNodeSlot *slot) {
+    if (session == NULL || session->image == NULL || slot == NULL) return;
+    if (slot->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) return;
+    if (slot->imageResourcePath == NULL || slot->imageResourcePath[0] == '\0') return;
+    (void)cjgui_linux_image_prepare(session->image, slot->imageResourcePath, slot->imageResourceId,
+                                    slot->imageResourceVersion);
+}
+
+// Accepted 场景是缓存引用的唯一权威：候选提交后按整棵已接受场景重建引用，
+// 旧版本资源因此可以安全淘汰，而当前显示的资源不会被忙碌/超限淘汰。
+static void cjgui_linux_refresh_image_references(CjguiLinuxSession *session) {
+    if (session == NULL || session->image == NULL) return;
+    cjgui_linux_image_clear_references(session->image);
+    if (!session->accepted.valid) return;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+        if (slot->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) continue;
+        if (slot->imageResourcePath == NULL || slot->imageResourcePath[0] == '\0') continue;
+        cjgui_linux_image_add_reference(session->image, slot->imageResourcePath, slot->imageResourceId,
+                                        slot->imageResourceVersion);
+    }
+}
+
+// 场景提交后，声明表只保留仍在新已接受场景里的节点：被移除或换代的节点声明
+// 不回收，长会话里 runCount 会随场景代数增长，最终把有效节点挤出容量。
+static void cjgui_linux_prune_run_declarations(CjguiLinuxSession *session) {
+    if (session == NULL || session->runCount == 0u) return;
+    uint32_t kept = 0u;
+    for (uint32_t i = 0u; i < session->runCount; i += 1u) {
+        int present = 0;
+        for (uint32_t n = 0u; n < session->accepted.nodeCount; n += 1u) {
+            if (session->accepted.slots[n].node.nodeId == session->runs[i].nodeId) {
+                present = 1;
+                break;
+            }
+        }
+        if (!present) {
+            cjgui_linux_strfree(&session->runs[i].encoded);
+            continue;
+        }
+        if (kept != i) session->runs[kept] = session->runs[i];
+        kept += 1u;
+    }
+    for (uint32_t i = kept; i < session->runCount; i += 1u) {
+        session->runs[i].nodeId = 0u;
+        session->runs[i].encoded = NULL;
+    }
+    session->runCount = kept;
+}
+
 static int cjgui_linux_commit_candidate(CjguiLinuxSession *session) {
     if (!session->candidate.valid) return 0;
     cjgui_linux_scene_move(&session->accepted, &session->candidate);
     session->accepted.valid = 1;
+    if (getenv("CJGUI_LINUX_SCENE_TRACE")) {
+        // Bounded geometry record for the exact rects the native hit test uses.
+        // Node bounds are layout space; translate is the paint-alignment sidecar.
+        uint32_t shown = 0u;
+        for (uint32_t i = 0u; i < session->accepted.nodeCount && shown < 80u; i += 1u) {
+            CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+            const CjguiInternalRendererComposableNode *node = &slot->node;
+            if (node->nodeId == 0u) continue;
+            fprintf(stderr,
+                    "CJGUI_LINUX_SCENE node=%llu kind=%u x=%lld y=%lld w=%lld h=%lld "
+                    "tx=%.1f ty=%.1f clip=%lld,%lld,%lld,%lld interactive=%d\n",
+                    (unsigned long long)node->nodeId, node->nodeKind, (long long)node->x,
+                    (long long)node->y, (long long)node->width, (long long)node->height,
+                    cjgui_linux_slot_translate_x(slot), cjgui_linux_slot_translate_y(slot),
+                    (long long)node->clipX, (long long)node->clipY, (long long)node->clipWidth,
+                    (long long)node->clipHeight, node->isInteractive);
+            shown += 1u;
+        }
+        fflush(stderr);
+    }
+    cjgui_linux_prune_run_declarations(session);
     session->preparationActive = 0;
     session->preparationId = 0u;
+    cjgui_linux_refresh_image_references(session);
+    cjgui_linux_sync_ordinary_proxy(session);
+    if (session->focusActive) {
+        CjguiLinuxNodeSlot *focus = cjgui_linux_focused_slot(session);
+        if (!focus) cjgui_linux_focus_clear(session);
+    }
     return 1;
 }
 
@@ -1707,6 +3365,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node(
     cjgui_linux_slot_store_strings(slot, label, value, semanticId, bindingKey, rowKey, parentRowKey,
                                    semanticLabel, encodedRuns);
     cjgui_linux_run_apply(session, slot);
+    cjgui_linux_request_slot_image(session, slot);
     session->nodeWriteCount += 1u;
     if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare_ok idx=%u\n", index);
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -1753,6 +3412,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_preparatio
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     }
     cjgui_linux_scene_reset(&session->candidate);
+    cjgui_linux_prune_run_declarations(session);
     session->preparationActive = 0;
     session->preparationId = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -1763,6 +3423,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_discard_composable_scene_can
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     cjgui_linux_scene_reset(&session->candidate);
+    cjgui_linux_prune_run_declarations(session);
     session->preparationActive = 0;
     session->preparationId = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -1806,6 +3467,7 @@ static CjguiInternalRendererStatus cjgui_linux_store_scene_node(
     cjgui_linux_replace(&slot->imageResourcePath, imageResourcePath ? imageResourcePath : "");
     cjgui_linux_replace(&slot->imageResourceId, imageResourceId ? imageResourceId : "");
     cjgui_linux_run_apply(session, slot);
+    cjgui_linux_request_slot_image(session, slot);
     session->nodeWriteCount += 1u;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -1898,15 +3560,82 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!outViewport) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // 主线程先结算图片完成；若解码在 pump 期间完成，窗口自唤醒管道
+    // 会让本轮泵立即返回，下一次 viewport 查询看到推进后的完成版本。
+    cjgui_linux_image_pump(session->image);
     uint32_t width = 0u, height = 0u; int resized = 0;
     (void)cjgui_linux_window_size(session->window, &width, &height, &resized);
     if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI viewport w=%u h=%u\n", width, height);
     memset(outViewport, 0, sizeof(*outViewport));
     outViewport->width = width;
     outViewport->height = height;
-    outViewport->resizeVersion = session->frameIndex;
-    outViewport->resourceCompletionVersion = session->frameIndex;
+    outViewport->resizeVersion = session->resizeVersion;
+    // 契约：只有图片请求到达 ready/failed 才推进；帧号不是资源完成。
+    outViewport->resourceCompletionVersion = cjgui_linux_image_completion_version(session->image);
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_prepare_composable_image_resource(uint64_t sessionToken, const char *resourcePath,
+                                                          const char *resourceId, uint64_t resourceVersion,
+                                                          uint32_t *outState) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    cjgui_linux_image_pump(session->image);
+    *outState = cjgui_linux_image_prepare(session->image, resourcePath, resourceId, resourceVersion);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_composable_image_resource_state(uint64_t sessionToken, const char *resourcePath,
+                                                        const char *resourceId, uint64_t resourceVersion,
+                                                        uint32_t *outState) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *outState = cjgui_linux_image_state(session->image, resourcePath, resourceId, resourceVersion);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus
+cjgui_internal_renderer_probe_image_texture(uint64_t sessionToken, uint64_t nodeId, int32_t *outFound,
+                                            int32_t *outHasTexture, int32_t *outCacheKeyLength,
+                                            int32_t *outFailed) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!outFound || !outHasTexture || !outCacheKeyLength || !outFailed) {
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    *outFound = 0;
+    *outHasTexture = 0;
+    *outCacheKeyLength = 0;
+    *outFailed = 0;
+    if (!session->accepted.valid) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+        if (slot->node.nodeId != nodeId) continue;
+        if (slot->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) continue;
+        uint32_t state = cjgui_linux_image_state(session->image, slot->imageResourcePath,
+                                                 slot->imageResourceId, slot->imageResourceVersion);
+        uint32_t width = 0u, height = 0u, gpuSlot = UINT32_MAX;
+        int ready = state == CJGUI_LINUX_IMAGE_READY
+                        ? cjgui_linux_image_texture(session->image, slot->imageResourcePath,
+                                                    slot->imageResourceId, slot->imageResourceVersion,
+                                                    &width, &height, &gpuSlot)
+                        : 0;
+        char key[8192];
+        int keyLength = cjgui_linux_image_cache_key(slot->imageResourcePath, slot->imageResourceId,
+                                                    slot->imageResourceVersion, key, sizeof(key))
+                            ? (int)strlen(key)
+                            : 0;
+        *outFound = 1;
+        *outHasTexture = (ready && gpuSlot != UINT32_MAX) ? 1 : 0;
+        *outCacheKeyLength = keyLength;
+        *outFailed = state == CJGUI_LINUX_IMAGE_FAILED ? 1 : 0;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_node_rect(uint64_t sessionToken, uint64_t nodeId,
@@ -2033,6 +3762,53 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+// Shared styled measurement for handwritten textStyleRuns and generated label
+// textRuns. Both arrive as the same 14-field declaration; the result comes from
+// the exact layout the paint path uses, so wrap/baseline/max-lines agree.
+CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_styled_text(
+    uint64_t sessionToken, const char *text, double fontSize, uint32_t fontWeight,
+    uint32_t fontFamily, uint32_t maximumWidth, double letterSpacing, double lineHeight,
+    uint32_t maximumLines, uint32_t overflow, const char *runs,
+    CjguiInternalRendererTextMeasurement *outMeasurement) {
+    (void)letterSpacing;
+    (void)lineHeight;
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!text) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    CjguiLinuxParsedRuns parsed;
+    size_t textLength = strlen(text);
+    if (!cjgui_linux_parse_runs(runs, text, textLength, &parsed)) {
+        return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
+    }
+    uint32_t quadCount = 0u, spanCount = 0u;
+    double width = 0.0, height = 0.0, ascent = 0.0, resultLineHeight = 0.0;
+    int status = cjgui_linux_text_styled_layout(
+        session->text, text, textLength, fontSize, fontWeight, fontFamily, (double)maximumWidth,
+        maximumLines, overflow != 0u ? 1 : 0, parsed.runs, parsed.count, 0.0, 0.0, 0, NULL, 0u,
+        NULL, 0u, &quadCount, &spanCount, &width, &height, &ascent, &resultLineHeight);
+    if (status != CJGUI_LINUX_TEXT_OK && status != CJGUI_LINUX_TEXT_BUDGET_EXCEEDED) {
+        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_ABI measure_styled FAIL status=%d bytes=%zu runs=%u\n",
+                    status, textLength, parsed.count);
+        }
+        return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    }
+    session->textLayoutPreparationCount += 1u;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI measure_styled ok bytes=%zu runs=%u w=%.1f h=%.1f lh=%.1f\n",
+                textLength, parsed.count, width, height, resultLineHeight);
+    }
+    if (outMeasurement) {
+        memset(outMeasurement, 0, sizeof(*outMeasurement));
+        outMeasurement->width = (uint32_t)(width + 0.5);
+        outMeasurement->height = (uint32_t)(height + 0.5);
+        outMeasurement->baseline = (uint32_t)(ascent + 0.5);
+        outMeasurement->lineHeight = (uint32_t)(resultLineHeight + 0.5);
+        if (outMeasurement->lineHeight == 0u) outMeasurement->lineHeight = 1u;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline_natural_height(
     uint64_t sessionToken, const char *text, double fontSize, uint32_t fontWeight, uint32_t fontFamily,
     uint32_t contentWidth, uint32_t *outHeight) {
@@ -2081,8 +3857,11 @@ int32_t cjgui_internal_renderer_declare_input_caret(uint64_t sessionToken, int64
 
 // X11 keysym 常量（只取本阶段用到的，避免在会话层引入 X11 头）。
 #define CJGUI_LINUX_XK_BACKSPACE 0xFF08u
+#define CJGUI_LINUX_XK_TAB       0xFF09u
+#define CJGUI_LINUX_XK_ISO_LEFT_TAB 0xFE20u
 #define CJGUI_LINUX_XK_RETURN    0xFF0Du
 #define CJGUI_LINUX_XK_ESCAPE    0xFF1Bu
+#define CJGUI_LINUX_XK_SPACE     0x0020u
 #define CJGUI_LINUX_XK_HOME      0xFF50u
 #define CJGUI_LINUX_XK_LEFT      0xFF51u
 #define CJGUI_LINUX_XK_UP        0xFF52u
@@ -2090,6 +3869,8 @@ int32_t cjgui_internal_renderer_declare_input_caret(uint64_t sessionToken, int64
 #define CJGUI_LINUX_XK_DOWN      0xFF54u
 #define CJGUI_LINUX_XK_END       0xFF57u
 #define CJGUI_LINUX_XK_DELETE    0xFFFFu
+#define CJGUI_LINUX_XK_MENU      0xFF67u
+#define CJGUI_LINUX_XK_F10       0xFFC7u
 
 static uint32_t cjgui_linux_pending_free(const CjguiLinuxSession *session) {
     return CJGUI_LINUX_PENDING_EVENTS - session->pendingCount;
@@ -2357,17 +4138,55 @@ static int cjgui_linux_apply_paste(CjguiLinuxSession *session, const char *text,
     return applied;
 }
 
+static uint64_t cjgui_linux_text_hash(const char *text) {
+    uint64_t hash = 1469598103934665603ull;
+    if (text) {
+        for (const unsigned char *cursor = (const unsigned char *)text; *cursor; cursor += 1) {
+            hash ^= (uint64_t)*cursor;
+            hash *= 1099511628211ull;
+        }
+    }
+    return hash;
+}
+
 // IME 相位 -> 共同层 kind 52。首份 update 用选择起点冻结替换范围；后续 update
 // 报告同一 marked 起点与上一份 preedit 长度；提交/取消终结同一身份。
 static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t phase,
                                         const char *text, uint32_t innerCaret16) {
     if (!session->proxy.active) {
         fprintf(stderr, "CJGUI_LINUX_COMPOSITION_REJECTED reason=no_text_proxy phase=%u\n", phase);
+        if (phase != CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE) {
+            (void)cjgui_linux_composition_clear(session);
+            return 1;
+        }
         return 0;
     }
     uint32_t text16 = text ? cjgui_linux_utf16_length(text, strlen(text)) : 0u;
+    // Only a node with a real owned-session declaration consumes the kind-52
+    // composition phase (the common window routes 52 through that session).
+    // An ordinary proxy has no such consumer: its commit was silently dropped
+    // while the native proxy already held the text, so the owner never saw the
+    // edit. Fold ordinary commits into the same whole-value edit channel used
+    // by typed text; cancel stays zero-write.
+    const int ownedSession = session->ownedTextSessionEnabled &&
+        session->ownedTextSessionNodeId == session->proxy.nodeId &&
+        session->ownedTextSessionResourceId == session->proxy.resourceId &&
+        session->ownedTextSessionNodeKind == session->proxy.nodeKind;
     if (phase == CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE) {
-        if (!session->compositionActive) {
+        if (session->compositionActive) {
+            if (!cjgui_linux_composition_target_matches(session)) {
+                // Focus/rebind/removal happened while the preedit was open.
+                // The next update belongs to a different target; do not
+                // reinterpret the frozen range on it.
+                if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+                    fprintf(stderr,
+                            "CJGUI_LINUX_COMPOSITION_TARGET_CHANGED phase=update node=%llu action=drop\n",
+                            (unsigned long long)session->compositionNodeId);
+                }
+                (void)cjgui_linux_composition_clear(session);
+                return 0;
+            }
+        } else {
             session->compositionIdCounter += 1u;
             if (session->compositionIdCounter == 0u) session->compositionIdCounter = 1u;
             session->compositionId = session->compositionIdCounter;
@@ -2377,6 +4196,14 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
             session->compositionStart16 = a;
             session->compositionLength16 = b - a;
             session->compositionReplaceLength16 = b - a;
+            session->compositionBaseHash =
+                cjgui_linux_text_hash(session->proxy.value ? session->proxy.value : "");
+            session->compositionNodeId = session->proxy.nodeId;
+            session->compositionResourceId = session->proxy.resourceId;
+            session->compositionNodeKind = session->proxy.nodeKind;
+            session->compositionBindingEpoch = session->proxy.bindingEpoch;
+            session->compositionOwned = ownedSession;
+            session->compositionCaret16 = 0u;
             session->compositionActive = 1;
         }
         if (innerCaret16 > text16) innerCaret16 = text16;
@@ -2387,20 +4214,67 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
         if (copyLength > 0u) memcpy(session->compositionText, text, copyLength);
         session->compositionText[copyLength] = '\0';
         session->compositionTextLength = copyLength;
-    } else if (!session->compositionActive) {
-        // 迟到的终态：共同层同样会按身份判重；这里不产生第二条意图。
-        return 0;
+        session->compositionCaret16 = innerCaret16;
+    } else {
+        if (!session->compositionActive) {
+            // 迟到的终态：共同层同样会按身份判重；这里不产生第二条意图。
+            return 0;
+        }
+        if (!cjgui_linux_composition_target_matches(session)) {
+            // The terminal belongs to the target frozen at composition start.
+            // After a focus switch, rebind or removal it ends only that old
+            // composition; it must not write the current proxy even when both
+            // fields carry the same body text.
+            if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+                fprintf(stderr,
+                        "CJGUI_LINUX_COMPOSITION_STALE_TARGET phase=%u node=%llu action=drop\n",
+                        phase, (unsigned long long)session->compositionNodeId);
+            }
+            (void)cjgui_linux_composition_clear(session);
+            return 1;
+        }
+        if (!session->compositionOwned) {
+            uint32_t start16 = session->compositionStart16;
+            uint32_t replace16 = session->compositionReplaceLength16;
+            if (phase == CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT) {
+                const CjguiLinuxNodeSlot *accepted =
+                    cjgui_linux_accepted_slot(session, session->compositionNodeId);
+                const char *acceptedValue = (accepted && accepted->value) ? accepted->value : "";
+                if (accepted && cjgui_linux_text_hash(acceptedValue) != session->compositionBaseHash) {
+                    // The owner moved while the preedit was open (measured:
+                    // 外部写入 -> 外部你好写入 when the old caret was reused).
+                    // Refuse the stale commit and re-anchor to the accepted body;
+                    // the next legal keystroke continues from the current value.
+                    free(session->proxy.value);
+                    session->proxy.value = cjgui_linux_strdup(acceptedValue);
+                    uint32_t units = cjgui_linux_utf16_length(acceptedValue, strlen(acceptedValue));
+                    session->proxy.selectionStart16 = units;
+                    session->proxy.selectionEnd16 = units;
+                    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+                        fprintf(stderr, "CJGUI_LINUX_COMPOSITION_STALE node=%llu action=refuse_reanchor\n",
+                                (unsigned long long)session->compositionNodeId);
+                    }
+                } else if (accepted) {
+                    (void)cjgui_linux_emit_text_edit(session, start16, replace16, text ? text : "");
+                }
+            }
+            (void)cjgui_linux_composition_clear(session);
+            return 1;
+        }
     }
 
     CjguiLinuxNodeSlot routing;
     memset(&routing, 0, sizeof(routing));
-    routing.node.nodeId = session->proxy.nodeId;
+    routing.node.nodeId = session->compositionNodeId;
     routing.node.projectionVersion = session->accepted.valid ? session->accepted.projectionVersion
                                                             : session->proxy.sceneVersion;
-    routing.node.resourceId = session->proxy.resourceId;
-    routing.node.nodeKind = session->proxy.nodeKind;
+    routing.node.resourceId = session->compositionResourceId;
+    routing.node.nodeKind = session->compositionNodeKind;
     if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_COMPOSITION,
                                   &routing, 0, 0, 0, text ? text : "")) {
+        if (phase != CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE) {
+            (void)cjgui_linux_composition_clear(session);
+        }
         return 0;
     }
     if (phase == CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT) {
@@ -2422,21 +4296,17 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
                                         : 0);
     out->selectionStart = innerCaret16;
     out->selectionEnd = innerCaret16;
-    out->bindingEpoch = session->proxy.bindingEpoch;
+    out->bindingEpoch = session->compositionBindingEpoch;
     if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr,
-                "CJGUI_LINUX_COMPOSITION_PUSH phase=%u id=%u start=%u len=%u text16=%u caret16=%u\n",
-                phase, session->compositionId, session->compositionStart16,
-                session->compositionLength16, text16, innerCaret16);
+                "CJGUI_LINUX_COMPOSITION_PUSH phase=%u id=%u node=%llu start=%u len=%u text16=%u caret16=%u\n",
+                phase, session->compositionId, (unsigned long long)session->compositionNodeId,
+                session->compositionStart16, session->compositionLength16, text16, innerCaret16);
     }
     if (phase == CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE) {
         session->compositionLength16 = text16;
     } else {
-        session->compositionActive = 0;
-        session->compositionLength16 = 0u;
-        session->compositionReplaceLength16 = 0u;
-        session->compositionTextLength = 0u;
-        session->compositionText[0] = '\0';
+        (void)cjgui_linux_composition_clear(session);
     }
     return 1;
 }
@@ -2477,12 +4347,327 @@ static void cjgui_linux_clipboard_poll(CjguiLinuxSession *session) {
     free(buffer);
 }
 
+static CjguiLinuxNodeSlot *cjgui_linux_focused_slot(CjguiLinuxSession *session) {
+    if (!session->focusActive || !session->accepted.valid) return NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+        if (slot->node.nodeId == session->focusNodeId &&
+            slot->node.resourceId == session->focusResourceId &&
+            slot->node.nodeKind == session->focusNodeKind) return slot;
+    }
+    return NULL;
+}
+
+// With no remembered focus, start in the topmost scoped layer rather than in
+// the base form behind it. Layers are appended after their base in scene order.
+static uint64_t cjgui_linux_default_focus_scope(CjguiLinuxSession *session) {
+    uint64_t scope = 0u;
+    if (!session->accepted.valid) return 0u;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        const CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+        if (slot->node.inputScope != 0u && cjgui_linux_slot_keyboard_focusable(slot)) {
+            scope = slot->node.inputScope;
+        }
+    }
+    return scope;
+}
+
+static int cjgui_linux_push_focus_event(CjguiLinuxSession *session, const CjguiLinuxNodeSlot *slot,
+                                        int64_t modifiers) {
+    const char *text = NULL;
+    int64_t start = 0, end = 0;
+    uint64_t binding = 0u;
+    if (cjgui_linux_is_editable_text_kind(slot->node.nodeKind) && session->proxy.active &&
+        session->proxy.nodeId == slot->node.nodeId && session->proxy.resourceId == slot->node.resourceId &&
+        session->proxy.nodeKind == slot->node.nodeKind) {
+        text = session->proxy.value;
+        start = (int64_t)session->proxy.selectionStart16;
+        end = (int64_t)session->proxy.selectionEnd16;
+        binding = session->proxy.bindingEpoch;
+    }
+    if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, slot, 0, 0,
+                                  modifiers, text)) return 0;
+    uint32_t index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
+    session->pending[index].event.selectionStart = start;
+    session->pending[index].event.selectionEnd = end;
+    session->pending[index].event.bindingEpoch = binding;
+    return 1;
+}
+
+static int cjgui_linux_focus_slot(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot, int announce,
+                                  int64_t modifiers) {
+    if (!cjgui_linux_slot_keyboard_focusable(slot)) return 0;
+    if (cjgui_linux_is_editable_text_kind(slot->node.nodeKind)) {
+        if (cjgui_internal_renderer_focus_composable_node(session->token, slot->node.nodeId) !=
+            CJGUI_INTERNAL_RENDERER_OK) return 0;
+    } else {
+        int hadComposition = session->compositionActive;
+        cjgui_linux_proxy_release(session);
+        cjgui_linux_focus_set(session, slot);
+        if (hadComposition) cjgui_linux_repaint_composition_frame(session);
+    }
+    if (announce && !cjgui_linux_push_focus_event(session, slot, modifiers)) return 0;
+    return 1;
+}
+
+static int cjgui_linux_tab_title_is_stop(const CjguiLinuxSession *session, const CjguiLinuxNodeSlot *slot,
+                                         uint64_t activeGroup, uint64_t scope) {
+    uint64_t group = slot->node.tabGroupId;
+    if (slot->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE || group == 0u) return 1;
+    if (group == activeGroup) return 0;   // Tab exits a group even after arrow navigation
+    const CjguiLinuxNodeSlot *first = NULL;
+    const CjguiLinuxNodeSlot *selected = NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        const CjguiLinuxNodeSlot *peer = &session->accepted.slots[i];
+        if (peer->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE ||
+            peer->node.tabGroupId != group || peer->node.inputScope != scope ||
+            !cjgui_linux_slot_keyboard_focusable(peer)) continue;
+        if (!first) first = peer;
+        if (peer->node.tabSelected) selected = peer;
+    }
+    return slot == (selected ? selected : first);
+}
+
+static int cjgui_linux_focus_next(CjguiLinuxSession *session, int backwards, int64_t modifiers) {
+    if (!session->accepted.valid || session->accepted.nodeCount == 0u) return 0;
+    CjguiLinuxNodeSlot *current = cjgui_linux_focused_slot(session);
+    int64_t index = current ? (int64_t)(current - session->accepted.slots) : -1;
+    uint64_t scope = current ? current->node.inputScope : cjgui_linux_default_focus_scope(session);
+    uint64_t activeGroup = (current &&
+        current->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE)
+        ? current->node.tabGroupId : 0u;
+    int64_t cursor = index >= 0 ? index + (backwards ? -1 : 1)
+                                : (backwards ? (int64_t)session->accepted.nodeCount - 1 : 0);
+    for (uint32_t attempts = 0u; attempts < session->accepted.nodeCount; attempts += 1u) {
+        if (cursor < 0) cursor = (int64_t)session->accepted.nodeCount - 1;
+        if (cursor >= (int64_t)session->accepted.nodeCount) cursor = 0;
+        CjguiLinuxNodeSlot *slot = &session->accepted.slots[cursor];
+        if (slot->node.inputScope == scope && cjgui_linux_slot_keyboard_focusable(slot) &&
+            cjgui_linux_tab_title_is_stop(session, slot, activeGroup, scope)) {
+            if (cjgui_linux_focus_slot(session, slot, 1, modifiers)) {
+                if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                    fprintf(stderr, "CJGUI_LINUX_ABI focus_tab node=%llu kind=%u scope=%llu back=%d\n",
+                            (unsigned long long)slot->node.nodeId, slot->node.nodeKind,
+                            (unsigned long long)scope, backwards);
+                }
+                return 1;
+            }
+            return 0;
+        }
+        cursor += backwards ? -1 : 1;
+    }
+    return 0;
+}
+
+static int cjgui_linux_activate_focused(CjguiLinuxSession *session, int64_t modifiers) {
+    CjguiLinuxNodeSlot *slot = cjgui_linux_focused_slot(session);
+    if (!slot || !slot->node.isInteractive || slot->node.isReadOnly) return 0;
+    switch (slot->node.nodeKind) {
+        case CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON:
+        case CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE:
+        case CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC:
+            return cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE,
+                                            slot, 0, 0, modifiers, NULL);
+        case CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT: {
+            const char *next = (slot->value && strcmp(slot->value, "true") == 0) ? "false" : "true";
+            return cjgui_linux_pending_push(session,
+                                            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED,
+                                            slot, 0, 0, modifiers, next);
+        }
+        default:
+            return 0;
+    }
+}
+
+static int cjgui_linux_dismiss_layer(CjguiLinuxSession *session, int64_t modifiers) {
+    CjguiLinuxNodeSlot *slot = cjgui_linux_focused_slot(session);
+    if (!slot || slot->node.inputScope == 0u) {
+        slot = NULL;
+        if (session->accepted.valid) {
+            for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+                CjguiLinuxNodeSlot *candidate = &session->accepted.slots[i];
+                if (candidate->node.inputScope != 0u && cjgui_linux_slot_keyboard_focusable(candidate)) {
+                    slot = candidate;
+                }
+            }
+        }
+    }
+    if (!slot || slot->node.inputScope == 0u) return 0;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI dismiss_escape node=%llu scope=%llu\n",
+                (unsigned long long)slot->node.nodeId, (unsigned long long)slot->node.inputScope);
+    }
+    // 上下文菜单的结束事件必须携带请求 id：共同层按 `escape:<requestId>`
+    // 只结束这个请求，迟到的旧 Escape 不能撤销新菜单。普通模态层保持
+    // 裸 "escape"，沿用既有共同契约。
+    char text[48];
+    uint64_t request = cjgui_linux_aux_context_menu_request(session->token);
+    if (request != 0u) {
+        snprintf(text, sizeof(text), "escape:%llu", (unsigned long long)request);
+    } else {
+        snprintf(text, sizeof(text), "escape");
+    }
+    return cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
+                                    slot, 0, 0, modifiers, text);
+}
+
+// Normalize one command chord into the shared `shortcut:...` wire value. X11
+// reports Shift-modified letters as uppercase keysyms, so the shift bit is
+// derived from both the mask and the keysym.
+static int cjgui_linux_shortcut_character(const CjguiLinuxWindowEvent *event, char *out) {
+    uint32_t key = event->keySym;
+    if (key >= 'A' && key <= 'Z') { *out = (char)(key - 'A' + 'a'); return 1; }
+    if (key >= 'a' && key <= 'z') { *out = (char)key; return 1; }
+    if (key >= '0' && key <= '9') { *out = (char)key; return 1; }
+    if (key == ',' || key == '.' || key == '/' || key == '-' || key == '=' ||
+        key == '[' || key == ']' || key == ';' || key == '\'') {
+        *out = (char)key;
+        return 1;
+    }
+    return 0;
+}
+
+static void cjgui_linux_build_shortcut(char *out, size_t capacity, char key,
+                                       int control, int option, int shift, int command) {
+    snprintf(out, capacity, "shortcut:%s%s%s%s%c",
+             control ? "control+" : "", option ? "option+" : "",
+             shift ? "shift+" : "", command ? "command+" : "", key);
+}
+
+// Returns 1 when the chord belongs to an accepted command declaration. The
+// actual run still goes through Cangjie invokeCommand: this only forwards the
+// normalized shortcut in a WINDOW_COMMAND event, exactly like the macOS route.
+static int cjgui_linux_try_command_shortcut(CjguiLinuxSession *session,
+                                            const CjguiLinuxWindowEvent *event) {
+    uint32_t mods = event->modifiers;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_CHORD sym=0x%x mods=%u proxy=%d composing=%d\n",
+                event->keySym, mods, session->proxy.active, session->compositionActive);
+    }
+    int control = (mods & CJGUI_LINUX_MOD_CONTROL) != 0u;
+    int option = (mods & CJGUI_LINUX_MOD_ALT) != 0u;
+    int command = (mods & CJGUI_LINUX_MOD_SUPER) != 0u;
+    int shift = (mods & CJGUI_LINUX_MOD_SHIFT) != 0u ||
+                (event->keySym >= 'A' && event->keySym <= 'Z');
+    char shortcut[64];
+    char key = '\0';
+    int plain = 0;
+    if (!control && !option && !command && !shift) {
+        // A layer may declare plain navigation as scoped commands (search
+        // panel / command palette). Native only forwards the key; the shared
+        // window still resolves the declaration, target and scope. With no
+        // such declaration the ordinary text/list/activation path owns it.
+        const char *name = NULL;
+        if (event->keySym == CJGUI_LINUX_XK_UP) name = "up";
+        else if (event->keySym == CJGUI_LINUX_XK_DOWN) name = "down";
+        else if (event->keySym == CJGUI_LINUX_XK_RETURN) name = "enter";
+        else if (event->keySym == CJGUI_LINUX_XK_ESCAPE) name = "escape";
+        if (!name) return 0;
+        snprintf(shortcut, sizeof(shortcut), "shortcut:%s", name);
+        plain = 1;
+    } else {
+        if (!control && !option && !command) return 0;
+        if (!cjgui_linux_shortcut_character(event, &key)) return 0;
+        // Copy/cut/paste/select-all stay with the text service while a field owns
+        // the keyboard; a command must not shadow the platform editing contract.
+        if (session->proxy.active && control && !option && !command && !shift &&
+            (key == 'c' || key == 'x' || key == 'v' || key == 'a')) return 0;
+        cjgui_linux_build_shortcut(shortcut, sizeof(shortcut), key, control, option, shift, command);
+    }
+    CjguiLinuxNodeSlot *focused = cjgui_linux_focused_slot(session);
+    uint64_t scope = focused ? focused->node.inputScope : cjgui_linux_default_focus_scope(session);
+    int declared = cjgui_linux_aux_shortcut_declared(session->token, shortcut, scope);
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_DECL shortcut=%s scope=%llu declared=%d plain=%d\n", shortcut,
+                (unsigned long long)scope, declared, plain);
+    }
+    // Linux has no Command key. A Control chord also addresses declarations
+    // written for macOS-style `command+` shortcuts, after the exact spelling.
+    if (!declared && !plain && control && !command && !option) {
+        cjgui_linux_build_shortcut(shortcut, sizeof(shortcut), key, 0, option, shift, 1);
+        declared = cjgui_linux_aux_shortcut_declared(session->token, shortcut, scope);
+    }
+    if (!declared) return 0;
+    if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND,
+                                  NULL, 0, 0, (int64_t)mods, shortcut)) return 0;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_COMMAND shortcut=%s scope=%llu\n", shortcut,
+                (unsigned long long)scope);
+    }
+    return 1;
+}
+
 // 处理一次按键：命中已声明的文本代理时产生一次编辑意图（整值 + 增量）。
 static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
+    int composing = session->compositionActive;
+    int commandModifier = (event->modifiers & (CJGUI_LINUX_MOD_CONTROL | CJGUI_LINUX_MOD_ALT |
+                                               CJGUI_LINUX_MOD_SUPER)) != 0u;
+    // Composition keeps XIM priority: no command shortcut runs while the IME
+    // owns the keystroke.
+    if (!composing && cjgui_linux_try_command_shortcut(session, event)) return;
+    if (!composing && !commandModifier && !session->proxy.active &&
+        (event->keySym == CJGUI_LINUX_XK_UP || event->keySym == CJGUI_LINUX_XK_DOWN)) {
+        // Focus order is scene order inside the current scope; Up/Down move it
+        // and the FOCUS event lets the shared layer reveal a clipped row.
+        (void)cjgui_linux_focus_next(session, event->keySym == CJGUI_LINUX_XK_UP,
+                                     (int64_t)event->modifiers);
+        return;
+    }
+    if (!composing && !commandModifier &&
+        (event->keySym == CJGUI_LINUX_XK_MENU ||
+         (event->keySym == CJGUI_LINUX_XK_F10 && (event->modifiers & CJGUI_LINUX_MOD_SHIFT) != 0u))) {
+        CjguiLinuxNodeSlot *focused = cjgui_linux_focused_slot(session);
+        if (focused) {
+            double pointX = (double)focused->node.x + cjgui_linux_slot_translate_x(focused) +
+                            (double)focused->node.width * 0.5;
+            double pointY = (double)focused->node.y + cjgui_linux_slot_translate_y(focused) +
+                            (double)focused->node.height * 0.5;
+            CjguiInternalRendererPointerEventGeometry geometry;
+            cjgui_linux_capture_pointer_geometry(session, focused, pointX, pointY, &geometry);
+            (void)cjgui_linux_pending_push_geometry(
+                session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST,
+                focused, (int64_t)pointX, (int64_t)pointY, (int64_t)event->modifiers, NULL, &geometry);
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_CONTEXT_KEY node=%llu\n",
+                        (unsigned long long)focused->node.nodeId);
+            }
+        }
+        return;
+    }
+    if (!composing && !commandModifier && event->keySym == CJGUI_LINUX_XK_ESCAPE) {
+        // A composing IME owns Escape: the first press may only cancel the
+        // candidate list, so native must not dismiss the layer behind it.
+        // Either way Escape is a control key and must never fall through to
+        // text insertion: XIM reports it with utf8Length 1, and inserting
+        // U+001B corrupted the owned value ("邮件80\u001b").
+        (void)cjgui_linux_dismiss_layer(session, (int64_t)event->modifiers);
+        return;
+    }
+    // X11 delivers Shift+Tab as ISO_Left_Tab rather than Tab+ShiftMask; both
+    // spellings must reach the same traversal decision.
+    if (!composing && !commandModifier &&
+        (event->keySym == CJGUI_LINUX_XK_TAB || event->keySym == CJGUI_LINUX_XK_ISO_LEFT_TAB)) {
+        int backwards = event->keySym == CJGUI_LINUX_XK_ISO_LEFT_TAB ||
+                        (event->modifiers & CJGUI_LINUX_MOD_SHIFT) != 0u;
+        int insertsTab = 0;
+        if (session->proxy.active &&
+            session->proxy.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) {
+            CjguiLinuxNodeSlot *proxySlot = cjgui_linux_accepted_slot(session, session->proxy.nodeId);
+            insertsTab = proxySlot && proxySlot->node.tabInsertsText;
+        }
+        if (!insertsTab) {
+            // A single-line field (owned or ordinary) must never insert a
+            // literal tab, but Tab still belongs to focus traversal. Swallowing
+            // it here made long forms unreachable by keyboard from an owned
+            // field; only an explicit multiline tabInsertsText consumes it.
+            (void)cjgui_linux_focus_next(session, backwards, (int64_t)event->modifiers);
+            return;
+        }
+    }
     if (!session->proxy.active) {
-        if (event->keySym == CJGUI_LINUX_XK_ESCAPE) {
-            cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
-                                     NULL, 0, 0, (int64_t)event->modifiers, NULL);
+        if (!composing && !commandModifier &&
+            (event->keySym == CJGUI_LINUX_XK_RETURN || event->keySym == CJGUI_LINUX_XK_SPACE)) {
+            if (cjgui_linux_activate_focused(session, (int64_t)event->modifiers)) return;
         }
         return;
     }
@@ -2623,6 +4808,95 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
     (void)cjgui_linux_emit_text_edit(session, replaceStart16, replaceLength16, inserted);
 }
 
+static int cjgui_linux_pointer_focus_text(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot,
+                                          const CjguiLinuxWindowEvent *event);
+
+// 输入类文本的原生拖选：锚点在按下时冻结，移动时对同一代理正文重新命中并发布
+// SELECTION_CHANGED（UTF-16）。owned 与普通输入同一条路径；预览 TEXT 节点不走
+// 这里，它们仍需共同层收 BEGIN/MOVE/END。
+static CjguiLinuxNodeSlot *cjgui_linux_pointer_text_slot(CjguiLinuxSession *session) {
+    if (!session->pointerTextTarget || !session->proxy.active || !session->accepted.valid) return NULL;
+    if (session->proxy.nodeId != session->pointerTextNodeId ||
+        session->proxy.resourceId != session->pointerTextResourceId ||
+        session->proxy.nodeKind != session->pointerTextNodeKind ||
+        session->proxy.bindingEpoch != session->pointerTextBindingEpoch) return NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+        if (slot->node.nodeId == session->pointerTextNodeId &&
+            slot->node.resourceId == session->pointerTextResourceId &&
+            slot->node.nodeKind == session->pointerTextNodeKind) return slot;
+    }
+    return NULL;
+}
+
+static void cjgui_linux_pointer_drag_text(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
+    if (!session || !event) return;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_pointer_text_slot(session);
+    if (!slot) {
+        // Focus switched, the binding epoch advanced, or the node left the
+        // accepted scene. End the old gesture instead of applying A's anchor
+        // to whatever is focused now.
+        if (session->pointerTextTarget) {
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_ABI text_drag_aborted node=%llu focus=%llu proxy=%d\n",
+                        (unsigned long long)session->pointerTextNodeId,
+                        (unsigned long long)session->focusNodeId, session->proxy.active);
+            }
+            session->pointerTextTarget = 0;
+            session->pointerTextAborted = 1;
+        }
+        return;
+    }
+    const char *value = session->proxy.value ? session->proxy.value : "";
+    size_t length = strlen(value);
+    uint32_t byteOffset = 0u, affinity = 0u;
+    CjguiInternalRendererStatus hitStatus = cjgui_linux_hit_test_text_body(session, slot, value, event->x,
+                                                                           event->y, &byteOffset, &affinity);
+    if (hitStatus != CJGUI_INTERNAL_RENDERER_OK) {
+        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_ABI text_drag_hit_failed status=%d x=%.1f y=%.1f\n",
+                    (int)hitStatus, event->x, event->y);
+        }
+        return;
+    }
+    uint32_t units = cjgui_linux_utf16_length(value, length);
+    uint32_t caret = cjgui_linux_utf16_for_byte_offset(value, length, byteOffset);
+    if (caret > units) caret = units;
+    uint32_t anchor = session->textSelectionAnchor16;
+    if (anchor > units) anchor = units;
+    uint32_t start = anchor < caret ? anchor : caret;
+    uint32_t end = anchor < caret ? caret : anchor;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI text_drag x=%.1f y=%.1f byte=%u anchor=%u sel=%u:%u\n",
+                event->x, event->y, byteOffset, anchor, start, end);
+    }
+    if (start == session->proxy.selectionStart16 && end == session->proxy.selectionEnd16) return;
+    session->proxy.selectionStart16 = start;
+    session->proxy.selectionEnd16 = end;
+    CjguiInternalRendererPointerEventGeometry geometry;
+    cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
+    if (!cjgui_linux_pending_push_geometry(session,
+                                           CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED,
+                                           slot, (int64_t)event->x, (int64_t)event->y,
+                                           (int64_t)event->modifiers, NULL, &geometry)) return;
+    uint32_t index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
+    session->pending[index].event.selectionStart = (int64_t)start;
+    session->pending[index].event.selectionEnd = (int64_t)end;
+    session->pending[index].event.bindingEpoch = session->proxy.bindingEpoch;
+}
+
+// 预编辑是 Linux 本地的可见态，不改变已接受场景；共同层对组字相位发起的
+// 刷新在场景完全相同时走语义接受、不提交新帧（preedit 已到共同层却不上屏）。
+// 组字态变化后直接重绘最后一帧已接受场景：不重建投影、不写 owner。
+static void cjgui_linux_repaint_composition_frame(CjguiLinuxSession *session) {
+    if (session == NULL || !session->accepted.valid || session->gpu == NULL) return;
+    CjguiInternalRendererFrameObservation observation;
+    memset(&observation, 0, sizeof(observation));
+    // Accepted-only paint: a preedit update must not commit a staged command
+    // menu or promote a pending scene candidate as a side effect.
+    (void)cjgui_linux_present_scene(session, &observation, 0);
+}
+
 static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
     switch (event->kind) {
         case CJGUI_LINUX_WINDOW_EVENT_CLOSE:
@@ -2635,6 +4909,7 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
             uint32_t height = (uint32_t)(event->y > 0.0 ? event->y : 0.0);
             session->requestedWidth = width;
             session->requestedHeight = height;
+            session->resizeVersion += 1u;
             (void)cjgui_linux_gpu_resize(session->gpu, width, height);
             cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_RESIZED, NULL,
                                      (int64_t)width, (int64_t)height, 0, NULL);
@@ -2642,10 +4917,45 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
         }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_DOWN: {
             CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_ABI pointer_down x=%.1f y=%.1f node=%llu kind=%u\n",
+                        event->x, event->y,
+                        (unsigned long long)(slot ? slot->node.nodeId : 0u),
+                        (unsigned int)(slot ? slot->node.nodeKind : 0u));
+            }
             session->pointerDown = 1;
+            session->pointerTextTarget = 0;
+            session->pointerTextAborted = 0;
+            session->pointerTextNodeId = 0u;
+            session->pointerTextResourceId = -1;
+            session->pointerTextNodeKind = 0u;
+            session->pointerTextBindingEpoch = 0u;
             session->pointerNodeId = slot ? slot->node.nodeId : 0u;
             session->pointerResourceId = slot ? slot->node.resourceId : 0;
             session->pointerNodeKind = slot ? slot->node.nodeKind : 0u;
+            if (event->button == CJGUI_LINUX_BUTTON_LEFT &&
+                cjgui_linux_pointer_focus_text(session, slot, event)) {
+                session->pointerTextTarget = 1;
+                session->pointerTextNodeId = slot->node.nodeId;
+                session->pointerTextResourceId = slot->node.resourceId;
+                session->pointerTextNodeKind = slot->node.nodeKind;
+                session->pointerTextBindingEpoch = session->proxy.bindingEpoch;
+                break;
+            }
+            if (event->button == CJGUI_LINUX_BUTTON_LEFT && slot &&
+                !cjgui_linux_is_editable_text_kind(slot->node.nodeKind) &&
+                cjgui_linux_slot_keyboard_focusable(slot)) {
+                // A click on a button moves real keyboard focus off the old
+                // field. Publish FOCUS on press like the macOS mouse-down path,
+                // so the ring follows the press even when the release leaves
+                // the node; the press event still tells Cangjie where
+                // activation happened.
+                int hadComposition = session->compositionActive;
+                cjgui_linux_proxy_release(session);
+                cjgui_linux_focus_set(session, slot);
+                (void)cjgui_linux_push_focus_event(session, slot, (int64_t)event->modifiers);
+                if (hadComposition) cjgui_linux_repaint_composition_frame(session);
+            }
             CjguiInternalRendererPointerEventGeometry geometry;
             cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
             if (slot) {
@@ -2666,8 +4976,28 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
             break;
         }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_UP: {
+            if (session->pointerTextAborted) {
+                session->pointerDown = 0;
+                session->pointerTextTarget = 0;
+                session->pointerTextAborted = 0;
+                break;
+            }
+            if (session->pointerTextTarget) {
+                // 抬起位置可能是拖选的终点：先按同一点收口，再结束声明；
+                // 纯点击时锚点/焦点相同，不会重复发布。
+                cjgui_linux_pointer_drag_text(session, event);
+                session->pointerDown = 0;
+                session->pointerTextTarget = 0;
+                break;
+            }
             CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
             int sameNode = slot && session->pointerDown && slot->node.nodeId == session->pointerNodeId;
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_ABI pointer_up x=%.1f y=%.1f node=%llu kind=%u text_target=%d\n",
+                        event->x, event->y,
+                        (unsigned long long)(slot ? slot->node.nodeId : 0u),
+                        (unsigned int)(slot ? slot->node.nodeKind : 0u), session->pointerTextTarget);
+            }
             CjguiInternalRendererPointerEventGeometry geometry;
             cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
             if (slot) {
@@ -2678,18 +5008,39 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                                                   slot, (int64_t)event->x, (int64_t)event->y,
                                                   (int64_t)event->modifiers, NULL, &geometry);
                 // 只有"按下与抬起落在同一节点"才算激活：短命的鼠标路由留在 native，
-                // 语义判决仍归共同层。
+                // 语义判决仍归共同层。布尔控件与键盘路径发送同一 owner 变更事件；
+                // ACTIVATE 只属于按钮/页签等动作契约。
                 if (sameNode && event->button == CJGUI_LINUX_BUTTON_LEFT) {
-                    cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE,
-                                                      slot, (int64_t)event->x, (int64_t)event->y,
-                                                      (int64_t)event->modifiers, NULL, &geometry);
+                    if (slot->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT &&
+                        slot->node.isInteractive != 0u && slot->node.isReadOnly == 0u) {
+                        const char *next =
+                            (slot->value && strcmp(slot->value, "true") == 0) ? "false" : "true";
+                        cjgui_linux_pending_push_geometry(
+                            session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED,
+                            slot, (int64_t)event->x, (int64_t)event->y,
+                            (int64_t)event->modifiers, next, &geometry);
+                    } else {
+                        cjgui_linux_pending_push_geometry(
+                            session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE,
+                            slot, (int64_t)event->x, (int64_t)event->y,
+                            (int64_t)event->modifiers, NULL, &geometry);
+                    }
                 }
             }
             session->pointerDown = 0;
             break;
         }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_MOVE: {
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_ABI pointer_move x=%.1f y=%.1f down=%d text_target=%d\n",
+                        event->x, event->y, session->pointerDown, session->pointerTextTarget);
+            }
             if (!session->pointerDown) break;   // 悬停阶段本阶段不产生共同层意图
+            if (session->pointerTextAborted) break;
+            if (session->pointerTextTarget) {
+                cjgui_linux_pointer_drag_text(session, event);
+                break;
+            }
             CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
             CjguiInternalRendererPointerEventGeometry geometry;
             cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
@@ -2704,6 +5055,8 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                                          (int64_t)event->x, (int64_t)event->y, (int64_t)event->modifiers, NULL);
                 session->pointerDown = 0;
             }
+            session->pointerTextTarget = 0;
+            session->pointerTextAborted = 0;
             break;
         case CJGUI_LINUX_WINDOW_EVENT_WHEEL: {
             CjguiLinuxNodeSlot *slot = cjgui_linux_wheel_target(session, event->x, event->y);
@@ -2735,17 +5088,24 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
             session->windowKey = 0;
             break;
         case CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_UPDATE:
-            (void)cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE,
-                                               event->utf8, event->compositionCaret16);
+            if (cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_UPDATE,
+                                             event->utf8, event->compositionCaret16)) {
+                cjgui_linux_repaint_composition_frame(session);
+            }
             break;
         case CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_COMMIT:
             // 提交文本一次进入既有 owner 路径；被 IME 消费的按键本身没有普通事件。
-            (void)cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT,
-                                               event->utf8, 0u);
+            // The preedit must disappear on this frame, not on the next keystroke.
+            if (cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_COMMIT,
+                                             event->utf8, 0u)) {
+                cjgui_linux_repaint_composition_frame(session);
+            }
             break;
         case CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_CANCEL:
-            (void)cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_CANCEL,
-                                               NULL, 0u);
+            if (cjgui_linux_emit_composition(session, CJGUI_INTERNAL_RENDERER_TEXT_COMPOSITION_CANCEL,
+                                             NULL, 0u)) {
+                cjgui_linux_repaint_composition_frame(session);
+            }
             break;
         default:
             break;
@@ -2755,6 +5115,9 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
 static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession *session, uint32_t timeoutMs,
                                                               CjguiInternalRendererEvent *outEvent,
                                                               uint64_t *outIdleWaitNs) {
+    // 每轮泵都先结算已完成的图片准备；worker 的窗口唤醒只负责把阻塞的
+    // window_pump 叫醒，真正的纹理上传/状态发布仍在主线程发生。
+    cjgui_linux_image_pump(session->image);
     uint64_t started = cjgui_linux_now_ns();
     uint64_t idle = 0u;
     while (session->pendingCount == 0u) {
@@ -2874,18 +5237,114 @@ const char *cjgui_internal_renderer_form_event_text(uint64_t sessionToken) {
     return session->formText;
 }
 
+static int cjgui_linux_declared_owned_target(CjguiLinuxSession *session, uint64_t nodeId, int64_t resourceId,
+                                              uint32_t nodeKind);
+
 CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64_t sessionToken, uint64_t nodeId) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI focus_composable_node\n");
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI focus_composable_node node=%llu\n",
+                (unsigned long long)nodeId);
+    }
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->accepted.valid) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
-    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
-        if (session->accepted.slots[i].node.nodeId == nodeId) {
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, nodeId);
+    if (!slot) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    const CjguiInternalRendererComposableNode *node = &slot->node;
+    if (!node->isInteractive || node->isReadOnly) {
+        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_ABI focus_refused node=%llu kind=%u interactive=%u readonly=%u\n",
+                    (unsigned long long)nodeId, node->nodeKind, node->isInteractive, node->isReadOnly);
+        }
+        return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    }
+    if (!cjgui_linux_is_editable_text_kind(node->nodeKind)) {
+        if (!cjgui_linux_is_keyboard_focus_kind(node->nodeKind)) {
+            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_ABI focus_refused node=%llu kind=%u not_focusable=1\n",
+                        (unsigned long long)nodeId, node->nodeKind);
+            }
+            return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        }
+        // A button/tab/boolean takes real keyboard focus but owns no text proxy.
+        // Clearing the proxy is what stops later keystrokes from writing the
+        // previously focused field.
+        int hadComposition = session->compositionActive;
+        cjgui_linux_proxy_release(session);
+        cjgui_linux_focus_set(session, slot);
+        if (hadComposition) cjgui_linux_repaint_composition_frame(session);
+        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_ABI focus_non_text node=%llu kind=%u scope=%llu\n",
+                    (unsigned long long)nodeId, node->nodeKind, (unsigned long long)node->inputScope);
+        }
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    const char *value = slot->value ? slot->value : "";
+    uint32_t units = cjgui_linux_utf16_length(value, strlen(value));
+    // Same accepted identity keeps the existing proxy. A real owned binding
+    // declaration decides the class; ordinary refocus keeps a legitimate local
+    // body when the accepted packet carries the preserve hint, or when the
+    // accepted body and the current caret range are unchanged.
+    if (session->proxy.active &&
+        session->proxy.nodeId == nodeId && session->proxy.resourceId == node->resourceId &&
+        session->proxy.nodeKind == node->nodeKind) {
+        if (!session->proxy.ordinary) {
+            if (cjgui_linux_declared_owned_target(session, nodeId, node->resourceId, node->nodeKind)) {
+                session->pointerNodeId = nodeId;
+                cjgui_linux_focus_set(session, slot);
+                session->proxy.sceneVersion = session->accepted.projectionVersion;
+                return CJGUI_INTERNAL_RENDERER_OK;
+            }
+            // Declaration was withdrawn or replaced: this is an ordinary proxy
+            // now; do not keep claiming an owned binding epoch.
+            session->proxy.ordinary = 1;
+            session->proxy.bindingEpoch = 0u;
+        }
+        if (node->preservesActiveLocalText) {
             session->pointerNodeId = nodeId;
+            cjgui_linux_focus_set(session, slot);
+            session->proxy.sceneVersion = session->accepted.projectionVersion;
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        if (session->proxy.value && strcmp(session->proxy.value, value) == 0 &&
+            session->proxy.selectionStart16 <= session->proxy.selectionEnd16 &&
+            session->proxy.selectionEnd16 <= units) {
+            session->pointerNodeId = nodeId;
+            cjgui_linux_focus_set(session, slot);
+            session->proxy.sceneVersion = session->accepted.projectionVersion;
             return CJGUI_INTERNAL_RENDERER_OK;
         }
     }
-    return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    char *copy = cjgui_linux_strdup(value);
+    if (!copy) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    int hadComposition = session->compositionActive;
+    cjgui_linux_proxy_release(session);
+    session->proxy.active = 1;
+    session->proxy.ordinary = 1;
+    session->proxy.nodeId = nodeId;
+    session->proxy.resourceId = node->resourceId;
+    session->proxy.nodeKind = node->nodeKind;
+    session->proxy.sceneVersion = session->accepted.projectionVersion;
+    session->proxy.value = copy;
+    session->proxy.selectionStart16 = units;
+    session->proxy.selectionEnd16 = units;
+    session->pointerNodeId = nodeId;
+    cjgui_linux_focus_set(session, slot);
+    if (hadComposition) cjgui_linux_repaint_composition_frame(session);
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI focus_install node=%llu kind=%u bytes=%zu\n",
+                (unsigned long long)nodeId, node->nodeKind, strlen(value));
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+static int cjgui_linux_declared_owned_target(CjguiLinuxSession *session, uint64_t nodeId, int64_t resourceId,
+                                              uint32_t nodeKind) {
+    if (!session->ownedTextSessionEnabled) return 0;
+    if (session->ownedTextSessionNodeId != nodeId) return 0;
+    if (resourceId >= 0 && session->ownedTextSessionResourceId != resourceId) return 0;
+    if (nodeKind != 0u && session->ownedTextSessionNodeKind != nodeKind) return 0;
+    return 1;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_session(
@@ -2894,20 +5353,50 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_se
     if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_owned_text_session\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (enabled > 1u) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_DECLARE_TEXT enabled=%u node=%llu epoch=%llu\n", enabled,
                 (unsigned long long)nodeId, (unsigned long long)bindingEpoch);
     }
     if (!enabled) {
-        memset(&session->proxy, 0, sizeof(session->proxy));
+        // 撤回只清真实声明；活动代理若属于该声明，降为普通代理而不是丢弃
+        // 正文/选区。普通模态返回的 restore 随后按 ordinary 路径同步。
+        if (bindingEpoch < session->ownedTextSessionBindingEpoch)
+            return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        if (session->proxy.active && !session->proxy.ordinary &&
+            session->proxy.nodeId == session->ownedTextSessionNodeId &&
+            session->proxy.resourceId == session->ownedTextSessionResourceId &&
+            session->proxy.nodeKind == session->ownedTextSessionNodeKind) {
+            session->proxy.ordinary = 1;
+            session->proxy.bindingEpoch = 0u;
+        }
+        session->ownedTextSessionEnabled = 0;
+        session->ownedTextSessionNodeId = 0u;
+        session->ownedTextSessionResourceId = -1;
+        session->ownedTextSessionNodeKind = 0u;
+        if (cjgui_linux_composition_revalidate(session))
+            cjgui_linux_repaint_composition_frame(session);
         return CJGUI_INTERNAL_RENDERER_OK;
     }
+    if (nodeId == 0u) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (session->ownedTextSessionEnabled && session->ownedTextSessionNodeId == nodeId &&
+        session->ownedTextSessionResourceId == resourceId && session->ownedTextSessionNodeKind == nodeKind &&
+        session->ownedTextSessionBindingEpoch == bindingEpoch) {
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (bindingEpoch < session->ownedTextSessionBindingEpoch)
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     // 声明本身不携带值：真正的值/选区由 restore_composable_selection 每轮推来，
-    // 这里只记住身份与绑定代。
-    session->proxy.nodeId = nodeId;
-    session->proxy.resourceId = resourceId;
-    session->proxy.nodeKind = nodeKind;
-    session->proxy.bindingEpoch = bindingEpoch;
+    // 这里只记住真实绑定，不覆盖已有代理的身份。
+    session->ownedTextSessionEnabled = 1;
+    session->ownedTextSessionNodeId = nodeId;
+    session->ownedTextSessionResourceId = resourceId;
+    session->ownedTextSessionNodeKind = nodeKind;
+    session->ownedTextSessionBindingEpoch = bindingEpoch;
+    // A declaration replacing the identity a preedit was frozen on ends that
+    // preedit here, before the next restore can install the new binding.
+    if (cjgui_linux_composition_revalidate(session))
+        cjgui_linux_repaint_composition_frame(session);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -2932,6 +5421,31 @@ static int cjgui_linux_proxy_matches(CjguiLinuxSession *session, uint64_t nodeId
     return 1;
 }
 
+// nodeKind == 0 means the caller has no such parameter (install_owned_source_selection
+// and recover paths). Resolve the kind from the matching real declaration first:
+// an empty proxy has kind 0, so reading proxy.nodeKind alone installs an owned
+// proxy the recover identity check can never match.
+static uint32_t cjgui_linux_resolve_restore_kind(const CjguiLinuxSession *session, uint64_t nodeId,
+                                                  int64_t resourceId) {
+    if (session->ownedTextSessionEnabled && session->ownedTextSessionNodeId == nodeId &&
+        (resourceId < 0 || session->ownedTextSessionResourceId == resourceId)) {
+        return session->ownedTextSessionNodeKind;
+    }
+    if (session->proxy.active && session->proxy.nodeId == nodeId &&
+        (resourceId < 0 || session->proxy.resourceId == resourceId)) {
+        return session->proxy.nodeKind;
+    }
+    if (session->accepted.valid) {
+        for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+            const CjguiLinuxNodeSlot *slot = &session->accepted.slots[i];
+            if (slot->node.nodeId == nodeId && (resourceId < 0 || slot->node.resourceId == resourceId)) {
+                return slot->node.nodeKind;
+            }
+        }
+    }
+    return 0u;
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection(
     uint64_t sessionToken, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion,
     const char *expectedValue, uint32_t selectionStart, uint32_t selectionEnd, uint32_t *outSelectionStart,
@@ -2940,23 +5454,26 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!expectedValue) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
-    // nodeKind == 0 表示调用方没有这个形参（install_owned_source_selection 就没有），
-    // 此时必须沿用 set_composable_owned_text_session 已声明的种类，**不能用 0 覆盖**：
-    // 覆盖后 recover_active_text_proxy 的身份判据永远不匹配，owner 拒绝后的回滚
-    // 会静默失效（实测症状：CJGUI_LINUX_RECOVER want kind=10 | have kind=0）。
-    uint32_t effectiveKind = nodeKind != 0u ? nodeKind : session->proxy.nodeKind;
+    uint32_t effectiveKind = nodeKind != 0u ? nodeKind
+                                           : cjgui_linux_resolve_restore_kind(session, nodeId, resourceId);
+    // Restore serves both real owned sessions and ordinary modal-return/tab
+    // bookmarks. Only the current binding declaration makes this proxy owned.
+    int owned = cjgui_linux_declared_owned_target(session, nodeId, resourceId, effectiveKind);
+    uint64_t binding = owned ? session->ownedTextSessionBindingEpoch : 0u;
     if (!session->proxy.active || session->proxy.nodeId != nodeId) {
-        uint64_t retainedEpoch = session->proxy.bindingEpoch;
-        memset(&session->proxy, 0, sizeof(session->proxy));
-        session->proxy.bindingEpoch = retainedEpoch;
+        cjgui_linux_proxy_release(session);
         session->proxy.active = 1;
+        session->proxy.ordinary = owned ? 0 : 1;
         session->proxy.nodeId = nodeId;
         session->proxy.resourceId = resourceId;
         session->proxy.nodeKind = effectiveKind;
+        session->proxy.bindingEpoch = binding;
         session->proxy.value = cjgui_linux_strdup(expectedValue);
     } else if (!cjgui_linux_proxy_matches(session, nodeId, resourceId, effectiveKind, NULL)) {
         return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
     } else {
+        session->proxy.ordinary = owned ? 0 : 1;
+        session->proxy.bindingEpoch = binding;
         cjgui_linux_replace(&session->proxy.value, expectedValue);
     }
     session->proxy.sceneVersion = sceneVersion;
@@ -2966,9 +5483,22 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     if (selectionEnd < selectionStart) selectionEnd = selectionStart;
     session->proxy.selectionStart16 = selectionStart;
     session->proxy.selectionEnd16 = selectionEnd;
+    {
+        CjguiLinuxNodeSlot *restored = cjgui_linux_accepted_slot(session, nodeId);
+        if (restored && (resourceId < 0 || restored->node.resourceId == resourceId) &&
+            (effectiveKind == 0u || restored->node.nodeKind == effectiveKind)) {
+            cjgui_linux_focus_set(session, restored);
+        }
+    }
+    // Restore also runs for style-only refreshes of the same binding. Only an
+    // identity or binding-epoch change may end the live preedit; the body hash
+    // is not the target identity.
+    if (cjgui_linux_composition_revalidate(session))
+        cjgui_linux_repaint_composition_frame(session);
     if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
-        fprintf(stderr, "CJGUI_LINUX_RESTORE_SEL node=%llu epoch=%llu sel=%u:%u\n", (unsigned long long)nodeId,
-                (unsigned long long)session->proxy.bindingEpoch, selectionStart, selectionEnd);
+        fprintf(stderr, "CJGUI_LINUX_RESTORE_SEL node=%llu epoch=%llu sel=%u:%u kind=%u\n",
+                (unsigned long long)nodeId, (unsigned long long)session->proxy.bindingEpoch,
+                selectionStart, selectionEnd, effectiveKind);
     }
     if (outSelectionStart) *outSelectionStart = selectionStart;
     if (outSelectionEnd) *outSelectionEnd = selectionEnd;
@@ -3183,10 +5713,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_diagnostic_workload(
     outWorkload->nodeCloneCount = session->nodeCloneCount;
     outWorkload->nodeAllocationCount = session->nodeAllocationCount;
     outWorkload->textLayoutPreparationCount = session->textLayoutPreparationCount;
-    outWorkload->imageDecodeStartCount = 0u;   // 本阶段不做图片解码
+    outWorkload->imageDecodeStartCount = cjgui_linux_image_decode_start_count(session->image);
     uint32_t glyphs = 0u, atlasBytes = 0u;
     cjgui_linux_text_stats(session->text, &glyphs, &atlasBytes);
-    outWorkload->reusableResourceBytes = atlasBytes;
+    outWorkload->reusableResourceBytes = (uint64_t)atlasBytes + cjgui_linux_image_cache_bytes(session->image);
     outWorkload->textRasterCount = session->textRasterCount;
     outWorkload->textRasterBytes = atlasBytes;
     outWorkload->textUploadCount = session->textUploadCount;
@@ -3252,21 +5782,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_diagnostic_node_geometry(
 // 点 -> 字节偏移。x/y 是窗口内容逻辑点，与布局同一坐标系；返回的偏移是
 // **显示字节**（UTF-8 字节偏移），affinity 0=auto（本实现落点即自动吸附结果）。
 // 版本不符或节点不在都必须具名拒绝，绝不静默给 0。
-CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(
-    uint64_t sessionToken, uint64_t nodeId, double x, double y, uint64_t expectedSceneVersion,
-    uint32_t *outByteOffset, uint32_t *outAffinity) {
-    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
-    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (!session->accepted.valid) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
-    if (expectedSceneVersion != 0u && expectedSceneVersion != session->accepted.projectionVersion) {
-        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
-    }
-    CjguiLinuxNodeSlot *slot = NULL;
-    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
-        if (session->accepted.slots[i].node.nodeId == nodeId) { slot = &session->accepted.slots[i]; break; }
-    }
-    if (!slot) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
-    const char *body = cjgui_linux_node_body(slot);
+// Hit-test one explicit body. A preserved local proxy can differ from the
+// accepted packet, so the caller must pass the same body it will convert the
+// byte offset against.
+static CjguiInternalRendererStatus cjgui_linux_hit_test_text_body(CjguiLinuxSession *session,
+                                                                  const CjguiLinuxNodeSlot *slot,
+                                                                  const char *body, double x, double y,
+                                                                  uint32_t *outByteOffset,
+                                                                  uint32_t *outAffinity) {
     if (!body || !body[0]) return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
 
     double localX = x - (double)slot->node.x - cjgui_linux_slot_translate_x(slot);
@@ -3331,4 +5854,80 @@ CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(
     if (outByteOffset) *outByteOffset = (uint32_t)best;
     if (outAffinity) *outAffinity = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_hit_test_composable_text(
+    uint64_t sessionToken, uint64_t nodeId, double x, double y, uint64_t expectedSceneVersion,
+    uint32_t *outByteOffset, uint32_t *outAffinity) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (!session->accepted.valid) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
+    if (expectedSceneVersion != 0u && expectedSceneVersion != session->accepted.projectionVersion) {
+        return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    }
+    CjguiLinuxNodeSlot *slot = NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        if (session->accepted.slots[i].node.nodeId == nodeId) { slot = &session->accepted.slots[i]; break; }
+    }
+    if (!slot) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
+    return cjgui_linux_hit_test_text_body(session, slot, cjgui_linux_node_body(slot), x, y,
+                                          outByteOffset, outAffinity);
+}
+
+// Left-press on editable text focuses that node and reports the caret under the
+// pointer, matching the Windows mouse path (FOCUS + SELECTION_CHANGED, no
+// button ACTIVATE). The text model stays in the proxy installed by focus.
+static int cjgui_linux_pointer_focus_text(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot,
+                                          const CjguiLinuxWindowEvent *event) {
+    if (!session || !slot || event->button != CJGUI_LINUX_BUTTON_LEFT) return 0;
+    const CjguiInternalRendererComposableNode *node = &slot->node;
+    if (!node->isInteractive || node->isReadOnly || !cjgui_linux_is_editable_text_kind(node->nodeKind)) return 0;
+    // 预览类 TEXT 的 owned 目标由共同层收 BEGIN/MOVE/END（应用自己做源范围映射）；
+    // 输入类节点与 Windows 一致走原生焦点+选区，owned 与非 owned 同一条路径。
+    if (node->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT &&
+        (cjgui_linux_declared_owned_target(session, node->nodeId, node->resourceId, node->nodeKind) ||
+         (session->proxy.active && !session->proxy.ordinary && session->proxy.nodeId == node->nodeId &&
+          session->proxy.resourceId == node->resourceId && session->proxy.nodeKind == node->nodeKind))) {
+        return 0;
+    }
+    if (cjgui_internal_renderer_focus_composable_node(session->token, node->nodeId) !=
+        CJGUI_INTERNAL_RENDERER_OK) return 0;
+    const char *value = session->proxy.value ? session->proxy.value : "";
+    size_t length = strlen(value);
+    uint32_t units = cjgui_linux_utf16_length(value, length);
+    uint32_t caret = units;
+    uint32_t byteOffset = 0u, affinity = 0u;
+    // Use the proxy body for BOTH the hit test and the byte->UTF-16 conversion.
+    // Under preservesActiveLocalText the accepted packet can lag the local body;
+    // mixing the two would place the caret in a different string.
+    if (cjgui_linux_hit_test_text_body(session, slot, value, event->x, event->y,
+                                       &byteOffset, &affinity) == CJGUI_INTERNAL_RENDERER_OK) {
+        caret = cjgui_linux_utf16_for_byte_offset(value, length, byteOffset);
+        if (caret > units) caret = units;
+    }
+    session->proxy.selectionStart16 = caret;
+    session->proxy.selectionEnd16 = caret;
+    session->textSelectionAnchor16 = caret;
+    CjguiInternalRendererPointerEventGeometry geometry;
+    cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
+    if (!cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS,
+                                           slot, (int64_t)event->x, (int64_t)event->y,
+                                           (int64_t)event->modifiers, value, &geometry)) return 1;
+    uint32_t index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
+    session->pending[index].event.selectionStart = (int64_t)caret;
+    session->pending[index].event.selectionEnd = (int64_t)caret;
+    session->pending[index].event.bindingEpoch = session->proxy.bindingEpoch;
+    if (!cjgui_linux_pending_push_geometry(session,
+                                           CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED,
+                                           slot, (int64_t)event->x, (int64_t)event->y,
+                                           (int64_t)event->modifiers, NULL, &geometry)) return 1;
+    index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
+    session->pending[index].event.selectionStart = (int64_t)caret;
+    session->pending[index].event.selectionEnd = (int64_t)caret;
+    session->pending[index].event.bindingEpoch = session->proxy.bindingEpoch;
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI pointer_focus node=%llu kind=%u caret=%u proxy=%d\n",
+                (unsigned long long)node->nodeId, node->nodeKind, caret, session->proxy.active);
+    }
+    return 1;
 }

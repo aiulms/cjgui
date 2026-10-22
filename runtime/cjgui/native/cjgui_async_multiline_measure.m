@@ -1,4 +1,5 @@
 #import "cjgui_async_multiline_measure.h"
+#import "cjgui_composable_font_snapshot.h"
 
 #include <math.h>
 #include <pthread.h>
@@ -33,8 +34,12 @@ enum {
 @property(nonatomic) CjguiAsyncMultilineMeasureHandle handle;
 @property(nonatomic, strong) NSData *inputBytes;
 @property(nonatomic, strong) NSFont *fontSnapshot;
+@property(nonatomic, strong) id fontResourceLease;
+@property(nonatomic, copy) CjguiAsyncPreparedTextWork preparedTextWork;
 @property(nonatomic) size_t reservedInputBytes;
 @property(nonatomic) CGFloat contentWidth;
+@property(nonatomic) double letterSpacing;
+@property(nonatomic) double lineHeightPoints;
 @property(nonatomic) BOOL ordinaryText;
 @property(nonatomic) BOOL smallTextLane;
 @property(nonatomic) BOOL layoutStarted;
@@ -152,6 +157,15 @@ static CjguiAsyncMultilineMeasureJob *CjguiAsyncMeasureLookupLocked(
     return nil;
 }
 
+int CjguiAsyncMeasureRetainFontLease(CjguiAsyncMultilineMeasureHandle handle, id lease) {
+    if (!lease) return 1;
+    pthread_mutex_lock(&gCjguiAsyncMeasureLock);
+    CjguiAsyncMultilineMeasureJob *job = CjguiAsyncMeasureLookupLocked(handle,NULL,NULL);
+    if (job) job.fontResourceLease = lease;
+    pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
+    return job != nil;
+}
+
 static void CjguiAsyncMeasureReleaseReservationBytesLocked(BOOL smallTextLane,
                                                             size_t byteCount) {
     if (byteCount <= gCjguiAsyncMeasureReservedBytes) {
@@ -226,6 +240,7 @@ static void CjguiAsyncMeasureTestWorkerGate(CjguiAsyncMultilineMeasureHandle han
 static void CjguiAsyncMeasureClearWorkerInputs(CjguiAsyncMultilineMeasureJob *job) {
     job.inputBytes = nil;
     job.fontSnapshot = nil;
+    job.preparedTextWork = nil;
 }
 
 static void CjguiAsyncMeasureSetServiceStart(CjguiAsyncMultilineMeasureJob *job,
@@ -266,6 +281,15 @@ static void CjguiAsyncMeasurePerformOrdinaryText(
     uint64_t serviceStartNs = 0;
     @autoreleasepool {
         @try {
+            if (job.preparedTextWork) {
+                serviceStartNs=CjguiAsyncMeasureNow();
+                CjguiAsyncMeasureSetServiceStart(job,serviceStartNs);
+                serviceActive=YES;
+                if (!job.preparedTextWork(outMetrics)) *outFailure=CJGUI_ASYNC_MEASURE_FAILURE_INVALID_HEIGHT;
+                job.serviceEndNs=CjguiAsyncMeasureNow();job.serviceNs+=job.serviceEndNs-serviceStartNs;
+                serviceActive=NO;
+                return;
+            }
             NSString *value = [[NSString alloc] initWithBytes:job.inputBytes.bytes
                 length:job.inputBytes.length encoding:NSUTF8StringEncoding];
             if (!value) {
@@ -274,16 +298,29 @@ static void CjguiAsyncMeasurePerformOrdinaryText(
             }
             NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
             paragraph.lineBreakMode = NSLineBreakByWordWrapping;
-            NSDictionary *attributes = @{NSFontAttributeName: job.fontSnapshot,
-                                         NSParagraphStyleAttributeName: paragraph};
+            NSMutableDictionary *attributes = [@{NSFontAttributeName: job.fontSnapshot,
+                                         NSParagraphStyleAttributeName: paragraph} mutableCopy];
+            CjguiApplyComposableTypography(attributes, job.letterSpacing, job.lineHeightPoints);
             CGFloat width = job.contentWidth > 0.0
                 ? job.contentWidth : CGFLOAT_MAX / 4.0;
             serviceStartNs = CjguiAsyncMeasureNow();
             CjguiAsyncMeasureSetServiceStart(job, serviceStartNs);
             serviceActive = YES;
-            NSRect bounds = [value boundingRectWithSize:NSMakeSize(width, CGFLOAT_MAX / 4.0)
-                options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
-                attributes:attributes];
+            BOOL styled = job.letterSpacing != 0.0 || job.lineHeightPoints > 0.0;
+            CjguiComposableTextMetrics styledMetrics = {0};
+            NSRect bounds;
+            if (styled) {
+                paragraph.lineBreakStrategy = NSLineBreakStrategyPushOut;
+                attributes[NSParagraphStyleAttributeName] = paragraph;
+                CjguiApplyComposableTypography(attributes, job.letterSpacing, job.lineHeightPoints);
+                styledMetrics = CjguiMeasureComposableTypography(value, attributes, job.fontSnapshot,
+                    width, job.lineHeightPoints);
+                bounds = NSMakeRect(0,0,styledMetrics.width,styledMetrics.height);
+            } else {
+                bounds = [value boundingRectWithSize:NSMakeSize(width, CGFLOAT_MAX / 4.0)
+                    options:NSStringDrawingUsesLineFragmentOrigin | NSStringDrawingUsesFontLeading
+                    attributes:attributes];
+            }
             job.serviceEndNs = CjguiAsyncMeasureNow();
             job.serviceNs += job.serviceEndNs - serviceStartNs;
             serviceActive = NO;
@@ -293,6 +330,7 @@ static void CjguiAsyncMeasurePerformOrdinaryText(
             }
             CGFloat lineHeight = MAX(1.0, job.fontSnapshot.ascender -
                 job.fontSnapshot.descender + job.fontSnapshot.leading);
+            if (styled) lineHeight = styledMetrics.lineHeight;
             if (!isfinite(lineHeight)) {
                 *outFailure = CJGUI_ASYNC_MEASURE_FAILURE_INVALID_HEIGHT;
                 return;
@@ -303,7 +341,7 @@ static void CjguiAsyncMeasurePerformOrdinaryText(
                 MAX(lineHeight, ceil(bounds.size.height)));
             outMetrics->lineHeight = (uint32_t)MIN(UINT32_MAX, ceil(lineHeight));
             outMetrics->baseline = (uint32_t)MIN(UINT32_MAX,
-                MAX(0.0, ceil(job.fontSnapshot.ascender)));
+                MAX(0.0, ceil(styled ? styledMetrics.baseline : job.fontSnapshot.ascender)));
         } @catch (__unused NSException *exception) {
             if (serviceActive) {
                 job.serviceEndNs = CjguiAsyncMeasureNow();
@@ -329,9 +367,11 @@ static void CjguiAsyncMeasurePerformMultiline(CjguiAsyncMultilineMeasureJob *job
             }
             NSMutableParagraphStyle *paragraph = [NSMutableParagraphStyle new];
             paragraph.lineBreakMode = NSLineBreakByWordWrapping;
+            NSMutableDictionary *attributes = [@{NSFontAttributeName: job.fontSnapshot,
+                NSParagraphStyleAttributeName: paragraph} mutableCopy];
+            CjguiApplyComposableTypography(attributes, job.letterSpacing, job.lineHeightPoints);
             NSTextStorage *storage = [[NSTextStorage alloc] initWithString:value
-                attributes:@{NSFontAttributeName: job.fontSnapshot,
-                             NSParagraphStyleAttributeName: paragraph}];
+                attributes:attributes];
             NSLayoutManager *layout = [NSLayoutManager new];
             layout.backgroundLayoutEnabled = NO;
             [storage addLayoutManager:layout];
@@ -347,6 +387,7 @@ static void CjguiAsyncMeasurePerformMultiline(CjguiAsyncMultilineMeasureJob *job
             }
             CGFloat lineHeight = MAX(1.0, job.fontSnapshot.ascender - job.fontSnapshot.descender +
                                              job.fontSnapshot.leading);
+            if (job.lineHeightPoints > 0.0) lineHeight = job.lineHeightPoints;
             CGFloat height = MAX(lineHeight, NSMaxY([layout usedRectForTextContainer:container]));
             if (layout.extraLineFragmentTextContainer == container &&
                 !NSIsEmptyRect(layout.extraLineFragmentRect)) {
@@ -443,7 +484,8 @@ static void CjguiAsyncMeasureRunJob(CjguiAsyncMultilineMeasureJob *job,
 
 static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
     const uint8_t *utf8Bytes, size_t byteLength, NSFont *fontSnapshot,
-    double contentWidth, BOOL ordinaryText, CjguiAsyncMultilineMeasureHandle *outHandle) {
+    double contentWidth, BOOL ordinaryText, double letterSpacing, double lineHeightPoints,
+    size_t additionalInputCharge, CjguiAsyncPreparedTextWork work, CjguiAsyncMultilineMeasureHandle *outHandle) {
     if (outHandle) *outHandle = 0;
     if (!outHandle || (byteLength > 0 && !utf8Bytes) || !fontSnapshot ||
         !isfinite(contentWidth) || contentWidth < 0.0 ||
@@ -452,8 +494,10 @@ static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
     }
     if (byteLength > kCjguiAsyncMeasureMaxJobBytes) return CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY;
 
+    if (additionalInputCharge>kCjguiAsyncMeasureMaxJobBytes*2 || byteLength>SIZE_MAX-additionalInputCharge) return CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT;
+    size_t reservedBytes=byteLength+additionalInputCharge;
     BOOL smallTextLane = ordinaryText &&
-        byteLength <= kCjguiAsyncMeasureSmallTextMaxJobBytes;
+        reservedBytes <= kCjguiAsyncMeasureSmallTextMaxJobBytes;
     // Reserve bounded capacity and a generation before allocating or copying.
     // A preparing slot is occupied and charged exactly like a live job, but
     // cancellation cannot return that charge until its preparer drops refs.
@@ -475,8 +519,8 @@ static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
         : kCjguiAsyncMeasureGenericReservedBytes;
     size_t totalRemaining = kCjguiAsyncMeasureMaxReservedBytes -
         gCjguiAsyncMeasureReservedBytes;
-    if (slotIndex == NSNotFound || byteLength > laneLimit - laneReserved ||
-        byteLength > totalRemaining ||
+    if (slotIndex == NSNotFound || reservedBytes > laneLimit - laneReserved ||
+        reservedBytes > totalRemaining ||
         gCjguiAsyncMeasureNextGeneration > (UINT64_MAX >> kCjguiAsyncMeasureHandleSlotBits)) {
         pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
         return CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY;
@@ -490,10 +534,10 @@ static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
     slot->preparing = YES;
     slot->preparationCancelled = NO;
     slot->preparingSmallTextLane = smallTextLane;
-    slot->preparingReservedInputBytes = byteLength;
-    gCjguiAsyncMeasureReservedBytes += byteLength;
-    if (smallTextLane) gCjguiAsyncMeasureSmallTextReservedBytes += byteLength;
-    else gCjguiAsyncMeasureGenericReservedBytes += byteLength;
+    slot->preparingReservedInputBytes = reservedBytes;
+    gCjguiAsyncMeasureReservedBytes += reservedBytes;
+    if (smallTextLane) gCjguiAsyncMeasureSmallTextReservedBytes += reservedBytes;
+    else gCjguiAsyncMeasureGenericReservedBytes += reservedBytes;
     pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
 
     __strong NSData *input = nil;
@@ -539,8 +583,11 @@ static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
         if (input && font && job) {
             job.inputBytes = input;
             job.fontSnapshot = font;
-            job.reservedInputBytes = byteLength;
+            job.preparedTextWork = work;
+            job.reservedInputBytes = reservedBytes;
             job.contentWidth = contentWidth;
+            job.letterSpacing = CjguiComposableLetterSpacing(letterSpacing);
+            job.lineHeightPoints = CjguiComposableLineHeight(lineHeightPoints);
             job.ordinaryText = ordinaryText;
             job.smallTextLane = smallTextLane;
             job.workerLive = YES;
@@ -615,13 +662,34 @@ static CjguiAsyncMultilineMeasureStatus CjguiAsyncMeasureBegin(
 CjguiAsyncMultilineMeasureStatus CjguiAsyncMultilineMeasureBegin(
     const uint8_t *utf8Bytes, size_t byteLength, NSFont *fontSnapshot,
     double contentWidth, CjguiAsyncMultilineMeasureHandle *outHandle) {
-    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, contentWidth, NO, outHandle);
+    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, contentWidth, NO, 0.0, 0.0, 0, nil, outHandle);
 }
 
 CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsBegin(
     const uint8_t *utf8Bytes, size_t byteLength, NSFont *fontSnapshot,
     double maximumWidth, CjguiAsyncMultilineMeasureHandle *outHandle) {
-    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, maximumWidth, YES, outHandle);
+    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, maximumWidth, YES, 0.0, 0.0, 0, nil, outHandle);
+}
+
+CjguiAsyncMultilineMeasureStatus CjguiAsyncMultilineMeasureBeginTypography(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, double letterSpacing, double lineHeightPoints,
+    CjguiAsyncMultilineMeasureHandle *outHandle) {
+    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, width, NO,
+        letterSpacing, lineHeightPoints, 0, nil, outHandle);
+}
+CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsBeginTypography(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, double letterSpacing, double lineHeightPoints,
+    CjguiAsyncMultilineMeasureHandle *outHandle) {
+    return CjguiAsyncMeasureBegin(utf8Bytes, byteLength, fontSnapshot, width, YES,
+        letterSpacing, lineHeightPoints, 0, nil, outHandle);
+}
+
+CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsBeginPrepared(const uint8_t *utf8Bytes,
+    size_t byteLength, NSFont *fontSnapshot, double width, size_t additionalInputCharge,
+    CjguiAsyncPreparedTextWork work, CjguiAsyncMultilineMeasureHandle *outHandle) {
+    if (!work) return CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT;
+    return CjguiAsyncMeasureBegin(utf8Bytes,byteLength,fontSnapshot,width,YES,0,0,
+        additionalInputCharge,work,outHandle);
 }
 
 CjguiAsyncMultilineMeasureStatus CjguiAsyncTextMetricsPoll(
@@ -865,3 +933,22 @@ void CjguiAsyncMultilineMeasureTestGetStats(CjguiAsyncMultilineMeasureTestStats 
     pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
 }
 #endif
+
+// Called only at an explicit lifecycle boundary. The slot remains the owner;
+// inspection never publishes an Objective-C object across this function.
+void CjguiAsyncFontLifetimeDebugOwners(void){
+    if(!CjguiFontLifetimeDebugEnabled())return;
+    @autoreleasepool{
+        pthread_mutex_lock(&gCjguiAsyncMeasureLock);
+        uint32_t occupied=0;
+        for(uint32_t i=0;i<kCjguiAsyncMeasureSlotCount;i++){
+            CjguiAsyncMultilineMeasureJob *job=gCjguiAsyncMeasureSlots[i].job;
+            if(!job)continue;occupied++;
+            fprintf(stderr,"FONT_LIFE scalar_slot handle=%llu worker=%d consumer=%d completed=%d prepared_work=%d\n",
+                (unsigned long long)job.handle,job.workerLive,job.consumerLive,job.terminalStatus,job.preparedTextWork!=nil);
+            CjguiFontLifetimeDebugVisit(job.fontResourceLease,"scalar_slot.fontResourceLease",job.handle);
+        }
+        fprintf(stderr,"FONT_LIFE scalar_slots=%u reserved=%zu\n",occupied,gCjguiAsyncMeasureReservedBytes);
+        pthread_mutex_unlock(&gCjguiAsyncMeasureLock);
+    }
+}

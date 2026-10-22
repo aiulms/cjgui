@@ -51,16 +51,11 @@
 // 二、本阶段"具名拒绝"的部分（消费方会看到什么）
 // ============================================================================
 // 以下入口**不假装成功**，全部返回具名状态、并把 out 参数清零（不写"已完成"的假状态）：
-//   * 图片资源 / 纹理上传（Linux 第一阶段没有解码器，也没有纹理上传路径）：
-//       prepare_composable_image_resource   -> CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED(31)，
-//                                               *outState = 3(failed)
-//       composable_image_resource_state     -> 同上（永远不会变成 ready）
+//   * PNG 二进制传输（本包只做本地文件，不扩传输）：
 //       prepare_composable_png_transfer     -> 31，width/height/micros 全 0
 //       finish_composable_png_transfer      -> 31（accepted 被忽略，没有任何暂存条目可结算）
-//       probe_image_texture                 -> 31，found/texture/keyLength/failed 全 0
-//     消费方看到：Cangjie 的 imageResourceStatusFromNative 把非 OK 映射成 "failed"+该状态码；
-//     probeImageTexture 的诊断串显示 status=31 且四个计数为 0。都不是"加载中"，因此不会
-//     有调用方无限等待 ready。
+//     本地图片的 prepare/state/probe 已由 session.c 的图片域实现（真实解码/上传），
+//     不在本文件的"具名拒绝"清单里。
 //   * X11 组合输入（IME 属第二阶段；session.c 与本层都只做 ASCII 直输）：
 //       arm_composition_reanchor / reanchor_composition
 //                                          -> CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED(32)，
@@ -133,12 +128,6 @@
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composition(uint64_t session,
                                                                        int32_t *outHadMarked,
                                                                        int32_t *outCancelReturned);
-CjguiInternalRendererStatus cjgui_internal_renderer_probe_image_texture(uint64_t session,
-                                                                        uint64_t nodeId,
-                                                                        int32_t *outFound,
-                                                                        int32_t *outHasTexture,
-                                                                        int32_t *outCacheKeyLength,
-                                                                        int32_t *outFailed);
 int64_t cjgui_macos_control_accent_srgb8(void);
 int32_t cjgui_macos_effective_dark_mode(void);
 int32_t cjgui_macos_reduce_motion_enabled(void);
@@ -697,7 +686,8 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_command_menu_item(
     uint64_t session, uint32_t itemIndex, const char *commandId, const char *title,
     const char *menuGroup, const char *shortcut, uint32_t menuSection, uint64_t focusScope,
-    uint8_t enabled, uint8_t checked) {
+    uint8_t enabled, uint8_t checked, uint8_t presentationOnly) {
+    (void)presentationOnly;
     if (getenv("CJGUI_LINUX_AUX_TRACE")) fprintf(stderr, "CJGUI_LINUX_AUX set_composable_command_menu_item\n");
     CjguiLinuxAuxSlot *state = aux_acquire(session);
     if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
@@ -708,6 +698,10 @@ cjgui_internal_renderer_set_composable_command_menu_item(
     if (!aux_menu_item_assign(&state->menuStaged[itemIndex], commandId, title, menuGroup, shortcut,
                               menuSection, focusScope, enabled, checked)) {
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    if (getenv("CJGUI_LINUX_AUX_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_AUX item index=%u id=%s shortcut=[%s] scope=%llu enabled=%u\n",
+                itemIndex, commandId, shortcut, (unsigned long long)focusScope, (unsigned)enabled);
     }
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -740,7 +734,22 @@ cjgui_internal_renderer_commit_composable_command_menu(uint64_t session) {
     state->menuAcceptedActive = 1;
     state->menuAcceptedVersion = state->menuStagedVersion;
     state->menuAcceptedCount = state->menuStagedCount;
+    // 这份 staging 已被本代接受；后续普通 present 不得重复提升它。
+    state->menuStagedActive = 0;
+    state->menuStagedVersion = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+int cjgui_linux_aux_command_menu_staged(uint64_t token) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (!state) return 0;
+    return aux_menu_staging_complete(state);
+}
+
+uint64_t cjgui_linux_aux_context_menu_request(uint64_t token) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (!state || !state->guardEnabled) return 0u;
+    return state->guardRequestId;
 }
 
 CjguiInternalRendererStatus
@@ -904,40 +913,9 @@ cjgui_internal_renderer_set_composable_data_transfer_item_bytes(uint64_t session
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-// ---------------------------------------------------------------- 图片资源（具名拒绝）
-// Linux 第一阶段没有图片解码器、没有纹理上传、也没有候选场景里的纹理缓存。
-// 四个入口都返回 PNG_UNSUPPORTED(31) 并清零 out 参数：消费方因此看到 "failed"（而不是
-// "loading"），不会有人等待一个永不出现的 ready。
-
-CjguiInternalRendererStatus
-cjgui_internal_renderer_prepare_composable_image_resource(uint64_t session, const char *resourcePath,
-                                                           const char *resourceId,
-                                                           uint64_t resourceVersion,
-                                                           uint32_t *outState) {
-    CjguiLinuxAuxSlot *state = aux_acquire(session);
-    if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    (void)resourcePath;
-    (void)resourceId;
-    (void)resourceVersion;
-    *outState = 3u;   // failed：本后端没有解码/上传路径
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
-}
-
-CjguiInternalRendererStatus
-cjgui_internal_renderer_composable_image_resource_state(uint64_t session, const char *resourcePath,
-                                                         const char *resourceId,
-                                                         uint64_t resourceVersion,
-                                                         uint32_t *outState) {
-    CjguiLinuxAuxSlot *state = aux_acquire(session);
-    if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (!outState) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    (void)resourcePath;
-    (void)resourceId;
-    (void)resourceVersion;
-    *outState = 3u;   // failed
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
-}
+// ---------------------------------------------------------------- PNG 传输（具名拒绝）
+// 本地 PNG 的准备/状态/纹理探针已由 session.c 的图片域实现；这里只保留
+// 未实现的二进制传输入口（本包不扩传输），仍具名拒绝而不是假装成功。
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_prepare_composable_png_transfer(uint64_t session, const char *resourceIdentity,
@@ -963,25 +941,6 @@ cjgui_internal_renderer_finish_composable_png_transfer(uint64_t session, const c
     if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     (void)resourceIdentity;
     (void)accepted;   // 没有任何暂存条目可结算：接受/拒绝都是无对象可结算
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
-}
-
-CjguiInternalRendererStatus
-cjgui_internal_renderer_probe_image_texture(uint64_t session, uint64_t nodeId, int32_t *outFound,
-                                             int32_t *outHasTexture, int32_t *outCacheKeyLength,
-                                             int32_t *outFailed) {
-    CjguiLinuxAuxSlot *state = aux_acquire(session);
-    if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (!outFound || !outHasTexture || !outCacheKeyLength || !outFailed) {
-        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    }
-    // 本阶段 Linux 没有任何纹理上传路径，所以"有没有纹理"恒为否；这里不遍历节点去回答
-    // "节点在不在场景里"（那是另一个问题），四个计数一律清零，状态是具名拒绝。
-    (void)nodeId;
-    *outFound = 0;
-    *outHasTexture = 0;
-    *outCacheKeyLength = 0;
-    *outFailed = 0;
     return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
 }
 
@@ -1283,5 +1242,23 @@ int32_t cjgui_macos_window_visible(int64_t windowNumber) {
 // 而本层并无证据证明窗口被最小化。
 int32_t cjgui_macos_window_minimized(int64_t windowNumber) {
     (void)windowNumber;
+    return 0;
+}
+
+int cjgui_linux_aux_shortcut_declared(uint64_t token, const char *shortcut, uint64_t focusScope) {
+    if (!shortcut || !shortcut[0]) return 0;
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (!state || !state->menuAcceptedActive) return 0;
+    for (uint32_t index = 0u; index < state->menuAcceptedCount; index += 1u) {
+        const CjguiLinuxAuxCommandMenuItem *item = &state->menuAccepted[index];
+        if (!item->present || !item->shortcut || strcmp(item->shortcut, shortcut) != 0) continue;
+        if (item->focusScope != 0u && item->focusScope != focusScope) continue;
+        return 1;
+    }
+    if (getenv("CJGUI_LINUX_AUX_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_AUX shortcut_miss=[%s] scope=%llu accepted=%u active=%d\n",
+                shortcut, (unsigned long long)focusScope, state->menuAcceptedCount,
+                state->menuAcceptedActive);
+    }
     return 0;
 }

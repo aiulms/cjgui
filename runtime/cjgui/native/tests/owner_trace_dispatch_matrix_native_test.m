@@ -132,7 +132,7 @@ static void *dispatchWorker(void *unused) {
         "binding", "row", "parent", "label");
     (void)cjgui_internal_renderer_configure_composable_command_menu(gSession, 778, 1);
     (void)cjgui_internal_renderer_set_composable_command_menu_item(gSession, 0,
-        "trace.command", "Trace", "trace", "", 0, 0, 1, 0);
+        "trace.command", "Trace", "trace", "", 0, 0, 1, 0, 0);
     (void)cjgui_internal_renderer_commit_composable_command_menu(gSession);
     (void)cjgui_internal_renderer_configure_composable_data_transfer(gSession, 778, 1);
     (void)cjgui_internal_renderer_set_composable_data_transfer_item(gSession, 0,

@@ -17,6 +17,152 @@ package cjgui
 import std.collection.*
 import cjgui_shared_operation_core.*
 
+private class TailLegacyRollbackParticipant <: CjguiComposableUiSceneRefreshParticipant {
+    public var rollbacks: Int64 = 0
+    public func beginSceneRefresh(): Bool { return true }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit {}
+    public func rollbackSceneRefresh(): Unit { rollbacks += 1 }
+}
+
+@Test
+func tailRollbackReasonKeepsLegacyParticipantCompatible(): Unit {
+    let legacy = TailLegacyRollbackParticipant()
+    let participant: CjguiComposableUiSceneRefreshParticipant = legacy
+    participant.rollbackSceneRefresh("accepted_input")
+    @Assert(legacy.rollbacks, 1)
+}
+
+@Test
+func tailRollbackReasonSettlesOnlyPendingTicketAndPreservesSpecificRefusal(): Unit {
+    let holder = CjguiGeneratedUiStructureHolder(generatedTextCatalog())
+    let provider = GeneratedTestProvider()
+    let children = ArrayList<CjguiGeneratedUiNodeSpec>([
+        CjguiGeneratedUiNodeSpec("fieldA", "textInput", fieldId: "label")])
+    let spec = CjguiGeneratedUiNodeSpec("panelA", "vertical", children: children)
+    let accepted = holder.submit(spec, provider)
+    @Assert(generatedCommit(holder, provider), true)
+    let version = holder.structureVersion()
+    let identity = holder.nodeIdForKey("fieldA")
+    let pending = holder.submit(spec, provider)
+    @Assert(holder.beginCandidateRefresh(), true)
+    let _ = holder.buildRefreshNode(provider)
+    @Assert(holder.prepareCandidateRefresh(), true)
+    holder.rollbackCandidateRefresh("accepted_input")
+    let ticket = holder.candidateTicketPayload(pending.candidateToken)
+    @Assert(ticket.contains("TERMINAL_STATE REJECTED"), true)
+    @Assert(ticket.contains("REASON accepted_input"), true)
+    @Assert(ticket.contains("SCENE_STATE scene_rejected:accepted_input"), true)
+    @Assert(holder.structureVersion(), version)
+    @Assert(holder.nodeIdForKey("fieldA"), identity)
+    @Assert(holder.currentAcceptedCandidateToken(), accepted.candidateToken)
+    @Assert(holder.pendingCandidateToken(), 0)
+    holder.rollbackCandidateRefresh("late_window_close")
+    @Assert(holder.candidateTicketPayload(pending.candidateToken), ticket)
+    @Assert(holder.candidateTicketPayload(accepted.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+    let specific = holder.submit(spec, provider)
+    @Assert(holder.beginCandidateRefresh(), true)
+    let _ = holder.buildRefreshNode(provider)
+    holder.rejectCandidateAttempt(specific.candidateToken, "binding_revoked", "fieldA")
+    let named = holder.candidateTicketPayload(specific.candidateToken)
+    holder.rollbackCandidateRefresh("later_generic_failure")
+    // The ticket also exposes the CURRENT pending pointer. Rollback clears
+    // that pointer; the attempt's own terminal fields must remain identical.
+    @Assert(holder.candidateTicketPayload(specific.candidateToken),
+        named.replace("PENDING_TOKEN ${specific.candidateToken}", "PENDING_TOKEN 0"))
+    @Assert(holder.pendingCandidateToken(), 0)
+    @Assert(holder.lastSceneOutcome(), "candidate_rejected")
+    let invalid = holder.submit(CjguiGeneratedUiNodeSpec("", "vertical"), provider)
+    let before = holder.candidateTicketPayload(invalid.candidateToken)
+    holder.rollbackCandidateRefresh("later_generic_failure")
+    @Assert(holder.candidateTicketPayload(invalid.candidateToken), before)
+}
+
+private class TailRollbackRegionBinding <: CjguiGeneratedUiRegionBinding {
+    public func ownerRevision(): Int64 { return 1 }
+    public func fieldResourceId(fieldId: String): Int64 { return -1 }
+    public func fieldOperationResourceId(fieldId: String): Int64 { return -1 }
+    public func draftText(fieldId: String): String { return "" }
+    public func appliedText(fieldId: String): String { return "" }
+    public func draftBoolean(fieldId: String): ?Bool { return None }
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        return CjguiGeneratedUiActionResult(false, "")
+    }
+    public func actionAvailable(actionName: String): Bool { return false }
+    public func applyFieldIntent(intent: CjguiGeneratedUiIntent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+}
+
+private class TailRollbackWindowController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
+    private static func catalog(): CjguiGeneratedUiCapabilityCatalog {
+        let result = generatedTextCatalog()
+        let properties = ArrayList<CjguiGeneratedUiPropertySpec>([
+            CjguiGeneratedUiPropertySpec("text", "STRING", required: true, maxLength: 40)])
+        let _ = result.registerComponent(CjguiGeneratedUiComponentSpec("label", properties, false))
+        return result
+    }
+    public let region = CjguiGeneratedUiWindowRegion(catalog(), TailRollbackRegionBinding(), "tail-rollback")
+    public func uiSceneVersion(): Int64 { return region.revision() }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(81001, "tail-rollback-root", CjguiComposableUiStyle())
+        root.add(region.buildNode())
+        return root
+    }
+    public func beginSceneRefresh(): Bool { return region.beginSceneRefresh() }
+    public func prepareSceneRefresh(): Bool { return region.prepareSceneRefresh() }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> { return ArrayList<CjguiComposableUiCommand>() }
+    public func commitSceneRefresh(): Unit { region.commitSceneRefresh() }
+    public func rollbackSceneRefresh(): Unit { region.rollbackSceneRefresh() }
+    public func rollbackSceneRefresh(reason: String): Unit { region.rollbackSceneRefresh(reason) }
+    public func disposeSceneRefreshResources(): Unit { region.disposeSceneRefreshResources() }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult { return region.handleEvent(event) }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func tailRollbackProductionWindowCancellationReachesPublicTicket(): Unit {
+    let controller = TailRollbackWindowController()
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    controller.region.attachWindow(window)
+    let accepted = window.acceptedSceneDump()
+    let budget = CjguiOwnerTurnBudget()
+    window.useOwnerTurnBudget(budget)
+    let reply = controller.region.submitStructure("""
+GENERATED_UI_STRUCTURE 1
+NODE 0 tailPanel vertical
+NODE 1 tailLabel label
+PROPERTY 1 tailLabel text pending
+END
+""", 0)
+    @Assert(reply.candidateAccepted, true)
+    @Assert(budget.begin(), true)
+    let _ = window.refreshIfNeeded()
+    @Assert(budget.hasPreparedWork(), true)
+    @Assert(controller.region.candidateTicketPayload(reply.candidateToken).contains("TERMINAL_STATE PENDING"), true)
+    // A real source refresh cancels the retained carrier. It does not change
+    // admission or retry the declaration: its original public ticket settles.
+    window.requestRefresh()
+    let ticket = controller.region.candidateTicketPayload(reply.candidateToken)
+    @Assert(ticket.contains("TERMINAL_STATE REJECTED"), true)
+    @Assert(ticket.contains("REASON request_changed"), true)
+    @Assert(controller.region.acceptedStructureVersion(), 0)
+    @Assert(window.acceptedSceneDump(), accepted)
+    @Assert(budget.hasPreparedWork(), false)
+    budget.end()
+    window.close()
+    @Assert(controller.region.candidateTicketPayload(reply.candidateToken), ticket)
+}
+
 @Test
 func generatedCandidateTokenOwnsItsOwnAttempt(): Unit {
     let catalog = generatedTextCatalog()

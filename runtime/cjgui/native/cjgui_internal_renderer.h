@@ -705,7 +705,8 @@ typedef struct CjguiInternalRendererComposableNode {
     uint32_t tabSelected;
     // Platform-neutral accepted semantics. Selected and expanded are separate
     // from focus and paint; bit 0=selected, bit 1=expandable, bit 2=expanded,
-    // bit 3=disabled. A semantic row may be an inert layout node containing
+    // bit 3=disabled, bit 4=checked (owner-declared checkable state). A
+    // semantic row may be an inert layout node containing
     // a separate actionable child, so disabled cannot be inferred from kind.
     uint32_t semanticRole;
     uint32_t semanticState;
@@ -784,7 +785,8 @@ typedef struct CjguiInternalRendererComposableNode {
     // platform. Semantics and admission ranges match the OHOS fork:
     //   letterSpacing: logical points, (-1000, 1000), 0 = inherited default
     //   lineHeightPoints: logical points, (0, 1000), 0 = natural line height;
-    //     consumers pass lineHeightPoints / fontSize as a multiplier
+    //     Mac consumes absolute paragraph height; a backend needing a ratio
+    //     converts lineHeightPoints / fontSize at its platform boundary.
     //   maxLines: 0 = unlimited; mirrors the shared textMaxLines declaration
     //   ellipsisEnabled: 1 = tail ellipsis; mirrors textOverflow = "ellipsis"
     //   cornerRadii*: present=1 replaces the uniform cornerRadius
@@ -818,10 +820,16 @@ typedef struct CjguiInternalRendererComposableNode {
     double iconTintGreen;
     double iconTintBlue;
     double iconTintAlpha;
+    // Accepted declaration facts for AX range readback. Changes still travel
+    // as NAVIGATE; native neither owns the slider value nor applies its step.
+    int64_t pointerControlMinimum;
+    int64_t pointerControlMaximum;
 } CjguiInternalRendererComposableNode;
-_Static_assert(offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 ==
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, pointerControlMinimum) ==
+               offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 &&
+               offsetof(CjguiInternalRendererComposableNode, pointerControlMaximum) + 8 ==
                sizeof(CjguiInternalRendererComposableNode),
-               "CjguiInternalRendererComposableNode iconTintAlpha tail drifted");
+               "CjguiInternalRendererComposableNode slider range tail drifted");
 
 typedef struct CjguiInternalRendererViewport {
     uint32_t width;
@@ -876,6 +884,17 @@ cjgui_internal_renderer_composed_prefix_utf8_length(
 // macOS launcher may call this while on that main thread; it is not exposed to
 // Cangjie and does not weaken AppKit's main-thread ownership.
 void cjgui_internal_renderer_enable_main_thread_dispatch(void);
+
+// Paired internal scheduling ABI. Revision is observed BEFORE draining work.
+// Notify is a thread-safe, coalescible hint over static scalar state: it holds
+// no window, callback or managed pointer. UINT64_MAX means no idle deadline.
+// Unregister the connection notifier on close; a copied late hint is harmless.
+#define CJGUI_OWNER_IDLE_WAIT_VERSION 1
+uint64_t cjgui_internal_renderer_owner_work_revision(void);
+void cjgui_internal_renderer_owner_notify_work(void);
+uint32_t cjgui_internal_renderer_owner_idle_wait_support_version(void);
+int32_t cjgui_internal_renderer_owner_wait_idle_work(uint64_t observedRevision,
+    uint64_t absoluteDeadlineNs, uint64_t *outIdleWaitNs);
 
 #ifdef CJGUI_INTERNAL_TESTING
 // Isolated lifecycle probe: temporarily refuse worker calls, then restore the
@@ -1250,6 +1269,12 @@ cjgui_internal_renderer_set_composable_node_semantic_metadata(uint64_t session,
     uint32_t nodeIndex, const char *bindingKey, const char *rowKey, const char *parentRowKey,
     const char *semanticLabel);
 
+// Auxiliary explanation for a staged node, or a filled node in preparationId.
+// Copied UTF-8; publication, rejection and retirement follow that same scene.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_set_composable_node_semantic_help(uint64_t session,
+    uint64_t preparationId, uint32_t nodeIndex, const char *help);
+
 // Replaces the complete native coordination declaration set (including an
 // empty set) for this staged composable scene. Promotion is atomic with the
 // scene presented by `present_composable_scene`.
@@ -1270,6 +1295,18 @@ cjgui_internal_renderer_set_composable_data_transfer_item_bytes(
 CjguiInternalRendererStatus
 cjgui_internal_renderer_present_composable_scene(
     uint64_t session, CjguiInternalRendererFrameObservation *outObservation);
+
+// macOS-only, candidate-owned ordinary modal return. The 16 scalar words are
+// request, scene, base scene, binding, node, resource, kind, start16, end16,
+// owned-session flag, owner version, context, mirror revision, selection
+// revision, semantic incarnation, preparation. Body is copied during staging.
+// Receipt echoes these words, then install status, actual-host-installed,
+// renderer generation. An accepted frame with a failed OS install stays an
+// accepted frame; callers consume the distinct installation result once.
+CjguiInternalRendererStatus cjgui_internal_renderer_stage_modal_return(
+    uint64_t session, const uint64_t *request, const char *body);
+CjguiInternalRendererStatus cjgui_internal_renderer_modal_return_receipt(
+    uint64_t session, uint64_t scene, uint64_t request, uint64_t *receipt);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_stage_window_background(uint64_t session,
@@ -1334,7 +1371,8 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_command_menu_item(
     uint64_t session, uint32_t itemIndex, const char *commandId,
     const char *title, const char *menuGroup, const char *shortcut,
-    uint32_t menuSection, uint64_t focusScope, uint8_t enabled, uint8_t checked);
+    uint32_t menuSection, uint64_t focusScope, uint8_t enabled, uint8_t checked,
+    uint8_t presentationOnly);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_commit_composable_command_menu(uint64_t session);
@@ -1460,6 +1498,12 @@ uint32_t cjgui_internal_renderer_selection_background_version(void);
 // candidate value during private preparation / staged resource admission.
 CjguiInternalRendererStatus
 cjgui_internal_renderer_set_composable_text_runs(uint64_t session, uint64_t nodeId, const char *encoded);
+// Private synchronous snapshot transport. 1..1024 declarations per call;
+// all borrowed pointers expire on return. Uses the scalar main-thread writer,
+// including explicit empty clears, accepted/candidate COW and glyph invalidation.
+CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_text_runs_batch(uint64_t session,
+    uint64_t projectionVersion, uint32_t count, const uint64_t *nodeIds, const char *const *encoded);
+
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_measure_composable_text(uint64_t session,
@@ -1469,6 +1513,26 @@ cjgui_internal_renderer_measure_composable_text(uint64_t session,
                                                 uint32_t fontFamily,
                                                 uint32_t maximumWidth,
                                                 CjguiInternalRendererTextMeasurement *outMeasurement);
+
+// Mac typography extension. Existing entry points retain zero/natural defaults.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_measure_composable_text_typography(uint64_t session, const char *text,
+    double fontSize, uint32_t fontWeight, uint32_t fontFamily, uint32_t maximumWidth,
+    double letterSpacing, double lineHeightPoints, CjguiInternalRendererTextMeasurement *outMeasurement);
+#define CJGUI_STYLED_TEXT_MEASUREMENT_VERSION 1
+CjguiInternalRendererStatus
+cjgui_internal_renderer_measure_composable_styled_text(uint64_t session, const char *text,
+    double fontSize, uint32_t fontWeight, uint32_t fontFamily, uint32_t maximumWidth,
+    double letterSpacing, double lineHeightPoints, uint32_t maximumLines, uint32_t overflow,
+    const char *runs, CjguiInternalRendererTextMeasurement *outMeasurement);
+int32_t cjgui_async_composable_styled_text_begin(const char *text, uint64_t byteLength,
+    double fontSize, uint32_t fontWeight, uint32_t fontFamily, uint32_t maximumWidth,
+    double letterSpacing, double lineHeightPoints, uint32_t maximumLines, uint32_t overflow,
+    const char *runs, uint64_t *outHandle);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_measure_composable_multiline_natural_height_typography(uint64_t session, const char *text,
+    double fontSize, uint32_t fontWeight, uint32_t fontFamily, uint32_t contentWidth,
+    double letterSpacing, double lineHeightPoints, uint32_t *outHeight);
 
 // Preview: exact multiline input content height at its resolved content width.
 // Uses the same TextKit line-breaking rules as the multiline scene/input path.

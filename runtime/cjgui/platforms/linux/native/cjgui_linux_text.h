@@ -114,6 +114,70 @@ int cjgui_linux_text_layout(CjguiLinuxText *text, const char *utf8, size_t len, 
                             uint32_t quadCapacity, uint32_t *outQuadCount, double *outWidth,
                             double *outHeight, double *outAscent);
 
+// 行数受限的排版：maxLines=0 等价于上面的不限行入口。超出时只排前 maxLines 行；
+// ellipsis!=0 时用 U+2026 替换可见尾部并缩短前缀，仍走同一整形/换行路径。
+// 只影响绘制串，调用方保留完整语义原文。
+int cjgui_linux_text_layout_limited(CjguiLinuxText *text, const char *utf8, size_t len,
+                                    double fontSize, uint32_t fontWeight, uint32_t fontFamily,
+                                    double maxWidth, uint32_t maxLines, int ellipsis,
+                                    double originX, double originY, int wantQuads,
+                                    CjguiLinuxTextQuad *outQuads, uint32_t quadCapacity,
+                                    uint32_t *outQuadCount, double *outWidth, double *outHeight,
+                                    double *outAscent);
+
+// ------------------------------------------------------------ 多样式只读排版
+//
+// 与共同层的 textStyleRuns / 生成 label 的 textRuns 共享同一份声明：每个 run 按
+// UTF-8 字节范围覆盖 start/end，后声明的 run 覆盖先声明的（与共同层"普通 run
+// 保持原顺序"一致）。测量、换行、基线、限行省略与绘制全部走这一条路径。
+//
+// fontSize/fontWeight/fontFamily 是未被任何 run 覆盖时使用的基线样式。
+// 字形方块按 run 输出颜色归属索引（runIndex，UINT32_MAX 表示基线样式），背景
+// span 只在 wantQuads!=0 时输出。语义原文不在这里改写：省略只影响绘制串。
+
+typedef struct CjguiLinuxTextStyleRun {
+    uint32_t start;
+    uint32_t end;
+    double fontSize;
+    uint32_t fontWeight;
+    uint32_t fontFamily;
+    float red;
+    float green;
+    float blue;
+    float alpha;
+    uint8_t hasBackground;
+    float backgroundRed;
+    float backgroundGreen;
+    float backgroundBlue;
+    float backgroundAlpha;
+} CjguiLinuxTextStyleRun;
+
+typedef struct CjguiLinuxStyledQuad {
+    CjguiLinuxTextQuad glyph;
+    uint32_t runIndex;
+} CjguiLinuxStyledQuad;
+
+typedef struct CjguiLinuxStyledSpan {
+    uint32_t runIndex;
+    double x0;
+    double x1;
+    double top;
+    double height;
+} CjguiLinuxStyledSpan;
+
+#define CJGUI_LINUX_TEXT_STYLE_RUN_CAP 4096u
+
+int cjgui_linux_text_styled_layout(CjguiLinuxText *text, const char *utf8, size_t len,
+                                   double fontSize, uint32_t fontWeight, uint32_t fontFamily,
+                                   double maxWidth, uint32_t maxLines, int ellipsis,
+                                   const CjguiLinuxTextStyleRun *runs, uint32_t runCount,
+                                   double originX, double originY, int wantQuads,
+                                   CjguiLinuxStyledQuad *outQuads, uint32_t quadCapacity,
+                                   CjguiLinuxStyledSpan *outSpans, uint32_t spanCapacity,
+                                   uint32_t *outQuadCount, uint32_t *outSpanCount,
+                                   double *outWidth, double *outHeight, double *outAscent,
+                                   double *outLineHeight);
+
 // 取走自上次调用以来的回退记录。返回写入条数；0 表示没有新的回退。
 // 共同层据此产生可见的 fallback 诊断，不静默画豆腐块。
 uint32_t cjgui_linux_text_take_fallback_log(CjguiLinuxText *text, CjguiLinuxTextFallback *outEntries,

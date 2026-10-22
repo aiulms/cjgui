@@ -40,6 +40,36 @@ public let CJGUI_COMPOSITE_ELEMENT_CONTAINER: String = "container"
 public let CJGUI_COMPOSITE_ELEMENT_FIELD: String = "field"
 public let CJGUI_COMPOSITE_ELEMENT_PRESET: String = "preset"
 public let CJGUI_COMPOSITE_ELEMENT_ACTION: String = "action"
+/// A read-only TEXT projection of the SAME frozen owner snapshot the other
+/// elements are resolved from. It exists because a factory cannot mount its OWN
+/// text node (every node needs a framework-allocated identity) and owner-provided
+/// text - a field's validation error, an owner's blocking reason, the owner's
+/// status line - must stay readable WITHOUT re-submitting the structure. The
+/// framework resolves the string from the instance's one snapshot; the factory
+/// only chooses where to place it and how to paint it. A projection never
+/// writes business state and never carries a writer.
+public let CJGUI_COMPOSITE_ELEMENT_PROJECTION: String = "projection"
+
+/// Projection sources. Each names ONE owner fact that is already part of the
+/// instance's frozen snapshot; none of them invents business wording.
+/// `field_error`: the field's own validation error.
+public let CJGUI_COMPOSITE_PROJECTION_FIELD_ERROR: String = "field_error"
+/// `field_reason`: why the owner currently blocks editing that field.
+public let CJGUI_COMPOSITE_PROJECTION_FIELD_REASON: String = "field_reason"
+/// `action_reason`: why the owner currently blocks that action.
+public let CJGUI_COMPOSITE_PROJECTION_ACTION_REASON: String = "action_reason"
+/// `owner_status`: the owner snapshot's own status message.
+public let CJGUI_COMPOSITE_PROJECTION_OWNER_STATUS: String = "owner_status"
+
+/// Whether a node kind is an EDITABLE field control (it accepts a human edit)
+/// rather than a read-only copy of a value. The composite audit uses this to
+/// check the one thing a factory may not paint over: an editor the owner has
+/// blocked must not still look editable. A read-only rendering of the same value
+/// is deliberately not an editable control, so it is never forced disabled.
+public func CjguiCompositeElementIsEditableFieldControl(nodeKind: Int64): Bool {
+    return nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT ||
+        nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT || nodeKind == CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT
+}
 
 /// Intent kinds the public binding adapter resolves a control event into.
 public let CJGUI_GENERATED_INTENT_NONE: String = "none"
@@ -68,6 +98,11 @@ public class CjguiCompositeElementSpec {
     public let presetValue: String
     /// role == action: the declared business action this element requests.
     public let actionName: String
+    /// role == projection: the owner fact this read-only text presents. It is a
+    /// declaration, not a business value: the framework resolves the string from
+    /// the instance's frozen snapshot on every build, so a value/error/lock
+    /// update reaches the text without submitting a new structure.
+    public let source: String
     /// Declared caption (empty = the action's own label / the field's label).
     public let label: String
     /// Parent element key ("" = the instance root).
@@ -75,13 +110,14 @@ public class CjguiCompositeElementSpec {
 
     public init(elementKey: String, role: String, fieldId!: String = "", argumentName!: String = "",
                 presetValue!: String = "", actionName!: String = "", label!: String = "",
-                parentKey!: String = "") {
+                parentKey!: String = "", source!: String = "") {
         this.elementKey = elementKey
         this.role = role
         this.fieldId = fieldId
         this.argumentName = argumentName
         this.presetValue = presetValue
         this.actionName = actionName
+        this.source = source
         this.label = label
         this.parentKey = parentKey
     }
@@ -136,6 +172,11 @@ public class CjguiCompositeElementBinding {
     /// stable key). A binding is only valid for that key's accepted node, so a
     /// late event can never be routed through another instance's binding.
     public let instanceKey: String
+    /// Framework-assigned generation for this accepted composite instance. It
+    /// survives a pure reorder and changes when the key is rebound or removed
+    /// and re-added, so a held range/action session can prove it still belongs
+    /// to the object it was accepted for.
+    public let instanceIncarnation: Int64
     public let elementKey: String
     public let role: String
     public let nodeId: Int64
@@ -149,6 +190,11 @@ public class CjguiCompositeElementBinding {
     public let argumentName: String
     public let writerOperation: String
     public let ownerTargetResourceId: Int64
+    /// The owner target of the WHOLE instance, resolved once from the same
+    /// field/action targeting the elements use. Every element of one instance
+    /// carries it, so the instance identity and the per-element routes cannot
+    /// disagree about which object the instance binds.
+    public let instanceOwnerTargetResourceId: Int64
     public let bindingResourceId: Int64
     public let editorKind: String
     public let presetValue: String
@@ -165,15 +211,29 @@ public class CjguiCompositeElementBinding {
     /// handwritten form (a legally empty draft stays an empty draft).
     public let draftText: String
     public let draftBoolean: Bool
+    /// role projection: the owner text this element presents, resolved from the
+    /// instance's ONE frozen snapshot (a field's validation error, a field's or
+    /// action's blocking reason, or the owner's status message). Empty means the
+    /// owner publishes no such text right now - never an absent answer replaced
+    /// by invented copy.
+    public let projectionText: String
+    /// role projection: the declared source the text was resolved from, carried
+    /// so a data refresh can resolve the SAME fact again instead of guessing it
+    /// from the element key.
+    public let projectionSource: String
 
     public init(elementKey: String, role: String, nodeId: Int64, semanticId: String, label: String,
-                instanceKey!: String = "", fieldId!: String = "", argumentName!: String = "",
+                instanceKey!: String = "", instanceIncarnation!: Int64 = 0, fieldId!: String = "",
+                argumentName!: String = "",
                 writerOperation!: String = "", ownerTargetResourceId!: Int64 = -1,
+                instanceOwnerTargetResourceId!: Int64 = -1,
                 bindingResourceId!: Int64 = -1, editorKind!: String = "", presetValue!: String = "",
                 actionName!: String = "", actionEnabled!: Bool = false, draftText!: String = "",
                 draftBoolean!: Bool = false, ownerAvailable!: Bool = true,
-                blockedReason!: String = "") {
+                blockedReason!: String = "", projectionText!: String = "",
+                projectionSource!: String = "") {
         this.instanceKey = instanceKey
+        this.instanceIncarnation = instanceIncarnation
         this.elementKey = elementKey
         this.role = role
         this.nodeId = nodeId
@@ -183,6 +243,7 @@ public class CjguiCompositeElementBinding {
         this.argumentName = argumentName
         this.writerOperation = writerOperation
         this.ownerTargetResourceId = ownerTargetResourceId
+        this.instanceOwnerTargetResourceId = instanceOwnerTargetResourceId
         this.bindingResourceId = bindingResourceId
         this.editorKind = editorKind
         this.presetValue = presetValue
@@ -192,6 +253,8 @@ public class CjguiCompositeElementBinding {
         this.blockedReason = blockedReason
         this.draftText = draftText
         this.draftBoolean = draftBoolean
+        this.projectionText = projectionText
+        this.projectionSource = projectionSource
     }
 
     public func isFieldLike(): Bool {
@@ -218,18 +281,32 @@ public class CjguiCompositeBuildContext {
     /// A factory that needs hover/pressed/focus paint takes it from here instead
     /// of switching on a theme name or inventing its own state machine.
     public let resolvedInteraction: CjguiComposableUiInteractionStyle
+    /// The accepted owner projection for THIS instance, sampled once when the
+    /// composite was built. Draft/applied values, field errors, dirty/canApply
+    /// and action availability all belong to one owner snapshot; the factory
+    /// renders them instead of issuing a second per-field owner read.
+    private let ownerFeedback: ?CjguiGeneratedUiFormFeedback
 
     public init(instanceKey: String, properties: HashMap<String, String>,
                 elements: ArrayList<CjguiCompositeElementBinding>,
                 children!: ArrayList<CjguiComposableUiNode> = ArrayList<CjguiComposableUiNode>(),
                 resolvedStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
-                resolvedInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle()) {
+                resolvedInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+                ownerFeedback!: ?CjguiGeneratedUiFormFeedback = None) {
         this.instanceKey = instanceKey
         this.properties = properties
         this.elements = elements
         this.children = children
         this.resolvedStyle = resolvedStyle
         this.resolvedInteraction = resolvedInteraction
+        this.ownerFeedback = ownerFeedback
+    }
+
+    /// This instance's own snapshot, or None when the provider does not
+    /// publish per-instance feedback (legacy single owner keeps its separate
+    /// formFeedback() projection).
+    public func formFeedback(): ?CjguiGeneratedUiFormFeedback {
+        return ownerFeedback
     }
 
     public func property(name: String): String {
@@ -313,11 +390,22 @@ public class CjguiGeneratedUiIntent {
     public let argumentName: String
     public let value: CjguiSharedOperationValue
     public let actionName: String
+    /// Accepted composite instance that produced this edit; empty for an
+    /// ordinary generated or handwritten field. The owner route uses this
+    /// identity instead of a global "current object" switch.
+    public let instanceKey: String
+    /// Accepted element identity the event was resolved through. The action
+    /// dispatcher re-checks this full binding before the owner transaction,
+    /// then hands the ORIGINAL target and generation to the provider. It is
+    /// never re-resolved from the mutable instance-key mapping at execution.
+    public let nodeId: Int64
+    public let instanceIncarnation: Int64
 
     public init(kind: String, nodeKey: String, reason: String, fieldId!: String = "",
                 writerOperation!: String = "", ownerTargetResourceId!: Int64 = -1,
                 argumentName!: String = "", value!: CjguiSharedOperationValue =
-                    CjguiSharedOperationValue.string(""), actionName!: String = "") {
+                    CjguiSharedOperationValue.string(""), actionName!: String = "",
+                instanceKey!: String = "", nodeId!: Int64 = -1, instanceIncarnation!: Int64 = 0) {
         this.kind = kind
         this.nodeKey = nodeKey
         this.reason = reason
@@ -327,6 +415,9 @@ public class CjguiGeneratedUiIntent {
         this.argumentName = argumentName
         this.value = value
         this.actionName = actionName
+        this.instanceKey = instanceKey
+        this.nodeId = nodeId
+        this.instanceIncarnation = instanceIncarnation
     }
 
     public static func none(reason: String): CjguiGeneratedUiIntent {

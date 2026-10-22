@@ -60,6 +60,27 @@ int main(void) { @autoreleasepool {
         accepted.textTextureSourceCredential)==NO,
         "full_source_credentials_remain_strict_about_changed_geometry");
     CHECK(framePromote(ctx,token,81),"translated_static_TEXT_really_committed");
+    // Ancestor clipping is shader state. These two clips both cover the SAME
+    // planned local tile; keep strict source credentials and compare the actual
+    // texture bytes against the independent cold oracle below.
+    CHECK(beginText(ctx,84,4,g,body,NO),"clip_extent_candidate_begins");
+    CJGuiInternalComposableSceneNode *clip=ctx.composablePreparation.nodes[0];
+    CjguiInternalRendererComposableNode clipped=clip.node;
+    clipped.clipWidth-=50; clipped.clipHeight-=8; clip.node=clipped;
+    CHECK(frameWaitReady(token,84),"clip_extent_candidate_prepares");
+    CHECK([textures(clip) isEqualToArray:before] && clip.preparedTextLayout==layout &&
+        atomic_load(&CjguiTestSealedRasterLayoutCreateCount)==sealedBefore,
+        "shader_clip_extent_preserves_covered_local_glyph_tiles");
+    CHECK(!CjguiTextRasterSourceCredentialsEqual(clip.textTextureSourceCredential,
+        ctx.composableNodes[0].textTextureSourceCredential),"clip_extent_full_proof_remains_strict");
+    NSArray *clippedPixels=pixels(clip);
+    (void)cjgui_internal_renderer_cancel_composable_preparation(token,84);
+    CHECK(beginText(ctx,85,4,g,body,NO),"clip_cold_oracle_begins");
+    CJGuiInternalComposableSceneNode *clipCold=ctx.composablePreparation.nodes[0];
+    clipCold.node=clipped;CjguiReleaseComposableTextResource(clipCold);clipCold.preparedTextLayout=nil;
+    CHECK(frameWaitReady(token,85) && [clippedPixels isEqualToArray:pixels(clipCold)],
+        "changed_visible_coverage_retained_tile_bytes_equal_cold_oracle");
+    (void)cjgui_internal_renderer_cancel_composable_preparation(token,85);
     NSArray *reusePixels=pixels(ctx.composableNodes[0]);
     CHECK(beginText(ctx,82,4,g,body,NO),"cold_oracle_same_final_declaration");
     CJGuiInternalComposableSceneNode *cold=ctx.composablePreparation.nodes[0];
@@ -75,6 +96,23 @@ int main(void) { @autoreleasepool {
     CHECK(![textures(ctx.composablePreparation.nodes[0]) isEqualToArray:textures(ctx.composableNodes[0])],
         "same_resource_with_changed_body_never_reuses_old_pixels");
     (void)cjgui_internal_renderer_cancel_composable_preparation(token,83);
+    for (unsigned variant=0;variant<6;variant++) {
+        uint64_t request=90+variant;
+        CHECK(beginText(ctx,request,4,g,body,NO),"raster_dependency_negative_begins");
+        CJGuiInternalComposableSceneNode *changed=ctx.composablePreparation.nodes[0];
+        CjguiInternalRendererComposableNode raw=changed.node;
+        if(variant==0)raw.width-=20;
+        if(variant==1)raw.fontSize+=2;
+        if(variant==2)raw.letterSpacing+=0.5;
+        if(variant==3)raw.lineHeightPoints=20;
+        if(variant==4)raw.resourceId+=7;
+        if(variant==5)raw.textRed=0.1;
+        changed.node=raw;
+        CHECK(frameWaitReady(token,request),"changed_width_font_typography_identity_color_prepares");
+        CHECK(![textures(changed) isEqualToArray:textures(ctx.composableNodes[0])],
+            "changed_raster_dependency_does_not_retain_old_pixels");
+        (void)cjgui_internal_renderer_cancel_composable_preparation(token,request);
+    }
     CjguiReleaseSession(token);
     fprintf(stderr,"scroll_raster summary failures=%d\n",failures);
     return failures ? 1 : 0;

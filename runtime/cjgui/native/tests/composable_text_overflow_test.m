@@ -1,4 +1,6 @@
+#define CJGUI_INTERNAL_TESTING 1
 #import "../cjgui_internal_renderer.m"
+#import "../cjgui_async_multiline_measure.h"
 #include <stdio.h>
 static int failures;
 #define CHECK(c,n) do { BOOL ok=(c); fprintf(stderr,"text_overflow case=%s result=%s\n",n,ok?"PASS":"FAIL"); if(!ok) failures++; } while(0)
@@ -9,7 +11,122 @@ static CjguiPreparedTextNodeLayout *layoutRuns(NSString *value,uint32_t lines,ui
     node.node=raw;return CjguiPrepareTextNodeLayout(node,value,1.0,runs,nil);
 }
 static CjguiPreparedTextNodeLayout *layout(NSString *value,uint32_t lines,uint32_t overflow) { return layoutRuns(value,lines,overflow,nil); }
-int main(void) { @autoreleasepool {
+static CjguiPreparedTextNodeLayout *typographyLayout(NSString *value, double spacing, double height, NSData *runs) {
+    CJGuiInternalComposableSceneNode *node=[CJGuiInternalComposableSceneNode new];
+    node.node=(CjguiInternalRendererComposableNode){.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT,
+        .width=220,.height=200,.fontSize=16,.fontFamily=1,.textAlpha=1,
+        .letterSpacing=spacing,.lineHeightPoints=height};
+    CjguiPreparedTextNodeLayout *p=CjguiPrepareTextNodeLayout(node,value,1.0,runs,nil);
+    [p.layoutManager ensureLayoutForTextContainer:p.container];
+    return p;
+}
+static void typographyChecks(void) {
+    CjguiPreparedTextNodeLayout *plain=typographyLayout(@"AA",0,0,nil);
+    CjguiPreparedTextNodeLayout *spaced=typographyLayout(@"AA",4,0,nil);
+    CGFloat advance=[spaced.layoutManager locationForGlyphAtIndex:1].x-
+        [plain.layoutManager locationForGlyphAtIndex:1].x;
+    fprintf(stderr,"typography advance_delta=%.3f\n",advance);
+    CHECK(fabs(advance-4.0)<0.05,"letter_spacing_changes_glyph_advance_in_points");
+    CjguiPreparedTextNodeLayout *tall=typographyLayout(@"AA\nAA",1.5,32,nil);
+    __block NSUInteger lines=0; __block CGFloat first=0, delta=0;
+    [tall.layoutManager enumerateLineFragmentsForGlyphRange:[tall.layoutManager glyphRangeForTextContainer:tall.container]
+        usingBlock:^(NSRect rect,NSRect used,NSTextContainer *container,NSRange glyphs,BOOL *stop){
+            if(lines==0)first=rect.origin.y;else if(lines==1)delta=rect.origin.y-first;lines++;
+        }];
+    fprintf(stderr,"typography line_delta=%.3f line_count=%lu\n",delta,(unsigned long)lines);
+    CHECK(lines==2 && fabs(delta-32.0)<0.05,"absolute_line_height_changes_line_layout");
+    CJGuiInternalComposableSceneNode *button=[CJGuiInternalComposableSceneNode new];
+    button.node=(CjguiInternalRendererComposableNode){.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+        .width=220,.height=120,.fontSize=16,.fontFamily=1,.textAlpha=1,
+        .letterSpacing=4,.lineHeightPoints=32,.textMaxLines=2,.textOverflow=1};
+    CjguiPreparedTextNodeLayout *buttonLayout=CjguiPrepareTextNodeLayout(button,@"AA\nAA\nAA",1,nil,nil);
+    [buttonLayout.layoutManager ensureLayoutForTextContainer:buttonLayout.container];
+    NSParagraphStyle *buttonParagraph=[buttonLayout.storage attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:NULL];
+    CHECK(buttonParagraph.minimumLineHeight==32 && buttonLayout.container.maximumNumberOfLines==2 &&
+        fabs([buttonLayout.layoutManager locationForGlyphAtIndex:1].x-
+            [plain.layoutManager locationForGlyphAtIndex:1].x-4)<0.05 &&
+        [buttonLayout.storage.string isEqualToString:@"AA\nAA\nAA"],"button_label_combines_typography_and_overflow");
+    CjguiInternalTextStyleRun run={.start=0,.end=2,.fontSize=22,.fontWeight=700,.alpha=1};
+    CjguiPreparedTextNodeLayout *mixed=typographyLayout(@"AA\n中文 é 👩🏽‍💻",1.5,32,
+        [NSData dataWithBytes:&run length:sizeof(run)]);
+    NSParagraphStyle *paragraph=[mixed.storage attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:NULL];
+    CHECK(paragraph.minimumLineHeight==32 && paragraph.maximumLineHeight==32,
+        "style_runs_preserve_node_absolute_line_height");
+    CHECK([mixed.storage.string isEqualToString:@"AA\n中文 é 👩🏽‍💻"],"typography_preserves_unicode_and_newlines");
+    CJGuiInternalComposableSceneNode *node=[CJGuiInternalComposableSceneNode new];
+    node.node=(CjguiInternalRendererComposableNode){.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT,
+        .width=220,.height=200,.fontSize=16,.fontFamily=1};
+    NSString *base=CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect);
+    CjguiInternalRendererComposableNode raw=node.node;raw.letterSpacing=4;node.node=raw;
+    CHECK(![base isEqualToString:CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect)],"spacing_invalidates_texture_key");
+    raw.letterSpacing=0;raw.lineHeightPoints=32;node.node=raw;
+    CHECK(![base isEqualToString:CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect)],"line_height_invalidates_texture_key");
+    raw.lineHeightPoints=0;node.node=raw;
+    CHECK([base isEqualToString:CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect)],"default_restores_texture_identity");
+    raw.fontSize=16.0001;node.node=raw;
+    CHECK(![base isEqualToString:CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect)],"fractional_font_change_invalidates_texture");
+    raw.fontSize=16;raw.width=219;node.node=raw;
+    CHECK(![base isEqualToString:CjguiComposableTextTextureKey(node,1,1,@"AA",NSZeroRect)],"width_invalidates_texture");
+
+    raw.width=220;raw.x=0;raw.y=0;raw.clipWidth=220;raw.clipHeight=200;raw.letterSpacing=2;
+    raw.lineHeightPoints=32;node.node=raw;node.value=@"中文 é 👩🏽‍💻\n末行";
+    (void)CjguiComposableTextTextureRectForNodeWithText(node,node.value);
+    uint64_t measured=node.testTextExtentMeasurementCount;
+    for(int i=0;i<12;i++)(void)CjguiComposableTextTextureRectForNodeWithText(node,node.value);
+    CHECK(measured==1 && node.testTextExtentMeasurementCount==measured,"stable_text_reuses_extent_measurement");
+    raw.letterSpacing=0;raw.lineHeightPoints=0;node.node=raw;
+    (void)CjguiComposableTextTextureRectForNodeWithText(node,node.value);
+    CHECK(node.testTextExtentMeasurementCount==measured+1,"default_reset_invalidates_extent_once");
+
+    [NSApplication sharedApplication];
+    CJGuiInternalComposableSceneOverlay *overlay=[[CJGuiInternalComposableSceneOverlay alloc] initWithFrame:NSMakeRect(0,0,220,200)];
+    overlay.inputProxy=[[NSTextView alloc] initWithFrame:NSMakeRect(0,0,206,188)];
+    overlay.inputProxy.string=node.value;overlay.inputProxy.selectedRange=NSMakeRange(3,2);
+    raw.letterSpacing=2;raw.lineHeightPoints=32;node.node=raw;
+    NSDictionary *styled=CjguiComposableTypographyAttributesForNode(@{NSFontAttributeName:CjguiComposableFont(node)},node);
+    [overlay applyActiveComposableTextAttributesForNode:node baseAttributes:styled];
+    CHECK([[overlay.inputProxy.textStorage attribute:NSKernAttributeName atIndex:0 effectiveRange:NULL] doubleValue]==2,
+        "active_text_uses_declared_tracking");
+    NSString *signature=[overlay activeTextLayoutSignatureForNode:node contentWidth:206];
+    raw.letterSpacing=0;raw.lineHeightPoints=0;node.node=raw;
+    NSDictionary *natural=CjguiComposableTypographyAttributesForNode(@{NSFontAttributeName:CjguiComposableFont(node)},node);
+    [overlay applyActiveComposableTextAttributesForNode:node baseAttributes:natural];
+    NSParagraphStyle *restored=[overlay.inputProxy.textStorage attribute:NSParagraphStyleAttributeName atIndex:0 effectiveRange:NULL];
+    CHECK([overlay.inputProxy.textStorage attribute:NSKernAttributeName atIndex:0 effectiveRange:NULL]==nil &&
+        restored.minimumLineHeight==0 && restored.maximumLineHeight==0,"active_default_clears_previous_typography");
+    CHECK([overlay.inputProxy.string isEqualToString:node.value] && NSEqualRanges(overlay.inputProxy.selectedRange,NSMakeRange(3,2)),
+        "style_change_retains_body_and_selection");
+    CHECK(![signature isEqualToString:[overlay activeTextLayoutSignatureForNode:node contentWidth:206]],
+        "active_layout_signature_tracks_typography");
+    for(int i=0;i<3;i++) {
+        double spacing[]={1.5,-0.75,0};double heights[]={32,12,0};
+        NSString *body=@"中文 é 👩🏽‍💻\n家人👨‍👩‍👧‍👦\n";NSData *bytes=[body dataUsingEncoding:NSUTF8StringEncoding];
+        NSFont *font=CjguiComposableFontSnapshotForStyle(16,0,0);
+        NSMutableDictionary *attributes=[@{NSFontAttributeName:font} mutableCopy];
+        NSMutableParagraphStyle *p=[NSMutableParagraphStyle new];p.lineBreakMode=NSLineBreakByWordWrapping;
+        p.lineBreakStrategy=NSLineBreakStrategyPushOut;attributes[NSParagraphStyleAttributeName]=p;
+        CjguiApplyComposableTypography(attributes,spacing[i],heights[i]);
+        CjguiComposableTextMetrics expected=CjguiMeasureComposableTypography(body,attributes,font,96,heights[i]);
+        CjguiAsyncMultilineMeasureHandle handle=0;
+        CHECK(CjguiAsyncTextMetricsBeginTypography(bytes.bytes,bytes.length,font,96,spacing[i],heights[i],&handle)==CJGUI_ASYNC_MEASURE_STARTED,
+            "styled_async_metrics_admitted");
+        CjguiAsyncTextMetrics result={0};CjguiAsyncMultilineMeasureFailure failure=0;
+        CjguiAsyncMultilineMeasureStatus status=CJGUI_ASYNC_MEASURE_PENDING;
+        double deadline=CFAbsoluteTimeGetCurrent()+5;
+        while(status==CJGUI_ASYNC_MEASURE_PENDING && CFAbsoluteTimeGetCurrent()<deadline) {
+            status=CjguiAsyncTextMetricsPoll(handle,&result,&failure);
+            if(status==CJGUI_ASYNC_MEASURE_PENDING)usleep(1000);
+        }
+        // Natural defaults retain the previous scalar-measurement contract.
+        BOOL equal=i==2 || (result.width==(uint32_t)ceil(expected.width) && result.height==(uint32_t)ceil(expected.height) &&
+            result.lineHeight==(uint32_t)ceil(expected.lineHeight) && result.baseline==(uint32_t)ceil(expected.baseline));
+        CHECK(status==CJGUI_ASYNC_MEASURE_READY && equal,"styled_async_matches_synchronous_layout");
+        CjguiAsyncMultilineMeasureRelease(handle,CJGUI_ASYNC_MEASURE_RELEASE_CONSUMED);
+    }
+}
+int main(int argc,const char **argv) { @autoreleasepool {
+    typographyChecks();
+    if(argc==2 && strcmp(argv[1],"--typography-only")==0)return failures?1:0;
     NSString *body=@"中文文件名👩🏽‍💻与家人👨‍👩‍👧‍👦路径/很长的说明文字abcdef0123456789，后续内容不能改写。";
     CjguiPreparedTextNodeLayout *legacy=layout(body,0,0),*one=layout(body,1,1),*two=layout(body,2,1),*clip=layout(body,2,0);
     CHECK([one.storage.string isEqualToString:body] && [two.storage.string isEqualToString:body],"full_utf16_and_business_text_retained");
@@ -85,5 +202,35 @@ int main(void) { @autoreleasepool {
     CHECK(mixDiffs==0,"mixed_run_font_weight_color_tail_matches_independent_literal_pixels");
     CHECK([[mixed.storage attribute:CjguiDeclaredPaintFontAttribute atIndex:2 effectiveRange:NULL] isEqual:CjguiComposableFontForStyle(22,700,0)],"run_declared_font_survives_cjk_fallback");
     CHECK([mixed.storage.string isEqualToString:@"短标题\n下一段中文👩🏽‍💻"],"mixed_run_source_remains_complete");
+    CJGuiInternalComposableSceneNode *sealedNode=[CJGuiInternalComposableSceneNode new];
+    CjguiInternalRendererComposableNode sealedRaw={0};sealedRaw.nodeId=99;sealedRaw.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT;
+    sealedRaw.width=154;sealedRaw.height=200;sealedRaw.fontSize=16;sealedRaw.textAlpha=1;sealedRaw.textMaxLines=1;sealedRaw.textOverflow=1;
+    sealedNode.node=sealedRaw;sealedNode.value=newline.storage.string;
+    NSArray *sealedTiles=@[[NSValue valueWithRect:NSMakeRect(0,0,154,200)]];
+    CjguiTextRasterSourceCredential *sealedCredential=CjguiCreateTextRasterSourceCredential(sealedNode,newline.storage,newline.layoutManager,newline.container,nil,newline.storage.string,1.0,NSMakeRect(0,0,154,200),sealedTiles,NSZeroPoint,0,0,0);
+    CjguiPreparedTextNodeLayout *sealed=sealedCredential?CjguiCreateSealedRasterLayout(sealedCredential):nil;
+    CHECK(sealedCredential!=nil && sealed!=nil,"production_immutable_credential_seals_readonly_source");
+    if(sealed){NSBitmapImageRep *sealedPixels=paint(sealed);CHECK(memcmp(sealedPixels.bitmapData,oracle.bitmapData,sealedPixels.bytesPerRow*sealedPixels.pixelsHigh)==0,"production_sealed_painter_keeps_hard_break_ellipsis_pixels");}
+    // Cover the normal cold-label admission, not a preconfigured test-only
+    // layout: this path owns the immutable input for >=1024 UTF-16 units.
+    NSString *coldBody=[@"短标题\n" stringByAppendingString:[@"中文👩🏽‍💻" stringByPaddingToLength:1600 withString:@"中文👩🏽‍💻" startingAtIndex:0]];
+    sealedRaw.clipWidth=154;sealedRaw.clipHeight=200;sealedNode.node=sealedRaw;sealedNode.value=coldBody;
+    CJGuiInternalSession *coldContext=[CJGuiInternalSession new];
+    CjguiComposablePreparation *coldPreparation=[CjguiComposablePreparation new];coldPreparation.scale=1;
+    uint64_t coldReservation=0;
+    CjguiTextPreparationWorkerInput *coldInput=CjguiCreateTextPreparationWorkerInput(coldContext,coldPreparation,sealedNode,coldBody,@"",&coldReservation);
+    CHECK(coldInput!=nil && coldReservation>0 && [coldInput.body isEqualToString:coldBody],"cold_readonly_admission_retains_complete_business_text");
+    CjguiPreparedTextNodeLayout *coldSource=coldInput?CjguiTextPreparationLayoutFromAttributedBody(coldInput,coldInput.sourceAttributedBody):nil;
+    CHECK(coldSource.container.maximumNumberOfLines==1 && coldSource.container.lineBreakMode==NSLineBreakByTruncatingTail,"cold_readonly_source_keeps_overflow_declaration");
+    CjguiTextRasterSourceCredential *coldCredential=coldSource?CjguiCreateTextRasterSourceCredential(sealedNode,coldSource.storage,coldSource.layoutManager,coldSource.container,nil,coldBody,1,NSMakeRect(0,0,154,200),sealedTiles,NSZeroPoint,0,0,0):nil;
+    CjguiPreparedTextNodeLayout *coldPainter=coldCredential?CjguiCreateSealedRasterLayout(coldCredential):nil;
+    CHECK(coldPainter!=nil && [coldPainter.storage.string isEqualToString:coldBody],"cold_readonly_painter_keeps_complete_source");
+    if(coldPainter){NSBitmapImageRep *coldPixels=paint(coldPainter);CHECK(memcmp(coldPixels.bitmapData,oracle.bitmapData,coldPixels.bytesPerRow*coldPixels.pixelsHigh)==0,"cold_readonly_sealed_pixels_equal_literal_ellipsis");}
+    sealedRaw.textMaxLines=2;sealedRaw.textOverflow=0;sealedNode.node=sealedRaw;
+    CjguiTextPreparationWorkerInput *coldClip=CjguiCreateTextPreparationWorkerInput(coldContext,coldPreparation,sealedNode,coldBody,@"",&coldReservation);
+    CHECK(coldClip.containerMaximumNumberOfLines==2 && coldClip.containerLineBreakMode==NSLineBreakByClipping,"cold_readonly_clip_line_limit");
+    sealedRaw.textMaxLines=0;sealedNode.node=sealedRaw;
+    CjguiTextPreparationWorkerInput *coldDefault=CjguiCreateTextPreparationWorkerInput(coldContext,coldPreparation,sealedNode,coldBody,@"",&coldReservation);
+    CHECK(coldDefault.containerMaximumNumberOfLines==0 && coldDefault.containerLineBreakMode==NSLineBreakByWordWrapping,"cold_readonly_default_remains_unlimited");
     fprintf(stderr,"text_overflow failures=%d\n",failures);return failures?1:0;
 }}

@@ -153,6 +153,28 @@ func saveLoadAndExternalFileConflictPreserveTheLastKnownGoodRuleSet(): Unit {
 }
 
 @Test
+func relativePathOpenEditApplyAndSaveReadBackTheSameFile(): Unit {
+    let relativeName = "cjgui-relative-ruleset-test.cjgui-rules"
+    let _ = removeIfExists(Path(relativeName))
+    File.writeTo(Path(relativeName),
+        "CJGUI_RULE_SET 1\nNEXT_ID 2\nSELECTED 1\nRECORD 1 1 7 414243 6361636865\nEND\n".toArray())
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.openFromHuman(relativeName).applied, true)
+    // The saved target is the same file, addressed absolutely from now on.
+    let storedPath = domain.snapshot().filePath
+    @Assert(Path(storedPath).isAbsolute(), true)
+    @Assert(domain.editSelectedLabelFromHuman("相对保存", 4, 4).applied, true)
+    @Assert(domain.applySelectedDraftFromHuman(domain.selectedDraftVersion()).applied, true)
+    @Assert(domain.saveFromHuman().applied, true)
+
+    let reopened = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(reopened.openFromHuman(storedPath).applied, true)
+    @Assert(reopened.snapshot().recordById(1).label, "相对保存")
+    let _ = removeIfExists(Path(relativeName))
+    let _ = removeIfExists(Path("${storedPath}.cjgui-save-lock"), recursive: true)
+}
+
+@Test
 func twoIndependentRuleSetInstancesCoordinateSaveLeaseThenDetectWinnerPayload(): Unit {
     let directory = Directory.createTemp("/tmp")
     let ruleSetPath = directory.join("two-instance.cjgui-rules").toString()
@@ -494,4 +516,41 @@ func declaredRetentionBoundaryDrivesBindingAndOwnerValidation(): Unit {
     @Assert(domain.applyDraftForCollectionItemFromHuman(recordId,
         domain.draftVersionForCollectionItem(recordId), domain.baseAppliedVersionForCollectionItem(recordId)).applied, true)
     @Assert(domain.snapshot().recordById(recordId).retentionCount, 500)
+}
+
+@Test
+func ownerSnapshotReadsAnotherRecordWithoutChangingTheSelection(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("A", true, 7, "cache", "snap-a").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("B", true, 9, "cache", "snap-b").applied, true)
+    let bId = domain.selectedRecordId()
+    // Human edits B; A keeps its own (different) draft.
+    @Assert(domain.editTextFromHuman(CjguiRuleSetEditingDomain.formRetentionResourceId, "11", 2, 2).applied, true)
+    @Assert(domain.editTextFromHuman(CjguiRuleSetEditingDomain.formLabelResourceId, "B-draft", 1, 1).applied, true)
+    let bDraft = domain.formSnapshotForRecord(bId).getOrThrow()
+    @Assert(bDraft.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "B-draft")
+    @Assert(bDraft.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "11")
+    @Assert(bDraft.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).isFocused, true)
+    // Reading A is a snapshot of A's own draft; it does not move the selection,
+    // the focus, or the business version.
+    let versionBefore = domain.contextSnapshot().version
+    let selectedBefore = domain.selectedRecordId()
+    let a = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(a.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "A")
+    @Assert(a.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "7")
+    @Assert(a.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).isFocused, false)
+    @Assert(domain.selectedRecordId(), selectedBefore)
+    @Assert(domain.contextSnapshot().version, versionBefore)
+    // A write to A through the normal owner route also keeps B's draft/focus.
+    @Assert(domain.editTextForCollectionItemFromHuman(aId, CjguiRuleSetEditingDomain.formLabelResourceId,
+        "A-draft", 1, 1).applied, true)
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "A-draft")
+    let bAfter = domain.formSnapshotForRecord(bId).getOrThrow()
+    @Assert(bAfter.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "B-draft")
+    @Assert(bAfter.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).isFocused, true)
+    // Unknown/deleted owners have no snapshot (the scoped read becomes a named
+    // refusal instead of borrowing another record).
+    @Assert(domain.formSnapshotForRecord(999999).isNone(), true)
 }

@@ -25,6 +25,23 @@ public func ruleDetailTabWorkspace(state: CjguiComposableUiTabsState, basicPage:
         CjguiComposableUiStyle(growX: 1), titleHeight: 26)
 }
 
+/// The same workspace with the CONVERGED public detail as its own page: the
+/// handwritten page keeps the app's layout, the public page is one
+/// `cjguiSharedEditableDetailFields` call over the same binding, and both edit
+/// the same record. The two-page composition above stays available for the
+/// shipped contract test.
+public func ruleDetailTabWorkspaceWithPublicDetail(state: CjguiComposableUiTabsState,
+    basicPage: CjguiComposableUiNode, publicDetailPage: CjguiComposableUiNode,
+    retentionPage: CjguiComposableUiNode): CjguiComposableUiNode {
+    let scope = CjguiComposableUiIdentityScope("rule-detail-pages")
+    let pages = ArrayList<CjguiComposableUiTabPage>()
+    pages.add(CjguiComposableUiTabPage("basic", "基本", basicPage))
+    pages.add(CjguiComposableUiTabPage("publicDetail", "公共详情", publicDetailPage))
+    pages.add(CjguiComposableUiTabPage("retention", "保留策略", retentionPage))
+    return cjguiComposableTabs(scope, "rule-detail-tabs", pages, state,
+        CjguiComposableUiStyle(growX: 1), titleHeight: 26)
+}
+
 private class CjguiRuleSetStartupFiles {
     let openPath: String
     let saveAsPath: String
@@ -44,9 +61,20 @@ private class CjguiRuleSetStartupFiles {
     /// "derive the presets from the declared field bounds"; a value is used only
     /// by the dedicated out-of-range negative control.
     let retentionPreset: String
+    /// Optional demonstration load for the table cluster. Rows are created
+    /// through the same public owner entry as a human "新增", never injected
+    /// into a second store; zero leaves the example's normal startup empty.
+    let seedTableRows: Int64
+    let performanceScene: Bool
+    let observeCosts: Bool
+    /// Presentation preferences live beside, never inside, the rule document.
+    /// An empty explicit value derives `<document>.cjgui-views`; no document
+    /// means no preference file until `--view-preferences` is supplied.
+    let viewPreferencesPath: String
     init(openPath: String, saveAsPath: String, verifiesHostCloseDecisions: Bool, measurementDurationMs: Int64,
         measurementWarmupMs: Int64, retentionMinimum: Int64, retentionMaximum: Int64,
-        retentionPreset!: String = "") {
+        retentionPreset!: String = "", seedTableRows!: Int64 = 0, viewPreferencesPath!: String = "",
+        performanceScene!: Bool = false, observeCosts!: Bool = false) {
         this.openPath = openPath
         this.saveAsPath = saveAsPath
         this.verifiesHostCloseDecisions = verifiesHostCloseDecisions
@@ -55,6 +83,10 @@ private class CjguiRuleSetStartupFiles {
         this.retentionMinimum = retentionMinimum
         this.retentionMaximum = retentionMaximum
         this.retentionPreset = retentionPreset
+        this.seedTableRows = seedTableRows
+        this.performanceScene = performanceScene
+        this.observeCosts = observeCosts
+        this.viewPreferencesPath = viewPreferencesPath
     }
 }
 
@@ -66,16 +98,30 @@ private class CjguiRuleSetStartupFiles {
 /// entry without moving the viewport or selection.
 class CjguiRuleSetVirtualListSource <: CjguiComposableUiVariableHeightListSource {
     private let domain: CjguiRuleSetEditingDomain
-    private let theme: CjguiComposableUiTheme
-    private let bodyStyle: CjguiComposableUiStyle
+    // Presentation is refreshed by the controller once per accepted
+    // declaration; identity and range remain domain-owned. Keeping ONE source
+    // instance lets the public text-filter wrapper cache its visible order
+    // across unrelated refreshes.
+    private var theme: CjguiComposableUiTheme
+    private var bodyStyle: CjguiComposableUiStyle
     private let cardScope: CjguiComposableUiIdentityScope
+    // The controller's ONE collection selection; the list only asks whether a
+    // stable key is selected so multiple rows paint as selected. The virtual
+    // list's own single selected key remains the active detail record.
+    private let collectionSelection: ?CjguiComposableUiCollectionSelection
 
     init(domain: CjguiRuleSetEditingDomain, theme: CjguiComposableUiTheme, bodyStyle: CjguiComposableUiStyle,
-        cardScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("rule-record-card")) {
+        cardScope!: CjguiComposableUiIdentityScope = CjguiComposableUiIdentityScope("rule-record-card"),
+        collectionSelection!: ?CjguiComposableUiCollectionSelection = None) {
         this.domain = domain
         this.theme = theme
         this.bodyStyle = bodyStyle
         this.cardScope = cardScope
+        this.collectionSelection = collectionSelection
+    }
+    public func updatePresentation(theme: CjguiComposableUiTheme, bodyStyle: CjguiComposableUiStyle): Unit {
+        this.theme = theme
+        this.bodyStyle = bodyStyle
     }
     public func itemCount(): Int64 {
         return domain.collectionRangeSnapshot().totalCount
@@ -122,12 +168,21 @@ class CjguiRuleSetVirtualListSource <: CjguiComposableUiVariableHeightListSource
         }
     }
     public func buildRow(item: CjguiComposableUiVariableHeightListItem, isSelected: Bool, isFocused: Bool): CjguiComposableUiNode {
-        let rowTextColor = if (isSelected || isFocused) {
+        // With a shared collection selection attached, the multi-selection is
+        // the only source of the selected fill. The single-key virtual-list
+        // highlight stays for consumers that have no collection selection; it
+        // must not paint a row the person just Command-deselected.
+        let multiSelected = if (let Some(selection) <- collectionSelection) {
+            selection.isSelected(item.key)
+        } else {
+            isSelected || isFocused
+        }
+        let rowTextColor = if (multiSelected) {
             theme.primaryAction.textColor
         } else {
             bodyStyle.textColor
         }
-        let rowBackground = if (isSelected || isFocused) {
+        let rowBackground = if (multiSelected) {
             theme.primaryAction.background
         } else {
             theme.card.background
@@ -168,7 +223,7 @@ class CjguiRuleSetVirtualListSource <: CjguiComposableUiVariableHeightListSource
                 CjguiComposableUiStyle(fixedHeight: 26, textColor: rowTextColor, fontFamily: bodyStyle.fontFamily),
                 operationActionName: "SELECT_RECORD", operationResourceId: item.resourceId,
                 interactionStyle: theme.primaryActionInteraction,
-                ownerInteractionState: if (isSelected) { CjguiComposableUiInteractionState.SELECTED } else {
+                ownerInteractionState: if (multiSelected) { CjguiComposableUiInteractionState.SELECTED } else {
                     CjguiComposableUiInteractionState.NONE
                 }))
         let itemScope = cardScope.child("rule_${item.resourceId}")
@@ -196,7 +251,7 @@ class CjguiRuleSetVirtualListSource <: CjguiComposableUiVariableHeightListSource
 /// A normal consumer of the experimental composable window. The component
 /// tree deliberately lives here, beside the rule-set choices and actions;
 /// native code receives no rule field names or fixed form layout.
-private class CjguiRuleSetComposableController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider & CjguiComposableUiPlatformThemeConsumer {
+class CjguiRuleSetComposableController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider & CjguiComposableUiPlatformThemeConsumer & CjguiRuleSetViewStateHost {
     private let domain: CjguiRuleSetEditingDomain
     private let listState: CjguiComposableUiVirtualListState
     private let componentRegistry: CjguiComposableUiComponentRegistry
@@ -228,8 +283,56 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     // fields, "保留策略" keeps the file/retention work. Which page is ACTIVE is
     // window view state, so an ordinary refresh never moves a person back.
     private let detailTabs: CjguiComposableUiTabsState = CjguiComposableUiTabsState("basic")
+    // ONE stable-key virtual source, refreshed in place, plus the PUBLIC
+    // text-filter projection over it. Filtering therefore never reparses a
+    // displayed row number and never builds a row for every record.
+    private let ruleListSource: CjguiRuleSetVirtualListSource
+    private let filteredListSource: CjguiComposableUiFilteredListSource
+    // The table is a THIRD projection over the same filtered stable-key rows:
+    // it owns display order and column projection, never business records.
+    private let tableSource: CjguiComposableUiTableSource
+    // Declared columns plus their ONE public layout state. Both the menu and
+    // the external action host mutate this object; the table only projects it.
+    private let tableColumns: Array<CjguiComposableUiTableColumn>
+    private let tableLayout: CjguiComposableUiTableColumnLayout
+    // Card mode is the third projection over the same filtered/sorted rows:
+    // the public grid source groups them into responsive rows and materializes
+    // only visible rows through a normal variable-height list.
+    private let cardGridRenderer: CjguiRuleSetCardGridRenderer
+    private let cardGridSource: CjguiComposableUiCardGridSource
+    private let cardListState: CjguiComposableUiVirtualListState
+    // ONE public collection selection shared by the list and table. It stores
+    // only stable keys; the active detail record stays the owner's selected
+    // record, and drafts are never touched by selection or filtering.
+    private let collectionSelection: CjguiComposableUiCollectionSelection
+    private let collectionFilteredOrder: CjguiComposableUiFlatCollectionOrder
+    private let collectionEligibilityOrder: CjguiComposableUiFlatCollectionOrder
+    private let collectionTableOrder: CjguiComposableUiFlatCollectionOrder
+    // ONE typed collection view over the same filtered/table/layout objects:
+    // mode, query, sort target and stable-key column layout, plus the one
+    // presentation revision both a human control and an external client use.
+    private let collectionView: CjguiComposableUiCollectionViewState
+    // Named presets and their separate preference file are application-owned.
+    private let viewPreferences: CjguiRuleSetViewPreferences
+    private var viewDraftName: String
+    private var collectionPrunedVersion: Int64
+    private var collectionBatchSerial: Int64
+    // The detail pane offers two REAL field/layout combinations over the SAME
+    // owner form: "standard" stacks every declared field, "compact" binds the
+    // name+enabled pair side by side and presents retention through the
+    // declared composite. It is window view state and never submits a draft.
+    private var detailLayout: String
+    private let recordSearchPanel: CjguiSearchableSelectionPanel
+    private var panelWindow: ?CjguiComposableUiWindow = None
+    // The edit dialog's return target is the public node reference of the
+    // control that owned input when the modal opened. The window's existing
+    // modal-return machinery consumes it as the layer anchor; this is not a
+    // second focus state machine.
+    private var editDialogReturnTarget: ?CjguiComposableUiNodeReference = None
+    private var editDialogReturnRecordId: Int64 = -1
 
-    init(domain: CjguiRuleSetEditingDomain, presetOverride!: String = "") {
+    init(domain: CjguiRuleSetEditingDomain, presetOverride!: String = "",
+        viewPreferencesPath!: String = "") {
         this.domain = domain
         this.treePanel = CjguiRuleSetTreePanel(domain)
         this.generatedRegion = CjguiRuleSetGeneratedRegion(domain, presetOverride: presetOverride)
@@ -253,6 +356,113 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         this.transferRejectedCount = 0
         this.transferPeakPayloadBytes = 0
         this.transferLastApplyNanoseconds = 0
+        this.viewDraftName = ""
+        this.detailLayout = "standard"
+        this.recordSearchPanel = CjguiSearchableSelectionPanel("rule-record-search")
+        this.editDialogReturnTarget = None
+        this.editDialogReturnRecordId = -1
+        let selection = CjguiComposableUiCollectionSelection()
+        this.collectionSelection = selection
+        this.collectionPrunedVersion = -1
+        this.collectionBatchSerial = 0
+        let baseListSource = CjguiRuleSetVirtualListSource(domain, CjguiComposableUiTheme.paperLight(),
+            CjguiComposableUiStyle(), cardScope: recordCardScope, collectionSelection: Some(selection))
+        this.ruleListSource = baseListSource
+        this.collectionEligibilityOrder = CjguiComposableUiFlatCollectionOrder(baseListSource,
+            { item => item.resourceId >= 0 })
+        this.filteredListSource = CjguiComposableUiFilteredListSource(baseListSource,
+            { item => item.title })
+        this.collectionFilteredOrder = CjguiComposableUiFlatCollectionOrder(filteredListSource,
+            { item => item.resourceId >= 0 })
+        let tableColumns = CjguiRuleSetTableColumns.create(domain)
+        let tableLayout = CjguiComposableUiTableColumnLayout(tableColumns)
+        this.tableColumns = tableColumns
+        this.tableLayout = tableLayout
+        let table = CjguiComposableUiTableSource(filteredListSource, "rule-set-table",
+            tableColumns,
+            CjguiRuleSetTableColumns.style(CjguiComposableUiTheme.paperLight(),
+                CjguiComposableUiStyle()),
+            rowAction: { item =>
+                if (item.resourceId >= 0) {
+                    CjguiComposableUiTableRowAction("SELECT_RECORD", item.resourceId)
+                } else {
+                    CjguiComposableUiTableRowAction.none()
+                }
+            }, rowSelected: { key => selection.isSelected(key) }, layout: tableLayout)
+        this.tableSource = table
+        this.collectionTableOrder = CjguiComposableUiFlatCollectionOrder(table,
+            { item => item.resourceId >= 0 })
+        let cardRenderer = CjguiRuleSetCardGridRenderer(domain,
+            CjguiComposableUiTheme.paperLight(), CjguiComposableUiStyle())
+        this.cardGridRenderer = cardRenderer
+        this.cardListState = CjguiComposableUiVirtualListState()
+        this.cardGridSource = CjguiComposableUiCardGridSource(table, "rule-set-cards",
+            CjguiComposableUiCardGridSpec(190, 118, columnGap: 10, rowGap: 10),
+            { item, context => cardRenderer.build(item, context) },
+            actionOf: { item =>
+                if (item.resourceId >= 0) {
+                    CjguiComposableUiTableRowAction("SELECT_RECORD", item.resourceId)
+                } else {
+                    CjguiComposableUiTableRowAction.none()
+                }
+            },
+            selectedOf: { key => selection.isSelected(key) },
+            focusedKeyOf: { => selection.focus() })
+        let view = CjguiComposableUiCollectionViewState(table, ["list", "table", "grid"], "list")
+        this.collectionView = view
+        let preferences = CjguiRuleSetViewPreferences()
+        this.viewPreferences = preferences
+        if (viewPreferencesPath.size > 0) {
+            preferences.setFilePath(viewPreferencesPath)
+            let loaded = preferences.load(viewPreferencesPath)
+            if (!loaded.applied) {
+                this.inputNotice = "视图偏好未载入：${loaded.reason}"
+            } else if (preferences.activeName().size > 0) {
+                if (let Some(snapshot) <- preferences.snapshot(preferences.activeName())) {
+                    let restored = view.applySnapshot(snapshot)
+                    if (!restored.applied) {
+                        this.inputNotice = "视图偏好未恢复：${restored.reason}"
+                    }
+                }
+                this.viewDraftName = preferences.activeName()
+            }
+        }
+        domain.attachViewStateHost(this)
+    }
+
+    /// The searchable-record panel restores focus through the accepted layer
+    /// machinery, so it needs the ordinary window it is presented in.
+    public func bindWindow(window: CjguiComposableUiWindow): Unit {
+        panelWindow = Some(window)
+    }
+
+    /// Called after each normal window turn. A confirmed record action leaves
+    /// the panel only after its modal layer closed AND focus restoration
+    /// finished; cancellation consumes no business action and returns focus to
+    /// the control that opened the panel.
+    public func finishPanelAction(window: CjguiComposableUiWindow): Unit {
+        if (let Some(item) <- recordSearchPanel.takeConfirmed(window)) {
+            if (let Some(recordId) <- Int64.tryParse(item.key)) {
+                let result = domain.selectCollectionItemFromHuman(recordId)
+                if (result.applied) {
+                    listState.setFocusedKey("rule_${recordId}")
+                    listState.setSelectedKey("rule_${recordId}")
+                    inputNotice = "已定位规则：${item.title}"
+                } else {
+                    inputNotice = "定位未应用：${result.reason}"
+                }
+            } else {
+                inputNotice = "定位未应用：记录标识无效"
+            }
+            localRevision += 1
+            window.requestRefresh()
+        }
+        let failure = recordSearchPanel.takeConfirmationFailure()
+        if (failure.size > 0) {
+            inputNotice = "焦点恢复失败，未执行查找操作：${failure}"
+            localRevision += 1
+            window.requestRefresh()
+        }
     }
 
     /// The detail pane's shared tab view state. Switching a page is a WINDOW view
@@ -276,7 +486,290 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         // Aggregate owner state still rebuilds the whole declaration. Pointer
         // capture below uses its narrower split owner revision instead.
         return domain.snapshot().version.saturatingAdd(localRevision).saturatingAdd(
-            generatedRegion.revision()).saturatingAdd(treePanel.viewRevision())
+            generatedRegion.revision()).saturatingAdd(treePanel.viewRevision()).saturatingAdd(
+            recordSearchPanel.revision()).saturatingAdd(collectionView.revision()).saturatingAdd(
+            tableLayout.revision()).saturatingAdd(cardGridSource.measurementGeneration())
+    }
+
+    // --- shared view-state host (human controls and external verbs) ----------
+
+    public func viewStateField(name: String): String {
+        if (name == "tableColumns") {
+            return tableLayout.encodeState()
+        }
+        if (name == "tableColumnsRevision") {
+            return tableLayout.revision().toString()
+        }
+        if (name == "collectionView") {
+            return collectionView.encodedSnapshot()
+        }
+        if (name == "collectionViews") {
+            return viewPreferences.catalog()
+        }
+        if (name == "collectionViewRevision") {
+            return collectionView.revision().toString()
+        }
+        if (name == "collectionViewsRevision") {
+            return viewPreferences.revision().toString()
+        }
+        if (name == "collectionViewDirty") {
+            return if (viewPreferences.isDirty()) { "true" } else { "false" }
+        }
+        return ""
+    }
+
+    /// Human controls and external verbs both reach this function through the
+    /// domain's executeFromHuman/executeFromExternal entry. Column actions use
+    /// the published layout revision; preset reads/writes use the collection
+    /// view revision; catalog saves use the preset-catalog revision. None of
+    /// these borrow the document version.
+    public func applyViewStateAction(
+        invocation: CjguiSharedOperationActionInvocation
+    ): CjguiSharedOperationActionResult {
+        let action = invocation.actionName
+        // Detail layout is a pure view choice; the generated action carries no
+        // business target/version and only changes this window's presentation.
+        if (action == "SET_DETAIL_LAYOUT_STANDARD" || action == "SET_DETAIL_LAYOUT_COMPACT") {
+            detailLayout = if (action == "SET_DETAIL_LAYOUT_COMPACT") { "compact" } else { "standard" }
+            let draft = domain.formSnapshot()
+            let layoutLabel = if (detailLayout == "compact") { "紧凑" } else { "标准" }
+            inputNotice = "已切换到${layoutLabel}字段布局；草稿 v${draft.draftVersion} 未提交"
+            localRevision += 1
+            return CjguiSharedOperationActionResult(true, false, 0, 0, "detail_layout_set")
+        }
+        let columnAction = action == "SET_TABLE_COLUMN_WIDTH" || action == "SET_TABLE_COLUMN_VISIBLE" ||
+            action == "MOVE_TABLE_COLUMN" || action == "RESET_TABLE_COLUMNS"
+        let saveViewAction = action == "SAVE_COLLECTION_VIEW"
+        let savePreferencesAction = action == "SAVE_COLLECTION_VIEW_PREFERENCES"
+        let selectOrResetAction = action == "SELECT_COLLECTION_VIEW" ||
+            action == "RESET_COLLECTION_VIEW"
+        let modeAction = action == "SET_COLLECTION_VIEW_MODE"
+        if (!columnAction && !saveViewAction && !savePreferencesAction && !selectOrResetAction &&
+            !modeAction) {
+            return CjguiSharedOperationActionResult(false, false, 0, 0, "unknown_view_state_action")
+        }
+        let before = if (columnAction) {
+            tableLayout.revision()
+        } else if (saveViewAction || savePreferencesAction) {
+            viewPreferences.revision()
+        } else {
+            collectionView.revision()
+        }
+        if (!CjguiRuleSetEditingDomain.isRuleSetActionTarget(invocation.targetResourceIds)) {
+            return CjguiSharedOperationActionResult(false, false, before, before, "invalid_target")
+        }
+        if (invocation.expectedVersion != before) {
+            return CjguiSharedOperationActionResult(false, true, before, before,
+                "view_state_version_conflict")
+        }
+        let key = viewStateString(invocation, "columnKey")
+        var accepted = false
+        var reason = "unknown_view_state_action"
+        if (action == "SET_TABLE_COLUMN_WIDTH") {
+            if (!tableColumnKeys().contains(key)) {
+                reason = "unknown_column"
+            } else if (let Some(width) <- viewStateInteger(invocation, "width")) {
+                let _ = tableLayout.setWidth(key, width)
+                accepted = true
+                reason = "column_width_set"
+            } else {
+                reason = "invalid_width"
+            }
+        } else if (action == "SET_TABLE_COLUMN_VISIBLE") {
+            if (!tableColumnKeys().contains(key)) {
+                reason = "unknown_column"
+            } else if (let Some(visible) <- viewStateBoolean(invocation, "visible")) {
+                if (tableLayout.setVisible(key, visible)) {
+                    accepted = true
+                    reason = "column_visibility_set"
+                } else {
+                    reason = if (tableLayout.isVisible(key) == visible) {
+                        "column_visibility_unchanged"
+                    } else {
+                        "last_visible_column"
+                    }
+                }
+            } else {
+                reason = "invalid_visibility"
+            }
+        } else if (action == "MOVE_TABLE_COLUMN") {
+            if (!tableColumnKeys().contains(key)) {
+                reason = "unknown_column"
+            } else if (let Some(offset) <- viewStateInteger(invocation, "offset")) {
+                let _ = tableLayout.move(key, offset)
+                accepted = true
+                reason = "column_moved"
+            } else {
+                reason = "invalid_offset"
+            }
+        } else if (action == "RESET_TABLE_COLUMNS") {
+            let _ = tableLayout.reset()
+            accepted = true
+            reason = "columns_reset"
+        } else if (saveViewAction) {
+            let name = viewStateString(invocation, "name")
+            if (name.size == 0) {
+                reason = "invalid_view_name"
+            } else {
+                let changed = viewPreferences.upsert(name, collectionView.snapshot())
+                let catalogReason = viewPreferences.lastReason()
+                if (changed || catalogReason == "view_unchanged") {
+                    accepted = true
+                    reason = catalogReason
+                    viewDraftName = name
+                } else {
+                    reason = catalogReason
+                }
+            }
+        } else if (action == "SELECT_COLLECTION_VIEW") {
+            let name = viewStateString(invocation, "name")
+            if (name.size == 0) {
+                reason = "invalid_view_name"
+            } else if (let Some(snapshot) <- viewPreferences.snapshot(name)) {
+                let restored = collectionView.applySnapshot(snapshot)
+                if (restored.applied) {
+                    let _ = viewPreferences.setActive(name)
+                    viewDraftName = name
+                    syncCollectionFocusWithView()
+                    accepted = true
+                    reason = "view_selected"
+                } else {
+                    reason = restored.reason
+                }
+            } else {
+                reason = "unknown_view"
+            }
+        } else if (action == "RESET_COLLECTION_VIEW") {
+            let reset = collectionView.resetToDefault()
+            if (reset.applied) {
+                let _ = viewPreferences.clearActive()
+                viewDraftName = ""
+                syncCollectionFocusWithView()
+                accepted = true
+                reason = "view_reset"
+            } else {
+                reason = reset.reason
+            }
+        } else if (modeAction) {
+            let mode = viewStateString(invocation, "mode")
+            if (mode.size == 0) {
+                reason = "invalid_view_mode"
+            } else if (!collectionView.validModeNames().contains(mode)) {
+                reason = "unknown_view_mode"
+            } else if (collectionView.setMode(mode)) {
+                syncCollectionFocusWithView()
+                accepted = true
+                reason = "view_mode_set"
+            } else {
+                accepted = true
+                reason = "view_mode_unchanged"
+            }
+        } else if (savePreferencesAction) {
+            let saved = viewPreferences.save(viewPreferences.filePath(),
+                protectedViewPreferencePaths())
+            accepted = saved.applied
+            reason = saved.reason
+        }
+        let after = if (columnAction) {
+            tableLayout.revision()
+        } else if (saveViewAction || savePreferencesAction) {
+            viewPreferences.revision()
+        } else {
+            collectionView.revision()
+        }
+        if (columnAction && after != before) {
+            collectionView.notePresentationChanged()
+        }
+        if (after != before || (accepted && !columnAction)) {
+            localRevision += 1
+        }
+        return CjguiSharedOperationActionResult(accepted, false, before, after, reason)
+    }
+
+    private func viewStateString(invocation: CjguiSharedOperationActionInvocation,
+        name: String): String {
+        for (argument in invocation.arguments) {
+            if (argument.name == name && argument.value.valueType == "STRING") {
+                return argument.value.stringValue
+            }
+        }
+        return ""
+    }
+
+    private func viewStateInteger(invocation: CjguiSharedOperationActionInvocation,
+        name: String): ?Int64 {
+        for (argument in invocation.arguments) {
+            if (argument.name == name && argument.value.valueType == "INTEGER") {
+                return Some(argument.value.integerValue)
+            }
+        }
+        return None
+    }
+
+    private func viewStateBoolean(invocation: CjguiSharedOperationActionInvocation,
+        name: String): ?Bool {
+        for (argument in invocation.arguments) {
+            if (argument.name == name && argument.value.valueType == "BOOLEAN") {
+                return Some(argument.value.booleanValue)
+            }
+        }
+        return None
+    }
+
+    private func tableColumnKeys(): ArrayList<String> {
+        return tableLayout.columnKeys()
+    }
+
+    /// Human preset controls use the SAME domain view-state entry external
+    /// clients use. Only the preset name is added as an ordinary argument.
+    private func executeViewStateFromHuman(actionName: String, expectedVersion: Int64,
+        name: String): CjguiSharedOperationActionResult {
+        let arguments = ArrayList<CjguiSharedOperationActionArgument>()
+        if (name.size > 0) {
+            arguments.add(CjguiSharedOperationActionArgument("name",
+                CjguiSharedOperationValue.string(name)))
+        }
+        return domain.executeFromHuman(CjguiSharedOperationActionInvocation(actionName,
+            expectedVersion, ArrayList<Int64>([CjguiRuleSetEditingDomain.ruleSetResourceId]),
+            arguments))
+    }
+
+    private func viewPresetIndex(semanticId: String): Int64 {
+        let parts = semanticId.split("view-preset-")
+        if (parts.size == 2) {
+            if (let Some(index) <- Int64.tryParse(parts[1])) {
+                return index
+            }
+        }
+        return -1
+    }
+
+    public func collectionViewState(): CjguiComposableUiCollectionViewState {
+        return collectionView
+    }
+
+    public func viewPreferencesStore(): CjguiRuleSetViewPreferences {
+        return viewPreferences
+    }
+
+    public func viewPreferencesPath(): String {
+        return viewPreferences.filePath()
+    }
+
+    /// Paths a preference write must never replace. The current document path
+    /// is read at write time (not startup), and the pending save-as input is
+    /// included when it names a different target. The preference store applies
+    /// ordinary relative/absolute normalization to both sides.
+    private func protectedViewPreferencePaths(): ArrayList<String> {
+        let paths = ArrayList<String>()
+        let documentPath = domain.snapshot().filePath
+        if (documentPath.size > 0) {
+            paths.add(documentPath)
+        }
+        if (filePath.size > 0 && !paths.contains(filePath)) {
+            paths.add(filePath)
+        }
+        return paths
     }
 
     public func applyPlatformColorScheme(scheme: CjguiComposableUiColorScheme): Bool {
@@ -304,6 +797,9 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     }
 
     public func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64 {
+        if (node.actionName == CJGUI_COMPOSABLE_UI_TABLE_COLUMN_RESIZE_ACTION) {
+            return tableLayout.resizeCaptureVersion()
+        }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE && node.resourceId == CjguiRuleSetEditingDomain
             .ruleSetResourceId) {
             return domain.splitFirstSizeVersion()
@@ -382,6 +878,7 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     }
 
     public func buildUi(): CjguiComposableUiNode {
+        let workspaceWidth = workspaceContentWidth()
         let collection = domain.collectionRangeSnapshot();
         let form = domain.formSnapshot();
         let binding = domain.formBinding()
@@ -395,6 +892,43 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         let inputStyle = presentationTextStyle(theme.input)
         let validationStyle = CjguiComposableUiStyle(fixedHeight: 20,
             textColor: CjguiComposableUiColor(0.75, 0.12, 0.14, 1.0), fontFamily: bodyStyle.fontFamily)
+        // The ONE list source is refreshed in place, then the PUBLIC text
+        // filter projects it. The applied-data revision invalidates a cached
+        // visible order, while an unrelated event (focus, theme) does not.
+        ruleListSource.updatePresentation(theme, bodyStyle)
+        tableSource.updatePresentation(CjguiRuleSetTableColumns.style(theme, bodyStyle))
+        cardGridRenderer.updatePresentation(theme, bodyStyle)
+        // Sorting and filtering are projections over ONE owner-backed source.
+        // Both revisions are refreshed here; a rebuild per frame never scans.
+        tableSource.dataChanged(domain.version())
+        let _ = tableSource.setQuery(collectionView.query())
+        // Responsive card columns use the actual window/first-pane width. The
+        // previous top business item is re-revealed only when the grouping or
+        // card width really changed, so ordinary refreshes do not reset scroll.
+        if (collectionView.mode() == "grid") {
+            let anchorKey = cardGridSource.itemKeyForRowStart(cardListState.materializedStart())
+            if (cardGridSource.setAvailableWidth(cardGridViewportWidth())) {
+                let anchorRowKey = cardGridSource.rowKeyForItem(anchorKey)
+                if (anchorRowKey.size > 0) {
+                    let _ = cardListState.revealKey(cardGridSource, anchorRowKey)
+                }
+            }
+        }
+        // Real deletion / lost eligibility prunes selected keys; a filter that
+        // merely hides a selected record does not.
+        syncCollectionSelectionWithData()
+        let collectionOrder = currentCollectionOrder()
+        let selectionCount = collectionSelection.selectedCount()
+        let hiddenSelectionCount = collectionSelection.hiddenCount(collectionOrder)
+        // External selection reads use the same live object and current order.
+        treePanel.attachCollectionSurface(collectionSelection, collectionOrder,
+            collectionViewVersion())
+        let visibleRuleCount = if (collectionView.mode() == "table" ||
+            collectionView.mode() == "grid") {
+            tableSource.itemCount()
+        } else {
+            filteredListSource.visibleCount()
+        }
         // The handwritten beacon takes path/key/version from the SAME application
         // declaration the generated side resolves against; the toggle only moves
         // the declared version.
@@ -421,13 +955,16 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         // Its explicit key therefore covers every value/style dependency
         // below it while allowing the changing list/detail region to remain
         // on the canonical solver path.
-        let header = cjguiComposableVertical(5, "rule-set-header", CjguiComposableUiStyle(fixedHeight: 70, gap: 4),
-            layoutReuseKey: "rule-header|applied=${form.appliedConfigVersion}|draft=${form.draftVersion}|dark=${usesDarkAppearance}|mono=${usesMonospacedText}")
+        // The header height follows its content. The action row and the
+        // secondary view switches wrap when the window is narrow; a fixed
+        // header height used to clip the second row.
+        let header = cjguiComposableVertical(5, "rule-set-header", CjguiComposableUiStyle(gap: 4),
+            layoutReuseKey: "rule-header|applied=${form.appliedConfigVersion}|draft=${form.draftVersion}|dark=${usesDarkAppearance}|mono=${usesMonospacedText}|filter=${collectionView.query()}|view=${collectionView.mode()}|sort=${tableSource.sortColumnKey()}:${tableSource.sortAscending()}|selected=${selectionCount}|hidden=${hiddenSelectionCount}")
         header.add(
             cjguiComposableText(3, "rule-set-title",
                 "规则集编辑 · 已应用 v${form.appliedConfigVersion} · 草稿 v${form.draftVersion}", headingStyle,
                 resourceId: CjguiRuleSetEditingDomain.ruleSetResourceId, fieldId: "ruleSet", displayValueRole: "applied"))
-        let commands = cjguiComposableHorizontal(4, "rule-set-actions", CjguiComposableUiStyle(fixedHeight: 34, gap: 7))
+        let commands = cjguiComposableWrap(4, "rule-set-actions", CjguiComposableUiStyle(gap: 7), rowGap: 6)
         commands.add(command(10, "create", "新增", "CREATE_RECORD"))
         commands.add(command(11, "copy", "复制", "COPY_RECORD"))
         commands.add(command(12, "delete", "删除", "DELETE_RECORD"))
@@ -442,29 +979,176 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             presentationScope.local("toggle-beacon")))
         commands.add(localPresentationButton(29, "open-rule-set-editor", "编辑草稿", "OPEN_EDIT_DIALOG", 84))
         header.add(commands);
+        // The stable-key filter and the two window-level view switches live in
+        // this SHALLOW header row. The list/detail split keeps its existing
+        // node depth: narrowing the range projection never nests the virtual
+        // list inside a second container.
+        // The primary filter keeps a usable minimum width; the view switches
+        // move to their own wrap row so they cannot squeeze the input.
+        let filterRow = cjguiComposableHorizontal(28, "rule-list-filter-row",
+            CjguiComposableUiStyle(gap: 5))
+        filterRow.add(
+            cjguiComposableTextInput(24, "rule-list-filter", "筛选规则", collectionView.query(), -1,
+                CjguiComposableUiStyle(minWidth: 200, fixedHeight: 30, growX: 1, fontSize: inputStyle.fontSize,
+                    textColor: inputStyle.textColor, background: inputStyle.background, border: inputStyle.border,
+                    borderWidth: inputStyle.borderWidth, fontFamily: inputStyle.fontFamily),
+                displayValueRole: "filter", interactionStyle: theme.inputInteraction))
+        filterRow.add(
+            cjguiComposableButton(25, "rule-list-filter-clear", "清除", "CLEAR_RULE_FILTER", -1,
+                presentationButtonStyle(52), enabled: collectionView.query().size > 0))
+        filterRow.add(localPresentationButton(27, "open-record-search", "查找规则 ⌘K", "OPEN_RECORD_SEARCH", 110))
+        header.add(filterRow)
+        let viewRow = cjguiComposableWrap(206, "rule-list-view-row",
+            CjguiComposableUiStyle(gap: 5), rowGap: 4)
+        if (collectionView.query().size > 0) {
+            viewRow.add(
+                cjguiComposableText(26, "rule-list-filter-count",
+                    "匹配 ${visibleRuleCount} / 共 ${collection.totalCount}",
+                    CjguiComposableUiStyle(fixedWidth: 116, fixedHeight: 30, fontSize: 11.0,
+                        textColor: bodyStyle.textColor, fontFamily: bodyStyle.fontFamily, textMaxLines: 1,
+                        textOverflow: "ellipsis")))
+        }
+        let detailOptions = ArrayList<CjguiChoiceOption>([
+            CjguiChoiceOption("standard", 39, "标准", "standard", "SET_DETAIL_LAYOUT_STANDARD",
+                semanticId: "detail-layout-standard"),
+            CjguiChoiceOption("compact", 36, "紧凑", "compact", "SET_DETAIL_LAYOUT_COMPACT",
+                semanticId: "detail-layout-compact")
+        ])
+        viewRow.add(CjguiChoiceGroup.build(38, "detail-layout-choice", 3810, detailOptions, detailLayout,
+            3811, style: CjguiChoiceGroupStyle(container: CjguiComposableUiStyle(fixedWidth: 136),
+                button: presentationButtonStyle(64), interaction: theme.primaryActionInteraction)))
+        viewRow.add(localPresentationButton(200, "toggle-rule-view", if (collectionView.mode() == "list") {
+            "表格视图"
+        } else {
+            "列表视图"
+        }, "TOGGLE_RULE_VIEW", 84))
+        viewRow.add(localPresentationButton(207, "toggle-card-view", if (collectionView.mode() == "grid") {
+            "卡片视图 ✓"
+        } else {
+            "卡片视图"
+        }, "TOGGLE_CARD_VIEW", 84))
+        viewRow.add(localPresentationButton(205, "open-view-menu", "视图预设", "OPEN_VIEW_MENU", 88))
+        header.add(viewRow)
+        // Selection count and batch entries are ordinary application controls
+        // over the public selection; hidden-by-filter keys stay in scope.
+        let batchRow = cjguiComposableHorizontal(210, "rule-batch-row",
+            CjguiComposableUiStyle(fixedHeight: 32, gap: 6))
+        let selectionLabel = if (hiddenSelectionCount > 0) {
+            "已选 ${selectionCount} 项，其中隐藏 ${hiddenSelectionCount} 项"
+        } else {
+            "已选 ${selectionCount} 项"
+        }
+        batchRow.add(cjguiComposableText(211, "rule-batch-count", selectionLabel,
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 30, fontSize: 11.0,
+                textColor: bodyStyle.textColor, fontFamily: bodyStyle.fontFamily,
+                textMaxLines: 1, textOverflow: "ellipsis")))
+        batchRow.add(cjguiComposableButton(212, "rule-batch-select-all", "全选筛选结果",
+            "COLLECTION_SELECT_ALL", -1, presentationButtonStyle(110),
+            enabled: visibleRuleCount > 0))
+        batchRow.add(cjguiComposableButton(213, "rule-batch-enable", "批量启用",
+            "COLLECTION_BATCH_ENABLE", -1, presentationButtonStyle(76),
+            enabled: selectionCount > 0))
+        batchRow.add(cjguiComposableButton(214, "rule-batch-disable", "批量停用",
+            "COLLECTION_BATCH_DISABLE", -1, presentationButtonStyle(76),
+            enabled: selectionCount > 0))
+        batchRow.add(cjguiComposableButton(215, "rule-batch-clear", "清除选择",
+            "COLLECTION_CLEAR", -1, presentationButtonStyle(76),
+            enabled: selectionCount > 0))
+        header.add(batchRow)
         root.add(header)
 
-        let listPane = if (collection.totalCount == 0) {
-            cjguiComposableText(
-                23,
-                "empty-list",
-                "尚无规则；可用新增创建",
-                CjguiComposableUiStyle(
-                    minWidth: 160,
-                    idealWidth: 260,
-                    maxWidth: 340,
-                    growX: 1,
-                    fixedHeight: 30,
-                    textColor: bodyStyle.textColor,
-                    fontFamily: bodyStyle.fontFamily
-                )
-            )
+        // The list pane is the SAME public variable-height list over the public
+        // stable-key text filter. Every visible row still resolves its applied
+        // record by business ID, and no off-screen record becomes a UI node.
+        let emptyFiltered = collectionView.query().size > 0
+        let emptySpec = CjguiContentStateSpec(CJGUI_CONTENT_EMPTY,
+            emptyReason: if (emptyFiltered) { CJGUI_EMPTY_NO_MATCH } else { CJGUI_EMPTY_NO_DATA },
+            detail: if (emptyFiltered) { "可清除筛选后重试" } else { "可用新增创建第一条规则" },
+            actionLabel: if (emptyFiltered) { "清除筛选" } else { "新增规则" },
+            actionName: if (emptyFiltered) { "CLEAR_RULE_FILTER" } else { "CREATE_RECORD" })
+        let emptyText = CjguiContentFeedback.build(23, "empty-list", 2301, 2302, 2303, emptySpec,
+            style: CjguiContentStateStyle(container: CjguiComposableUiStyle(minWidth: 160, idealWidth: 260,
+                    maxWidth: 340, growX: 1, padding: 8, gap: 4),
+                title: CjguiComposableUiStyle(fontSize: 12.0, textColor: bodyStyle.textColor,
+                    fontFamily: bodyStyle.fontFamily),
+                detail: CjguiComposableUiStyle(fontSize: 10.5, textColor: bodyStyle.textColor,
+                    fontFamily: bodyStyle.fontFamily),
+                action: presentationButtonStyle(90),
+                actionInteraction: theme.primaryActionInteraction))
+        let listPane = if (visibleRuleCount == 0) {
+            emptyText
         } else {
-            cjguiComposableVariableHeightList(21, "rule-list-scroll", 22,
-                CjguiRuleSetVirtualListSource(domain, theme, bodyStyle, cardScope: recordCardScope), listState, 76, 5, 3,
+            cjguiComposableVariableHeightList(21, "rule-list-scroll", 22, filteredListSource, listState, 76, 5, 3,
                 CjguiComposableUiStyle(minWidth: 160, idealWidth: 260, maxWidth: 340, growX: 1,
                     alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH, background: theme.card.background,
                     border: theme.card.border))
+        }
+        // The card pane is a THIRD presentation over the same filtered/sorted
+        // source. The grid source groups visible items into responsive rows and
+        // the normal variable-height list only materializes the visible range.
+        let cardPane = if (collectionView.mode() == "grid") {
+            let pane = cjguiComposableVertical(20, "rule-card-pane",
+                CjguiComposableUiStyle(minWidth: 160, growX: 1, growY: 1, gap: 0,
+                    background: theme.card.background, border: theme.card.border))
+            let bar = cjguiComposableHorizontal(220, "rule-card-bar",
+                CjguiComposableUiStyle(fixedHeight: 28, gap: 6,
+                    alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+            bar.add(cjguiComposableText(221, "rule-card-hint",
+                "卡片视图 · ${cardGridSource.columns()} 列 · ${cardGridSource.cardWidth()} pt",
+                CjguiComposableUiStyle(growX: 1, fontSize: 10.5, textColor: theme.card.textColor,
+                    fontFamily: bodyStyle.fontFamily, textMaxLines: 1, textOverflow: "ellipsis")))
+            pane.add(bar)
+            if (visibleRuleCount == 0) {
+                pane.add(emptyText)
+            } else {
+                pane.add(cjguiComposableVariableHeightList(21, "rule-card-scroll", 22,
+                    cardGridSource, cardListState, cardGridSource.spec().cardHeight,
+                    cardGridSource.spec().rowGap, 2,
+                    CjguiComposableUiStyle(minWidth: 160, growX: 1, growY: 1,
+                        alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
+                        background: theme.card.background)))
+            }
+            pane
+        } else {
+            emptyText
+        }
+        // The table pane reuses the same public list/viewport for its body and
+        // only adds a header plus one rule. A flexible name column and fixed
+        // status columns come from the SAME declarations the header uses.
+        let tablePane = if (collectionView.mode() == "table") {
+            let pane = cjguiComposableVertical(20, "rule-table-pane",
+                CjguiComposableUiStyle(idealWidth: 560, growX: 1, growY: 1,
+                    gap: 0, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
+                    background: theme.card.background, border: theme.card.border))
+            let columnBar = cjguiComposableHorizontal(202, "rule-table-column-bar",
+                CjguiComposableUiStyle(fixedHeight: 28, gap: 6,
+                    alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+            columnBar.add(cjguiComposableText(203, "rule-table-column-hint",
+                if (tableSource.minimumContentWidth() > tablePaneWidth(workspaceWidth)) {
+                    "列宽超出当前空间；列设置可缩窄或恢复默认"
+                } else { "拖动表头竖条调宽；菜单可显隐、换序" }, CjguiComposableUiStyle(growX: 1, fontSize: 10.5,
+                    textColor: theme.card.textColor, fontFamily: bodyStyle.fontFamily,
+                    textMaxLines: 1, textOverflow: "ellipsis")))
+            columnBar.add(cjguiComposableButton(204, "open-column-menu", "列设置", "OPEN_COLUMN_MENU", -1,
+                presentationButtonStyle(84), operationActionName: "OPEN_COLUMN_MENU",
+                operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+            pane.add(columnBar)
+            pane.add(tableSource.buildHeader())
+            pane.add(cjguiComposableHorizontal(201, "rule-table-header-rule",
+                CjguiComposableUiStyle(fixedHeight: 1, growX: 1, background: theme.card.border)))
+            if (visibleRuleCount == 0) {
+                pane.add(emptyText)
+            } else {
+                pane.add(cjguiComposableVariableHeightList(21, "rule-table-scroll", 22, tableSource, listState, 30,
+                    1, 3,
+                    CjguiComposableUiStyle(growX: 1, growY: 1,
+                        alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH, background: theme.card.background)))
+            }
+            pane
+        } else if (collectionView.mode() == "grid") {
+            cardPane
+        } else {
+            listPane
         }
 
         let detail = cjguiComposableVertical(
@@ -477,15 +1161,63 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
                 gap: 8
             )
         )
+        // The detail header carries the SAME public searchable-record panel
+        // (keyboard selection + layer-close focus restore) and the second
+        // field/layout combination. Both are window view state: neither
+        // writes, applies nor discards the owner's draft.
+        // The search and layout switches live in the shallow header row; the
+        // detail declares its title and status directly so the tab/field
+        // subtree keeps its existing layout depth.
         detail.add(cjguiComposableText(31, "detail-title", if (renderedSelectedId >= 0) {
             "当前规则草稿"
         } else {
             "请选择或新增一条规则"
         }, headingStyle))
-        detail.add(
-            cjguiComposableImage(32, "rule-set-beacon", beacon.rasterPath,
-                CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END),
-                imageResourceId: beacon.key, imageResourceVersion: beacon.version))
+        let detailStatusStyle = CjguiStatusMessageStyle(
+            chip: CjguiComposableUiStyle(fixedWidth: 52, fixedHeight: 20, fontSize: 10.5,
+                textColor: bodyStyle.textColor, fontFamily: bodyStyle.fontFamily),
+            text: CjguiComposableUiStyle(fontSize: 11.0, textColor: bodyStyle.textColor,
+                fontFamily: bodyStyle.fontFamily),
+            container: CjguiComposableUiStyle(gap: 4, padding: 0))
+        let detailStatusText = viewStatusText(form.statusMessage)
+        detail.add(CjguiStatusFeedback.buildMessage(33, "detail-status", 3301, 3302, -1,
+            CjguiStatusMessageSpec(statusKindFor(detailStatusText), detailStatusText),
+            style: detailStatusStyle))
+        let detailVisual = cjguiComposableHorizontal(3400, "detail-visual-row",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
+        let detailTags = cjguiComposableWrap(3401, "detail-tags",
+            CjguiComposableUiStyle(growX: 1, gap: 6), rowGap: 4)
+        let tagStyle = CjguiComposableUiStyle(fixedHeight: 20, padding: 4, fontSize: 10.5,
+            textColor: theme.card.textColor, fontFamily: bodyStyle.fontFamily,
+            background: theme.card.background, border: theme.card.border, borderWidth: 1, cornerRadius: 4)
+        detailTags.add(cjguiComposableText(3402, "detail-tag-applied",
+            "已应用 v${form.appliedConfigVersion}", tagStyle))
+        detailTags.add(cjguiComposableText(3403, "detail-tag-draft", "草稿 v${form.draftVersion}", tagStyle))
+        detailTags.add(cjguiComposableText(3404, "detail-tag-view", "视图 ${collectionView.mode()}", tagStyle))
+        detailTags.add(cjguiComposableText(3405, "detail-tag-selection",
+            if (hiddenSelectionCount > 0) {
+                "已选 ${selectionCount} · 隐藏 ${hiddenSelectionCount}"
+            } else {
+                "已选 ${selectionCount}"
+            }, tagStyle))
+        detailVisual.add(detailTags)
+        let beaconCard = cjguiComposableStack(3410, "detail-beacon-card",
+            CjguiComposableUiStyle(fixedWidth: 128, fixedHeight: 96, clipsContent: true))
+        let beaconFrame = cjguiComposableAspectRatio(3411, "detail-beacon-frame", 4, 3,
+            CjguiComposableUiStyle(fixedWidth: 128, fixedHeight: 96))
+        beaconFrame.add(cjguiComposableImage(3412, "detail-beacon-image", beacon.rasterPath,
+            CjguiComposableUiStyle(fixedWidth: 128, fixedHeight: 96),
+            imageResourceId: beacon.key, imageResourceVersion: beacon.version))
+        beaconCard.add(beaconFrame)
+        beaconCard.add(cjguiComposableButton(3413, "detail-beacon-edit",
+            if (renderedSelectedId >= 0) { "编辑" } else { "未选" }, "OPEN_EDIT_DIALOG", -1,
+            CjguiComposableUiStyle(fixedWidth: 44, fixedHeight: 22, fontSize: 10.0,
+                background: theme.primaryAction.background, textColor: theme.primaryAction.textColor,
+                border: theme.primaryAction.border, borderWidth: 1, alignX: CJGUI_COMPOSABLE_UI_ALIGN_END,
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_START, zIndex: 2),
+            enabled: renderedSelectedId >= 0, operationActionName: "OPEN_EDIT_DIALOG"))
+        detailVisual.add(beaconCard)
+        detail.add(detailVisual)
         // The detail pane is a real multi-page workspace through the PUBLIC tab
         // container: "基本" holds the draft fields, "保留策略" holds the file and
         // retention work. Both pages share the app's existing identities, and
@@ -494,29 +1226,43 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             CjguiComposableUiStyle(gap: 8, growX: 1))
         let retentionPage = cjguiComposableVertical(61, "rule-detail-retention",
             CjguiComposableUiStyle(gap: 8, growX: 1))
-        if (renderedSelectedId >= 0 && layerMode != "edit" && layerMode != "edit-menu") {
-            var fieldIndex: Int64 = 0
-            while (fieldIndex < binding.fieldCount()) {
-                let descriptor = binding.fieldAtControlIndex(fieldIndex);
-                let field = form.fieldForResourceId(descriptor.resourceId)
-                basicPage.add(
-                    cjguiComposableBoundFormField(detailFieldGroupNodeId(renderedSelectedId, fieldIndex),
-                        "field-group-${descriptor.fieldId}", detailFieldNodeId(renderedSelectedId, fieldIndex),
-                        detailValidationNodeId(renderedSelectedId, fieldIndex), descriptor, field, renderedSelectedId,
-                        inputStyle, validationStyle, editorSemanticId: "field-${descriptor.fieldId}",
-                        validationSemanticId: "error-${descriptor.fieldId}", textOperationActionName: "EDIT_DRAFT_TEXT",
-                        booleanOperationActionName: "EDIT_DRAFT_BOOLEAN"))
-                fieldIndex += 1
-            }
-            let applyRow = cjguiComposableHorizontal(41, "draft-actions", CjguiComposableUiStyle(fixedHeight: 34, gap: 8))
-            applyRow.add(command(detailActionNodeId(renderedSelectedId, 0), "apply", "应用草稿", "APPLY"));
-            applyRow.add(command(detailActionNodeId(renderedSelectedId, 1), "cancel", "取消草稿", "CANCEL"));
-            basicPage.add(applyRow)
+        let publicDetailPage = cjguiComposableVertical(65, "rule-detail-public",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
+        if (renderedSelectedId >= 0) {
+            // The SAME owner through the CONVERGED public seam as its own normal
+            // page: one call composes BoundFormField/FormFeedback over this app's
+            // binding, so the rule business carries no second field layout.
+            publicDetailPage.add(cjguiSharedEditableDetailFields(
+                publicDetailStatusNodeId(renderedSelectedId) - 50, publicDetailEditorNodeId(renderedSelectedId),
+                publicDetailStatusNodeId(renderedSelectedId), "public-detail", renderedSelectedId,
+                binding, form, { fieldId =>
+                    let availability = generatedRegion.fieldAvailability(fieldId)
+                    CjguiSharedDetailFieldState(availability.known && availability.isAvailable,
+                        unavailableReason: availability.reason)
+                }, "", theme))
+            let publicActions = cjguiComposableHorizontal(66, "public-detail-actions",
+                CjguiComposableUiStyle(fixedHeight: 34, gap: 8))
+            // The public page's own Apply/Cancel: same owner actions, wide enough
+            // for the full label (the compact 64pt command button ellipsized it).
+            publicActions.add(localPresentationButton(detailActionNodeId(renderedSelectedId, 2),
+                "public-detail-apply", "应用草稿", "APPLY", 96))
+            publicActions.add(localPresentationButton(detailActionNodeId(renderedSelectedId, 3),
+                "public-detail-cancel", "取消草稿", "CANCEL", 96))
+            publicDetailPage.add(publicActions)
+        } else {
+            publicDetailPage.add(cjguiComposableText(3910, "public-detail-empty",
+                "未选择规则。请从左侧列表选择，或点击“新增”。", bodyStyle))
         }
-        if (renderedSelectedId >= 0 && (layerMode == "edit" || layerMode == "edit-menu")) {
+        if (renderedSelectedId >= 0) {
+            // The modal dialog is painted above these fields. Keeping the
+            // ordinary detail field declared under it gives the layer's public
+            // return reference a LIVE target (a removed node cannot be an
+            // anchor) and avoids a second focus restoration protocol.
+            basicPage.add(buildDetailFields(form, binding, renderedSelectedId, inputStyle, validationStyle))
+        } else {
             basicPage.add(
-                cjguiComposableText(34, "detail-layer-editor-notice",
-                    "草稿正在通用对话框中编辑；应用/取消仍直接进入规则集领域。", bodyStyle))
+                cjguiComposableText(37, "detail-empty-selection",
+                    "未选择规则。请从左侧列表选择，或点击“新增”。", bodyStyle))
         }
         retentionPage.add(
             cjguiComposableTextInput(390, "file-path", "文件路径", filePath, -1, inputStyle,
@@ -526,11 +1272,10 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         fileActions.add(command(404, "open", "打开", "OPEN"));
         fileActions.add(command(405, "close", "关闭", "CLOSE"));
         retentionPage.add(fileActions)
-        retentionPage.add(cjguiComposableText(50, "status", if (inputNotice.size > 0) {
-            inputNotice
-        } else {
-            collection.statusMessage
-        }, fixedTextStyle(bodyStyle, 30)))
+        let retentionStatusText = viewStatusText(collection.statusMessage)
+        retentionPage.add(CjguiStatusFeedback.buildMessage(50, "status", 5001, 5002, -1,
+            CjguiStatusMessageSpec(statusKindFor(retentionStatusText), retentionStatusText),
+            style: detailStatusStyle))
         // A distinct normal application also composes the reusable local-key
         // API: neither group reserves a global numeric range or leaks a
         // native menu/product type. Their actions stay on this controller's
@@ -555,13 +1300,24 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         }
         // The public tab container presents exactly ONE page; the other page keeps
         // its identity and its own view state without being measured or drawn.
-        detail.add(ruleDetailTabWorkspace(detailTabs, basicPage, retentionPage))
+        detail.add(ruleDetailTabWorkspaceWithPublicDetail(detailTabs, basicPage, publicDetailPage,
+            retentionPage))
         let splitScope = CjguiComposableUiIdentityScope("rule-set-content")
-        let split = cjguiComposableScopedSplitView(splitScope, "rule-set-content", listPane, detail,
-            CjguiComposableUiSplitAxis.HORIZONTAL, domain.splitFirstSize(), 160, 260,
-            CjguiComposableUiStyle(growX: 1, growY: 1), operationActionName: "SET_SPLIT_SIZE",
-            operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId)
-        root.add(split)
+        if (tableWorkspaceStacks(workspaceWidth)) {
+            // Keep the original table, detail, field and selection identities.
+            // Only their composition changes; no owner/view preference writes.
+            let stacked = cjguiComposableVertical(-1, "rule-set-content-stacked",
+                CjguiComposableUiStyle(growX: 1, gap: 12), identity: Some(splitScope.local("stacked")))
+            stacked.add(tablePane); stacked.add(detail)
+            root.add(stacked)
+        } else {
+            root.add(cjguiComposableScopedSplitView(splitScope, "rule-set-content", tablePane, detail,
+                CjguiComposableUiSplitAxis.HORIZONTAL,
+                if (collectionView.mode() == "table") { tablePaneWidth(workspaceWidth) } else { domain.splitFirstSize() },
+                tablePaneMinimumWidth(), 260,
+                CjguiComposableUiStyle(growX: 1, growY: 1), operationActionName: "SET_SPLIT_SIZE",
+                operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+        }
         // The tree section sits directly under the header so its virtual rows
         // materialize inside the visible viewport (a human can reach them);
         // the generated region follows below.
@@ -582,6 +1338,110 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             menu.add(scopedLocalPresentationButton(502, "menu-toggle-beacon", "切换图标", "TOGGLE_BEACON", 140,
                 presentationScope.local("menu-toggle-beacon")))
             menu.add(localPresentationButton(503, "menu-close", "关闭菜单", "CLOSE_LAYER", 140))
+            host.add(menu)
+        }
+        if (layerMode == "columns") {
+            let columnKeys = tableLayout.columnKeys()
+            let menuHeight = columnKeys.size * 32 + 44
+            let menu = cjguiComposableAnchoredLayer(560, "rule-columns-menu", "rule-columns-menu", "menu",
+                "open-column-menu", 204,
+                CjguiComposableUiStyle(fixedWidth: 470, fixedHeight: menuHeight,
+                    background: theme.card.background, border: theme.card.border, padding: 6, gap: 4))
+            var menuIndex: Int64 = 0
+            for (key in columnKeys) {
+                let visible = tableLayout.isVisible(key)
+                let width = tableLayout.width(key)
+                let widthLabel = if (width > 0) { "${width}" } else { "弹性" }
+                let row = cjguiComposableHorizontal(560100 + menuIndex, "column-row-${key}",
+                    CjguiComposableUiStyle(fixedHeight: 30, gap: 4,
+                        alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+                row.add(cjguiComposableButton(570000 + menuIndex * 10, "column-toggle-${key}",
+                    "${tableSource.columnTitle(key)} ${if (visible) { "✓" } else { "○" }}  ${widthLabel}",
+                    "TABLE_COLUMN_TOGGLE", -1, CjguiComposableUiStyle(growX: 1, fixedHeight: 28,
+                        fontSize: 11.0, textColor: bodyStyle.textColor,
+                        fontFamily: bodyStyle.fontFamily, textMaxLines: 1, textOverflow: "ellipsis"),
+                    operationActionName: "TABLE_COLUMN_TOGGLE",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                row.add(cjguiComposableButton(570001 + menuIndex * 10, "column-left-${key}", "←", "TABLE_COLUMN_MOVE_LEFT", -1,
+                    presentationButtonStyle(30), operationActionName: "TABLE_COLUMN_MOVE_LEFT",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                row.add(cjguiComposableButton(570002 + menuIndex * 10, "column-right-${key}", "→", "TABLE_COLUMN_MOVE_RIGHT", -1,
+                    presentationButtonStyle(30), operationActionName: "TABLE_COLUMN_MOVE_RIGHT",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                row.add(cjguiComposableButton(570003 + menuIndex * 10, "column-narrower-${key}", "−", "TABLE_COLUMN_NARROWER", -1,
+                    presentationButtonStyle(30), enabled: width > 0,
+                    operationActionName: "TABLE_COLUMN_NARROWER",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                row.add(cjguiComposableButton(570004 + menuIndex * 10, "column-wider-${key}", "+", "TABLE_COLUMN_WIDER", -1,
+                    presentationButtonStyle(30), enabled: width > 0,
+                    operationActionName: "TABLE_COLUMN_WIDER",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                menu.add(row)
+                menuIndex += 1
+            }
+            let menuActions = cjguiComposableHorizontal(560199, "column-menu-actions",
+                CjguiComposableUiStyle(fixedHeight: 30, gap: 6,
+                    alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
+            menuActions.add(cjguiComposableButton(570900, "column-menu-reset", "恢复默认列布局",
+                "TABLE_COLUMN_RESET", -1, presentationButtonStyle(150),
+                operationActionName: "TABLE_COLUMN_RESET",
+                operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+            menuActions.add(localPresentationButton(560198, "column-menu-close", "关闭菜单", "CLOSE_LAYER", 100))
+            menu.add(menuActions)
+            host.add(menu)
+        }
+        if (layerMode == "views") {
+            let presetNames = viewPreferences.names()
+            let activeName = viewPreferences.activeName()
+            let menuHeight = 244 + (if (presetNames.size > 0) { presetNames.size } else { 1 }) * 30
+            let menu = cjguiComposableAnchoredLayer(590, "rule-view-menu", "rule-view-menu", "menu",
+                "open-view-menu", 205,
+                CjguiComposableUiStyle(fixedWidth: 400, fixedHeight: menuHeight,
+                    background: theme.card.background, border: theme.card.border, padding: 6, gap: 4))
+            menu.add(cjguiComposableText(590001, "view-menu-title",
+                if (activeName.size > 0) { "视图预设 · 当前：${activeName}" } else { "视图预设 · 当前：默认" },
+                CjguiComposableUiStyle(fixedHeight: 22, fontSize: 12.0, textColor: bodyStyle.textColor,
+                    fontFamily: bodyStyle.fontFamily, textMaxLines: 1, textOverflow: "ellipsis")))
+            menu.add(cjguiComposableTextInput(591, "view-preset-name", "视图名称", viewDraftName, -1,
+                CjguiComposableUiStyle(fixedHeight: 30, fontSize: inputStyle.fontSize,
+                    textColor: inputStyle.textColor, background: inputStyle.background,
+                    border: inputStyle.border, borderWidth: inputStyle.borderWidth,
+                    fontFamily: inputStyle.fontFamily),
+                displayValueRole: "draft", interactionStyle: theme.inputInteraction))
+            menu.add(localPresentationButton(592, "view-save", "保存当前视图", "SAVE_COLLECTION_VIEW", 380))
+            var presetIndex: Int64 = 0
+            for (name in presetNames) {
+                let marker = if (name == activeName) { "● " } else { "○ " }
+                menu.add(cjguiComposableButton(590100 + presetIndex * 10, "view-preset-${presetIndex}",
+                    "${marker}${name}", "SELECT_COLLECTION_VIEW", -1,
+                    presentationButtonStyle(380),
+                    operationActionName: "SELECT_COLLECTION_VIEW",
+                    operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+                presetIndex += 1
+            }
+            if (presetNames.size == 0) {
+                menu.add(cjguiComposableText(590002, "view-menu-empty", "尚未保存视图",
+                    CjguiComposableUiStyle(fixedHeight: 30, fontSize: 11.0,
+                        textColor: bodyStyle.textColor, fontFamily: bodyStyle.fontFamily)))
+            }
+            menu.add(localPresentationButton(593, "view-reset", "恢复默认视图", "RESET_COLLECTION_VIEW", 380))
+            menu.add(cjguiComposableButton(594, "view-save-preferences", "保存偏好",
+                "SAVE_COLLECTION_VIEW_PREFERENCES", -1, presentationButtonStyle(380),
+                enabled: viewPreferences.filePath().size > 0,
+                operationActionName: "SAVE_COLLECTION_VIEW_PREFERENCES",
+                operationResourceId: CjguiRuleSetEditingDomain.ruleSetResourceId))
+            menu.add(localPresentationButton(595, "view-menu-close", "关闭菜单", "CLOSE_LAYER", 380))
+            menu.add(cjguiComposableText(596, "view-menu-status",
+                if (viewPreferences.filePath().size == 0) {
+                    "偏好文件未设置；用 --open 文档或 --view-preferences 启动"
+                } else if (viewPreferences.isDirty()) {
+                    "偏好：有未保存修改 · ${viewPreferences.filePath()}"
+                } else {
+                    "偏好：已保存 · ${viewPreferences.filePath()}"
+                },
+                CjguiComposableUiStyle(fixedHeight: 20, fontSize: 10.5,
+                    textColor: bodyStyle.textColor, fontFamily: bodyStyle.fontFamily,
+                    textMaxLines: 1, textOverflow: "ellipsis")))
             host.add(menu)
         }
         if (layerMode == "record-menu" && activeRecordId >= 0) {
@@ -640,11 +1500,22 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             host.add(dialog)
         }
         if ((layerMode == "edit" || layerMode == "edit-menu") && renderedSelectedId >= 0) {
-            let dialog = cjguiComposableDialogLayer(510, "rule-set-edit-dialog", "rule-set-edit-dialog", "rule-detail",
-                30,
+            // Feed the captured public reference to the existing dialog layer
+            // declaration. The window restores this anchor (and the text
+            // bookmark when it is a field) after the modal closes.
+            let returnTarget = if (editDialogReturnRecordId == renderedSelectedId) {
+                match (editDialogReturnTarget) {
+                    case Some(value) => value
+                    case None => CjguiComposableUiNodeReference.manual(30)
+                }
+            } else {
+                CjguiComposableUiNodeReference.manual(30)
+            }
+            let dialog = cjguiComposableDialogLayerWithReference(510, "rule-set-edit-dialog",
+                "rule-set-edit-dialog", "rule-detail", returnTarget,
                 CjguiComposableUiStyle(fixedWidth: 420, fixedHeight: 360, background: theme.card.background,
                     border: theme.card.border, padding: 14, gap: 8),
-                initialFocusNodeId: dialogFieldNodeId(renderedSelectedId, 0))
+                initialFocus: Some(CjguiComposableUiNodeReference.manual(dialogFieldNodeId(renderedSelectedId, 0))))
             dialog.add(
                 cjguiComposableText(511, "rule-dialog-title", "编辑规则草稿", headingStyle,
                     resourceId: CjguiRuleSetEditingDomain.ruleSetResourceId, fieldId: "ruleSet",
@@ -660,14 +1531,34 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
                     // `CjguiRetentionIntegerEditComposite.buildEditor`. The
                     // preset caption/value come from the one config the
                     // registered composite also carries.
-                    let compositeRow = CjguiRetentionIntegerEditComposite.buildEditor(
+                    let preset = generatedRegion.retentionPreset()
+                    let stepBinding = CjguiNumericStepperBinding(
                         dialogFieldGroupNodeId(renderedSelectedId, dialogFieldIndex),
                         "dialog-field-group-${descriptor.fieldId}",
+                        dialogStepperRowNodeId(renderedSelectedId, dialogFieldIndex),
+                        dialogStepperPresetsNodeId(renderedSelectedId, dialogFieldIndex),
                         dialogFieldNodeId(renderedSelectedId, dialogFieldIndex),
-                        dialogPresetNodeId(renderedSelectedId, dialogFieldIndex), descriptor.label,
-                        field.draftText, descriptor.fieldId, "EDIT_DRAFT_TEXT", descriptor.resourceId,
-                        renderedSelectedId, generatedRegion.retentionPreset().label,
-                        style: inputStyle)
+                        "dialog-field-group-${descriptor.fieldId}-editor",
+                        dialogStepDownNodeId(renderedSelectedId, dialogFieldIndex),
+                        "dialog-field-group-${descriptor.fieldId}-step-down",
+                        dialogStepUpNodeId(renderedSelectedId, dialogFieldIndex),
+                        "dialog-field-group-${descriptor.fieldId}-step-up",
+                        descriptor.label, field.draftText, descriptor.minimum, descriptor.maximum, 1,
+                        descriptor.fieldId, "EDIT_DRAFT_TEXT", descriptor.resourceId, renderedSelectedId,
+                        CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION,
+                        CjguiRetentionIntegerEditComposite.STEP_UP_ACTION,
+                        enabled: renderedSelectedId >= 0, readOnly: false,
+                        feedback: field.validationError)
+                    let stepPreset = CjguiNumericStepperPreset("primary",
+                        dialogPresetNodeId(renderedSelectedId, dialogFieldIndex), preset.label, preset.value,
+                        actionName: CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+                        writerOperation: "EDIT_DRAFT_TEXT", bindingResourceId: descriptor.resourceId,
+                        ownerTargetResourceId: renderedSelectedId)
+                    let compositeRow = CjguiRetentionIntegerEditComposite.buildEditor(stepBinding,
+                        ArrayList<CjguiNumericStepperPreset>([stepPreset]),
+                        CjguiNumericStepperStyle(input: inputStyle,
+                            button: CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 26),
+                            preset: inputStyle))
                     if (field.validationError.size > 0) {
                         compositeRow.add(cjguiComposableText(
                             dialogValidationNodeId(renderedSelectedId, dialogFieldIndex),
@@ -717,10 +1608,177 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
                 host.add(submenu)
             }
         }
-        return host
+        return recordSearchPanel.attachTo(host, theme)
+    }
+
+    /// Two REAL field/layout combinations over the SAME owner form. The
+    /// switch only changes this consumer's declaration; it never calls the
+    /// domain's apply/cancel and therefore cannot submit or discard a draft.
+    private func buildDetailFields(form: CjguiSharedFormSnapshot, binding: CjguiSharedFormBinding,
+        recordId: Int64, inputStyle: CjguiComposableUiStyle,
+        validationStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        return if (detailLayout == "compact") {
+            buildCompactDetailFields(form, binding, recordId, inputStyle, validationStyle)
+        } else {
+            buildStandardDetailFields(form, binding, recordId, inputStyle, validationStyle)
+        }
+    }
+
+    /// Combination A: every declared field in declaration order, one per row.
+    private func buildStandardDetailFields(form: CjguiSharedFormSnapshot, binding: CjguiSharedFormBinding,
+        recordId: Int64, inputStyle: CjguiComposableUiStyle,
+        validationStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        let column = cjguiComposableVertical(62, "rule-detail-standard",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
+        var fieldIndex: Int64 = 0
+        while (fieldIndex < binding.fieldCount()) {
+            let descriptor = binding.fieldAtControlIndex(fieldIndex)
+            let field = form.fieldForResourceId(descriptor.resourceId)
+            if (descriptor.fieldId == "retentionCount") {
+                // The standard layout also consumes the ONE public numeric
+                // stepper; its preset comes from the same composite config.
+                let preset = generatedRegion.retentionPreset()
+                let stepBinding = CjguiNumericStepperBinding(
+                    detailFieldGroupNodeId(recordId, fieldIndex), "field-group-${descriptor.fieldId}",
+                    detailStepperRowNodeId(recordId, fieldIndex), detailStepperPresetsNodeId(recordId, fieldIndex),
+                    detailFieldNodeId(recordId, fieldIndex), "field-${descriptor.fieldId}",
+                    detailStepDownNodeId(recordId, fieldIndex), "field-${descriptor.fieldId}-step-down",
+                    detailStepUpNodeId(recordId, fieldIndex), "field-${descriptor.fieldId}-step-up",
+                    descriptor.label, field.draftText, descriptor.minimum, descriptor.maximum, 1,
+                    descriptor.fieldId, "EDIT_DRAFT_TEXT", descriptor.resourceId, recordId,
+                    CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION,
+                    CjguiRetentionIntegerEditComposite.STEP_UP_ACTION,
+                    feedbackNodeId: detailValidationNodeId(recordId, fieldIndex),
+                    enabled: recordId >= 0, readOnly: false, feedback: field.validationError)
+                let stepPreset = CjguiNumericStepperPreset("primary",
+                    detailPresetNodeId(recordId, fieldIndex), preset.label, preset.value,
+                    actionName: CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+                    writerOperation: "EDIT_DRAFT_TEXT", bindingResourceId: descriptor.resourceId,
+                    ownerTargetResourceId: recordId)
+                column.add(CjguiRetentionIntegerEditComposite.buildEditor(stepBinding,
+                    ArrayList<CjguiNumericStepperPreset>([stepPreset]),
+                    CjguiNumericStepperStyle(input: inputStyle,
+                        button: CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 30),
+                        preset: inputStyle)))
+                fieldIndex += 1
+                continue
+            }
+            column.add(
+                cjguiComposableBoundFormField(detailFieldGroupNodeId(recordId, fieldIndex),
+                    "field-group-${descriptor.fieldId}", detailFieldNodeId(recordId, fieldIndex),
+                    detailValidationNodeId(recordId, fieldIndex), descriptor, field, recordId, inputStyle,
+                    validationStyle, editorSemanticId: "field-${descriptor.fieldId}",
+                    validationSemanticId: "error-${descriptor.fieldId}", textOperationActionName: "EDIT_DRAFT_TEXT",
+                    booleanOperationActionName: "EDIT_DRAFT_BOOLEAN"))
+            fieldIndex += 1
+        }
+        column.add(detailApplyRow(41, recordId))
+        return column
+    }
+
+    /// Combination B: name+enabled bind side by side, retention uses the
+    /// declared composite (integer input + preset), and excluded type keeps
+    /// the remaining full row. Values, validation and actions still come from
+    /// the same binding and the same owner entries.
+    private func buildCompactDetailFields(form: CjguiSharedFormSnapshot, binding: CjguiSharedFormBinding,
+        recordId: Int64, inputStyle: CjguiComposableUiStyle,
+        validationStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        let column = cjguiComposableVertical(63, "rule-detail-compact",
+            CjguiComposableUiStyle(gap: 7, growX: 1))
+        let identityRow = cjguiComposableHorizontal(64, "rule-detail-compact-identity",
+            CjguiComposableUiStyle(gap: 8, growX: 1))
+        identityRow.add(compactBoundField(form, binding, recordId,
+            binding.controlIndexForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId), inputStyle,
+            validationStyle))
+        identityRow.add(compactBoundField(form, binding, recordId,
+            binding.controlIndexForResourceId(CjguiRuleSetEditingDomain.formEnabledResourceId), inputStyle,
+            validationStyle))
+        column.add(identityRow)
+        let retentionIndex = binding.controlIndexForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId)
+        let retentionDescriptor = binding.fieldAtControlIndex(retentionIndex)
+        let retention = form.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId)
+        let preset = generatedRegion.retentionPreset()
+        let compactInputStyle = CjguiComposableUiStyle(fixedHeight: 30, growX: 1,
+            fontSize: inputStyle.fontSize, textColor: inputStyle.textColor,
+            background: inputStyle.background, border: inputStyle.border,
+            borderWidth: inputStyle.borderWidth, fontFamily: inputStyle.fontFamily)
+        let stepBinding = CjguiNumericStepperBinding(
+            detailFieldGroupNodeId(recordId, retentionIndex), "compact-field-group-retentionCount",
+            detailStepperRowNodeId(recordId, retentionIndex),
+            detailStepperPresetsNodeId(recordId, retentionIndex),
+            detailFieldNodeId(recordId, retentionIndex),
+            "compact-field-group-retentionCount-editor",
+            detailStepDownNodeId(recordId, retentionIndex), "compact-field-group-retentionCount-step-down",
+            detailStepUpNodeId(recordId, retentionIndex), "compact-field-group-retentionCount-step-up",
+            retentionDescriptor.label, retention.draftText, retentionDescriptor.minimum,
+            retentionDescriptor.maximum, 1, retentionDescriptor.fieldId, "EDIT_DRAFT_TEXT",
+            retentionDescriptor.resourceId, recordId,
+            CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION,
+            CjguiRetentionIntegerEditComposite.STEP_UP_ACTION,
+            enabled: recordId >= 0, readOnly: false, feedback: retention.validationError)
+        let stepPreset = CjguiNumericStepperPreset("primary", detailPresetNodeId(recordId, retentionIndex),
+            preset.label, preset.value, actionName: CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+            writerOperation: "EDIT_DRAFT_TEXT", bindingResourceId: retentionDescriptor.resourceId,
+            ownerTargetResourceId: recordId)
+        let compositeRow = CjguiRetentionIntegerEditComposite.buildEditor(stepBinding,
+            ArrayList<CjguiNumericStepperPreset>([stepPreset]),
+            CjguiNumericStepperStyle(input: compactInputStyle,
+                button: CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 30),
+                preset: compactInputStyle))
+        column.add(compositeRow)
+        if (retention.validationError.size > 0) {
+            // Presentation wording derived from the owner's machine reason; the
+            // declared numeric bound itself still lives only in the field
+            // declaration the domain validates.
+            let message = if (retention.validationError.contains("range") || retention.validationError
+                .contains("count")) {
+                "${retentionDescriptor.label}超出允许范围"
+            } else {
+                "请检查${retentionDescriptor.label}"
+            }
+            column.add(
+                cjguiComposableText(detailValidationNodeId(recordId, retentionIndex),
+                    "compact-error-retentionCount", message, validationStyle,
+                    resourceId: retentionDescriptor.resourceId, fieldId: retentionDescriptor.fieldId,
+                    displayValueRole: "validation", operationResourceId: recordId))
+        }
+        column.add(compactBoundField(form, binding, recordId,
+            binding.controlIndexForResourceId(CjguiRuleSetEditingDomain.formExcludedTypeResourceId), inputStyle,
+            validationStyle))
+        column.add(detailApplyRow(42, recordId))
+        return column
+    }
+
+    private func compactBoundField(form: CjguiSharedFormSnapshot, binding: CjguiSharedFormBinding,
+        recordId: Int64, fieldIndex: Int64, inputStyle: CjguiComposableUiStyle,
+        validationStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        let descriptor = binding.fieldAtControlIndex(fieldIndex)
+        let field = form.fieldForResourceId(descriptor.resourceId)
+        return cjguiComposableBoundFormField(detailFieldGroupNodeId(recordId, fieldIndex),
+            "compact-field-group-${descriptor.fieldId}", detailFieldNodeId(recordId, fieldIndex),
+            detailValidationNodeId(recordId, fieldIndex), descriptor, field, recordId, inputStyle, validationStyle,
+            editorSemanticId: "compact-field-${descriptor.fieldId}",
+            validationSemanticId: "compact-error-${descriptor.fieldId}",
+            textOperationActionName: "EDIT_DRAFT_TEXT", booleanOperationActionName: "EDIT_DRAFT_BOOLEAN")
+    }
+
+    private func detailApplyRow(nodeId: Int64, recordId: Int64): CjguiComposableUiNode {
+        let applyRow = cjguiComposableHorizontal(nodeId, "draft-actions",
+            CjguiComposableUiStyle(fixedHeight: 34, gap: 8))
+        applyRow.add(cjguiComposableSpacer(nodeId + 900, "draft-actions-spacer"))
+        applyRow.add(command(detailActionNodeId(recordId, 0), "apply", "应用草稿", "APPLY"))
+        applyRow.add(command(detailActionNodeId(recordId, 1), "cancel", "取消草稿", "CANCEL"))
+        return applyRow
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        // An open searchable-record layer owns its own query/keys/pointer. The
+        // panel only forwards a stable record key after its layer closed and
+        // focus restoration finished (see finishPanelAction).
+        if (let Some(panelResult) <- recordSearchPanel.applyUiEvent(event)) {
+            localRevision += 1
+            return panelResult
+        }
         let generatedResult = generatedRegion.handleEvent(event)
         if (generatedResult.didApply) {
             localRevision += 1
@@ -732,6 +1790,56 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             return treeResult
         }
         let node = event.node
+        // Column grips reuse the existing split-handle kind so native capture
+        // delivers real pointer phases, but they are NOT the pane divider:
+        // their states and constraints belong to the table layout object.
+        if (node.actionName == CJGUI_COMPOSABLE_UI_TABLE_COLUMN_RESIZE_ACTION) {
+            let key = columnKeyFromSemantic(node.semanticId, "rule-set-table-header-resize-")
+            if (key.size == 0) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            if (event.eventKind == 35) {
+                let delta = if (event.text == "left") {
+                    -8
+                } else if (event.text == "right") {
+                    8
+                } else {
+                    0
+                }
+                if (delta == 0) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                let changed = tableLayout.nudgeWidth(key, delta)
+                if (changed) {
+                    collectionView.notePresentationChanged()
+                    localRevision += 1
+                }
+                return CjguiComposableUiDispatchResult(changed)
+            }
+            if (event.eventKind == 37) {
+                let began = tableLayout.beginResize(key, event.pointerX, tableLayout.width(key))
+                return CjguiComposableUiDispatchResult(began)
+            }
+            if (event.eventKind == 38 || event.eventKind == 39 || event.eventKind == 40) {
+                if (!tableLayout.resizeActive() || tableLayout.resizingKey() != key) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                let layoutRevisionBefore = tableLayout.revision()
+                if (event.eventKind == 38) {
+                    let _ = tableLayout.updateResize(event.pointerX)
+                } else if (event.eventKind == 39) {
+                    let _ = tableLayout.endResizeAt(event.pointerX)
+                } else {
+                    let _ = tableLayout.cancelResize()
+                }
+                if (tableLayout.revision() != layoutRevisionBefore) {
+                    collectionView.notePresentationChanged()
+                }
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(true)
+            }
+            return CjguiComposableUiDispatchResult(false)
+        }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE && event.eventKind == 35) {
             let direction = if (event.text == "left" || event.text == "up") {
                 -1
@@ -745,9 +1853,9 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
                 // keyboard nudge remains an ordinary local owner action;
                 // it never writes a framework-local pane size.
                 let next = if (direction < 0) {
-                    max(160, domain.splitFirstSize().saturatingSub(8))
+                    max(tablePaneMinimumWidth(), node.pointerControlFirstSize.saturatingSub(8))
                 } else {
-                    min(720, domain.splitFirstSize().saturatingAdd(8))
+                    min(720, node.pointerControlFirstSize.saturatingAdd(8))
                 }
                 let result = domain.setSplitFirstSizeFromHuman(next)
                 if (result.applied) {
@@ -761,8 +1869,8 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN || event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE ||
             event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_POINTER_END)) {
             let trackOrigin = node.bounds.x - node.pointerControlFirstSize
-            let splitFirstSize = CjguiComposableUiSplitGeometry.firstSizeForPointer(event.pointerX, trackOrigin, 720,
-                node.pointerControlHandleThickness, 160, 260)
+            let splitFirstSize = CjguiComposableUiSplitGeometry.firstSizeForPointer(event.pointerX, trackOrigin,
+                workspaceContentWidth(), node.pointerControlHandleThickness, tablePaneMinimumWidth(), 260)
             let result = domain.setSplitFirstSizeFromHuman(splitFirstSize)
             if (result.applied) {
                 localRevision += 1
@@ -780,38 +1888,125 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             } else {
                 ""
             };
+            if (layerMode.size == 0) {
+                clearEditDialogReturnTarget()
+            }
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == 30 && node.nodeId == 21) {
-            listState.scrollByViewport(event.text)
+            if (collectionView.mode() == "grid") {
+                cardListState.scrollByViewport(event.text)
+            } else {
+                listState.scrollByViewport(event.text)
+            }
             layerMode = ""
             activeRecordId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
-        if (event.eventKind == 31 && node.actionName == "SELECT_RECORD") {
-            listState.setFocusedKey("rule_${node.resourceId}")
+        // A pointer press produces FOCUS(31) followed by ACTIVATE(27); only
+        // ACTIVATE carries that gesture's Command/Shift. Consume the real
+        // activation so FOCUS never becomes a second, modifier-less click.
+        if (event.eventKind == 27 && node.actionName == "SELECT_RECORD") {
+            let key = "rule_${node.resourceId}"
+            let order = currentCollectionOrder()
+            if (node.resourceId < 0 || order.indexOfKey(key) < 0) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            let command = (event.modifierFlags & CJGUI_UI_MODIFIER_COMMAND) != 0
+            let shift = (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) != 0
+            collectionSelection.click(key, command, shift, order)
+            treePanel.markCollectionActive()
+            // Every plain/Command/Shift click also makes this row the active
+            // detail record. The owner preserves all other records' drafts.
+            let _ = domain.selectCollectionItemFromHuman(node.resourceId)
+            listState.setFocusedKey(key)
+            listState.setSelectedKey(key)
             layerMode = ""
             activeRecordId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == 35 && node.nodeId == 21) {
-            let target = listState.moveFocus(currentListSource(), event.text)
-            if (target.resourceId < 0) {
+            let order = currentCollectionOrder()
+            let extendRange = (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) != 0
+            if (collectionView.mode() == "grid") {
+                if (event.text == "select_all") {
+                    collectionSelection.selectAll(order)
+                    let _ = collectionSelection.ensureFocusInOrder(order)
+                    let focus = collectionSelection.focus()
+                    if (focus.size > 0) {
+                        let focusRowKey = cardGridSource.rowKeyForItem(focus)
+                        if (focusRowKey.size > 0) {
+                            let _ = cardListState.revealKey(cardGridSource, focusRowKey)
+                        }
+                    }
+                    treePanel.markCollectionActive()
+                    inputNotice = "全选当前筛选结果：${collectionSelection.selectedCount()} 条（含屏幕外行）"
+                    localRevision += 1
+                    return CjguiComposableUiDispatchResult(true)
+                }
+                let target = CjguiComposableUiCardGridNavigation.targetKey(order,
+                    collectionSelection.focus(), event.text, cardGridSource.columns())
+                if (target.size == 0) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                if (!extendRange && target == collectionSelection.focus()) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                collectionSelection.moveFocus(target, extendRange, order)
+                treePanel.markCollectionActive()
+                let targetRowKey = cardGridSource.rowKeyForItem(target)
+                if (targetRowKey.size > 0) {
+                    cardListState.setFocusedKey(targetRowKey)
+                    let _ = cardListState.revealKey(cardGridSource, targetRowKey)
+                }
+                let focusId = ruleIdForKey(target)
+                if (focusId >= 0) {
+                    let selected = domain.selectCollectionItemFromHuman(focusId)
+                    if (selected.applied) {
+                        listState.setSelectedKey(target)
+                    }
+                }
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(true)
+            }
+            let navigation = collectionSelection.navigate(event.text, extendRange, order)
+            if (!navigation.didChange) {
                 return CjguiComposableUiDispatchResult(false)
             }
-            let selected = domain.selectCollectionItemFromHuman(target.resourceId)
-            if (selected.applied) {
-                listState.setSelectedKey(target.key);
-                listState.setFocusedKey(target.key);
-                localRevision += 1
+            treePanel.markCollectionActive()
+            let focus = navigation.focus
+            if (focus.size > 0) {
+                listState.setFocusedKey(focus)
+                let _ = listState.revealKey(currentListSource(), focus)
             }
-            return CjguiComposableUiDispatchResult(selected.applied)
+            // Arrow/page/home/end move the active detail record with focus;
+            // select-all only changes the multi-selection.
+            if (event.text != "select_all" && focus.size > 0) {
+                let focusId = ruleIdForKey(focus)
+                if (focusId >= 0) {
+                    let selected = domain.selectCollectionItemFromHuman(focusId)
+                    if (selected.applied) {
+                        listState.setSelectedKey(focus)
+                    }
+                }
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 28 && node.nodeId == 24) {
+            applyListFilter(event.text)
+            return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == 28 && node.nodeId == 390) {
             filePath = event.text
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 28 && node.nodeId == 591) {
+            viewDraftName = event.text
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
@@ -819,7 +2014,15 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         let targetRecordId = if (detailTargetRecordId >= 0) {
             detailTargetRecordId
         } else {
-            dialogRecordId(node.nodeId)
+            let dialogId = dialogRecordId(node.nodeId)
+            if (dialogId >= 0) {
+                dialogId
+            } else {
+                // The converged public-detail block edits the SAME record through
+                // the same owner writer; without this its editors would only
+                // change the native text proxy.
+                publicDetailRecordId(node.nodeId)
+            }
         }
         if (event.eventKind == 28 && targetRecordId >= 0) {
             let result = domain.editTextForCollectionItemFromHuman(targetRecordId, node.resourceId, event.text,
@@ -835,6 +2038,28 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             if (result.applied) {
                 localRevision += 1
             };
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        // The handwritten stepper buttons use the SAME owner action names and
+        // shared numeric-step contract the generated composite resolves. The
+        // domain reads the current draft and sends the target through the
+        // ordinary draft writer; a boundary or invalid value is refused.
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            (node.actionName == CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION ||
+             node.actionName == CjguiRetentionIntegerEditComposite.STEP_UP_ACTION) &&
+            node.resourceId == CjguiRuleSetEditingDomain.formRetentionResourceId && node.operationResourceId >= 0) {
+            let arguments = ArrayList<CjguiSharedOperationActionArgument>([
+                CjguiSharedOperationActionArgument("expectedDraftVersion",
+                    CjguiSharedOperationValue.integer(domain.formSnapshot().draftVersion))
+            ])
+            let result = domain.executeFromHuman(CjguiSharedOperationActionInvocation(node.actionName,
+                domain.version(), ArrayList<Int64>([node.operationResourceId]), arguments))
+            inputNotice = if (result.applied) {
+                "保留天数已步进；草稿尚未应用"
+            } else {
+                "保留天数步进被拒：${result.reason}"
+            }
+            localRevision += 1
             return CjguiComposableUiDispatchResult(result.applied)
         }
         // The composite editor's preset button in the HANDWRITTEN region: its
@@ -855,18 +2080,223 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             }
             return CjguiComposableUiDispatchResult(result.applied)
         }
+        if (event.eventKind == 27 && node.actionName == "COLLECTION_SELECT_ALL") {
+            let order = currentCollectionOrder()
+            collectionSelection.selectAll(order)
+            let _ = collectionSelection.ensureFocusInOrder(order)
+            let focus = collectionSelection.focus()
+            if (focus.size > 0) {
+                if (collectionView.mode() == "grid") {
+                    let _ = cardGridSource.setAvailableWidth(cardGridViewportWidth())
+                    let focusRowKey = cardGridSource.rowKeyForItem(focus)
+                    if (focusRowKey.size > 0) {
+                        let _ = cardListState.revealKey(cardGridSource, focusRowKey)
+                    }
+                } else {
+                    listState.setFocusedKey(focus)
+                    let _ = listState.revealKey(currentListSource(), focus)
+                }
+            }
+            treePanel.markCollectionActive()
+            inputNotice = "全选当前筛选结果：${collectionSelection.selectedCount()} 条（含屏幕外行）"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && node.actionName == "COLLECTION_CLEAR") {
+            collectionSelection.clearSelection()
+            treePanel.markCollectionActive()
+            inputNotice = "已清除选择"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 &&
+            (node.actionName == "COLLECTION_BATCH_ENABLE" || node.actionName == "COLLECTION_BATCH_DISABLE")) {
+            return batchSetCollectionEnabled(node.actionName == "COLLECTION_BATCH_ENABLE")
+        }
         if (event.eventKind != 27) {
             return CjguiComposableUiDispatchResult(false)
+        }
+        if (node.actionName == "TOGGLE_RULE_VIEW") {
+            let nextMode = if (collectionView.mode() == "list") { "table" } else { "list" }
+            return CjguiComposableUiDispatchResult(switchViewModeFromHuman(nextMode))
+        }
+        if (node.actionName == "TOGGLE_CARD_VIEW") {
+            let nextMode = if (collectionView.mode() == "grid") { "list" } else { "grid" }
+            return CjguiComposableUiDispatchResult(switchViewModeFromHuman(nextMode))
+        }
+        let sortColumn = sortColumnKeyForAction(node.actionName)
+        if (sortColumn.size > 0) {
+            if (collectionView.mode() != "table") {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            if (collectionView.toggleSort(sortColumn)) {
+                if (tableSource.indexForKey(listState.focusedKey()) < 0) {
+                    let first = tableSource.itemAt(0)
+                    listState.setFocusedKey(if (first.resourceId >= 0) {
+                        first.key
+                    } else {
+                        ""
+                    })
+                }
+                // Selected keys are untouched; only the ORDER they cover
+                // changes. A hidden focus is repaired on the new order.
+                syncCollectionFocusWithView()
+                let directionLabel = if (tableSource.sortAscending()) {
+                    "升序"
+                } else {
+                    "降序"
+                }
+                inputNotice = "已按${sortColumnLabel(sortColumn)}${directionLabel}排序"
+                localRevision += 1
+            }
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (node.actionName == "OPEN_COLUMN_MENU") {
+            if (collectionView.mode() != "table") {
+                inputNotice = "列设置仅在表格视图可用"
+            } else {
+                layerMode = "columns"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(collectionView.mode() == "table")
+        }
+        if (node.actionName.startsWith("TABLE_COLUMN_")) {
+            let togglePrefix = "column-toggle-"
+            let leftPrefix = "column-left-"
+            let rightPrefix = "column-right-"
+            let narrowerPrefix = "column-narrower-"
+            let widerPrefix = "column-wider-"
+            var changed = false
+            if (node.actionName == "TABLE_COLUMN_TOGGLE") {
+                let key = columnKeyFromSemantic(node.semanticId, togglePrefix)
+                if (key.size == 0) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                changed = tableLayout.toggleVisible(key)
+                inputNotice = if (changed) {
+                    "${tableSource.columnTitle(key)}：${if (tableLayout.isVisible(key)) { "显示" } else { "隐藏" }}"
+                } else {
+                    "至少保留一列可见"
+                }
+            } else if (node.actionName == "TABLE_COLUMN_MOVE_LEFT" ||
+                node.actionName == "TABLE_COLUMN_MOVE_RIGHT") {
+                let left = node.actionName == "TABLE_COLUMN_MOVE_LEFT"
+                let key = columnKeyFromSemantic(node.semanticId, if (left) { leftPrefix } else { rightPrefix })
+                if (key.size == 0) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                changed = tableLayout.move(key, if (left) { -1 } else { 1 })
+                inputNotice = if (changed) {
+                    "${tableSource.columnTitle(key)}已${if (left) { "左移" } else { "右移" }}"
+                } else {
+                    "已在该方向边缘"
+                }
+            } else if (node.actionName == "TABLE_COLUMN_NARROWER" ||
+                node.actionName == "TABLE_COLUMN_WIDER") {
+                let narrower = node.actionName == "TABLE_COLUMN_NARROWER"
+                let key = columnKeyFromSemantic(node.semanticId,
+                    if (narrower) { narrowerPrefix } else { widerPrefix })
+                if (key.size == 0) {
+                    return CjguiComposableUiDispatchResult(false)
+                }
+                changed = tableLayout.nudgeWidth(key, if (narrower) { -16 } else { 16 })
+                inputNotice = if (changed) {
+                    "${tableSource.columnTitle(key)}宽度 ${tableLayout.width(key)}"
+                } else {
+                    "弹性列没有固定宽度"
+                }
+            } else if (node.actionName == "TABLE_COLUMN_RESET") {
+                changed = tableLayout.reset()
+                inputNotice = "已恢复默认列布局"
+            }
+            if (changed) {
+                collectionView.notePresentationChanged()
+                localRevision += 1
+            }
+            return CjguiComposableUiDispatchResult(changed)
         }
         if (node.actionName == "OPEN_PRESENTATION_MENU") {
             layerMode = "menu"
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
+        if (node.actionName == "OPEN_VIEW_MENU") {
+            layerMode = "views"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (node.actionName == "SAVE_COLLECTION_VIEW") {
+            // Human and external callers both reach the domain's view-state
+            // host; the preset name is the only extra argument.
+            let result = executeViewStateFromHuman("SAVE_COLLECTION_VIEW",
+                viewPreferences.revision(), viewDraftName)
+            inputNotice = if (result.applied) {
+                if (result.reason == "view_unchanged") {
+                    "当前视图与“${viewDraftName}”一致"
+                } else {
+                    "已保存视图“${viewDraftName}”"
+                }
+            } else {
+                "保存视图未应用：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        if (node.actionName == "SELECT_COLLECTION_VIEW") {
+            let presetIndex = viewPresetIndex(node.semanticId)
+            let names = viewPreferences.names()
+            if (presetIndex < 0 || presetIndex >= names.size) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            let name = names[presetIndex]
+            // The layout/query/sort restore happens before the active name is
+            // recorded, so a rejected view never leaves a half-applied preset.
+            let result = executeViewStateFromHuman("SELECT_COLLECTION_VIEW",
+                collectionView.revision(), name)
+            inputNotice = if (result.applied) {
+                "已切换视图“${name}”；草稿与选择保持"
+            } else {
+                "切换视图未应用：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        if (node.actionName == "RESET_COLLECTION_VIEW") {
+            let result = executeViewStateFromHuman("RESET_COLLECTION_VIEW",
+                collectionView.revision(), "")
+            inputNotice = if (result.applied) {
+                "已恢复默认视图；保存的预设仍保留"
+            } else {
+                "恢复默认视图未应用：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        if (node.actionName == "SAVE_COLLECTION_VIEW_PREFERENCES") {
+            let result = executeViewStateFromHuman("SAVE_COLLECTION_VIEW_PREFERENCES",
+                viewPreferences.revision(), "")
+            inputNotice = if (result.applied) {
+                "视图偏好已保存"
+            } else {
+                "保存偏好未应用：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
         if (node.actionName == "OPEN_EDIT_DIALOG") {
             if (renderedSelectedId < 0) {
                 inputNotice = "请先选择一条规则"
             } else {
+                // Capture the public return reference for the EXISTING modal
+                // machinery. `editingFocusReference` is the live text editor;
+                // `focusedNodeReference` covers a just-focused ordinary control.
+                let returnTarget = match (panelWindow) {
+                    case Some(value) => value.editingFocusReference() ?? value.focusedNodeReference() ??
+                        CjguiComposableUiNodeReference.manual(29)
+                    case None => CjguiComposableUiNodeReference.manual(29)
+                }
+                editDialogReturnTarget = Some(returnTarget)
+                editDialogReturnRecordId = renderedSelectedId
                 layerMode = "edit"
             }
             localRevision += 1
@@ -897,7 +2327,66 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             }
             if (layerMode.size == 0) {
                 activeRecordId = -1
+                clearEditDialogReturnTarget()
             }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (node.actionName == "OPEN_RECORD_SEARCH") {
+            let snapshot = domain.snapshot()
+            let items = ArrayList<CjguiSearchableSelectionItem>()
+            for (record in snapshot.records) {
+                let enabledLabel = if (record.enabled) { "已启用" } else { "已停用" }
+                items.add(
+                    CjguiSearchableSelectionItem("${record.id}", record.label,
+                        detail: "保留 ${record.retentionCount} 天 · ${enabledLabel} · 排除 ${record.excludedType}",
+                        keywords: record.excludedType))
+            }
+            if (items.size == 0) {
+                inputNotice = "没有可查找的规则；请先新增"
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(false)
+            }
+            // returnTarget is the control that owned input when the panel was
+            // opened. The panel restores exactly that control after a cancel.
+            let returnTarget = match (panelWindow) {
+                case Some(value) => value.editingFocusReference() ?? value.focusedNodeReference() ??
+                    CjguiComposableUiNodeReference.manual(27)
+                case None => CjguiComposableUiNodeReference.manual(27)
+            }
+            recordSearchPanel.open("查找规则", items, returnTarget,
+                hint: "输入名称筛选；↑ ↓ 选择，Enter 定位，Esc 取消")
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (node.actionName == "CLEAR_RULE_FILTER") {
+            if (collectionView.query().size == 0) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            applyListFilter("")
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (node.actionName == "TOGGLE_DETAIL_LAYOUT") {
+            detailLayout = if (detailLayout == "compact") { "standard" } else { "compact" }
+            let draft = domain.formSnapshot()
+            let layoutLabel = if (detailLayout == "compact") { "紧凑" } else { "标准" }
+            inputNotice = "已切换到${layoutLabel}字段布局；草稿 v${draft.draftVersion} 未提交"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        // The single-choice group uses direct set actions rather than a toggle:
+        // selecting the already-current option is a no-op, and every option
+        // carries its stable key/value.
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            (node.actionName == "SET_DETAIL_LAYOUT_STANDARD" || node.actionName == "SET_DETAIL_LAYOUT_COMPACT")) {
+            let nextLayout = if (node.actionName == "SET_DETAIL_LAYOUT_COMPACT") { "compact" } else { "standard" }
+            if (nextLayout == detailLayout) {
+                return CjguiComposableUiDispatchResult(true)
+            }
+            detailLayout = nextLayout
+            let draft = domain.formSnapshot()
+            let layoutLabel = if (detailLayout == "compact") { "紧凑" } else { "标准" }
+            inputNotice = "已切换到${layoutLabel}字段布局；草稿 v${draft.draftVersion} 未提交"
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
         }
@@ -969,8 +2458,14 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         }
         if (result.applied && (node.actionName == "APPLY" || node.actionName == "CANCEL")) {
             layerMode = ""
+            clearEditDialogReturnTarget()
         }
         if (result.applied) {
+            localRevision += 1
+        } else if (result.reason.size > 0 && result.reason != "unknown_ui_action") {
+            // A disabled/no-selection/rejected owner action still produces
+            // visible feedback; it never reports success or drops the draft.
+            inputNotice = "未应用：${result.reason}"
             localRevision += 1
         }
         return CjguiComposableUiDispatchResult(result.applied, shouldClose: node.actionName == "CLOSE" && result.applied)
@@ -987,7 +2482,10 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         inputNotice = if (eventKind == 11) {
             "输入队列已满：本次输入未应用，请重试"
         } else {
-            "输入未应用：事件 ${eventKind} 的原控件已刷新或移除（节点 ${nodeId}）"
+            // User-facing wording stays short; the detail stays in the app log so
+            // a developer can still identify the exact stale control.
+            print("CJGUI_RULE_REJECTED_EVENT kind=${eventKind} node=${nodeId}\n")
+            "输入未应用：界面已刷新，请重试"
         }
         localRevision += 1
         return CjguiComposableUiDispatchResult(true)
@@ -1026,33 +2524,47 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         } else {
             CjguiComposableUiNodeReference.scoped(presentationScope, "toggle-beacon")
         }
-        return ArrayList<CjguiComposableUiCommand>(
-            [
-                CjguiComposableUiCommand(
-                    "rule-set.open-presentation-menu",
-                    CjguiComposableUiNodeReference.scoped(presentationScope, "open-menu"),
-                    "菜单",
-                    CjguiComposableUiShortcut("m"),
-                    "View",
-                    0,
-                    layerMode != "menu",
-                    false
-                ),
-                CjguiComposableUiCommand(
-                    "rule-set.toggle-beacon",
-                    toggleBeaconTarget,
-                    "切换图标",
-                    "View",
-                    1,
-                    true,
-                    usesCoralBeacon,
-                    focusScopeId: if (layerMode == "menu") {
-                        "rule-set-menu"
-                    } else {
-                        ""
-                    }
-                )
-            ])
+        // The reusable panel contributes its scoped arrow/enter/escape keys;
+        // the application contributes the one ⌘K entry that opens it.
+        let commands = recordSearchPanel.commands()
+        commands.add(
+            CjguiComposableUiCommand(
+                "rule-set.find-record",
+                CjguiComposableUiNodeReference.manual(27),
+                "查找规则",
+                CjguiComposableUiShortcut("k"),
+                "Edit",
+                2,
+                layerMode.size == 0 && !recordSearchPanel.isOpen(),
+                false
+            ))
+        commands.add(
+            CjguiComposableUiCommand(
+                "rule-set.open-presentation-menu",
+                CjguiComposableUiNodeReference.scoped(presentationScope, "open-menu"),
+                "菜单",
+                CjguiComposableUiShortcut("m"),
+                "View",
+                0,
+                layerMode != "menu" && !recordSearchPanel.isOpen(),
+                false
+            ))
+        commands.add(
+            CjguiComposableUiCommand(
+                "rule-set.toggle-beacon",
+                toggleBeaconTarget,
+                "切换图标",
+                "View",
+                1,
+                true,
+                usesCoralBeacon,
+                focusScopeId: if (layerMode == "menu") {
+                    "rule-set-menu"
+                } else {
+                    ""
+                }
+            ))
+        return commands
     }
     public func commitSceneRefresh(): Unit {
         componentRegistry.commitTransaction()
@@ -1085,7 +2597,11 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     }
     private func localPresentationButton(nodeId: Int64, semanticId: String, label: String, actionName: String,
         width: Int64): CjguiComposableUiNode {
-        return cjguiComposableButton(nodeId, semanticId, label, actionName, -1, presentationButtonStyle(width),
+        // Command targets carry the owning rule-set resource. A native menu
+        // binding rejects a negative target resource id, and this control may
+        // be addressed through the window's command table (⌘K, menus, keys).
+        return cjguiComposableButton(nodeId, semanticId, label, actionName,
+            CjguiRuleSetEditingDomain.ruleSetResourceId, presentationButtonStyle(width),
             interactionStyle: if (usesDarkAppearance) {
                 CjguiComposableUiTheme.beaconDark().primaryActionInteraction
             } else {
@@ -1107,8 +2623,9 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
             case Some(value) => value.interaction
             case None => CjguiComposableUiTheme.paperLight().primaryActionInteraction
         }
-        return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BUTTON, label, label, actionName, -1,
-            painted, interactionStyle: interaction, identity: Some(identity))
+        return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_BUTTON, label, label, actionName,
+            CjguiRuleSetEditingDomain.ruleSetResourceId, painted, interactionStyle: interaction,
+            identity: Some(identity))
     }
     private func presentationButtonStyle(width: Int64): CjguiComposableUiStyle {
         let base = if (usesDarkAppearance) {
@@ -1162,17 +2679,347 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
         }
         return ""
     }
-    private func currentListSource(): CjguiRuleSetVirtualListSource {
-        let theme = if (usesDarkAppearance) {
-            CjguiComposableUiTheme.beaconDark()
+    private func currentListSource(): CjguiComposableUiVariableHeightListSource {
+        // Keyboard navigation resolves the SAME projection the scene presents,
+        // so "down" walks visible rows by stable key even while filtered and
+        // sorted. The table never turns a display position into business id.
+        return if (collectionView.mode() == "table" || collectionView.mode() == "grid") {
+            tableSource
         } else {
-            CjguiComposableUiTheme.paperLight()
+            filteredListSource
         }
-        return CjguiRuleSetVirtualListSource(domain, theme, presentationTextStyle(theme.body),
-            cardScope: recordCardScope)
+    }
+
+    private func currentCollectionOrder(): CjguiComposableUiCollectionOrder {
+        return if (collectionView.mode() == "table" || collectionView.mode() == "grid") {
+            collectionTableOrder
+        } else {
+            collectionFilteredOrder
+        }
+    }
+
+    /// Actual content width of the split's first pane. The window frame gives
+    /// the current size after a native resize; the split geometry applies the
+    /// same handle and pane minima the layout will use. The card grid then
+    /// decides how many fixed-height cards fit.
+    private func workspaceContentWidth(): Int64 {
+        let frame: ?(Int64, Int64, Int64, Int64) = match (panelWindow) {
+            case Some(window) => window.windowScreenFrame()
+            case None => None
+        }
+        let windowWidth = match (frame) {
+            case Some(value) => value[2]
+            case None => 980
+        }
+        return max(0, windowWidth - 28)
+    }
+
+    private func tablePaneMinimumWidth(): Int64 {
+        return if (collectionView.mode() == "table") { max(420, tableSource.minimumContentWidth()) } else { 160 }
+    }
+
+    private func tableWorkspaceStacks(width: Int64): Bool {
+        return collectionView.mode() == "table" && width < tablePaneMinimumWidth() + 268
+    }
+
+    private func tablePaneWidth(width: Int64): Int64 {
+        return if (tableWorkspaceStacks(width)) { width } else {
+            CjguiComposableUiSplitGeometry.firstSizeForTrack(domain.splitFirstSize(), width, 8,
+                tablePaneMinimumWidth(), 260)
+        }
+    }
+
+    private func cardGridViewportWidth(): Int64 {
+        let requested = domain.splitFirstSize()
+        let firstPane = CjguiComposableUiSplitGeometry.firstSizeForTrack(requested,
+            workspaceContentWidth(), 8, 160, 260)
+        return if (firstPane > 0) { firstPane } else { 190 }
+    }
+
+    /// Human mode controls use the SAME view-state host external clients use.
+    /// The split widening is a separate existing presentation action and is
+    /// only applied for table/grid modes that need more horizontal room.
+    private func switchViewModeFromHuman(mode: String): Bool {
+        let arguments = ArrayList<CjguiSharedOperationActionArgument>([
+            CjguiSharedOperationActionArgument("mode", CjguiSharedOperationValue.string(mode))
+        ])
+        let result = domain.executeFromHuman(CjguiSharedOperationActionInvocation(
+            "SET_COLLECTION_VIEW_MODE", collectionView.revision(),
+            ArrayList<Int64>([CjguiRuleSetEditingDomain.ruleSetResourceId]), arguments))
+        if (!result.applied) {
+            inputNotice = "视图切换未应用：${result.reason}"
+            localRevision += 1
+            return false
+        }
+        if ((mode == "table" || mode == "grid") && domain.splitFirstSize() < 520) {
+            let _ = domain.setSplitFirstSizeFromHuman(520)
+        }
+        syncCollectionFocusWithView()
+        inputNotice = if (mode == "grid") {
+            "卡片视图：拖动窗口边缘可改变列数"
+        } else if (mode == "table") {
+            "表格视图：点击表头排序"
+        } else {
+            "列表视图"
+        }
+        localRevision += 1
+        return true
+    }
+
+    /// A mode hint left by an earlier human switch must not describe the new
+    /// mode after an external client changed it. Non-mode notices (draft,
+    /// batch, save results) still take precedence.
+    /// Display-only classification of the owner's message. It never changes the
+    /// message or the owner's validation; the textual kind marker keeps status
+    /// readable without relying on colour.
+    private func statusKindFor(message: String): String {
+        if (message.contains("被拒") || message.contains("失败") || message.contains("冲突") ||
+            message.contains("错误")) {
+            return CJGUI_STATUS_ERROR
+        }
+        if (message.contains("已保存") || message.contains("已应用") || message.contains("成功")) {
+            return CJGUI_STATUS_SUCCESS
+        }
+        if (message.contains("尚未") || message.contains("隐藏") || message.contains("警告")) {
+            return CJGUI_STATUS_WARNING
+        }
+        return CJGUI_STATUS_INFO
+    }
+
+    private func viewStatusText(fallback: String): String {
+        let modeNotice = inputNotice == "列表视图" ||
+            inputNotice.startsWith("卡片视图：") || inputNotice.startsWith("表格视图：")
+        if (modeNotice) {
+            if (collectionView.mode() == "grid") {
+                return "卡片视图：拖动窗口边缘可改变列数"
+            }
+            if (collectionView.mode() == "table") {
+                return "表格视图：点击表头排序"
+            }
+            return "列表视图"
+        }
+        return if (inputNotice.size > 0) { inputNotice } else { fallback }
+    }
+
+    /// Keeps the virtual-list cursor on the collection focus after a filter,
+    /// sort or view switch. A focus hidden by the new projection falls back to
+    /// the still-visible anchor, then to the first selectable row; selected
+    /// keys themselves are never dropped here.
+    private func syncCollectionFocusWithView(): Unit {
+        let order = currentCollectionOrder()
+        let _ = collectionSelection.ensureFocusInOrder(order)
+        let focus = collectionSelection.focus()
+        if (collectionView.mode() == "grid") {
+            let _ = cardGridSource.setAvailableWidth(cardGridViewportWidth())
+            if (focus.size > 0) {
+                let focusRowKey = cardGridSource.rowKeyForItem(focus)
+                if (focusRowKey.size > 0) {
+                    let _ = cardListState.revealKey(cardGridSource, focusRowKey)
+                }
+            }
+            return
+        }
+        if (focus.size > 0) {
+            listState.setFocusedKey(focus)
+            let _ = listState.revealKey(currentListSource(), focus)
+        }
+    }
+
+    /// Runs once per owner data version. Deleting a record or losing
+    /// selectability prunes its key; editing a draft does not.
+    private func syncCollectionSelectionWithData(): Unit {
+        let version = domain.version()
+        if (version == collectionPrunedVersion) {
+            return
+        }
+        collectionPrunedVersion = version
+        collectionSelection.pruneToEligible(collectionEligibilityOrder)
+    }
+
+    private func ruleIdForKey(key: String): Int64 {
+        let parts = key.split("_")
+        if (parts.size == 2 && parts[0] == "rule") {
+            if (let Some(id) <- Int64.tryParse(parts[1])) {
+                return id
+            }
+        }
+        return -1
+    }
+
+    /// One owner transaction for the whole selection. Hidden selected keys are
+    /// included on purpose; the owner validates every target, version, draft
+    /// conflict and transaction rule once, exactly like its external batch
+    /// entry. The UI never loops row-by-row writes.
+    private func batchSetCollectionEnabled(enabled: Bool): CjguiComposableUiDispatchResult {
+        let keys = collectionSelection.selectedKeysInOrder()
+        if (keys.size == 0) {
+            inputNotice = "批量：未选择记录"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(false)
+        }
+        let ids = ArrayList<Int64>()
+        let seen = HashSet<Int64>()
+        for (key in keys) {
+            let id = ruleIdForKey(key)
+            if (id < 0) {
+                inputNotice = "批量被拒：选择中存在非记录 key"
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(false)
+            }
+            if (!seen.contains(id)) {
+                seen.add(id)
+                ids.add(id)
+            }
+        }
+        collectionBatchSerial += 1
+        let hidden = collectionSelection.hiddenCount(currentCollectionOrder())
+        let requestId = "collection-batch-${collectionBatchSerial}-${domain.version()}-${ids.size}"
+        let arguments = ArrayList<CjguiSharedOperationActionArgument>([
+            CjguiSharedOperationActionArgument("enabled", CjguiSharedOperationValue.boolean(enabled)),
+            CjguiSharedOperationActionArgument("requestId", CjguiSharedOperationValue.string(requestId))
+        ])
+        let invocation = CjguiSharedOperationActionInvocation(
+            "BATCH_SET_ENABLED", domain.snapshot().version, ids, arguments)
+        let result = domain.executeFromHuman(invocation)
+        let actionLabel = if (enabled) { "启用" } else { "停用" }
+        let hiddenLabel = if (hidden > 0) { "（含隐藏 ${hidden} 条）" } else { "" }
+        inputNotice = if (result.applied) {
+            "批量${actionLabel} ${ids.size} 条${hiddenLabel} → v${result.versionAfter}"
+        } else {
+            "批量被拒：${result.reason}"
+        }
+        localRevision += 1
+        treePanel.markCollectionActive()
+        return CjguiComposableUiDispatchResult(result.applied)
+    }
+
+    /// Uses the controller's existing scene revision instead of the owner data
+    /// version: filtering, sorting and view switching change the projection
+    /// without changing the document, so domain.version alone would look stale.
+    private func collectionViewVersion(): Int64 {
+        return uiSceneVersion()
+    }
+
+    /// The ONE column layout object shared by the table, the column menu and
+    /// the external action host.
+    public func tableColumnLayout(): CjguiComposableUiTableColumnLayout {
+        return tableLayout
+    }
+
+    /// Public selection snapshot for consumers/tests: the same object the
+    /// external provider reports, never a second projection.
+    public func collectionSelectionSnapshot(): CjguiComposableUiCollectionSelectionSnapshot {
+        return collectionSelection.snapshot(collectionViewVersion())
+    }
+
+    public func collectionHiddenCount(): Int64 {
+        return collectionSelection.hiddenCount(currentCollectionOrder())
+    }
+
+    public func collectionSelectionVersion(): Int64 {
+        return collectionSelection.selectionVersion()
+    }
+
+    private func columnKeyFromSemantic(semanticId: String, prefix: String): String {
+        let parts = semanticId.split(prefix)
+        if (parts.size == 2) {
+            return parts[1]
+        }
+        return ""
+    }
+
+    private func sortColumnKeyForAction(actionName: String): String {
+        if (actionName == CjguiRuleSetTableColumns.sortNameAction) {
+            return "name"
+        }
+        if (actionName == CjguiRuleSetTableColumns.sortEnabledAction) {
+            return "enabled"
+        }
+        if (actionName == CjguiRuleSetTableColumns.sortRetentionAction) {
+            return "retention"
+        }
+        if (actionName == CjguiRuleSetTableColumns.sortExcludedAction) {
+            return "excluded"
+        }
+        return ""
+    }
+
+    private func sortColumnLabel(columnKey: String): String {
+        if (columnKey == "name") {
+            return "规则名称"
+        }
+        if (columnKey == "enabled") {
+            return "启用状态"
+        }
+        if (columnKey == "retention") {
+            return "保留天数"
+        }
+        if (columnKey == "excluded") {
+            return "排除类型"
+        }
+        return columnKey
+    }
+
+    /// Drops the captured public return reference once the dialog is really
+    /// closing. The window's own modal-return anchor remains the single focus
+    /// owner; this only releases the consumer-side reference.
+    private func clearEditDialogReturnTarget(): Unit {
+        editDialogReturnTarget = None
+        editDialogReturnRecordId = -1
+    }
+
+    /// Applies a filter query and keeps focus on a row that still exists.
+    /// Selection is domain-owned and is not cleared just because the selected
+    /// record left the filter; the detail pane intentionally keeps it.
+    private func applyListFilter(value: String): Unit {
+        // The view owns the text query and the table delegates it to the same
+        // filtered source, so the list and table projections cannot diverge.
+        let _ = collectionView.setQuery(value)
+        tableSource.dataChanged(domain.version())
+        let visible = tableSource.itemCount()
+        // Selected keys stay selected even when the filter hides their rows;
+        // only the keyboard cursor is repaired onto the new order.
+        syncCollectionFocusWithView()
+        if (tableSource.indexForKey(listState.focusedKey()) < 0) {
+            let first = tableSource.itemAt(0)
+            listState.setFocusedKey(if (first.resourceId >= 0) {
+                first.key
+            } else {
+                ""
+            })
+        }
+        let selected = domain.selectedRecordId()
+        listState.setSelectedKey(if (selected >= 0) {
+            "rule_${selected}"
+        } else {
+            ""
+        })
+        inputNotice = if (value.size == 0) {
+            "已清除筛选"
+        } else {
+            "筛选“${value}”：${visible} 条匹配"
+        }
+        localRevision += 1
     }
     private func detailFieldNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
         return 200000000 + recordId * 16 + fieldIndex
+    }
+    /// The converged public-detail block owns its own id range so it can sit
+    /// beside the app's handwritten fields without colliding with them.
+    private func publicDetailEditorNodeId(recordId: Int64): Int64 {
+        return 810000000 + recordId * 100
+    }
+    private func publicDetailStatusNodeId(recordId: Int64): Int64 {
+        return 830000000 + recordId * 100
+    }
+    /// Record id encoded by the public-detail block's own editor ids. Only this
+    /// block's range resolves here; ordinary detail/dialog ids keep their own
+    /// mapping.
+    private func publicDetailRecordId(nodeId: Int64): Int64 {
+        if (nodeId >= 810000000 && nodeId < 830000000) {
+            return (nodeId - 810000000) / 100
+        }
+        return -1
     }
     private func detailFieldGroupNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
         return 600000000 + recordId * 16 + fieldIndex
@@ -1197,6 +3044,36 @@ private class CjguiRuleSetComposableController <: CjguiComposableUiController & 
     /// so its extra element needs its own distinct id range.
     private func dialogPresetNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
         return 1000000000 + recordId * 16 + fieldIndex
+    }
+    /// Identity of the composite preset button inside the COMPACT detail
+    /// layout. The same composite implementation is shared with the dialog and
+    /// the generated region; only the declared identity differs.
+    private func detailPresetNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1100000000 + recordId * 16 + fieldIndex
+    }
+    private func dialogStepperRowNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1200000000 + recordId * 16 + fieldIndex
+    }
+    private func dialogStepperPresetsNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1300000000 + recordId * 16 + fieldIndex
+    }
+    private func dialogStepDownNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1400000000 + recordId * 16 + fieldIndex
+    }
+    private func dialogStepUpNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1500000000 + recordId * 16 + fieldIndex
+    }
+    private func detailStepperRowNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1600000000 + recordId * 16 + fieldIndex
+    }
+    private func detailStepperPresetsNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1700000000 + recordId * 16 + fieldIndex
+    }
+    private func detailStepDownNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1800000000 + recordId * 16 + fieldIndex
+    }
+    private func detailStepUpNodeId(recordId: Int64, fieldIndex: Int64): Int64 {
+        return 1900000000 + recordId * 16 + fieldIndex
     }
     private func dialogActionNodeId(recordId: Int64, actionIndex: Int64): Int64 {
         return 500000000 + recordId * 4 + actionIndex
@@ -1241,6 +3118,10 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
     var retentionMinimum = CjguiRuleSetEditingDomain.defaultRetentionMinimum
     var retentionMaximum = CjguiRuleSetEditingDomain.defaultRetentionMaximum
     var retentionPreset = ""
+    var seedTableRows: Int64 = 0
+    var performanceScene = false
+    var observeCosts = false
+    var viewPreferencesPath = ""
     var hasRetentionRange = false
     var index: Int64 = 0
     while (index < args.size) {
@@ -1291,6 +3172,17 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
                 return None
             }
             index += 3
+        } else if (args[index] == "--seed-table-rows" && index + 1 < args.size && seedTableRows == 0) {
+            if (let Some(value) <- Int64.tryParse(args[index + 1])) {
+                if (value > 0 && value <= 2000) {
+                    seedTableRows = value
+                } else {
+                    return None
+                }
+            } else {
+                return None
+            }
+            index += 2
         } else if (args[index] == "--measurement-warmup-ms" && index + 1 < args.size && !hasMeasurementWarmup) {
             if (let Some(value) <- Int64.tryParse(args[index + 1])) {
                 if (value >= 0 && value <= 60000) {
@@ -1303,6 +3195,18 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
                 return None
             }
             index += 2
+        } else if (args[index] == "--performance-scene" && !performanceScene) {
+            performanceScene = true
+            index += 1
+        } else if (args[index] == "--observe-costs" && !observeCosts) {
+            observeCosts = true
+            index += 1
+        } else if (args[index] == "--view-preferences" && index + 1 < args.size && viewPreferencesPath.size == 0) {
+            // Explicit presentation preference file. It is deliberately a
+            // separate path from --open/--save-as: a document save never writes
+            // view preferences and a preference save never rewrites the rule set.
+            viewPreferencesPath = args[index + 1]
+            index += 2
         } else {
             return None
         }
@@ -1310,7 +3214,8 @@ private func parseStartupFiles(args: Array<String>): ?CjguiRuleSetStartupFiles {
     return Some(
         CjguiRuleSetStartupFiles(openPath, saveAsPath, verifiesHostCloseDecisions, measurementDurationMs,
             measurementWarmupMs, retentionMinimum, retentionMaximum,
-            retentionPreset: retentionPreset))
+            retentionPreset: retentionPreset, seedTableRows: seedTableRows,
+            viewPreferencesPath: viewPreferencesPath, performanceScene: performanceScene, observeCosts: observeCosts))
 }
 
 // Bounded consumer-side cost probe. It uses the same public controller and
@@ -1384,6 +3289,15 @@ private func authorization(): CjguiSharedOperationExternalAuthorization {
                 CjguiSharedOperationExternalActionScope("REDO", all, true),
                 CjguiSharedOperationExternalActionScope("SAVE_RULE_SET", all, true),
                 CjguiSharedOperationExternalActionScope("SET_SPLIT_SIZE", all, true),
+                CjguiSharedOperationExternalActionScope("SET_TABLE_COLUMN_WIDTH", all, true),
+                CjguiSharedOperationExternalActionScope("SET_TABLE_COLUMN_VISIBLE", all, true),
+                CjguiSharedOperationExternalActionScope("MOVE_TABLE_COLUMN", all, true),
+                CjguiSharedOperationExternalActionScope("RESET_TABLE_COLUMNS", all, true),
+                CjguiSharedOperationExternalActionScope("SAVE_COLLECTION_VIEW", all, true),
+                CjguiSharedOperationExternalActionScope("SELECT_COLLECTION_VIEW", all, true),
+                CjguiSharedOperationExternalActionScope("RESET_COLLECTION_VIEW", all, true),
+                CjguiSharedOperationExternalActionScope("SET_COLLECTION_VIEW_MODE", all, true),
+                CjguiSharedOperationExternalActionScope("SAVE_COLLECTION_VIEW_PREFERENCES", all, true),
                 // Runtime-generated-UI entry points. They are protocol verbs
                 // (listed by the connection's visible-action catalog when the
                 // generated provider is registered) and only forward bounded
@@ -1709,6 +3623,31 @@ func localFirstCreateThenBatchedExternalFixtureProjectsListRefresh(): Unit {
     window.close()
 }
 
+private func seedRuleSetTableRows(domain: CjguiRuleSetEditingDomain, rows: Int64): Bool {
+    let names = ["重复规则", "登录审计", "临时文件清理", "长期归档", "重复规则"]
+    let retentions: Array<Int64> = [2, 10, 100, 7, 30]
+    let excludedTypes = ["cache", "temp", "log", "cache", "temp"]
+    var index: Int64 = 0
+    while (index < rows) {
+        let ordinal = index + 1
+        // Every fifth row repeats an existing name; the rest stay distinguishable.
+        // Numeric sorting must therefore handle equal leaves and 2 < 10 < 100.
+        let label = if (ordinal % 5 == 0) {
+            names[index % names.size]
+        } else {
+            "${names[index % names.size]} ${ordinal}"
+        }
+        let result = domain.createRecordFromHuman(label, ordinal % 4 != 0,
+            retentions[index % retentions.size], excludedTypes[index % excludedTypes.size],
+            "table-seed-${ordinal}")
+        if (!result.applied) {
+            return false
+        }
+        index += 1
+    }
+    return true
+}
+
 private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
     let domain = CjguiRuleSetEditingDomain.newWithRetentionRange(minimum: startup.retentionMinimum,
         maximum: startup.retentionMaximum)
@@ -1722,8 +3661,27 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
         CjguiMacosApplicationHost.stopApplicationLoop();
         return 2
     }
+    if (startup.seedTableRows > 0 && !seedRuleSetTableRows(domain, startup.seedTableRows)) {
+        getStdErr().writeln("rule set: cannot seed table rows through the owner");
+        CjguiMacosApplicationHost.stopApplicationLoop();
+        return 2
+    }
+    let preferencePath = if (startup.viewPreferencesPath.size > 0) {
+        startup.viewPreferencesPath
+    } else if (startup.openPath.size > 0) {
+        "${startup.openPath}.cjgui-views"
+    } else if (startup.saveAsPath.size > 0) {
+        "${startup.saveAsPath}.cjgui-views"
+    } else {
+        ""
+    }
     let controller = CjguiRuleSetComposableController(domain,
-        presetOverride: startup.retentionPreset)
+        presetOverride: startup.retentionPreset, viewPreferencesPath: preferencePath)
+    if (startup.performanceScene && !seedRuleSetPerformanceScene(controller.generatedUiRegion())) {
+        getStdErr().writeln("rule set: performance scene declaration rejected")
+        CjguiMacosApplicationHost.stopApplicationLoop()
+        return 2
+    }
     let host = CjguiMacosApplicationHost(
         controller,
         configuration: CjguiMacosApplicationWindowConfiguration("CJGUI 规则集编辑器", 980u32, 620u32)
@@ -1736,6 +3694,9 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
     // The generated-instance projection needs the same accepted window its
     // identities live in, so an external caller can address them by declared key.
     controller.generatedUiRegion().attachWindow(window)
+    // The searchable-record panel is an ordinary modal over this window; it
+    // needs the accepted window to finish layer return/focus restoration.
+    controller.bindWindow(window)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), domain, window)
     if (!connection.enableTargetedContextReads(domain) || !connection.enableWindowProgressReads(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
@@ -1744,6 +3705,7 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
         host.close();
         return 1
     }
+    let costObservation = RuleSetCostObservation(window, domain, startup.observeCosts)
     if (startup.verifiesHostCloseDecisions) {
         // A window that really HOLDS a shared-catalog image identity, accepted
         // through the same public structure channel an external client uses. The
@@ -1797,12 +3759,28 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
         getStdOut().writeln("CJGUI_RULE_SET_HOST_PROBE rejected_then_accepted_close_cleaned")
         return 0
     }
+    // A window start may report a pending first frame; the ordinary scheduler
+    // finishes that submission on later owner turns. Readiness is therefore
+    // observed with a bounded pump, not assumed from start() alone. This is
+    // the same normal turn loop used below, not a private startup protocol.
+    var readinessTurns: Int64 = 0
+    while (host.isOpen() && window.windowProjection().submittedFrameIndex <= 0 && readinessTurns < 240) {
+        let _ = host.pumpOneTurn()
+        controller.finishPanelAction(window)
+        readinessTurns += 1
+    }
     if (let Some(info) <- connection.connectionInfo()) {
         let output = getStdOut()
         output.writeln("CJGUI_RULE_SET_READY DESCRIPTOR_PATH ${info.descriptorPath}")
         output.writeln("CJGUI_RULE_SET_READY PROTOCOL ${info.protocol}")
+        output.writeln("CJGUI_RULE_SET_READY VIEW_PREFERENCES ${controller.viewPreferencesPath()}")
+        output.writeln("CJGUI_RULE_SET_READY VIEW_ACTIVE ${controller.viewPreferencesStore().activeName()}")
+        output.flush()
         let projection = window.windowProjection()
         if (!projection.isActive || projection.sessionIdentity.size == 0 || projection.submittedFrameIndex <= 0) {
+            output.writeln("CJGUI_RULE_SET_READY NOT_READY active=${projection.isActive} " +
+                "session=${projection.sessionIdentity.size} submitted=${projection.submittedFrameIndex} " +
+                "failure=${projection.lastNativeFailure} turns=${readinessTurns}")
             output.flush();
             host.close();
             return 1
@@ -1811,9 +3789,13 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
             "CJGUI_RULE_SET_READY WINDOW_READY ${projection.sessionIdentity} ${projection.submittedFrameIndex}")
         output.flush()
     }
+    costObservation.sample("ready")
     let warmupStarted = MonoTime.now()
     while (host.isOpen() && (MonoTime.now() - warmupStarted).toMilliseconds() < startup.measurementWarmupMs) {
-        let _ = host.pumpOneTurn()
+        let remaining = max(1, startup.measurementWarmupMs - (MonoTime.now() - warmupStarted).toMilliseconds())
+        let _ = host.pumpUntilWork(timeoutMs: UInt32(remaining))
+        controller.finishPanelAction(window)
+        costObservation.poll()
     }
     if (host.isOpen()) {
         let output = getStdOut();
@@ -1824,15 +3806,31 @@ private func runRuleSetApp(startup: CjguiRuleSetStartupFiles): Int32 {
     let measurementStarted = MonoTime.now()
     while (host.isOpen() && (startup.measurementDurationMs <= 0 ||
             (MonoTime.now() - measurementStarted).toMilliseconds() < startup.measurementDurationMs)) {
-        let _ = host.pumpOneTurn()
+        let remaining = if (startup.measurementDurationMs <= 0) { UInt32.Max } else {
+            UInt32(max(1, startup.measurementDurationMs - (MonoTime.now() - measurementStarted).toMilliseconds()))
+        }
+        let _ = host.pumpUntilWork(timeoutMs: remaining)
+        controller.finishPanelAction(window)
+        costObservation.poll()
     }
     getStdOut().writeln("CJGUI_RULE_TRANSFER_METRICS ${controller.transferMetricsSummary()}")
     getStdOut().flush()
+    costObservation.finish()
     host.close();
     return 0
 }
 
 main(args: Array<String>): Int64 {
+    if (args.size == 1 && args[0] == "--check-performance-declarations") {
+        let domain = CjguiRuleSetEditingDomain.newUntitled()
+        let created = domain.createRecordFromHuman("规则", true, 9, "cache", "declaration-check")
+        let region = CjguiRuleSetGeneratedRegion(domain)
+        let ok = created.applied && seedRuleSetPerformanceScene(region) &&
+            !CjguiGeneratedUiPresentation.isPropertyImplemented(CJGUI_GENERATED_PRESENTATION_IMAGE,
+                "textOverflow", "STRING")
+        println("RULE_SET_PERFORMANCE_DECLARATIONS accepted=${ok}")
+        return if (ok) { 0 } else { 1 }
+    }
     if (args.size == 1 && args[0] == "--verify-transfer-cost") {
         return Int64(runTransferCostProbe())
     }
@@ -1840,7 +3838,7 @@ main(args: Array<String>): Int64 {
         return Int64(runRuleSetApp(startup))
     }
     getStdErr().writeln(
-        "usage: CJGUIRuleSet [--open PATH] [--save-as PATH] [--verify-host-close-decisions] [--retention-range MIN MAX] [--retention-preset VALUE] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000]")
+        "usage: CJGUIRuleSet [--open PATH] [--save-as PATH] [--view-preferences PATH] [--verify-host-close-decisions] [--retention-range MIN MAX] [--retention-preset VALUE] [--seed-table-rows 1..2000] [--performance-scene] [--observe-costs] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000]")
     CjguiMacosApplicationHost.stopApplicationLoop()
     return 2
 }
@@ -2370,7 +4368,10 @@ func retentionCompositeHandwrittenAndGeneratedShareOneShape(): Unit {
     // resolves its field + preset elements.
     let region = controller.generatedUiRegion()
     @Assert(region.submitStructure(RETENTION_COMPOSITE_S1, 0).candidateAccepted, true)
-    @Assert(window.refresh(), true)
+    if (!window.refresh()) {
+        throw IllegalArgumentException("retention composite refresh failed: " +
+            window.windowProjection().lastNativeFailure + " / " + region.sceneState())
+    }
     @Assert(region.acceptedStructureVersion(), 1)
     @Assert(region.acceptedNodeIdForKey("retentionEdit") > 0, true)
     @Assert(region.acceptedCompositeElementNodeId("retentionEdit", "edit") > 0, true)
@@ -2398,10 +4399,22 @@ func retentionCompositeHandwrittenAndGeneratedShareOneShape(): Unit {
             descriptorLabel = descriptor.label
         }
     }
-    let directBuild = CjguiRetentionIntegerEditComposite.buildEditor(1, "direct-row", 2, 3,
-        descriptorLabel, field.draftText, "retentionCount", "EDIT_DRAFT_TEXT",
+    let retentionDescriptor = domain.formBinding().fieldAtControlIndex(
+        domain.formBinding().controlIndexForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId))
+    let directBinding = CjguiNumericStepperBinding(1, "direct-row", 2, 3, 4, "direct-input", 5,
+        "direct-step-down", 6, "direct-step-up", descriptorLabel, field.draftText,
+        retentionDescriptor.minimum, retentionDescriptor.maximum, 1, "retentionCount", "EDIT_DRAFT_TEXT",
         CjguiRuleSetEditingDomain.formRetentionResourceId, recordId,
-        region.retentionPreset().label)
+        CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION,
+        CjguiRetentionIntegerEditComposite.STEP_UP_ACTION)
+    let directPreset = CjguiNumericStepperPreset("primary", 7, region.retentionPreset().label,
+        region.retentionPreset().value, actionName: CjguiRetentionIntegerEditComposite.PRESET_ACTION,
+        writerOperation: "EDIT_DRAFT_TEXT",
+        bindingResourceId: CjguiRuleSetEditingDomain.formRetentionResourceId,
+        ownerTargetResourceId: recordId)
+    let directBuild = CjguiRetentionIntegerEditComposite.buildEditor(directBinding,
+        ArrayList<CjguiNumericStepperPreset>([directPreset]),
+        CjguiNumericStepperStyle(input: CjguiComposableUiStyle(fixedHeight: 26, growX: 1)))
     let directShape = ArrayList<String>()
     compositeShapeOf(directBuild, directShape)
     @Assert(handwrittenShape.size, directShape.size)
@@ -2410,12 +4423,15 @@ func retentionCompositeHandwrittenAndGeneratedShareOneShape(): Unit {
         @Assert(handwrittenShape[index], directShape[index])
         index += 1
     }
-    // The shape really is input + preset, not a plain editor.
-    @Assert(handwrittenShape.size >= 3, true)
-    // shape[0] is the row container, [1] the shared integer input and [2] the
-    // configured preset button.
-    @Assert(handwrittenShape[1].contains("|retentionCount|EDIT_DRAFT_TEXT|"), true)
-    @Assert(handwrittenShape[2].contains("|${CjguiRetentionIntegerEditComposite.PRESET_ACTION}"), true)
+    // The shape really is input + step buttons + preset, not a plain editor.
+    var sawInput = false
+    var sawPreset = false
+    for (shape in handwrittenShape) {
+        if (shape.contains("|retentionCount|EDIT_DRAFT_TEXT|")) { sawInput = true }
+        if (shape.contains("|${CjguiRetentionIntegerEditComposite.PRESET_ACTION}")) { sawPreset = true }
+    }
+    @Assert(sawInput, true)
+    @Assert(sawPreset, true)
     window.close()
 }
 
@@ -2575,4 +4591,153 @@ END"""
     @Assert(row.nodeId, rowId)
     @Assert(row.style.gap, 12)
     window.close()
+}
+
+// --- list filtering + second field/layout combination ---------------------
+
+private func filterLayoutCreateRule(domain: CjguiRuleSetEditingDomain, label: String, enabled: Bool,
+    requestId: String): Unit {
+    let result = domain.executeFromExternal(cjguiRuleSetInvocationForFilterTest(domain, label, enabled, requestId))
+    if (!result.applied) {
+        throw IllegalArgumentException("filter test rule create failed: ${result.reason}")
+    }
+}
+
+private func cjguiRuleSetInvocationForFilterTest(domain: CjguiRuleSetEditingDomain, label: String, enabled: Bool,
+    requestId: String): CjguiSharedOperationActionInvocation {
+    return CjguiRuleSetInvocationFactory.create(domain.snapshot().version, label, enabled, 7, "cache", requestId)
+}
+
+private func ruleSetScene(controller: CjguiRuleSetComposableController,
+    version: Int64): CjguiComposableUiScene {
+    let root = controller.buildUi()
+    let rect = CjguiComposableUiRect(0, 0, 980, 620)
+    // Resolve the same candidate identities a window resolves so the virtual
+    // list materializes its visible range; this is still a pure headless scene,
+    // not a native window.
+    let registry = CjguiComposableUiIdentityRegistry()
+    if (!registry.beginCandidate()) {
+        return CjguiComposableUiLayoutEngine.layout(root, rect, version)
+    }
+    let _ = registry.resolveCandidate(root)
+    let _ = registry.replaceCandidateRoot(root)
+    let scene = CjguiComposableUiLayoutEngine.layoutWithMetrics(root, rect, version,
+        CjguiComposableUiFallbackTextMeasurer(), identityRegistry: Some(registry)).scene
+    let _ = registry.prepareCandidate()
+    return scene
+}
+
+private func sceneHasSemantic(scene: CjguiComposableUiScene, semanticId: String): Bool {
+    for (node in scene.nodes()) {
+        if (node.semanticId == semanticId) {
+            return true
+        }
+    }
+    return false
+}
+
+/// Filtering is a projection over the EXISTING virtual range: visible rows are
+/// chosen by business record id, an off-filter record does not become a row,
+/// keyboard navigation walks only visible records, and the detail selection is
+/// not silently rewritten when the selected record leaves the filter.
+@Test
+func ruleListFilterAndKeyboardNavigationKeepStableRecordIdentity(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    filterLayoutCreateRule(domain, "Alpha 规则", true, "filter-1")
+    filterLayoutCreateRule(domain, "Beta 规则", false, "filter-2")
+    filterLayoutCreateRule(domain, "Alpine 规则", true, "filter-3")
+    let controller = CjguiRuleSetComposableController(domain)
+    var scene = ruleSetScene(controller, 1)
+    let filterNode = scene.nodeForId(24)
+    @Assert(filterNode.nodeId, 24)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(filterNode, 28, "alp", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    scene = ruleSetScene(controller, 2)
+    @Assert(sceneHasSemantic(scene, "rule-row-1"), true)
+    @Assert(sceneHasSemantic(scene, "rule-row-3"), true)
+    @Assert(sceneHasSemantic(scene, "rule-row-2"), false)
+    // Filtering never moves the owner selection: it was record 3 and remains 3.
+    @Assert(domain.selectedRecordId(), 3)
+    let listNode = scene.nodeForId(21)
+    @Assert(listNode.nodeId, 21)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(listNode, 35, "home", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    @Assert(domain.selectedRecordId(), 1)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(listNode, 35, "down", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    // "down" lands on the SECOND VISIBLE record (3), never on the filtered-out
+    // display position 2.
+    @Assert(domain.selectedRecordId(), 3)
+    // A query with no match presents ordinary empty feedback and keeps the
+    // owner selection untouched.
+    let filterNodeAgain = scene.nodeForId(24)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(filterNodeAgain, 28, "zzz", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    scene = ruleSetScene(controller, 3)
+    @Assert(sceneHasSemantic(scene, "empty-list"), true)
+    @Assert(sceneHasSemantic(scene, "rule-row-1"), false)
+    @Assert(domain.selectedRecordId(), 3)
+}
+
+/// The second detail layout really binds the same owner fields differently:
+/// name+enabled side by side and retention through the declared composite. The
+/// switch itself is window view state; only the explicit owner actions apply or
+/// cancel the draft.
+@Test
+func detailLayoutSwitchKeepsDraftAndUsesTheSameOwnerActions(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    filterLayoutCreateRule(domain, "布局规则", true, "layout-1")
+    let recordId = domain.selectedRecordId()
+    @Assert(recordId > 0, true)
+    let controller = CjguiRuleSetComposableController(domain)
+    var scene = ruleSetScene(controller, 1)
+    let standardEditor = scene.nodeForId(200000000 + recordId * 16)
+    @Assert(standardEditor.nodeId, 200000000 + recordId * 16)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(standardEditor, 28, "布局草稿", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    let draftBefore = domain.formSnapshot()
+    @Assert(draftBefore.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "布局草稿")
+    let appliedLabelBefore = domain.snapshot().recordById(recordId).label
+    let toggle = scene.nodeForId(36)
+    @Assert(toggle.nodeId, 36)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(toggle, 27, "", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    scene = ruleSetScene(controller, 2)
+    @Assert(sceneHasSemantic(scene, "rule-detail-compact"), true)
+    @Assert(sceneHasSemantic(scene, "rule-detail-standard"), false)
+    @Assert(sceneHasSemantic(scene, "compact-field-label"), true)
+    @Assert(sceneHasSemantic(scene, "compact-field-enabled"), true)
+    // The switch neither submitted nor discarded the draft.
+    let draftAfterSwitch = domain.formSnapshot()
+    @Assert(draftAfterSwitch.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "布局草稿")
+    @Assert(draftAfterSwitch.draftVersion, draftBefore.draftVersion)
+    @Assert(draftAfterSwitch.appliedConfigVersion, draftBefore.appliedConfigVersion)
+    @Assert(domain.snapshot().recordById(recordId).label, appliedLabelBefore)
+    // Cancel through the SAME owner action the standard layout uses.
+    let cancelNode = scene.nodeForId(300000000 + recordId * 4 + 1)
+    @Assert(cancelNode.nodeId, 300000000 + recordId * 4 + 1)
+    @Assert(cancelNode.actionName, "CANCEL")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(cancelNode, 27, "", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        appliedLabelBefore)
+    // Edit again inside the compact layout and apply through the same entry.
+    var compactEditor = scene.nodeForId(200000000 + recordId * 16)
+    for (node in scene.nodes()) {
+        if (node.semanticId == "compact-field-label") {
+            compactEditor = node
+        }
+    }
+    @Assert(compactEditor.semanticId, "compact-field-label")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(compactEditor, 28, "紧凑布局已应用", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    let applyNode = scene.nodeForId(300000000 + recordId * 4)
+    @Assert(applyNode.actionName, "APPLY")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(applyNode, 27, "", 0, 0,
+        controller.uiSceneVersion())).didApply, true)
+    // Owner readback, not button colour or a log line.
+    @Assert(domain.snapshot().recordById(recordId).label, "紧凑布局已应用")
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        "紧凑布局已应用")
+    @Assert(domain.formSnapshot().appliedConfigVersion > draftBefore.appliedConfigVersion, true)
 }

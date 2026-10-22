@@ -15,6 +15,7 @@ from collections import deque
 import hashlib
 import json
 import os
+import queue
 import statistics
 import subprocess
 import threading
@@ -120,6 +121,161 @@ def lifecycle_timings(launched_at: float, ready_at: float, measurement_started_a
     }
 
 
+def observe_interactive_window(
+    executable: Path, app_args: list[str], output: Path, *, sample_s: float = 0.5,
+    maximum_s: float = 900, commands: Any = None, generated_structure: Path | None = None,
+) -> dict[str, Any]:
+    """Bounded process sampling while a person/CUA uses the normal window.
+
+    A stdin JSON line {"phase":"name"} takes one compact progress read. It
+    never generates input or retries an operation. App stdout contains sparse
+    diagnosticSnapshot observations; the two clocks are not silently equated.
+    """
+    require(executable.is_file(), f"missing ordinary executable: {executable}")
+    executable = executable.resolve()
+    require(.05 <= sample_s <= 10 and 0 < maximum_s <= 900, "invalid observation bounds")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    launched_ns = time.monotonic_ns()
+    result: dict[str, Any] = {
+        "schema": "cjgui_sparse_window_cost_v1", "executable": str(executable),
+        "sha256": sha256(executable), "arguments": app_args, "launched_ns": launched_ns,
+        "samples": [], "phases": [], "diagnostic_observations": [],
+        "presentation_latency_ns": None, "presentation_evidence": "unavailable",
+        "log_overflow": False, "error": None,
+    }
+    process = subprocess.Popen([str(executable), *app_args], cwd=executable.parent,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    result["pid"] = process.pid
+    lines: list[str] = []
+    lock = threading.Lock()
+    command_queue: queue.Queue[str] = queue.Queue(maxsize=96)
+    ready_seen = False
+
+    def drain(pipe: Any, destination: Path, stdout: bool) -> None:
+        saved = 0
+        with destination.open("wb") as target:
+            while raw := pipe.readline(65536):
+                observed_ns = time.monotonic_ns()
+                if saved + len(raw) <= 64 * 1024 * 1024:
+                    target.write(raw)
+                    saved += len(raw)
+                else:
+                    result["log_overflow"] = True
+                if stdout:
+                    line = raw.decode("utf-8", "replace").strip()
+                    with lock:
+                        if len(lines) < 4096:
+                            lines.append(line)
+                        if line.startswith("RULE_SET_COST ") and len(result["diagnostic_observations"]) < 128:
+                            values = dict(part.split("=", 1) for part in line.split()[1:] if "=" in part)
+                            result["diagnostic_observations"].append({"observed_ns": observed_ns, **values})
+
+    readers = [threading.Thread(target=drain, args=(process.stdout, output.with_suffix(".stdout.log"), True), daemon=True),
+               threading.Thread(target=drain, args=(process.stderr, output.with_suffix(".stderr.log"), False), daemon=True)]
+    for reader in readers:
+        reader.start()
+
+    def read_commands() -> None:
+        for raw in sys.stdin if commands is None else commands:
+            command_queue.put(raw)
+
+    threading.Thread(target=read_commands, daemon=True).start()
+    next_sample = time.monotonic()
+    connection = None
+    try:
+        while process.poll() is None:
+            now_ns = time.monotonic_ns()
+            require(now_ns - launched_ns < maximum_s * 1e9, "observation reached lifecycle bound")
+            with lock:
+                ready = window_ready_signal(lines)
+                descriptor_path = ready_descriptor(lines)
+            if ready is not None and not ready_seen:
+                ready_seen = True
+                result["ready"] = {"observed_ns": now_ns, "session_identity": ready.session_identity,
+                    "first_submitted_frame_index": ready.submitted_frame_index,
+                    "startup_to_ready_ms": (now_ns - launched_ns) / 1e6}
+                print(json.dumps({"ready": result["ready"], "pid": process.pid,
+                    "descriptor": str(descriptor_path) if descriptor_path else None}), flush=True)
+            if descriptor_path is not None and connection is None:
+                connection = public_client.SharedOperationClient(public_client.parse_descriptor(descriptor_path))
+                result["descriptor_path"] = str(descriptor_path)
+                if generated_structure is not None:
+                    from cjgui_generated_client import GeneratedUiSession
+                    session = GeneratedUiSession(connection)
+                    structure = session.structure()
+                    payload = generated_structure.read_text(encoding="utf-8")
+                    setup_start = time.monotonic_ns()
+                    reply = session.submit_text(payload, structure.version)
+                    require(reply.candidate_accepted, f"workload declaration refused: {reply}")
+                    accepted = session.wait_for_structure(structure.version + 1, timeout_ms=10000)
+                    require(accepted.outcome == "reached", f"workload declaration did not become accepted: {accepted}")
+                    result["workload_ready"] = {"observed_ns": time.monotonic_ns(),
+                        "setup_start_ns": setup_start, "structure_sha256": sha256(generated_structure),
+                        "accepted_structure_version": structure.version + 1,
+                        "progress": connection.get_window_progress().raw}
+                    print(json.dumps({"workload_ready": result["workload_ready"]["accepted_structure_version"]}), flush=True)
+            try:
+                raw = command_queue.get_nowait()
+            except queue.Empty:
+                raw = None
+            if raw is not None:
+                command = json.loads(raw)
+                phase = command["phase"]
+                require(isinstance(phase, str) and 0 < len(phase) <= 64, "invalid phase label")
+                require(len(result["phases"]) < 96, "phase bound exceeded")
+                mark: dict[str, Any] = {"phase": phase, "client_start_ns": time.monotonic_ns()}
+                if connection is not None:
+                    response = connection.get_window_progress(timeout_seconds=10)
+                    mark["response"] = response.raw
+                    mark["progress"] = window_progress(response)
+                mark["client_end_ns"] = time.monotonic_ns()
+                result["phases"].append(mark)
+                print(json.dumps({"phase": phase, "index": len(result["phases"])}), flush=True)
+            if time.monotonic() >= next_sample:
+                try:
+                    sample = process_sample(process.pid, (now_ns - launched_ns) / 1e9)
+                    if is_live_process_sample(sample):
+                        result["samples"].append(sample)
+                except RuntimeError:
+                    if process.poll() is None:
+                        raise
+                next_sample = time.monotonic() + sample_s
+            time.sleep(.01)
+    except BaseException as error:
+        result["error"] = f"{type(error).__name__}: {error}"
+        raise
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        result["exit_code"] = process.wait(timeout=5)
+        result["exit_observed_ns"] = time.monotonic_ns()
+        for reader in readers:
+            reader.join(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+        temporary = output.with_suffix(".pending.json")
+        temporary.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(output)
+    return result
+
+
+def mark_interactive_observation(descriptor: Path, phase: str, output: Path) -> None:
+    """Same compact boundary read for hosts without a persistent stdin pipe."""
+    require(0 < len(phase) <= 64, "invalid phase label")
+    require(not output.exists() or output.stat().st_size < 4 * 1024 * 1024, "phase log bound exceeded")
+    connection = public_client.SharedOperationClient(public_client.parse_descriptor(descriptor))
+    mark = {"phase": phase, "client_start_ns": time.monotonic_ns()}
+    response = connection.get_window_progress(timeout_seconds=10)
+    mark.update(client_end_ns=time.monotonic_ns(), response=response.raw, progress=window_progress(response))
+    with output.open("a", encoding="utf-8") as target:
+        target.write(json.dumps(mark, ensure_ascii=False) + "\n")
+    print(json.dumps({"phase": phase, "read_ms": (mark["client_end_ns"]-mark["client_start_ns"])/1e6}))
+
+
 def business_recovery(
     samples: list[dict[str, float | int]], business_finished_elapsed_s: float,
 ) -> dict[str, float | int | bool | dict[str, float | int]]:
@@ -196,6 +352,11 @@ def window_progress(response: public_client.SharedOperationResponse) -> dict[str
         if not values:
             continue
         result[field] = " ".join(values[0])
+    # Current workload facts already travel through the compact progress
+    # protocol. Keep them rather than silently dropping them for old aliases.
+    for field, values in response.entries:
+        if field.startswith("WINDOW_WORKLOAD_"):
+            result[field] = " ".join(values)
     return result
 
 
@@ -669,6 +830,11 @@ def run_cycle(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--interactive-executable", type=Path)
+    parser.add_argument("--mark-descriptor", type=Path)
+    parser.add_argument("--phase")
+    parser.add_argument("--app-arg", action="append", default=[])
+    parser.add_argument("--generated-structure", type=Path)
     parser.add_argument("--duration-seconds", type=float, default=60.0)
     parser.add_argument("--warmup-seconds", type=float, default=5.0)
     parser.add_argument("--sample-seconds", type=float, default=1.0)
@@ -682,6 +848,14 @@ def main() -> int:
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
+    if arguments.mark_descriptor is not None:
+        require(arguments.phase is not None, "phase label is required")
+        mark_interactive_observation(arguments.mark_descriptor, arguments.phase, arguments.output)
+        return 0
+    if arguments.interactive_executable is not None:
+        result = observe_interactive_window(arguments.interactive_executable, arguments.app_arg,
+            arguments.output, sample_s=arguments.sample_seconds, generated_structure=arguments.generated_structure)
+        return 0 if result["exit_code"] == 0 and not result["log_overflow"] else 1
     require(1.0 <= arguments.duration_seconds <= 900.0, "duration must be within 1..900 seconds")
     require(0.05 <= arguments.sample_seconds <= arguments.duration_seconds, "invalid sample interval")
     require(10.0 <= arguments.public_get_interval_ms <= 10_000.0, "public GET interval must be within 10..10000 ms")

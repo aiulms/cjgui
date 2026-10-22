@@ -10,6 +10,7 @@ import cjgui.*
 import cjgui_rule_set_application.*
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.convert.*
 import std.sync.*
 import std.env.*
 
@@ -232,6 +233,24 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         }
         let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("split", splitProperties, true,
             childLimit: 2))
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("stack",
+            CjguiGeneratedUiPresentation.stackStyleProperties(), true, childLimit: 64))
+        let wrapProperties = CjguiGeneratedUiPresentation.wrapContentProperties()
+        for (property in CjguiGeneratedUiPresentation.containerStyleProperties()) {
+            wrapProperties.add(property)
+        }
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("wrap", wrapProperties, true,
+            childLimit: 64))
+        let aspectProperties = CjguiGeneratedUiPresentation.aspectRatioContentProperties()
+        for (property in CjguiGeneratedUiPresentation.boxProperties()) {
+            aspectProperties.add(property)
+        }
+        aspectProperties.add(CjguiGeneratedUiPropertySpec("padding", "INTEGER", minimum: 0, maximum: 32,
+            defaultValue: "0"))
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("aspectRatio", aspectProperties, true,
+            childLimit: 1))
+        let _ = catalog.registerComponent(CjguiGeneratedUiComponentSpec("spacer",
+            CjguiGeneratedUiPresentation.spacerContentProperties(), false))
 
         // The ONE image declaration, registered where the catalog is built so the
         // published capability text and the region always agree.
@@ -249,6 +268,8 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
             parameterNames: domain.actionArgumentNames("APPLY_DRAFT")))
         let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("CANCEL_DRAFT", "取消草稿",
             parameterNames: domain.actionArgumentNames("CANCEL_DRAFT")))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("SET_DETAIL_LAYOUT_STANDARD", "标准布局"))
+        let _ = catalog.registerAction(CjguiGeneratedUiActionSpec("SET_DETAIL_LAYOUT_COMPACT", "紧凑布局"))
         // One definition: the domain's shared form binding (the same object the
         // handwritten form field list and the external field read come from),
         // plus the writer operations' own argument names from that same domain, so
@@ -275,6 +296,7 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         }
         let _ = CjguiRetentionIntegerEditComposite.registerInto(catalog, presetConfig,
             domain.draftTextArgumentName())
+        let _ = CjguiRuleSetFeedbackComposites.registerInto(catalog)
         return (catalog, presetConfig)
     }
 
@@ -313,6 +335,28 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         return domain.selectedRecordId()
     }
 
+    /// A declared instance key may NAME its owner (`rule<recordId>`): that is an
+    /// app-owned instance identity, not a fabricated object. Any other key keeps
+    /// the normal single-owner meaning (the selected record).
+    public func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
+        if (resourceIdForField(fieldId) < 0) { return -1 }
+        return ownerForInstanceKey(instanceKey)
+    }
+
+    public func actionOperationResourceId(actionName: String, instanceKey: String): Int64 {
+        return ownerForInstanceKey(instanceKey)
+    }
+
+    private func ownerForInstanceKey(instanceKey: String): Int64 {
+        if (instanceKey.startsWith("rule") && instanceKey.size > 4) {
+            if (let Some(id) <- Int64.tryParse(instanceKey[4..])) {
+                return if (domain.hasRecord(id)) { id } else { -1 }
+            }
+            return -1
+        }
+        return domain.selectedRecordId()
+    }
+
     public func draftText(fieldId: String): String {
         let resourceId = resourceIdForField(fieldId)
         if (resourceId < 0) { return "" }
@@ -339,7 +383,12 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func actionAvailable(actionName: String): Bool {
-        if (actionName == "APPLY_DRAFT" || actionName == "CANCEL_DRAFT") {
+        if (actionName == "SET_DETAIL_LAYOUT_STANDARD" || actionName == "SET_DETAIL_LAYOUT_COMPACT") {
+            return true
+        }
+        if (actionName == "APPLY_DRAFT" || actionName == "CANCEL_DRAFT" ||
+            actionName == CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION ||
+            actionName == CjguiRetentionIntegerEditComposite.STEP_UP_ACTION) {
             return domain.selectedRecordId() >= 0
         }
         return false
@@ -363,7 +412,12 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func actionAvailability(actionName: String): CjguiSharedAvailability {
-        if (actionName != "APPLY_DRAFT" && actionName != "CANCEL_DRAFT") {
+        if (actionName == "SET_DETAIL_LAYOUT_STANDARD" || actionName == "SET_DETAIL_LAYOUT_COMPACT") {
+            return CjguiSharedAvailability.allowed(CjguiRuleSetEditingDomain.ruleSetResourceId, domain.version())
+        }
+        if (actionName != "APPLY_DRAFT" && actionName != "CANCEL_DRAFT" &&
+            actionName != CjguiRetentionIntegerEditComposite.STEP_DOWN_ACTION &&
+            actionName != CjguiRetentionIntegerEditComposite.STEP_UP_ACTION) {
             return CjguiSharedAvailability.unknown()
         }
         let recordId = domain.selectedRecordId()
@@ -379,6 +433,17 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     }
 
     public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        if (actionName == "SET_DETAIL_LAYOUT_STANDARD" || actionName == "SET_DETAIL_LAYOUT_COMPACT") {
+            let invocation = CjguiSharedOperationActionInvocation(actionName, 0,
+                ArrayList<Int64>([CjguiRuleSetEditingDomain.ruleSetResourceId]),
+                ArrayList<CjguiSharedOperationActionArgument>())
+            let result = domain.executeFromHuman(invocation)
+            synchronized(lock) {
+                lastOutcome = if (result.applied) { "字段布局已切换" } else { "字段布局切换被拒：${result.reason}" }
+                revisionValue += 1
+            }
+            return CjguiGeneratedUiActionResult(result.applied, result.reason)
+        }
         let selected = domain.selectedRecordId()
         if (selected < 0) {
             return CjguiGeneratedUiActionResult(false, "no_selected_record")
@@ -433,9 +498,18 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
     /// Live field projections from the same shared form binding the
     /// handwritten form uses: draft text, applied value, validation, focus and
     /// selection. Hex encoding keeps arbitrary text on one protocol line.
-    public func fieldsPayload(): String {
+    /// ONE owner's field projection from that owner's OWN draft facts: the same
+    /// projection the selected record publishes, built without changing the
+    /// selection, the focused field or the business version. An unknown or
+    /// deleted owner stays empty (the transport turns that into a named refusal)
+    /// and is never answered with another record's fields.
+    private func fieldsPayloadForProjectedOwner(ownerResourceId: Int64): String {
+        if (ownerResourceId < 0) { return "" }
+        let form = match (domain.formSnapshotForRecord(ownerResourceId)) {
+            case Some(snapshot) => snapshot
+            case None => return ""
+        }
         fieldsSerializationsValue += 1
-        let form = domain.formSnapshot()
         let builder = StringBuilder()
         // The published field order is the catalog's own order, derived from the
         // application form binding - not a second hand-written list.
@@ -455,6 +529,44 @@ public class CjguiRuleSetGeneratedRegion <: CjguiGeneratedUiBindingProvider &
         }
         builder.append("END")
         return builder.toString()
+    }
+
+    /// The SAME projection for ONE accepted generated instance. The accepted
+    /// instance table (not a provider map) decides whether the key exists and
+    /// which owner it binds; an unknown, retired or differently-owned instance
+    /// is refused here rather than answered with the unscoped record.
+    public func fieldsPayload(instanceKey: String): String {
+        if (instanceKey.isEmpty() || !holder.isAcceptedCompositeInstanceKey(instanceKey)) {
+            return ""
+        }
+        return fieldsPayloadForProjectedOwner(holder.compositeOwnerTargetForInstance(instanceKey))
+    }
+
+    /// The same projection addressed by the instance's accepted owner id. The
+    /// holder must bind exactly ONE accepted instance to this owner; ambiguous
+    /// or unbound owners stay empty.
+    public func fieldsPayloadForOwner(ownerResourceId: Int64): String {
+        if (ownerResourceId < 0) {
+            return ""
+        }
+        if (holder.compositeInstanceKeyForOwnerTarget(ownerResourceId).isEmpty()) {
+            return ""
+        }
+        return fieldsPayloadForProjectedOwner(ownerResourceId)
+    }
+
+    /// Accepted owner target bound to one instance key, or -1 when the key has
+    /// no accepted composite element. The transport uses it to authorize a
+    /// per-instance read; an unscoped answer never stands in for it.
+    public func instanceOwnerResourceId(instanceKey: String): Int64 {
+        if (instanceKey.isEmpty()) {
+            return -1
+        }
+        return holder.compositeOwnerTargetForInstance(instanceKey)
+    }
+
+    public func fieldsPayload(): String {
+        return fieldsPayloadForProjectedOwner(domain.selectedRecordId())
     }
 
     private func hexEncode(text: String): String {

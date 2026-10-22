@@ -2430,6 +2430,53 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
             }
             return CjguiComposableUiDispatchResult(changed)
         }
+        // Request-local context commands target the body node; handle them
+        // before the generic node-4 navigation branch below.
+        if (event.eventKind == 27 && event.text == "select_all") {
+            let request = match (contextMenuRequest) {
+                case Some(value) => value;
+                case None =>
+                    getStdOut().writeln("RANGE_CONTEXT_SELECT_ALL_REFUSED reason=no_request")
+                    getStdOut().flush()
+                    return CjguiComposableUiDispatchResult(false)
+            }
+            let targetMatches = event.node.nodeId == request.nodeId && event.node.resourceId == request.resourceId &&
+                event.node.nodeKind == request.nodeKind && event.node.value == request.value
+            let window = match (hostWindow) {
+                case Some(value) => value;
+                case None =>
+                    getStdOut().writeln("RANGE_CONTEXT_SELECT_ALL_REFUSED reason=window_missing request=${request.requestId}")
+                    getStdOut().flush()
+                    return CjguiComposableUiDispatchResult(false)
+            }
+            getStdOut().writeln("RANGE_CONTEXT_SELECT_ALL request=${request.requestId} target_match=${targetMatches} " +
+                "event=${event.node.nodeId}/${event.node.resourceId}/${event.node.nodeKind} " +
+                "request_target=${request.nodeId}/${request.resourceId}/${request.nodeKind} " +
+                "value_bytes=${event.node.value.toArray().size}/${request.value.toArray().size}")
+            getStdOut().flush()
+            if (!targetMatches) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            let frozen = window.freezeAcceptedSelection(request.nodeId)
+            getStdOut().writeln("RANGE_CONTEXT_SELECT_ALL_FREEZE request=${request.requestId} frozen=${frozen.isSome()}")
+            getStdOut().flush()
+            let ticket = match (frozen) {
+                case Some(value) => value
+                case None => return CjguiComposableUiDispatchResult(false)
+            }
+            let length = cjguiUtf16Length(request.value)
+            let restore = window.requestAcceptedSelectionRestore(ticket, 0, length, 0, length, {
+                => if (let Some(current) <- contextMenuRequest) {
+                    if (current.requestId == request.requestId) {
+                        contextMenuVisible = false
+                        window.requestRefresh()
+                    }
+                }
+            })
+            getStdOut().writeln("RANGE_CONTEXT_SELECT_ALL_RESTORE request=${request.requestId} restore=${restore}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(restore >= 0)
+        }
         if (event.eventKind == 27 && (event.node.actionName == "RANGE_TEXT_FIRST" || event.node.actionName ==
             "RANGE_TEXT_MIDDLE" || event.node.actionName == "RANGE_TEXT_LAST" || event.node.nodeId == 4)) {
             if (!this.fileBacked) {
@@ -2489,34 +2536,6 @@ class RangeTextWindowController <: CjguiComposableUiController & CjguiComposable
                 getStdOut().flush()
             }
             return CjguiComposableUiDispatchResult(applied)
-        }
-        if (event.eventKind == 27 && event.text == "select_all") {
-            let request = match (contextMenuRequest) {
-                case Some(value) => value;
-                case None => return CjguiComposableUiDispatchResult(false)
-            }
-            if (event.node.nodeId != request.nodeId || event.node.resourceId != request.resourceId ||
-                event.node.nodeKind != request.nodeKind || event.node.value != request.value) {
-                return CjguiComposableUiDispatchResult(false)
-            }
-            let window = match (hostWindow) {
-                case Some(value) => value;
-                case None => return CjguiComposableUiDispatchResult(false)
-            }
-            let ticket = match (window.freezeAcceptedSelection(request.nodeId)) {
-                case Some(value) => value
-                case None => return CjguiComposableUiDispatchResult(false)
-            }
-            let length = cjguiUtf16Length(request.value)
-            let restore = window.requestAcceptedSelectionRestore(ticket, 0, length, 0, length, {
-                => if (let Some(current) <- contextMenuRequest) {
-                    if (current.requestId == request.requestId) {
-                        contextMenuVisible = false
-                        window.requestRefresh()
-                    }
-                }
-            })
-            return CjguiComposableUiDispatchResult(restore >= 0)
         }
         if (event.eventKind == 36) {
             if (let Some(request) <- contextMenuRequest) {

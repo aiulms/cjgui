@@ -22,7 +22,7 @@ class UiOnlyStarterController <: CjguiComposableUiController {
             theme.primaryAction, interaction: theme.primaryActionInteraction,
             purpose: "主操作按钮")
         // This is ordinary public composition: the base card, image and a
-        // non-modal status layer share the one resolved scene and renderer.
+        // normal status row share the one resolved scene and renderer.
         let root = cjguiComposableLayerHost(1, "ui-only-root", theme.page)
         let content = cjguiComposableVertical(2, "ui-only-content", CjguiComposableUiStyle(
             padding: 16, gap: 10, growY: 1, cornerRadius: 18, clipsContent: true,
@@ -39,14 +39,7 @@ class UiOnlyStarterController <: CjguiComposableUiController {
         content.add(cjguiComposableButton(7, "ui-only-increment", "计数 +1", "INCREMENT", 0,
             action.localStyle(), interactionStyle: action.interaction))
         content.add(cjguiComposableText(8, "ui-only-status", "已点击 ${count} 次；注释：${note}", theme.body))
-        let overlay = cjguiComposableAnchoredLayer(20, "ui-only-overlay", "ui-only-overlay", "menu", "ui-only-content", 5,
-            CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 42, padding: 8, cornerRadius: 12,
-                clipsContent: true, background: CjguiComposableUiColor(0.03, 0.07, 0.13, 0.76),
-                border: CjguiComposableUiColor(0.42, 0.62, 0.96, 0.80)))
-        overlay.add(cjguiComposableText(21, "ui-only-overlay-copy", "本地预览叠层 · ${count}",
-            CjguiComposableUiStyle(fontSize: 12.0, textColor: CjguiComposableUiColor(0.92, 0.96, 1.0, 1.0))))
         root.add(content)
-        root.add(overlay)
         return root
     }
 

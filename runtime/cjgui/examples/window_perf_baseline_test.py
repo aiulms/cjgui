@@ -19,6 +19,30 @@ ROOT = Path(__file__).resolve().parent
 
 
 class WindowReadySignalTest(unittest.TestCase):
+    def test_preserves_current_workload_facts_without_inventing_missing_timings(self) -> None:
+        response = baseline.public_client.SharedOperationResponse("CJGUI_SHARED_OPERATION/2", "WINDOW_PROGRESS",
+            (("WINDOW_WORKLOAD_TEXT_LAYOUT_PREPARATIONS", ("63",)),), "original")
+        facts = baseline.window_progress(response)
+        self.assertEqual("63", facts["WINDOW_WORKLOAD_TEXT_LAYOUT_PREPARATIONS"])
+        self.assertNotIn("WINDOW_WORK_TIMING_MS", facts)
+
+    def test_sparse_observation_retains_stderr_and_normal_close(self) -> None:
+        import io
+        with tempfile.TemporaryDirectory(prefix="cjgui-sparse-cost-") as temporary:
+            root = Path(temporary)
+            app = root / "window.py"
+            app.write_text("#!/usr/bin/env python3\nimport sys,time\n"
+                "print('CJGUI_RULE_SET_READY WINDOW_READY sparse_session 1',flush=True)\n"
+                "sys.stderr.write('x'*131072);sys.stderr.flush()\ntime.sleep(.3)\n")
+            app.chmod(0o755)
+            result = baseline.observe_interactive_window(app, [], root / "result.json",
+                sample_s=.05, maximum_s=3, commands=io.StringIO(''))
+            self.assertEqual(0, result["exit_code"])
+            self.assertEqual("sparse_session", result["ready"]["session_identity"])
+            self.assertGreater(len(result["samples"]), 0)
+            self.assertEqual(131072, (root / "result.stderr.log").stat().st_size)
+            self.assertIsNone(result["presentation_latency_ns"])
+
     def test_reports_ready_and_warmup_intervals_without_combining_them(self) -> None:
         timings = baseline.lifecycle_timings(10.0, 12.25, 17.0)
 

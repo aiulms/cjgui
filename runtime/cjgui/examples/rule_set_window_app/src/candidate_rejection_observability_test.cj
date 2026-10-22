@@ -1021,3 +1021,492 @@ func generatedSectionReadsDoOnlyTheRequestedWork(): Unit {
     @Assert(observationField(fields, "STREAM_EPOCH") > 0, true)
     window.close()
 }
+
+// The generated declaration and the handwritten tree reach the SAME layout
+// engine. This drives the public generated-region transaction directly so the
+// layout contract is checked without depending on a native window turn.
+private func generatedLayoutTextNode(scene: CjguiComposableUiScene,
+    value: String): CjguiComposableUiLayoutNode {
+    for (node in scene.nodes()) {
+        if (node.value == value) {
+            return node
+        }
+    }
+    return CjguiComposableUiLayoutNode.missing()
+}
+
+private func buildGeneratedLayoutScene(controller: CjguiGeneratedRejectionSceneController,
+    region: CjguiRuleSetGeneratedRegion): CjguiComposableUiScene {
+    @Assert(region.beginSceneRefresh(), true)
+    let root = controller.buildUi()
+    let scene = CjguiComposableUiLayoutEngine.layout(root, CjguiComposableUiRect(0, 0, 900, 600),
+        controller.uiSceneVersion())
+    @Assert(scene.layoutError(), "")
+    return scene
+}
+
+@Test
+func generatedLayoutPrimitivesReachAcceptedGeometryAndKeepField(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("布局验收", true, 7, "cache", "gen-layout-create").applied, true)
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+
+    let first = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 layoutRoot vertical
+PROPERTY 0 layoutRoot gap 0
+NODE 1 tags wrap
+PROPERTY 1 tags fixedWidth 200
+PROPERTY 1 tags gap 10
+PROPERTY 1 tags rowGap 12
+NODE 2 tagA label
+PROPERTY 2 tagA text A
+PROPERTY 2 tagA fixedWidth 80
+PROPERTY 2 tagA fixedHeight 20
+NODE 2 tagB label
+PROPERTY 2 tagB text B
+PROPERTY 2 tagB fixedWidth 80
+PROPERTY 2 tagB fixedHeight 20
+NODE 2 tagC label
+PROPERTY 2 tagC text C
+PROPERTY 2 tagC fixedWidth 80
+PROPERTY 2 tagC fixedHeight 20
+NODE 1 card stack
+PROPERTY 1 card fixedWidth 160
+PROPERTY 1 card fixedHeight 90
+NODE 2 photo aspectRatio
+PROPERTY 2 photo fixedWidth 160
+NODE 3 beacon image
+PROPERTY 3 beacon resource rule-set-beacon
+PROPERTY 3 beacon resourceVersion 1
+NODE 2 badge label
+PROPERTY 2 badge text LIVE
+PROPERTY 2 badge fixedWidth 40
+PROPERTY 2 badge fixedHeight 20
+PROPERTY 2 badge alignX end
+NODE 1 formRow horizontal
+PROPERTY 1 formRow fixedWidth 200
+PROPERTY 1 formRow gap 0
+NODE 2 left label
+PROPERTY 2 left text L
+PROPERTY 2 left fixedWidth 40
+PROPERTY 2 left fixedHeight 20
+NODE 2 gap spacer
+PROPERTY 2 gap axis horizontal
+PROPERTY 2 gap weight 1
+NODE 2 right label
+PROPERTY 2 right text R
+PROPERTY 2 right fixedWidth 40
+PROPERTY 2 right fixedHeight 20
+NODE 1 nameField textInput field=label
+END
+"""
+    let firstSubmit = region.submitStructure(first, 0)
+    @Assert(firstSubmit.reason, "")
+    @Assert(firstSubmit.candidateAccepted, true)
+    let firstScene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+
+    let tagA = generatedLayoutTextNode(firstScene, "A")
+    let tagC = generatedLayoutTextNode(firstScene, "C")
+    @Assert(tagC.bounds.y > tagA.bounds.y, true)
+    let live = generatedLayoutTextNode(firstScene, "LIVE")
+    var cardX: Int64 = -1
+    var cardY: Int64 = -1
+    for (node in firstScene.nodes()) {
+        if (cardX < 0 && node.nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL && node.bounds.width == 160 &&
+            node.bounds.height == 90) {
+            cardX = node.bounds.x
+            cardY = node.bounds.y
+        }
+    }
+    @Assert(cardX >= 0, true)
+    @Assert(live.bounds.x - cardX, 120)
+    @Assert(live.bounds.y - cardY, 0)
+    let left = generatedLayoutTextNode(firstScene, "L")
+    let right = generatedLayoutTextNode(firstScene, "R")
+    @Assert(right.bounds.x > left.bounds.x + left.bounds.width, true)
+    var aspectCount: Int64 = 0
+    var imageCount: Int64 = 0
+    for (node in firstScene.nodes()) {
+        if (node.nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL && node.bounds.width == 160 &&
+            node.bounds.height == 90) {
+            aspectCount += 1
+        }
+        if (node.nodeKind == CJGUI_COMPOSABLE_UI_IMAGE && node.bounds.width == 160 &&
+            node.bounds.height == 90) {
+            imageCount += 1
+        }
+    }
+    @Assert(aspectCount >= 2, true)
+    @Assert(imageCount, 1)
+
+    let nameBefore = region.acceptedNodeIdForKey("nameField")
+    @Assert(nameBefore > 0, true)
+    let bounds = CjguiComposableUiRect(0, 0, 200, 26)
+    let editor = CjguiComposableUiLayoutNode(
+        cjguiComposableTextInput(nameBefore, "gen-layout-nameField", "规则名称", "",
+            CjguiRuleSetEditingDomain.formLabelResourceId, CjguiComposableUiStyle(fixedHeight: 26),
+            fieldId: "label", operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: domain.selectedRecordId(),
+            displayValueRole: "draft"),
+        bounds, bounds)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(editor, 28, "布局续写", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        "布局续写")
+
+    // Same keys, changed layout parameters: the bound field keeps its accepted
+    // identity and draft, while the wrap/row geometry really changes.
+    let second = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 layoutRoot vertical
+PROPERTY 0 layoutRoot gap 0
+NODE 1 nameField textInput field=label
+NODE 1 tags wrap
+PROPERTY 1 tags fixedWidth 120
+PROPERTY 1 tags gap 10
+PROPERTY 1 tags rowGap 12
+NODE 2 tagA label
+PROPERTY 2 tagA text A
+PROPERTY 2 tagA fixedWidth 80
+PROPERTY 2 tagA fixedHeight 20
+NODE 2 tagB label
+PROPERTY 2 tagB text B
+PROPERTY 2 tagB fixedWidth 80
+PROPERTY 2 tagB fixedHeight 20
+NODE 2 tagC label
+PROPERTY 2 tagC text C
+PROPERTY 2 tagC fixedWidth 80
+PROPERTY 2 tagC fixedHeight 20
+NODE 1 card stack
+PROPERTY 1 card fixedWidth 160
+PROPERTY 1 card fixedHeight 90
+NODE 2 photo aspectRatio
+PROPERTY 2 photo aspectWidth 16
+PROPERTY 2 photo aspectHeight 9
+PROPERTY 2 photo fixedWidth 160
+NODE 3 beacon image
+PROPERTY 3 beacon resource rule-set-beacon
+PROPERTY 3 beacon resourceVersion 1
+NODE 2 badge label
+PROPERTY 2 badge text LIVE
+PROPERTY 2 badge fixedWidth 40
+PROPERTY 2 badge fixedHeight 20
+PROPERTY 2 badge alignX end
+NODE 1 formRow horizontal
+PROPERTY 1 formRow fixedWidth 160
+PROPERTY 1 formRow gap 0
+NODE 2 left label
+PROPERTY 2 left text L
+PROPERTY 2 left fixedWidth 40
+PROPERTY 2 left fixedHeight 20
+NODE 2 gap spacer
+PROPERTY 2 gap axis horizontal
+PROPERTY 2 gap weight 1
+NODE 2 right label
+PROPERTY 2 right text R
+PROPERTY 2 right fixedWidth 40
+PROPERTY 2 right fixedHeight 20
+END
+"""
+    let secondSubmit = region.submitStructure(second, 1)
+    @Assert(secondSubmit.reason, "")
+    @Assert(secondSubmit.candidateAccepted, true)
+    let secondScene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 2)
+    @Assert(region.acceptedNodeIdForKey("nameField"), nameBefore)
+    let secondLeft = generatedLayoutTextNode(secondScene, "L")
+    let secondRight = generatedLayoutTextNode(secondScene, "R")
+    @Assert(secondRight.bounds.x - secondLeft.bounds.x - secondLeft.bounds.width, 80)
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        "布局续写")
+
+    // Editing after the layout change still reaches the SAME accepted field.
+    let continuedEditor = CjguiComposableUiLayoutNode(
+        cjguiComposableTextInput(nameBefore, "gen-layout-nameField", "规则名称", "",
+            CjguiRuleSetEditingDomain.formLabelResourceId, CjguiComposableUiStyle(fixedHeight: 26),
+            fieldId: "label", operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: domain.selectedRecordId(),
+            displayValueRole: "draft"),
+        bounds, bounds)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(continuedEditor, 28, "布局续写2", 0, 0, 2)).didApply,
+        true)
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        "布局续写2")
+
+    let invalid = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 layoutRoot vertical
+NODE 1 badAspect aspectRatio
+PROPERTY 1 badAspect aspectWidth 0
+PROPERTY 1 badAspect aspectHeight 9
+NODE 2 badLabel label
+PROPERTY 2 badLabel text invalid
+END
+"""
+    let rejected = region.submitStructure(invalid, 2)
+    @Assert(rejected.candidateAccepted, false)
+    @Assert(region.acceptedStructureVersion(), 2)
+    @Assert(region.acceptedNodeIdForKey("nameField"), nameBefore)
+    @Assert(domain.formSnapshot().fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText,
+        "布局续写2")
+}
+
+/// The new field/status compositions reach the SAME accepted generated
+/// structure: numeric step/preset elements, status text, progress geometry and
+/// a stable-key choice are all built by the public builders.
+@Test
+func generatedFieldFeedbackAndChoiceUseSharedBuilders(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("生成反馈", true, 10, "cache", "gen-feedback").applied, true)
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+PROPERTY 0 root gap 4
+NODE 1 retentionEdit retentionIntegerEdit
+NODE 1 status ruleStatus
+PROPERTY 1 status kind error
+PROPERTY 1 status text 保存失败，请检查后重试
+NODE 1 progress ruleProgress
+PROPERTY 1 progress value 3
+PROPERTY 1 progress total 10
+PROPERTY 1 progress label 外部状态 3 / 10
+PROPERTY 1 progress trackWidth 160
+NODE 1 choice detailLayoutChoice
+PROPERTY 1 choice selected compact
+END
+"""
+    let submitted = region.submitStructure(structure, 0)
+    @Assert(submitted.candidateAccepted, true)
+    let scene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(scene.layoutError(), "")
+
+    let editId = region.acceptedCompositeElementNodeId("retentionEdit", "edit")
+    let downId = region.acceptedCompositeElementNodeId("retentionEdit", "decrement")
+    let upId = region.acceptedCompositeElementNodeId("retentionEdit", "increment")
+    let presetId = region.acceptedCompositeElementNodeId("retentionEdit", "preset")
+    @Assert(editId > 0, true)
+    @Assert(downId > 0, true)
+    @Assert(upId > 0, true)
+    @Assert(presetId > 0, true)
+    // The generated adapter routes action elements through GENERATED_ACTION;
+    // the declared owner action remains the composite binding, not the visible
+    // button token.
+    @Assert(scene.nodeForId(downId).actionName, "GENERATED_ACTION")
+    @Assert(scene.nodeForId(upId).actionName, "GENERATED_ACTION")
+    let downBinding = region.acceptedCompositeElement("retentionEdit", "decrement")
+    let upBinding = region.acceptedCompositeElement("retentionEdit", "increment")
+    @Assert(downBinding.isSome(), true)
+    @Assert(upBinding.isSome(), true)
+    @Assert(region.handleEvent(CjguiComposableUiEvent(scene.nodeForId(downId),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version)).didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "9")
+    @Assert(generatedLayoutTextNode(scene, "[错误]").value, "[错误]")
+    @Assert(generatedLayoutTextNode(scene, "保存失败，请检查后重试").value, "保存失败，请检查后重试")
+
+    let fillId = region.acceptedCompositeElementNodeId("progress", "fill")
+    @Assert(fillId > 0, true)
+    @Assert(scene.nodeForId(fillId).bounds.width, 48)
+    let compactId = region.acceptedCompositeElementNodeId("choice", "compact")
+    @Assert(compactId > 0, true)
+    @Assert(scene.nodeForId(compactId).ownerInteractionState, CjguiComposableUiInteractionState.SELECTED)
+
+    // An invalid declaration is still rejected by the existing candidate
+    // transaction and leaves this accepted interface/version untouched.
+    let invalid = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+NODE 1 bad ruleStatus
+PROPERTY 1 bad unknownProperty 1
+END
+"""
+    let rejected = region.submitStructure(invalid, 1)
+    @Assert(rejected.candidateAccepted, false)
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(region.acceptedNodeIdForKey("progress") > 0, true)
+}
+
+@Test
+func generatedPresetAndReorderKeepOwnerDraftAndBindings(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newWithRetentionRange(minimum: 1, maximum: 100)
+    @Assert(domain.createRecordFromHuman("预设重排", true, 10, "cache", "gen-preset-reorder").applied, true)
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+    let first = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+PROPERTY 0 root gap 4
+NODE 1 retentionEdit retentionIntegerEdit
+NODE 1 status ruleStatus
+PROPERTY 1 status kind info
+PROPERTY 1 status text 外部状态
+NODE 1 progress ruleProgress
+PROPERTY 1 progress value 1
+PROPERTY 1 progress total 4
+PROPERTY 1 progress label 外部状态 1 / 4
+PROPERTY 1 progress trackWidth 160
+NODE 1 choice detailLayoutChoice
+PROPERTY 1 choice selected standard
+END
+"""
+    @Assert(region.submitStructure(first, 0).candidateAccepted, true)
+    let scene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(scene.layoutError(), "")
+
+    // The preset button is a generated action element carrying the owner writer.
+    // Activating it writes the declared max preset through the owner, not a
+    // second value store.
+    let presetId = region.acceptedCompositeElementNodeId("retentionEdit", "preset")
+    @Assert(presetId > 0, true)
+    @Assert(scene.nodeForId(presetId).isEnabled, true)
+    let presetEvent = region.handleEvent(CjguiComposableUiEvent(scene.nodeForId(presetId),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version))
+    @Assert(presetEvent.didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "100")
+
+    // The owner refuses + at the declared maximum and leaves the stored draft
+    // at 100. The component does not clamp or silently write 101.
+    let upId = region.acceptedCompositeElementNodeId("retentionEdit", "increment")
+    @Assert(upId > 0, true)
+    let rejectedStep = region.handleEvent(CjguiComposableUiEvent(scene.nodeForId(upId),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version))
+    @Assert(rejectedStep.didApply, false)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "100")
+
+    // Same keys/values, different declaration order: the accepted candidate
+    // rebuilds bindings and keeps the owner draft. Continuing with the new
+    // increment/decrement node ids still writes the same owner field.
+    let reordered = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+PROPERTY 0 root gap 4
+NODE 1 choice detailLayoutChoice
+PROPERTY 1 choice selected standard
+NODE 1 progress ruleProgress
+PROPERTY 1 progress value 1
+PROPERTY 1 progress total 4
+PROPERTY 1 progress label 外部状态 1 / 4
+PROPERTY 1 progress trackWidth 160
+NODE 1 status ruleStatus
+PROPERTY 1 status kind info
+PROPERTY 1 status text 外部状态
+NODE 1 retentionEdit retentionIntegerEdit
+END
+"""
+    @Assert(region.submitStructure(reordered, 1).candidateAccepted, true)
+    let reorderedScene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 2)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "100")
+    let reorderedDown = region.acceptedCompositeElementNodeId("retentionEdit", "decrement")
+    @Assert(reorderedDown > 0, true)
+    @Assert(region.handleEvent(CjguiComposableUiEvent(reorderedScene.nodeForId(reorderedDown),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, reorderedScene.version)).didApply, true)
+    @Assert(domain.formSnapshot().fieldForResourceId(
+        CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "99")
+}
+
+/// Scoped external field reads use the ACCEPTED instance table: an instance
+/// answers with its own owner's projection, and unknown keys / unbound owners
+/// are refused rather than answered with the selected record (the unscoped
+/// legacy payload must not stand in for a per-instance read).
+@Test
+func generatedScopedFieldReadsFollowTheAcceptedInstanceOwner(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("作用域读", true, 12, "cache", "gen-scoped").applied, true)
+    let recordId = domain.selectedRecordId()
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+NODE 1 retentionEdit retentionIntegerEdit
+END
+"""
+    @Assert(region.submitStructure(structure, 0).candidateAccepted, true)
+    let _ = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.instanceOwnerResourceId("retentionEdit"), recordId)
+    let scoped = region.fieldsPayload("retentionEdit")
+    @Assert(scoped.contains("FIELD retentionCount "), true)
+    @Assert(region.fieldsPayloadForOwner(recordId).contains("FIELD retentionCount "), true)
+    // Unknown instance, unknown owner and an ambiguous/unbound owner are empty.
+    @Assert(region.fieldsPayload("noSuchInstance"), "")
+    @Assert(region.instanceOwnerResourceId("noSuchInstance"), -1)
+    @Assert(region.fieldsPayloadForOwner(recordId + 999), "")
+    // The scoped payload is the OWNER's projection: a draft edit shows up there.
+    @Assert(domain.editTextFromHuman(CjguiRuleSetEditingDomain.formRetentionResourceId, "17", 2, 2).applied, true)
+    @Assert(region.fieldsPayload("retentionEdit").contains("DRAFT_HEX 3137"), true)
+    // Selecting another record does not make the old instance borrow the new
+    // selected projection: it keeps serving ITS accepted owner's own draft,
+    // addressed without moving the selection.
+    @Assert(domain.createRecordFromHuman("另一个", true, 20, "temp", "gen-scoped-2").applied, true)
+    @Assert(domain.selectedRecordId() != recordId, true)
+    @Assert(region.fieldsPayload("retentionEdit").contains("DRAFT_HEX 3137"), true)
+    @Assert(region.fieldsPayloadForOwner(recordId).contains("DRAFT_HEX 3137"), true)
+    @Assert(region.fieldsPayload("retentionEdit") != region.fieldsPayload(), true)
+}
+
+@Test
+func generatedScopedReadsServeEachBoundOwnerWithoutSelectingIt(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("甲", true, 7, "cache", "two-1").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("乙", true, 9, "cache", "two-2").applied, true)
+    let bId = domain.selectedRecordId()
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+    // Two declared instances; each key NAMES its owner (rule<id>), so both bind
+    // their own record instead of the currently selected one.
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+NODE 1 rule${aId} retentionIntegerEdit
+NODE 2 rule${bId} retentionIntegerEdit
+END
+"""
+    @Assert(region.submitStructure(structure, 0).candidateAccepted, true)
+    let _ = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.instanceOwnerResourceId("rule${aId}"), aId)
+    @Assert(region.instanceOwnerResourceId("rule${bId}"), bId)
+    // The human keeps editing B; A keeps its OWN draft.
+    @Assert(domain.editTextFromHuman(CjguiRuleSetEditingDomain.formRetentionResourceId, "11", 2, 2).applied, true)
+    let versionBefore = domain.contextSnapshot().version
+    @Assert(region.fieldsPayload("rule${aId}").contains("DRAFT_HEX 37"), true)     // "7"
+    @Assert(region.fieldsPayload("rule${bId}").contains("DRAFT_HEX 3131"), true)  // "11"
+    // An external write to A (while B stays selected) lands on A only.
+    @Assert(domain.editTextForCollectionItemFromHuman(aId,
+        CjguiRuleSetEditingDomain.formRetentionResourceId, "15", 2, 2).applied, true)
+    @Assert(region.fieldsPayload("rule${aId}").contains("DRAFT_HEX 3135"), true)  // "15"
+    @Assert(region.fieldsPayloadForOwner(aId).contains("DRAFT_HEX 3135"), true)
+    @Assert(region.fieldsPayload("rule${bId}").contains("DRAFT_HEX 3131"), true)
+    @Assert(domain.selectedRecordId(), bId)
+    // The read itself changed nothing: selection, version and B's focus survive.
+    @Assert(domain.contextSnapshot().version > versionBefore, true)  // A's write only
+    let bSnapshot = domain.formSnapshotForRecord(bId).getOrThrow()
+    @Assert(bSnapshot.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "11")
+    // A deleted owner has no snapshot: the instance read is a named refusal
+    // (deleting A selects it first, so this also shows the owner is gone, not
+    // merely unselected).
+    @Assert(domain.selectRecordFromHuman(aId).applied, true)
+    @Assert(domain.deleteSelectedCollectionItemFromHuman().applied, true)
+    @Assert(region.fieldsPayload("rule${aId}"), "")
+}

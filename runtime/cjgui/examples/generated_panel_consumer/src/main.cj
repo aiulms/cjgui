@@ -594,6 +594,9 @@ private func generatedDiagnosticReadBatch(window: CjguiComposableUiWindow): Int6
 }
 
 main(args: Array<String>): Int64 {
+    if (args.size == 1 && args[0] == "--typography") {
+        return runTypographyConsumer()
+    }
     // `--verify-animation` / `--verify-normal-close` are self-verification
     // entries. A verification script may launch this instance with a
     // round-unique token so the exact process of THIS round can be identified by

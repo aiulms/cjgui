@@ -187,6 +187,14 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
     // The list source of the most recent build; navigation uses it only to
     // reveal (materialize) the new focus row.
     private var activeListSource: ?CjguiComposableUiTreeListSource
+    // Optional flat list/table surface. Both views share ONE collection
+    // selection instance; this panel only routes the existing public provider
+    // entry to whichever surface the human last interacted with, so external
+    // readers see the same facts instead of a second copy.
+    private var collectionSelection: ?CjguiComposableUiCollectionSelection
+    private var collectionOrder: ?CjguiComposableUiCollectionOrder
+    private var collectionViewVersion: Int64
+    private var collectionActive: Bool
 
     public init(domain: CjguiRuleSetEditingDomain) {
         this.domain = domain
@@ -204,6 +212,10 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         this.lastBatchStatus = ""
         this.selectionVersionValue = 0
         this.activeListSource = None
+        this.collectionSelection = None
+        this.collectionOrder = None
+        this.collectionViewVersion = 0
+        this.collectionActive = false
     }
 
     public func selectionVersion(): Int64 {
@@ -352,11 +364,62 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
 
     // --- shared selection provider (window/external use the same handlers) --
 
+    /// Makes the flat list/table surface available to the existing external
+    /// selection entry. It does not steal the active surface: the surface the
+    /// human last used (or the one an external command addressed by key) is
+    /// what the provider reports, so the tree's own entry keeps working.
+    public func attachCollectionSurface(selection: CjguiComposableUiCollectionSelection,
+        order: CjguiComposableUiCollectionOrder, viewVersion: Int64): Unit {
+        collectionSelection = Some(selection)
+        collectionOrder = Some(order)
+        collectionViewVersion = viewVersion
+    }
+
+    public func markCollectionActive(): Unit {
+        collectionActive = true
+    }
+
+    public func markTreeActive(): Unit {
+        collectionActive = false
+    }
+
     public func selectionPayload(): String {
+        if (collectionActive) {
+            if (let Some(cs) <- collectionSelection) {
+                if (let Some(order) <- collectionOrder) {
+                    return collectionPayload(cs, order)
+                }
+            }
+        }
+        return treePayload()
+    }
+
+    private func collectionPayload(selection: CjguiComposableUiCollectionSelection,
+        order: CjguiComposableUiCollectionOrder): String {
+        let snapshot = selection.snapshot(collectionViewVersion)
+        let builder = StringBuilder()
+        builder.append("SCOPE collection\n")
+        builder.append("SELECTION_VERSION ${snapshot.selectionVersion}\n")
+        builder.append("VIEW_VERSION ${snapshot.viewVersion}\n")
+        builder.append("COUNT ${snapshot.keys.size}\n")
+        builder.append("HIDDEN ${selection.hiddenCount(order)}\n")
+        builder.append("FOCUS ${if (snapshot.focus.size > 0) { snapshot.focus } else { "none" }}\n")
+        builder.append("ANCHOR ${if (snapshot.anchor.size > 0) { snapshot.anchor } else { "none" }}\n")
+        for (key in snapshot.keys) {
+            builder.append("KEY ${key}\n")
+        }
+        builder.append("END")
+        return builder.toString()
+    }
+
+    private func treePayload(): String {
         let snapshot = selection.snapshot()
         let builder = StringBuilder()
+        builder.append("SCOPE tree\n")
         builder.append("SELECTION_VERSION ${snapshot.selectionVersion}\n")
         builder.append("PROJECTION_VERSION ${snapshot.projectionVersion}\n")
+        builder.append("COUNT ${snapshot.keys.size}\n")
+        builder.append("HIDDEN 0\n")
         builder.append("FOCUS ${if (snapshot.focus.size > 0) { snapshot.focus } else { "none" }}\n")
         builder.append("ANCHOR ${if (snapshot.anchor.size > 0) { snapshot.anchor } else { "none" }}\n")
         for (key in snapshot.keys) {
@@ -368,6 +431,25 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
 
     public func applySelection(command: String, key: String,
                                expectedSelectionVersion: Int64): CjguiSharedOperationTreeSelectionResult {
+        // A key in the flat collection's own namespace addresses that surface
+        // explicitly; a key-less command (select-all/clear) follows whichever
+        // surface the human last used. Tree keys keep addressing the tree, so
+        // the pre-existing external tree entry is not silently redirected.
+        let collectionAddressed = key.startsWith("rule_")
+        if (collectionAddressed || (collectionActive && key.isEmpty())) {
+            if (let Some(cs) <- collectionSelection) {
+                if (let Some(order) <- collectionOrder) {
+                    // A rejected request must not steal routing: only a
+                    // successful command makes the collection the active
+                    // surface for later key-less commands.
+                    let result = applyCollectionSelection(cs, order, command, key, expectedSelectionVersion)
+                    if (result.applied) {
+                        collectionActive = true
+                    }
+                    return result
+                }
+            }
+        }
         let current = selection.selectionVersion()
         if (expectedSelectionVersion != current) {
             return CjguiSharedOperationTreeSelectionResult(false, "selection_version_conflict", current)
@@ -380,11 +462,13 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         }
         if (command == "select-all") {
             selection.selectAllVisible()
+            collectionActive = false
             viewRevisionValue += 1
             return CjguiSharedOperationTreeSelectionResult(true, "", selection.selectionVersion())
         }
         if (command == "clear") {
             selection.clearSelection()
+            collectionActive = false
             viewRevisionValue += 1
             return CjguiSharedOperationTreeSelectionResult(true, "", selection.selectionVersion())
         }
@@ -395,6 +479,7 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
             }
             let _ = projection.setExpanded(resolvedKey, expanded)
             selection.ensureFocusVisible()
+            collectionActive = false
             viewRevisionValue += 1
             return CjguiSharedOperationTreeSelectionResult(true, "", selection.selectionVersion())
         }
@@ -410,8 +495,45 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         } else {
             return CjguiSharedOperationTreeSelectionResult(false, "unknown_command", current)
         }
+        collectionActive = false
         viewRevisionValue += 1
         return CjguiSharedOperationTreeSelectionResult(true, "", selection.selectionVersion())
+    }
+
+    private func applyCollectionSelection(cs: CjguiComposableUiCollectionSelection,
+        order: CjguiComposableUiCollectionOrder, command: String, key: String,
+        expectedSelectionVersion: Int64): CjguiSharedOperationTreeSelectionResult {
+        let current = cs.selectionVersion()
+        if (expectedSelectionVersion != current) {
+            return CjguiSharedOperationTreeSelectionResult(false, "selection_version_conflict", current)
+        }
+        if (command == "select-all") {
+            cs.selectAll(order)
+            return CjguiSharedOperationTreeSelectionResult(true, "", cs.selectionVersion())
+        }
+        if (command == "clear") {
+            cs.clearSelection()
+            return CjguiSharedOperationTreeSelectionResult(true, "", cs.selectionVersion())
+        }
+        // Expansion is a tree concept; the flat projection has no hidden
+        // descendants to expand, and inventing one here would be a fake tree.
+        if (command == "expand" || command == "collapse") {
+            return CjguiSharedOperationTreeSelectionResult(false, "unknown_command", current)
+        }
+        let resolvedKey = if (key.size > 0) { key } else { cs.focus() }
+        if (resolvedKey.size == 0 || order.indexOfKey(resolvedKey) < 0) {
+            return CjguiSharedOperationTreeSelectionResult(false, "unknown_key", current)
+        }
+        if (command == "replace") {
+            cs.click(resolvedKey, false, false, order)
+        } else if (command == "toggle") {
+            cs.click(resolvedKey, true, false, order)
+        } else if (command == "range") {
+            cs.moveFocus(resolvedKey, true, order)
+        } else {
+            return CjguiSharedOperationTreeSelectionResult(false, "unknown_command", current)
+        }
+        return CjguiSharedOperationTreeSelectionResult(true, "", cs.selectionVersion())
     }
 
     public func handleTreeEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
@@ -422,7 +544,11 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         // state arrives with it, so Shift really extends the range.
         if (event.eventKind == 35 && event.node.nodeId == CJGUI_RULE_SET_TREE_LIST_NODE_ID) {
             let extendRange = (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) != 0
-            return navigateTree(event.text, extendRange)
+            let result = navigateTree(event.text, extendRange)
+            if (result.didApply) {
+                collectionActive = false
+            }
+            return result
         }
         // Wheel/trackpad scrolling on the same list node keeps going through
         // the existing virtual-list scroll state.
@@ -432,11 +558,13 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
             if (listState.scrollOffset() == before) {
                 return CjguiComposableUiDispatchResult(false)
             }
+            collectionActive = false
             viewRevisionValue += 1
             return CjguiComposableUiDispatchResult(true)
         }
         let handled = handleEvent(event)
         if (handled.didApply) {
+            collectionActive = false
             selectionVersionValue += 1
         }
         return handled

@@ -3,6 +3,11 @@
 这是正常 macOS 文档窗口：文档内容、版本、选区与撤销仍由
 `CjguiTextDocumentWorkspace` 持有；窗口和外部连接只是同一 owner 的投影与入口。
 它使用框架拥有的 [macOS 应用宿主](../../MACOS_APPLICATION_HOST.md)，不再依赖其他 example 的 launcher，也不声明 native finish FFI。
+
+macOS 的公共预览滑块通过 AX 发布“预览字节上限”、整数当前值及 128..512 范围。AX 增减和键盘箭头都进入既有 NAVIGATE，使用同一 owner 和 32 步长；边界不产生额外业务版本。native 只读取接受后的声明，不另存业务值。可见预览说明随同一值更新。首帧可能为 Preparing，本消费者沿正常宿主泵送有界推进到实际首帧，再报告 WINDOW_READY。
+
+本簇实际验证 AX 增减、owner 精确读回、可见反馈、键盘续接和正常关闭。真实 VoiceOver 未由人工验证，不能将 AX 查询或动作当作旁白通过；其他平台未验。构建来源和原始证据见 [E 当前结果](../../../../artifacts/e-astra-mechanisms-20261005/caret-regression/searchable-panel-current/RESULT.md)。
+
 启动带连接的短时实际窗口：
 
 ```zsh

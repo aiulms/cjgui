@@ -383,6 +383,7 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         let previewSlider = cjguiComposableSlider(36, "shared-document-preview-limit", previewLimit, 128, 512, 32,
             CjguiComposableUiStyle(minWidth: 180, idealWidth: 220, fixedHeight: 28),
             operationActionName: "SET_PREVIEW_LIMIT", operationResourceId: selectedDocumentId)
+        previewSlider.semanticLabel = "预览字节上限"
         root.add(previewSlider)
         let selectionText = if (selection.isAvailable) {
             "选区 UTF-8 字节 ${selection.start}..${selection.end}，文档 v${selection.documentVersion}"
@@ -1991,6 +1992,20 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
     return 0
 }
 
+// Host start accepts Preparing as well as Ready. Progress through its normal
+// pump instead of treating an unsubmitted first frame as a closed window.
+private func awaitInitialFrame(host: CjguiMacosApplicationHost, window: CjguiComposableUiWindow): Bool {
+    let started = MonoTime.now()
+    while (host.isOpen() && (MonoTime.now() - started).toMilliseconds() < 5000) {
+        let projection = window.windowProjection()
+        if (projection.isActive && projection.sessionIdentity.size > 0 && projection.submittedFrameIndex > 0) {
+            return true
+        }
+        let _ = host.pumpOneTurn()
+    }
+    return false
+}
+
 private func runWindow(path: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
     measurementDurationMs: Int64, measurementWarmupMs: Int64): Int32 {
     let fileBinding = CjguiTextDocumentFileBinding()
@@ -2052,12 +2067,12 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
             output.writeln("CJGUI_SHARED_DOCUMENT_READY DESCRIPTOR_PATH ${info.descriptorPath}")
             output.writeln("CJGUI_SHARED_DOCUMENT_READY PROTOCOL ${info.protocol}")
             output.writeln("CJGUI_SHARED_DOCUMENT_READY ACTION_COUNT ${info.actions.size}")
-            let projection = window.windowProjection()
-            if (!projection.isActive || projection.sessionIdentity.size == 0 || projection.submittedFrameIndex <= 0) {
+            if (!awaitInitialFrame(host, window)) {
                 output.flush();
                 host.close();
                 return 1
             }
+            let projection = window.windowProjection()
             output.writeln(
                 "CJGUI_SHARED_DOCUMENT_READY WINDOW_READY ${projection.sessionIdentity} ${projection.submittedFrameIndex}")
             output.flush()
@@ -2083,13 +2098,12 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
             return 1
         }
         let output = getStdOut();
-        let initialProjection = window.windowProjection()
-        if (!initialProjection.isActive || initialProjection.sessionIdentity.size == 0 ||
-            initialProjection.submittedFrameIndex <= 0) {
+        if (!awaitInitialFrame(host, window)) {
             output.flush();
             host.close();
             return 1
         }
+        let initialProjection = window.windowProjection()
         output.writeln(
             "CJGUI_SHARED_DOCUMENT_READY WINDOW_READY ${initialProjection.sessionIdentity} ${initialProjection.submittedFrameIndex}")
         output.flush()

@@ -25,6 +25,10 @@
 # Test run outputs — large binary corpora, must never enter history
 /artifacts/
 
+# Per-round build output inside the framework tree (test binaries, .cjo, .a).
+# Round notes and small evidence files stay tracked; only compiled output is excluded.
+/runtime/cjgui/artifacts/*/work/
+
 # Build outputs and compiled artifacts
 build/
 dist/

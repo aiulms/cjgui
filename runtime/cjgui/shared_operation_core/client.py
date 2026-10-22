@@ -1423,7 +1423,14 @@ def request_payload(args: argparse.Namespace, descriptor: dict[str, object]) -> 
         header.append("GET_GENERATED_UI_STRUCTURE")
         return "\n".join(header)
     if args.command == "generated-fields":
-        header.append("GET_GENERATED_UI_FIELDS")
+        if args.instance:
+            if not args.instance.isidentifier():
+                fail("instance key is not a protocol identifier")
+            header.append(f"GET_GENERATED_UI_FIELDS INSTANCE {args.instance}")
+        elif args.owner >= 0:
+            header.append(f"GET_GENERATED_UI_FIELDS OWNER {args.owner}")
+        else:
+            header.append("GET_GENERATED_UI_FIELDS")
         return "\n".join(header)
     if args.command == "generated-instances":
         header.append("GET_GENERATED_UI_INSTANCES")
@@ -1593,8 +1600,13 @@ def parser() -> argparse.ArgumentParser:
                                               help="read the terminal state of ONE submission attempt")
     generated_candidate.add_argument("--token", type=int, required=True,
                                      help="the attempt token reported by generated-submit")
-    commands.add_parser("generated-fields",
-                        help="read live field projections (draft/applied/validation/focus/selection)")
+    generated_fields = commands.add_parser("generated-fields",
+                                           help="read live field projections (draft/applied/validation/focus/selection)")
+    # Scoped reads use the SAME transport command with an INSTANCE or OWNER
+    # selector; these flags only choose it. Unknown or unauthorized scopes are
+    # still refused by the endpoint by name.
+    generated_fields.add_argument("--instance", default="")
+    generated_fields.add_argument("--owner", type=int, default=-1)
     commands.add_parser("tree-selection",
                         help="read the shared tree/collection selection snapshot (keys/focus/anchor/versions)")
     tree_select = commands.add_parser("tree-select",

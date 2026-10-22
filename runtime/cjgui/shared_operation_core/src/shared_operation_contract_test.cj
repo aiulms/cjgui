@@ -719,6 +719,52 @@ func genericTransportPublishesLogicalCollectionOnlyToFullContextReader(): Unit {
     @Assert(response.contains("WINDOW_COLLECTION rule_list 2000 1497 1504 rule_1500 rule_1500"), true)
 }
 
+private class CollectionKeyWindowProjection <: CjguiSharedOperationWindowProjectionProvider {
+    let selected: String
+    let focused: String
+    init(selected: String, focused: String) { this.selected = selected; this.focused = focused }
+    public func windowProjection(): CjguiSharedOperationWindowProjection {
+        return CjguiSharedOperationWindowProjection(true, 73, -1, "unavailable", "", 0, 0,
+            ArrayList<CjguiSharedOperationRelation>(),
+            collections: ArrayList<CjguiSharedOperationWindowCollection>([
+                CjguiSharedOperationWindowCollection("rules", 80, 0, 8, selected, focused)]))
+    }
+}
+
+private func collectionKeyContext(selected: String, focused: String): String {
+    let authorization = CjguiSharedOperationExternalAuthorization("collection-key-test", "collection-key-test",
+        ArrayList<CjguiSharedOperationExternalActionScope>([
+            CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true)]))
+    let connection = CjguiSharedOperationExternalConnection(BackupRuleContractDomain(), authorization,
+        CollectionKeyWindowProjection(selected, focused))
+    return connection.dispatchPayload("PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH collection-key-test\nGET_CONTEXT 0")
+}
+
+@Test
+func collectionContextPreservesOpaqueTableKey(): Unit {
+    let response = collectionKeyContext("data:rule_80", "data:rule_80")
+    @Assert(response.contains("KIND ERROR"), false)
+    @Assert(response.contains("WINDOW_COLLECTION rules 80 0 8 data:rule_80 data:rule_80"), true)
+}
+
+@Test
+func collectionContextRejectsWhitespaceAndOversizeKey(): Unit {
+    for (key in ["data:rule 80", "data:rule\n80", "data:rule\t80"]) {
+        @Assert(collectionKeyContext(key, "data:rule_80").contains("ERROR invalid_snapshot"), true)
+        @Assert(collectionKeyContext("data:rule_80", key).contains("ERROR invalid_snapshot"), true)
+    }
+}
+
+@Test
+func collectionContextUsesOpaqueTokenLengthBound(): Unit {
+    var key = ""
+    for (_ in 0..256) { key += "k" }
+    @Assert(collectionKeyContext(key, key).contains("KIND ERROR"), false)
+    @Assert(collectionKeyContext("", "").contains("WINDOW_COLLECTION rules 80 0 8 none none"), true)
+    @Assert(collectionKeyContext(key + "k", key).contains("ERROR invalid_snapshot"), true)
+    @Assert(collectionKeyContext(key, key + "k").contains("ERROR invalid_snapshot"), true)
+}
+
 private class ButtonFocusedWindowProjection <: CjguiSharedOperationWindowProjectionProvider {
     public func windowProjection(): CjguiSharedOperationWindowProjection {
         return CjguiSharedOperationWindowProjection(

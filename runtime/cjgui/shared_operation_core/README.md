@@ -65,6 +65,13 @@ overlay's `drawRect`. None means a person has necessarily seen the pixels:
 `WINDOW_REFRESH_PENDING` and `WINDOW_LAST_NATIVE_FAILURE` describe a retained
 temporary failure without converting a read into an implicit retry.
 
+`WINDOW_COLLECTION` preserves the collection's selected/focused logical item
+keys, including table keys such as `data:rule_80`. Nonempty keys use the existing
+opaque-token bound (1..256 visible ASCII bytes, no whitespace or controls);
+an empty key retains the `none` projection. Semantic, node, relation and action
+identifiers retain their own validation. Collection metadata still requires
+full-context authorization and is omitted from target-filtered reads.
+
 `GET_WINDOW_PROGRESS` is the separately authorized, scalar-only read for a
 live window's session/scene/frame progress. It intentionally contains no
 resource list, field value, draft, component tree, focus, selection or layer.
@@ -239,6 +246,23 @@ last comparison and does not honor the lock can still race the final rename.
 For shared ownership, have every writer use the CJGUI binding/lock or a
 separate application-level coordinator.
 
+## Owner-ready notification (experimental)
+
+`CjguiSharedOperationExternalConnection.ensureOwnerWorkNotifier(notify: () -> Unit)`
+installs one wake hint for the existing owner queue. The callback runs outside
+transport and I/O-state locks, may be coalesced until a drain, and is also issued
+when installation finds already-pending work. It must only wake the owner;
+business handlers still execute through the normal owner turn. Use a static,
+window-independent callback: an invocation already copied by a worker can race
+with detachment. Closing detaches future notifications and wakes the original
+condition predicates for accepted clients, claimed replies and worker exit.
+Request deadlines and exactly-once owner claims remain unchanged.
+
+The macOS application host connects this automatically for `pumpUntilWork`.
+Other platform hosts must connect their own cancellable wait. This is a source
+contract; transporting this file alone does not provide a compatible native
+wait ABI or platform implementation.
+
 ## Runtime-generated UI (experimental)
 
 An application may register the components, fields and actions it is willing to
@@ -276,6 +300,31 @@ executability — so a caller never has to guess which operation a field belongs
 ```
 FIELD <fieldId> <editorKind> resource=<shared-resource-id> writer=<owner-operation|none> required=<0|1> min=<n> max=<n> callable=<0|1>
 ```
+
+`generated-fields` names exactly one target. The bare form keeps the original
+single-owner contract; the two targeted forms read ONE accepted composite
+instance's owner snapshot:
+
+```
+GET_GENERATED_UI_FIELDS
+GET_GENERATED_UI_FIELDS INSTANCE <declared-instance-key>
+GET_GENERATED_UI_FIELDS OWNER <owner-resource-id>
+
+session.form_state()                                  # legacy single owner
+session.form_state(instance_key="cardB")              # that card's own snapshot
+session.fields(owner_resource_id=6300)                 # the same projection by owner
+```
+
+Draft and applied values, validation messages/versions, `FORM_STATE`'s
+`CAN_APPLY`/message and every `ACTION_STATE` availability/reason come from the
+same owner snapshot; no cross-owner join is attempted. `unknown_instance`,
+`unknown_owner` and `unauthorized_resource` are named refusals. An instance key
+that is no longer accepted, or whose accepted owner target moved, is unknown —
+never silently redirected to the object the key denotes now. An action press
+carries the accepted instance key, owner target and generation into the owner
+transaction; a multi-object provider must refuse a key that no longer resolves
+that target (`owner_target_retired`). A pure reorder keeps the identity; a real
+rebind retires it, including `A→B→A`.
 
 ### Candidate format
 
@@ -436,3 +485,5 @@ The runner drains both child output streams while it runs and retains only the
 last 64 KiB of stderr. This prevents native diagnostic output from blocking a
 normal child process through a full pipe; it does not suppress or reinterpret
 the child's diagnostic stream.
+
+公共只读 label 使用 `GeneratedTextStyleRun` 与 `styled_text_runs_property` 声明 UTF-8 字节范围及注册字体 key/version，见 [STYLED_TEXT.md](../STYLED_TEXT.md)。

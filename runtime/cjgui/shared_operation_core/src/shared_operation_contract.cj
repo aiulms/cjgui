@@ -371,6 +371,24 @@ public interface CjguiSharedOperationGeneratedUiProvider {
     /// field descriptor/projection feeds the handwritten form, the generated
     /// region and this external read.
     func fieldsPayload(): String
+    /// The SAME projection for ONE accepted composite instance. Every value
+    /// must come from that instance's single owner snapshot; empty means the
+    /// provider publishes no per-instance feedback (legacy single owner).
+    func fieldsPayload(instanceKey: String): String {
+        let _ = instanceKey
+        return ""
+    }
+    /// The same projection addressed by the instance's accepted owner id.
+    func fieldsPayloadForOwner(ownerResourceId: Int64): String {
+        let _ = ownerResourceId
+        return ""
+    }
+    /// Accepted owner target bound to one instance key, or -1 when unknown.
+    /// The transport uses it only to authorize a per-instance read.
+    func instanceOwnerResourceId(instanceKey: String): Int64 {
+        let _ = instanceKey
+        return -1
+    }
     /// The currently accepted structure, with its structure version.
     func acceptedStructurePayload(): String
     /// Version of the currently accepted structure (0 when none accepted yet).

@@ -17,6 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$(cd "$(dirname "$APP_CONFIG")" && pwd)"
 APP_CONFIG="$APP_DIR/$(basename "$APP_CONFIG")"
+python3 "$SCRIPT_DIR/macos_build_config.py" --help >/dev/null
 # The normal entry point owns its compiler choice. A manifest's `cjc-version`
 # constrains cjpm but cannot select a compiler inherited from an interactive
 # shell.  A developer selects 1.1.3 once through CANGJIE_HOME, or makes a
@@ -119,6 +120,7 @@ RENDERER_ARCHIVE="$NATIVE_LIB_DIR/libcjgui_internal_renderer.a"
 LAUNCHER_ARCHIVE="$NATIVE_LIB_DIR/libcjgui_macos_application_launcher.a"
 FINGERPRINT_FILE="$NATIVE_LIB_DIR/cjgui_macos_application_host.fingerprint"
 LINK_FINGERPRINT_FILE="$NATIVE_LIB_DIR/cjgui_macos_application_host.linked.fingerprint"
+NATIVE_HASHES_FILE="$NATIVE_LIB_DIR/cjgui_macos_application_host.archives.sha256"
 RENDERER_SOURCE="$NATIVE_SOURCE_DIR/cjgui_internal_renderer.m"
 BRIDGE_SOURCE="$NATIVE_SOURCE_DIR/cjgui_native_bridge.m"
 ASYNC_MEASURE_SOURCE="$NATIVE_SOURCE_DIR/cjgui_async_multiline_measure.m"
@@ -211,7 +213,9 @@ done
 BUILD_LOCK_HELD=1
 
 NEEDS_NATIVE_REBUILD=0
-if [[ ! -f "$RENDERER_ARCHIVE" || ! -f "$LAUNCHER_ARCHIVE" || ! -f "$FINGERPRINT_FILE" || "$(< "$FINGERPRINT_FILE")" != "$FINGERPRINT" ]]; then
+if [[ ! -f "$RENDERER_ARCHIVE" || ! -f "$LAUNCHER_ARCHIVE" || ! -f "$FINGERPRINT_FILE" || ! -f "$NATIVE_HASHES_FILE" || "$(< "$FINGERPRINT_FILE")" != "$FINGERPRINT" ]]; then
+  NEEDS_NATIVE_REBUILD=1
+elif [[ "$(< "$NATIVE_HASHES_FILE")" != "$(hash_file "$RENDERER_ARCHIVE") $(hash_file "$LAUNCHER_ARCHIVE")" ]]; then
   NEEDS_NATIVE_REBUILD=1
 fi
 
@@ -224,9 +228,15 @@ if (( NEEDS_NATIVE_REBUILD )); then
   "$AR_PATH" rcs "$NATIVE_BUILD_DIR/libcjgui_internal_renderer.a" "$NATIVE_BUILD_DIR/cjgui_internal_renderer.o" "$NATIVE_BUILD_DIR/cjgui_native_bridge.o" "$NATIVE_BUILD_DIR/cjgui_async_multiline_measure.o" "$NATIVE_BUILD_DIR/cjgui_async_multiline_bridge.o"
   "$CLANG_PATH" "${CLANG_FLAGS[@]}" -isysroot "$SDKROOT_PATH" -I "$NATIVE_SOURCE_DIR" -c "$LAUNCHER_SOURCE" -o "$NATIVE_BUILD_DIR/cjgui_macos_application_launcher.o"
   "$AR_PATH" rcs "$NATIVE_BUILD_DIR/libcjgui_macos_application_launcher.a" "$NATIVE_BUILD_DIR/cjgui_macos_application_launcher.o"
+  if [[ "$(native_fingerprint)" != "$FINGERPRINT" ]]; then
+    echo 'cjgui macOS application host: native inputs changed during compilation; previous App preserved' >&2
+    exit 2
+  fi
   # Archives arrive before their key; an unsuccessful compile/archive never advertises a valid new fingerprint.
   mv "$NATIVE_BUILD_DIR/libcjgui_internal_renderer.a" "$RENDERER_ARCHIVE"
   mv "$NATIVE_BUILD_DIR/libcjgui_macos_application_launcher.a" "$LAUNCHER_ARCHIVE"
+  print -rn -- "$(hash_file "$RENDERER_ARCHIVE") $(hash_file "$LAUNCHER_ARCHIVE")" > "$NATIVE_BUILD_DIR/archives.sha256"
+  mv "$NATIVE_BUILD_DIR/archives.sha256" "$NATIVE_HASHES_FILE"
   print -rn -- "$FINGERPRINT" > "$NATIVE_BUILD_DIR/fingerprint"
   mv "$NATIVE_BUILD_DIR/fingerprint" "$FINGERPRINT_FILE"
   rm -rf "$NATIVE_BUILD_DIR"
@@ -236,52 +246,43 @@ else
   print -r -- 'cjgui macOS application host: native_archive=reused'
 fi
 
-# `cjgui` is itself a static CFFI package.  Its manifest deliberately names a
-# package-local renderer archive, while an application owns the launcher and
-# its per-app native cache.  Materialize the former from the just-verified
-# app-local source build before cjpm resolves the dependency graph.  This is a
-# generated cache, not an exported binary SDK: a fresh source preview starts
-# without it and recreates it from the copied native sources on first build.
-FRAMEWORK_NATIVE_LIB_DIR="$RUNTIME_DIR/native/lib"
-FRAMEWORK_RENDERER_ARCHIVE="$FRAMEWORK_NATIVE_LIB_DIR/libcjgui_internal_renderer.a"
-FRAMEWORK_RENDERER_FINGERPRINT="$FRAMEWORK_NATIVE_LIB_DIR/cjgui_internal_renderer_sidecar.fingerprint"
-if [[ ! -f "$FRAMEWORK_RENDERER_ARCHIVE" || ! -f "$FRAMEWORK_RENDERER_FINGERPRINT" || "$(< "$FRAMEWORK_RENDERER_FINGERPRINT")" != "$FINGERPRINT" ]]; then
-  mkdir -p "$FRAMEWORK_NATIVE_LIB_DIR"
-  FRAMEWORK_NATIVE_BUILD_DIR="$(mktemp -d "$RUNTIME_DIR/native/.cjgui-framework-native-build.XXXXXX")"
-  cp "$RENDERER_ARCHIVE" "$FRAMEWORK_NATIVE_BUILD_DIR/libcjgui_internal_renderer.a"
-  print -rn -- "$FINGERPRINT" > "$FRAMEWORK_NATIVE_BUILD_DIR/fingerprint"
-  mv "$FRAMEWORK_NATIVE_BUILD_DIR/libcjgui_internal_renderer.a" "$FRAMEWORK_RENDERER_ARCHIVE"
-  mv "$FRAMEWORK_NATIVE_BUILD_DIR/fingerprint" "$FRAMEWORK_RENDERER_FINGERPRINT"
-  rmdir "$FRAMEWORK_NATIVE_BUILD_DIR"
-  print -r -- 'cjgui macOS application host: framework_native_archive=rebuilt'
-else
-  print -r -- 'cjgui macOS application host: framework_native_archive=reused'
-fi
-
 export SDKROOT="$SDKROOT_PATH"
 APP_EXECUTABLE="$APP_DIR/target/release/bin/main"
-# A changed native key forces only this app's executable to relink; cjpm retains its package graph.
-if (( NEEDS_NATIVE_REBUILD )); then rm -f "$APP_EXECUTABLE"; fi
-# cjpm 1.1.3 splits a dependency build-script path at spaces while compiling
-# build.cj. The host has already materialized the fingerprint-checked native
-# archive above, which is exactly what cjgui/build.cj would create. In a
-# spaced source export, skip that redundant script invocation while retaining
-# normal package compilation and linking from the actual source directory.
-if [[ "$APP_DIR" == *' '* || "$RUNTIME_DIR" == *' '* ]]; then
-  (cd "$APP_DIR" && cjpm build --skip-script -i)
-else
-  (cd "$APP_DIR" && cjpm build -i)
+BUILD_CACHE="$APP_DIR/.cjgui/macos-build"
+# cjpm merges dependency FFI before app FFI, so both declarations must name the
+# same private archive. Cjpm also requires in-module regular source files: one
+# bounded, read-only input snapshot is reused by content, without a repo clone.
+# No shared framework archive is written or consumed by this normal entry.
+python3 "$SCRIPT_DIR/macos_build_config.py" prepare "$APP_DIR" "$RUNTIME_DIR" "$NATIVE_LIB_DIR" "$BUILD_CACHE"
+LINK_KEY="$(python3 - "$BUILD_CACHE/prepared.json" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1]))['build_key'])
+PY
+)"
+if [[ ! -f "$LINK_FINGERPRINT_FILE" || "$(< "$LINK_FINGERPRINT_FILE")" != "$LINK_KEY" || ! -f "$BUILD_CACHE/build-provenance.json" || ! -f "$BUILD_CACHE/last-verified-link.log" || ! -f "$BUILD_CACHE/application/cjgui-native-link.map" ]]; then
+  rm -f "$APP_EXECUTABLE"
+fi
+CURRENT_NATIVE_HASHES="$(hash_file "$RENDERER_ARCHIVE") $(hash_file "$LAUNCHER_ARCHIVE")"
+print -r -- "cjgui macOS application host: native_identity sdk=$SDKROOT_PATH flags=${(j: :)CLANG_FLAGS} archives=$CURRENT_NATIVE_HASHES"
+print -r -- "cjgui macOS application host: build_configuration=$BUILD_CACHE/application/cjpm.toml source_snapshot=$BUILD_CACHE target=$APP_DIR/target"
+# The verified native builder replaces the root build.cj hook. Keep ordinary
+# cjpm compilation/linking, including the native link trace, for spaced roots.
+BUILD_STATUS=0
+# Linker stdout is evidence of the paths actually opened. Compiler diagnostics
+# on stderr can otherwise interleave in the middle of one archive path.
+(cd "$BUILD_CACHE/application" && cjpm build --skip-script -i -V) \
+  2> "$BUILD_CACHE/current-build-stderr.log" | tee "$BUILD_CACHE/current-link.log" || BUILD_STATUS=$?
+cat "$BUILD_CACHE/current-build-stderr.log" >&2
+if (( BUILD_STATUS != 0 )); then
+  exit "$BUILD_STATUS"
 fi
 if [[ ! -x "$APP_EXECUTABLE" ]]; then
   echo "cjgui macOS application host: cjpm did not publish executable $APP_EXECUTABLE" >&2
   exit 2
 fi
-if ! nm "$APP_EXECUTABLE" | rg 'cjgui_internal_renderer_set_window_title' >/dev/null; then
-  echo 'cjgui macOS application host: cjpm executable is not linked to the renderer archive' >&2
-  exit 2
-fi
+python3 "$SCRIPT_DIR/macos_build_config.py" verify "$BUILD_CACHE" "$APP_EXECUTABLE"
 LINK_BUILD_DIR="$(mktemp -d "$NATIVE_LIB_DIR/.cjgui-link-build.XXXXXX")"
-print -rn -- "$FINGERPRINT" > "$LINK_BUILD_DIR/fingerprint"
+print -rn -- "$LINK_KEY" > "$LINK_BUILD_DIR/fingerprint"
 mv "$LINK_BUILD_DIR/fingerprint" "$LINK_FINGERPRINT_FILE"
 rmdir "$LINK_BUILD_DIR"
 

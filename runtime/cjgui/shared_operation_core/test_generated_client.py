@@ -27,6 +27,10 @@ def response(body: str) -> client.SharedOperationResponse:
     return client.parse_response(body)
 
 
+def _u8(text: str) -> str:
+    return "u8:" + text.encode("utf-8").hex().upper()
+
+
 CAPABILITIES = "\n".join([
     "PROTOCOL CJGUI_SHARED_OPERATION/2",
     "KIND GENERATED_UI_CAPABILITIES",
@@ -161,7 +165,7 @@ SUBMIT_STALE = "\n".join([
 
 SNAPSHOT = "\n".join([
     "PROTOCOL CJGUI_SHARED_OPERATION/2",
-    "KIND CONTEXT",
+    "KIND SNAPSHOT",
     "VERSION 7",
     "ACTION SET_TITLE PARAMETERS 1 TARGETS 1 1",
     "ACTION_DISPLAY_NAME_UTF8_HEX SET_TITLE 18 E58699E59B9EE4BBBBE58AA1E6A087E9A298",
@@ -173,7 +177,7 @@ SNAPSHOT = "\n".join([
 # exercised against a real published signature (not a comma name list).
 SNAPSHOT_TYPED = "\n".join([
     "PROTOCOL CJGUI_SHARED_OPERATION/2",
-    "KIND CONTEXT",
+    "KIND SNAPSHOT",
     "VERSION 7",
     "ACTION TEST_PARAMS PARAMETERS 3 TARGETS 1 2",
     "ACTION_DISPLAY_NAME_UTF8_HEX TEST_PARAMS 4 74657374",
@@ -402,6 +406,24 @@ class InstanceTests(unittest.TestCase):
 
 
 class FieldAndSubmitTests(unittest.TestCase):
+    def test_old_error_none_does_not_confirm_validation(self) -> None:
+        field = generated.parse_generated_fields(response(FIELDS))[0]
+        self.assertEqual(getattr(field, "validation_state", "missing"), "unknown")
+
+    def test_field_validation_message_is_utf8_and_keeps_its_versions(self) -> None:
+        message = "份数需在 1–24 之间 👩‍💻"
+        body = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2", "KIND GENERATED_UI_FIELDS", "PAYLOAD_LENGTH 512",
+            "FIELD copies 6202 DRAFT_HEX 30 APPLIED_HEX 34 ERROR invalid "
+            "VERSION 2 VALIDATION_STATE invalid VALIDATION_MESSAGE_HEX "
+            + message.encode().hex() + " VALIDATION_VERSION 2 FIELD_VERSION 1",
+            "END"])
+        field = generated.parse_generated_fields(response(body))[0]
+        self.assertEqual(field.validation_error, message)
+        self.assertEqual(getattr(field, "validation_state", "missing"), "invalid")
+        self.assertEqual(getattr(field, "validation_version", None), 2)
+        self.assertEqual(getattr(field, "field_version", None), 1)
+
     def test_field_projection(self) -> None:
         values = generated.parse_generated_fields(response(FIELDS))
         self.assertEqual(len(values), 1)
@@ -486,6 +508,87 @@ class FieldAndSubmitTests(unittest.TestCase):
         self.assertEqual((stale.version_before, stale.version_after), (1, 1))
 
 
+class FormFeedbackTests(unittest.TestCase):
+    def fixture(self) -> str:
+        message = "份数需在 1–24 之间 👩‍💻".encode().hex()
+        return "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2", "KIND GENERATED_UI_FIELDS", "PAYLOAD_LENGTH 512",
+            "FORM_STATE KNOWN 1 CONSISTENT 1 VERSION 3 DRAFT_VERSION 2 APPLIED_VERSION 0 "
+            f"CAN_APPLY 0 MESSAGE_HEX {message} TARGET 6200",
+            "FIELD copies 6202 DRAFT_HEX 30 APPLIED_HEX 34 ERROR invalid AVAILABLE 1 REASON_HEX - "
+            "TARGET 6200 STATE_VERSION 3 VERSION 2 VALIDATION_STATE invalid "
+            f"VALIDATION_MESSAGE_HEX {message} VALIDATION_VERSION 3 FIELD_VERSION 1",
+            f"ACTION_STATE APPLY_DRAFT AVAILABLE 0 REASON_HEX {message} TARGET 6200 STATE_VERSION 3",
+            "ACTION_STATE CANCEL_DRAFT AVAILABLE 1 REASON_HEX - TARGET 6200 STATE_VERSION 3", "END"])
+
+    def test_atomic_state_keeps_validation_separate_from_editability(self) -> None:
+        state = generated.parse_generated_form_state(response(self.fixture()))
+        self.assertTrue(state.known and state.consistent)
+        self.assertEqual((state.state_version, state.draft_version, state.applied_version), (3, 2, 0))
+        self.assertFalse(state.can_apply)
+        self.assertTrue(state.fields[0].available)
+        self.assertEqual(state.fields[0].validation_state, "invalid")
+        self.assertEqual(state.message, state.fields[0].validation_error)
+        self.assertEqual(state.message, state.actions[0].blocked_reason)
+        self.assertTrue(state.actions[1].available)
+
+    def test_old_provider_is_unknown_and_mixed_versions_are_rejected(self) -> None:
+        state = generated.parse_generated_form_state(response(FIELDS))
+        self.assertFalse(state.known)
+        self.assertIsNone(state.can_apply)
+        self.assertEqual(state.fields[0].validation_state, "unknown")
+        for bad in (self.fixture().replace("VALIDATION_VERSION 3", "VALIDATION_VERSION 2"),
+                    self.fixture().replace("CANCEL_DRAFT AVAILABLE 1", "CANCEL_DRAFT AVAILABLE perhaps"),
+                    self.fixture().replace("CONSISTENT 1", "CONSISTENT 0")):
+            with self.assertRaises(generated.GeneratedUiError):
+                generated.parse_generated_form_state(response(bad))
+
+    def test_one_public_query_supplies_the_whole_form(self) -> None:
+        fixture = self.fixture()
+        calls = []
+
+        class FakeClient:
+            descriptor = {"capability": "cap"}
+
+            def request(self, payload, **kwargs):
+                calls.append(payload)
+                return response(fixture)
+
+        session = generated.GeneratedUiSession(FakeClient())
+        self.assertFalse(session.form_state().can_apply)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("GET_GENERATED_UI_FIELDS", calls[0])
+
+    def test_instance_and_owner_reads_name_exactly_one_target(self) -> None:
+        fixture = self.fixture()
+        calls = []
+
+        class FakeClient:
+            descriptor = {"capability": "cap"}
+
+            def request(self, payload, **kwargs):
+                calls.append(payload)
+                return response(fixture)
+
+        session = generated.GeneratedUiSession(FakeClient())
+        instance_state = session.form_state(instance_key="cardA")
+        owner_state = session.fields(owner_resource_id=6200)
+        legacy_state = session.form_state()
+        self.assertTrue(instance_state.known and owner_state[0].field_id == "copies")
+        self.assertTrue(legacy_state.known)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(calls[0].splitlines()[-1], "GET_GENERATED_UI_FIELDS INSTANCE cardA")
+        self.assertEqual(calls[1].splitlines()[-1], "GET_GENERATED_UI_FIELDS OWNER 6200")
+        self.assertEqual(calls[2].splitlines()[-1], "GET_GENERATED_UI_FIELDS",
+                         "the legacy command must stay compatible")
+        for bad in ({"instance_key": "card A"}, {"instance_key": ""},
+                    {"owner_resource_id": -1}, {"owner_resource_id": True},
+                    {"instance_key": "cardA", "owner_resource_id": 6200}):
+            with self.assertRaises(ValueError):
+                session.form_state(**bad)
+        self.assertEqual(len(calls), 3, "an invalid target must not reach the endpoint")
+
+
 class ActionSignatureTests(unittest.TestCase):
     def test_typed_actions_come_from_the_snapshot(self) -> None:
         actions = generated.parse_action_signatures(response(SNAPSHOT))
@@ -498,6 +601,98 @@ class ActionSignatureTests(unittest.TestCase):
 
 
 class SessionTests(unittest.TestCase):
+    def test_wait_keeps_timeout_outcome_after_shared_read_translation(self) -> None:
+        class DeadlineClient:
+            descriptor = {"capability": "cap"}
+
+            def request(self, payload, **kwargs):
+                raise TimeoutError("socket deadline")
+
+        session = generated.GeneratedUiSession(DeadlineClient())
+        wait = session.wait_for_structure(1, timeout_ms=30, poll_ms=1)
+        self.assertEqual(wait.outcome, "timeout")
+        self.assertIsNone(wait.structure)
+
+    def test_typed_reads_refuse_error_envelopes_without_caching_empty_state(self) -> None:
+        class RefusingClient:
+            descriptor = {"capability": "cap"}
+            failure = "unauthorized_action"
+
+            def request(self, payload, **kwargs):
+                return response("\n".join([
+                    "PROTOCOL CJGUI_SHARED_OPERATION/2", "KIND ERROR",
+                    f"ERROR {self.failure}", "END"]))
+
+        transport = RefusingClient()
+        session = generated.GeneratedUiSession(transport)
+        for read in (session.capabilities, session.structure, session.fields,
+                     session.form_state, session.instances, session.snapshot):
+            with self.subTest(read=read.__name__):
+                with self.assertRaisesRegex(generated.GeneratedUiError, "unauthorized_action"):
+                    read()
+                self.assertIsNone(session._capabilities)
+                self.assertIsNone(session._observation_snapshot)
+                self.assertIsNone(session.observation_anchor())
+        transport.failure = "endpoint_replaced"
+        for read in (session.capabilities, session.structure, session.fields, session.instances):
+            with self.subTest(read=read.__name__, error=transport.failure):
+                with self.assertRaises(generated.GeneratedUiEndpointError) as refused:
+                    read()
+                self.assertEqual(refused.exception.code, "endpoint_replaced")
+
+    def test_typed_reads_preserve_legitimate_empty_and_reject_wrong_kind(self) -> None:
+        class EmptyClient:
+            descriptor = {"capability": "cap"}
+
+            def request(self, payload, **kwargs):
+                kind = payload.splitlines()[-1].removeprefix("GET_")
+                return response(f"PROTOCOL CJGUI_SHARED_OPERATION/2\nKIND {kind}\nEND")
+
+        session = generated.GeneratedUiSession(EmptyClient())
+        self.assertEqual(session.capabilities().fields, ())
+        self.assertEqual(session.structure().nodes, ())
+        self.assertEqual(session.fields(), ())
+        self.assertEqual(session.instances().instances, ())
+        wrong = response("PROTOCOL CJGUI_SHARED_OPERATION/2\nKIND SNAPSHOT\nEND")
+        for parse in (generated.parse_generated_capabilities, generated.parse_generated_structure,
+                      generated.parse_generated_fields, generated.parse_generated_instances):
+            with self.subTest(parser=parse.__name__):
+                with self.assertRaisesRegex(generated.GeneratedUiError, "expected GENERATED_UI"):
+                    parse(wrong)
+
+    def test_typed_read_timeouts_keep_the_existing_deadline_classification(self) -> None:
+        class TimeoutClient:
+            descriptor = {"capability": "cap"}
+
+            def request(self, payload, **kwargs):
+                raise TimeoutError("read deadline")
+
+        session = generated.GeneratedUiSession(TimeoutClient())
+        for read in (session.capabilities, session.structure, session.fields,
+                     session.form_state, session.instances):
+            with self.subTest(read=read.__name__):
+                with self.assertRaises(generated.GeneratedUiDeadlineExceeded):
+                    read()
+
+    def test_failed_capability_refresh_drops_the_old_cached_projection(self) -> None:
+        class RefreshClient:
+            descriptor = {"capability": "cap"}
+            refused = False
+
+            def request(self, payload, **kwargs):
+                return response("PROTOCOL CJGUI_SHARED_OPERATION/2\nKIND ERROR\n"
+                                "ERROR unauthorized_action\nEND" if self.refused else CAPABILITIES)
+
+        transport = RefreshClient()
+        session = generated.GeneratedUiSession(transport)
+        self.assertTrue(session.capabilities().fields)
+        transport.refused = True
+        with self.assertRaisesRegex(generated.GeneratedUiError, "unauthorized_action"):
+            session.capabilities(refresh=True)
+        self.assertIsNone(session._capabilities)
+        with self.assertRaisesRegex(generated.GeneratedUiError, "unauthorized_action"):
+            session.capabilities()
+
     def test_wait_reports_timeout_with_the_last_observation(self) -> None:
         calls = {"count": 0}
 
@@ -639,7 +834,7 @@ class ArgumentValidationTests(unittest.TestCase):
     def test_unusable_action_metadata_is_reported(self) -> None:
         body = "\n".join([
             "PROTOCOL CJGUI_SHARED_OPERATION/2",
-            "KIND CONTEXT",
+            "KIND SNAPSHOT",
             "VERSION 7",
             "ACTION WEIRD PARAMETERS 1 TARGETS 1 1",
             "ACTION_DISPLAY_NAME_UTF8_HEX WEIRD 4 74657374",
@@ -676,6 +871,206 @@ class ArgumentValidationTests(unittest.TestCase):
         self.assertIn(replacements, passed_arguments)
         self.assertEqual(replacements.value_type, "TEXT_REPLACEMENTS")
         self.assertTrue(replacements.wire_line().startswith("ARG replacements TEXT_REPLACEMENTS "))
+
+
+class PublicSurfaceTests(unittest.TestCase):
+    def test_surface_support_and_evidence_are_typed_without_inference(self):
+        payload = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND GENERATED_UI_CAPABILITIES",
+            "PAYLOAD_LENGTH 400",
+            "GENERATED_UI 1",
+            "SURFACE version=1.0 stability=experimental compatibility=additive_only "
+            "protocol=2 subset=host,fields,commands future_key=kept",
+            "BOUNDS 12 64 8 256",
+            "COMPONENT vertical 0 0",
+            "SUPPORT component vertical state=available reason=admission_accepted source=catalog_admission",
+            "SUPPORT capability window_background state=unavailable "
+            "reason=window_background_not_enabled source=catalog_opt_in",
+            "SUPPORT component image state=fallback reason=text_only_backend source=application_declaration",
+            "SUPPORT field " + _u8("同名字段 A") + " state=unavailable reason=" + _u8("软件 回退") +
+            " source=application_declaration",
+            "SUPPORT backend macos_appkit state=available reason=build_target source=platform_build",
+            "EVIDENCE backend:macos_appkit state=unverified reason=delivery_evidence_not_declared",
+            "EVIDENCE " + _u8("component:vertical") + " state=verified reason=" + _u8("人工 验收"),
+            "END",
+        ])
+        capabilities = generated.parse_generated_capabilities(response(payload))
+        self.assertEqual(capabilities.surface.version, "1.0")
+        self.assertEqual(capabilities.surface.stability, "experimental")
+        self.assertEqual(capabilities.surface.compatibility, "additive_only")
+        self.assertEqual(capabilities.surface.subset, ("host", "fields", "commands"))
+        self.assertIn(("future_key", "kept"), capabilities.surface.extra)
+        fact = capabilities.support_for("component", "vertical")
+        self.assertIsNotNone(fact)
+        self.assertEqual(fact.state, "available")
+        self.assertEqual(fact.source, "catalog_admission")
+        encoded = capabilities.support_for("field", "同名字段 A")
+        self.assertEqual(encoded.state, "unavailable")
+        self.assertEqual(encoded.reason, "软件 回退")
+        unavailable = capabilities.support_for("capability", "window_background")
+        self.assertEqual(unavailable.state, "unavailable")
+        self.assertEqual(unavailable.reason, "window_background_not_enabled")
+        fallback = capabilities.support_for("component", "image")
+        self.assertEqual(fallback.state, "fallback")
+        self.assertEqual(fallback.source, "application_declaration")
+        self.assertEqual(capabilities.evidence_for("backend:macos_appkit").state, "unverified")
+        self.assertEqual(capabilities.evidence_for("component:vertical").state, "verified")
+        self.assertEqual(capabilities.evidence_for("component:vertical").reason, "人工 验收")
+        self.assertIsNone(capabilities.support_for("component", "not_registered"))
+        self.assertIsNone(capabilities.evidence_for("backend:unknown"))
+
+    def test_surface_refuses_incompatible_versions_by_name_and_keeps_additive_keys(self):
+        def capabilities(surface_line: str | None):
+            lines = [
+                "PROTOCOL CJGUI_SHARED_OPERATION/2",
+                "KIND GENERATED_UI_CAPABILITIES",
+                "PAYLOAD_LENGTH 400",
+                "GENERATED_UI 1",
+            ]
+            if surface_line is not None:
+                lines.append(surface_line)
+            lines.extend([
+                "BOUNDS 12 64 8 256",
+                "END",
+            ])
+            return generated.parse_generated_capabilities(response("\n".join(lines)))
+
+        # A legacy producer without SURFACE stays readable: absence is not
+        # upgraded into a claimed compatibility.
+        self.assertIsNone(capabilities(None).surface)
+
+        # Same major, additive key: compatible; the unknown key is preserved.
+        additive = capabilities(
+            "SURFACE version=1.1 stability=experimental compatibility=additive_only "
+            "protocol=2 subset=host,fields future_key=kept")
+        self.assertEqual(additive.surface.version, "1.1")
+        self.assertIn(("future_key", "kept"), additive.surface.extra)
+
+        with self.assertRaisesRegex(generated.GeneratedUiError,
+                                    r"SURFACE protocol 3 is not supported"):
+            capabilities("SURFACE version=1.0 stability=experimental compatibility=additive_only "
+                         "protocol=3 subset=host")
+        with self.assertRaisesRegex(generated.GeneratedUiError,
+                                    r"SURFACE version 2\.0 is not supported"):
+            capabilities("SURFACE version=2.0 stability=experimental compatibility=additive_only "
+                         "protocol=2 subset=host")
+        with self.assertRaisesRegex(generated.GeneratedUiError,
+                                    r"SURFACE compatibility breaking is not supported"):
+            capabilities("SURFACE version=1.0 stability=experimental compatibility=breaking "
+                         "protocol=2 subset=host")
+
+    def test_duplicate_support_fact_is_refused(self):
+        payload = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND GENERATED_UI_CAPABILITIES",
+            "PAYLOAD_LENGTH 400",
+            "GENERATED_UI 1",
+            "SUPPORT component image state=available reason=admission_accepted source=catalog_admission",
+            "SUPPORT component image state=fallback reason=text_only_backend source=application_declaration",
+            "END",
+        ])
+        with self.assertRaises(generated.GeneratedUiError):
+            generated.parse_generated_capabilities(response(payload))
+
+    def test_unknown_support_state_is_refused(self):
+        payload = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND GENERATED_UI_CAPABILITIES",
+            "PAYLOAD_LENGTH 400",
+            "GENERATED_UI 1",
+            "SUPPORT component vertical state=maybe reason=guessed source=catalog",
+            "END",
+        ])
+        with self.assertRaises(generated.GeneratedUiError):
+            generated.parse_generated_capabilities(response(payload))
+
+    def test_discovery_budget_and_controls_apply_after_decoding(self):
+        def parse_support(item_token: str, reason_token: str):
+            payload = "\n".join([
+                "PROTOCOL CJGUI_SHARED_OPERATION/2",
+                "KIND GENERATED_UI_CAPABILITIES",
+                "PAYLOAD_LENGTH 400",
+                "GENERATED_UI 1",
+                f"SUPPORT component {item_token} state=available "
+                f"reason={reason_token} source=catalog_admission",
+                "END",
+            ])
+            return generated.parse_generated_capabilities(response(payload))
+
+        def parse_evidence(item_token: str, reason_token: str):
+            payload = "\n".join([
+                "PROTOCOL CJGUI_SHARED_OPERATION/2",
+                "KIND GENERATED_UI_CAPABILITIES",
+                "PAYLOAD_LENGTH 400",
+                "GENERATED_UI 1",
+                f"EVIDENCE {item_token} state=unverified reason={reason_token}",
+                "END",
+            ])
+            return generated.parse_generated_capabilities(response(payload))
+
+        # The reproduced gap: a literal token skipped the byte budget its own
+        # encoded form was checked against.
+        long_item = "a" * 129
+        for token in (long_item, _u8(long_item)):
+            with self.assertRaises(generated.GeneratedUiError):
+                parse_support(token, "admission_accepted")
+        legal = "a" * 128
+        legal_fact = parse_support(legal, "admission_accepted").support_for("component", legal)
+        self.assertIsNotNone(legal_fact)
+        self.assertEqual(legal_fact.state, "available")
+
+        # Control characters are refused after either decoding path.
+        for token in ("u8:00", _u8("\u0000"), "u8:7F"):
+            with self.assertRaises(generated.GeneratedUiError):
+                parse_support("component", token)
+            with self.assertRaises(generated.GeneratedUiError):
+                parse_evidence(token, "unverified_reason")
+
+        long_evidence = "e" * 193
+        for token in (long_evidence, _u8(long_evidence)):
+            with self.assertRaises(generated.GeneratedUiError):
+                parse_evidence(token, "declared")
+
+        # Legacy plaintext without spaces, Chinese and encoded spaces remain
+        # legal: only the decoded value's facts are checked.
+        plain = parse_support("同名字段", "说明")
+        self.assertEqual(plain.support_for("component", "同名字段").reason, "说明")
+        spaced = parse_support(_u8("同名字段 A"), _u8("人工 验收"))
+        self.assertEqual(spaced.support_for("component", "同名字段 A").reason, "人工 验收")
+        evidence = parse_evidence(_u8("component:vertical"), _u8("人工 验收"))
+        self.assertEqual(evidence.evidence_for("component:vertical").reason, "人工 验收")
+
+    def test_remote_error_preserves_code_detail_version_target_and_unknown_code(self):
+        body = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND SNAPSHOT",
+            "ERROR owner_busy DETAIL_HEX 64656c61796564 REQUEST_VERSION 7 "
+            "OBSERVED_VERSION 9 TARGET window:1",
+            "END",
+        ])
+        with self.assertRaises(generated.GeneratedUiRemoteError) as caught:
+            generated._result_values(response(body), "SNAPSHOT")
+        error = caught.exception
+        self.assertEqual(error.code, "owner_busy")
+        self.assertEqual(error.detail, "delayed")
+        self.assertEqual(error.versions, {"REQUEST_VERSION": 7, "OBSERVED_VERSION": 9})
+        self.assertEqual(error.request_version, 7)
+        self.assertEqual(error.observed_version, 9)
+        self.assertEqual(error.target, "window:1")
+        self.assertFalse(error.unknown)
+
+        unknown_body = "\n".join([
+            "PROTOCOL CJGUI_SHARED_OPERATION/2",
+            "KIND SNAPSHOT",
+            "ERROR future_refusal",
+            "END",
+        ])
+        with self.assertRaises(generated.GeneratedUiRemoteError) as unknown_caught:
+            generated._result_values(response(unknown_body), "SNAPSHOT")
+        self.assertEqual(unknown_caught.exception.code, "future_refusal")
+        self.assertTrue(unknown_caught.exception.unknown)
+        self.assertEqual(unknown_caught.exception.versions, {})
 
 
 if __name__ == "__main__":

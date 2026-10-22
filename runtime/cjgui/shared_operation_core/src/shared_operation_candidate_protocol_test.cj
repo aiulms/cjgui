@@ -83,6 +83,25 @@ private func candidateTicketConnection(provider: ?CjguiSharedOperationGeneratedU
     return connection
 }
 
+/// The named-target fields command keeps the same endpoint: INSTANCE/OWNER are
+/// suffixes on GET_GENERATED_UI_FIELDS, so routing must reach the handler that
+/// parses them. This provider publishes no field payload, and the handler's own
+/// named refusal is what proves the suffix was routed rather than dropped as
+/// invalid_request.
+@Test
+func generatedFieldsNamedTargetCommandsReachTheirHandler(): Unit {
+    let connection = candidateTicketConnection(Some(CandidateTicketProvider()))
+    for (command in ["GET_GENERATED_UI_FIELDS INSTANCE cardA", "GET_GENERATED_UI_FIELDS OWNER 6200"]) {
+        let response = connection.dispatchPayload(
+            "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH candidate-ticket-capability\n" + command)
+        @Assert(response.contains("ERROR unknown_instance") || response.contains("ERROR unknown_owner"), true)
+        @Assert(response.contains("invalid_request"), false)
+    }
+    let legacy = connection.dispatchPayload(
+        "PROTOCOL CJGUI_SHARED_OPERATION/2\nAUTH candidate-ticket-capability\nGET_GENERATED_UI_FIELDS")
+    @Assert(legacy.contains("KIND GENERATED_UI_FIELDS"), true)
+}
+
 @Test
 func candidateTicketReadCarriesOnlyItsOwnAttempt(): Unit {
     let connection = candidateTicketConnection(Some(CandidateTicketProvider()))

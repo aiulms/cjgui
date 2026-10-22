@@ -100,6 +100,12 @@ private class ContextMenuLifecycleController <: CjguiComposableUiController &
     private var request: Option<CjguiComposableUiContextMenuRequest> = None
     private var visible: Bool = false
     private var revision: Int64 = 1
+    private var commandSource: CjguiContextMenuCommandSource = CjguiContextMenuCommandSource.RequestLocal
+    private var commandId: String = "probe.apply"
+    private var commandTargetNodeId: Int64 = -1
+    var lastDeclareAttempted: Bool = false
+    var lastDeclareAccepted: Bool = false
+    let ownerBudget = CjguiOwnerTurnBudget()
     var commandDispatches: Int64 = 0
     var endedRequests: Int64 = 0
 
@@ -143,21 +149,45 @@ private class ContextMenuLifecycleController <: CjguiComposableUiController &
         return hostNode
     }
 
+    public func useWindowCommand(id: String): Unit {
+        commandSource = CjguiContextMenuCommandSource.WindowCommand
+        commandId = id
+        commandTargetNodeId = -1
+    }
+
+    public func useLocalCommand(id: String, targetNodeId: Int64): Unit {
+        commandSource = CjguiContextMenuCommandSource.RequestLocal
+        commandId = id
+        commandTargetNodeId = targetNodeId
+    }
+
     public func requestContextMenu(request: CjguiComposableUiContextMenuRequest): Bool {
         if (request.nodeId != 2 || request.resourceId != 42 ||
             request.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
             return false
         }
         let window = match (host) { case Some(value) => value; case None => return false }
-        let declaration = CjguiComposableUiCommand("probe.apply",
-            CjguiComposableUiNodeReference.manual(request.nodeId), "Apply", "Probe", 0,
+        let targetNodeId = if (commandTargetNodeId >= 0) { commandTargetNodeId } else { request.nodeId }
+        let declaration = CjguiComposableUiCommand(commandId,
+            CjguiComposableUiNodeReference.manual(targetNodeId), "Apply", "Probe", 0,
             true, false)
-        if (!window.declareContextMenuCommand(request.requestId, declaration)) {
+        lastDeclareAttempted = true
+        if (cjguiContextMenuCommandSourceCode(commandSource) == "window_command") {
+            if (!window.declareCommand(declaration)) {
+                return false
+            }
+            lastDeclareAccepted = window.declareContextMenuCommand(request.requestId, declaration,
+                source: CjguiContextMenuCommandSource.WindowCommand)
+        } else {
+            lastDeclareAccepted = window.declareContextMenuCommand(request.requestId, declaration)
+        }
+        if (!lastDeclareAccepted) {
             return false
         }
         this.request = Some(request)
         visible = true
         revision += 1
+        window.requestRefresh()
         return true
     }
 
@@ -173,7 +203,7 @@ private class ContextMenuLifecycleController <: CjguiComposableUiController &
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
-        if (event.eventKind != 27 || event.text != "probe.apply" || event.node.nodeId != 2 ||
+        if (event.eventKind != 27 || event.text != commandId || event.node.nodeId != 2 ||
             event.node.resourceId != 42 || event.node.nodeKind != CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT) {
             return CjguiComposableUiDispatchResult(false)
         }
@@ -203,7 +233,8 @@ private class ContextMenuLifecycleController <: CjguiComposableUiController &
     public func sinkCalls(): Int64 { return owner.sinkCalls }
 }
 
-private func enqueueContextMenuRequest(window: CjguiComposableUiWindow): Bool {
+private func enqueueContextMenuRequest(window: CjguiComposableUiWindow,
+    budget: CjguiOwnerTurnBudget): Bool {
     let nodes = window.acceptedSceneNodes()
     var nodeIndex: Int64 = -1
     var index: Int64 = 0
@@ -215,7 +246,10 @@ private func enqueueContextMenuRequest(window: CjguiComposableUiWindow): Bool {
         }
         index += 1
     }
-    if (nodeIndex < 0) { return false }
+    if (nodeIndex < 0) {
+        println("CJGUI_CONTEXT_MENU_FIFO enqueue_target_missing nodes=${nodes.size}")
+        return false
+    }
     let empty = unsafe { LibC.mallocCString("") }
     var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
     try (textResource = empty.asResource()) {
@@ -224,9 +258,50 @@ private func enqueueContextMenuRequest(window: CjguiComposableUiWindow): Bool {
                 UInt32(nodeIndex), 56u32, textResource.value)
         }
     }
-    if (status != CJGUI_INTERNAL_RENDERER_OK) { return false }
-    let pumped = window.pump(0u32)
-    return pumped.isOpen
+    if (status != CJGUI_INTERNAL_RENDERER_OK) {
+        println("CJGUI_CONTEXT_MENU_FIFO enqueue_status=${status}")
+        return false
+    }
+    let _ = budget.begin()
+    let pumped = window.pump(4u32)
+    budget.end()
+    if (!pumped.isOpen) { return false }
+    var attempts = 0
+    var layered = 0
+    while (attempts < 64) {
+        let _ = budget.begin()
+        let _ = window.pump(2u32)
+        let _ = window.refreshIfNeeded()
+        budget.end()
+        layered = 0
+        for (node in window.acceptedSceneNodes()) {
+            if (node.layerId.size > 0) { layered += 1 }
+        }
+        if (layered > 0 && window.testContextMenuAcceptedForCurrentScene()) { break }
+        attempts += 1
+    }
+    return layered > 0 && window.testContextMenuAcceptedForCurrentScene()
+}
+
+private func startContextMenuProbe(window: CjguiComposableUiWindow,
+    budget: CjguiOwnerTurnBudget): Bool {
+    if (!window.start()) { return false }
+    window.useOwnerTurnBudget(budget)
+    var attempts = 0
+    while (attempts < 32 && window.acceptedSceneNodes().size == 0) {
+        let _ = budget.begin()
+        let _ = window.pump(4u32)
+        let _ = window.refreshIfNeeded()
+        budget.end()
+        attempts += 1
+    }
+    if (window.acceptedSceneNodes().size == 0) {
+        println("CJGUI_CONTEXT_MENU_FIFO start_nodes_missing open=${window.isOpen()} " +
+            "attempts=${attempts} pending=${window.isStartingPending()} " +
+            "preparing=${window.isStartingPreparing()} fault=${window.settlementFault()}")
+        return false
+    }
+    return true
 }
 
 private func newContextMenuHarness(): (ContextMenuLifecycleController, CjguiComposableUiWindow) {
@@ -238,9 +313,9 @@ private func newContextMenuHarness(): (ContextMenuLifecycleController, CjguiComp
 
 private func verifyAcceptedAndUndeclaredCommands(): Bool {
     let (controller, window) = newContextMenuHarness()
-    if (!window.start()) { window.close(); return false }
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
     controller.selectionSession().setSelection16(1, 4)
-    if (!enqueueContextMenuRequest(window)) { window.close(); return false }
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
     let requestId = controller.currentRequestId()
     if (requestId < 0 || controller.ownerWrites() != 0 || controller.sinkCalls() != 0 ||
         controller.commandDispatches != 0) {
@@ -265,9 +340,9 @@ private func verifyAcceptedAndUndeclaredCommands(): Bool {
 
 private func verifySameSelectionAbaRejects(): Bool {
     let (controller, window) = newContextMenuHarness()
-    if (!window.start()) { window.close(); return false }
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
     controller.selectionSession().setSelection16(1, 4)
-    if (!enqueueContextMenuRequest(window)) { window.close(); return false }
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
     let oldRequest = controller.currentRequestId()
     // Same coordinates and value, but setSelection16 advances its independent
     // selectionRevision. The frozen request must no longer authorize a command.
@@ -282,11 +357,11 @@ private func verifySameSelectionAbaRejects(): Bool {
 
 private func verifySupersededRequestCannotReachCurrentTarget(): Bool {
     let (controller, window) = newContextMenuHarness()
-    if (!window.start()) { window.close(); return false }
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
     controller.selectionSession().setSelection16(1, 4)
-    if (!enqueueContextMenuRequest(window)) { window.close(); return false }
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
     let oldRequest = controller.currentRequestId()
-    if (!enqueueContextMenuRequest(window)) { window.close(); return false }
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
     let currentRequest = controller.currentRequestId()
     let oldRefused = oldRequest >= 0 && currentRequest > oldRequest &&
         !window.invokeContextMenuCommand(oldRequest, "probe.apply") && controller.commandDispatches == 0 &&
@@ -300,9 +375,9 @@ private func verifySupersededRequestCannotReachCurrentTarget(): Bool {
 
 private func verifySameNodeRebindRejectsOldRequest(): Bool {
     let (controller, window) = newContextMenuHarness()
-    if (!window.start()) { window.close(); return false }
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
     controller.selectionSession().setSelection16(1, 4)
-    if (!enqueueContextMenuRequest(window)) { window.close(); return false }
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
     let oldRequest = controller.currentRequestId()
     let replacement = ContextMenuProbeOwner("alpha beta gamma")
     let _ = window.bindRangeTextSession(2, "context-probe-body", replacement, replacement, 42,
@@ -316,13 +391,70 @@ private func verifySameNodeRebindRejectsOldRequest(): Bool {
     return refusedWithoutOldOwnerWrite
 }
 
+private func verifyLocalWrongTargetRejected(): Bool {
+    let (controller, window) = newContextMenuHarness()
+    controller.useLocalCommand("probe.local", 999)
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
+    controller.selectionSession().setSelection16(1, 4)
+    let _ = enqueueContextMenuRequest(window, controller.ownerBudget)
+    let refused = controller.lastDeclareAttempted && !controller.lastDeclareAccepted &&
+        controller.currentRequestId() < 0 && controller.commandDispatches == 0 &&
+        controller.ownerWrites() == 0 && controller.sinkCalls() == 0
+    window.close()
+    println("CJGUI_CONTEXT_MENU_FIFO local_wrong_target_refused=${refused}")
+    return refused
+}
+
+private func verifyWindowCommandRevocationDoesNotDowngrade(): Bool {
+    let (controller, window) = newContextMenuHarness()
+    let id = "probe.window.apply"
+    controller.useWindowCommand(id)
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
+    controller.selectionSession().setSelection16(1, 4)
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
+    let requestId = controller.currentRequestId()
+    let declared = requestId >= 0 && controller.lastDeclareAccepted
+    let revoked = window.revokeCommand(id)
+    let refused = !window.invokeContextMenuCommand(requestId, id) &&
+        controller.commandDispatches == 0 && controller.ownerWrites() == 0 && controller.sinkCalls() == 0
+    window.close()
+    println("CJGUI_CONTEXT_MENU_FIFO window_revoke_no_downgrade=${declared && revoked && refused}")
+    return declared && revoked && refused
+}
+
+private func verifyWindowDeclarationChangeRejected(): Bool {
+    let (controller, window) = newContextMenuHarness()
+    let id = "probe.window.apply"
+    controller.useWindowCommand(id)
+    if (!startContextMenuProbe(window, controller.ownerBudget)) { window.close(); return false }
+    controller.selectionSession().setSelection16(1, 4)
+    if (!enqueueContextMenuRequest(window, controller.ownerBudget)) { window.close(); return false }
+    let requestId = controller.currentRequestId()
+    let declared = requestId >= 0 && controller.lastDeclareAccepted
+    let replacement = ArrayList<CjguiComposableUiCommand>()
+    replacement.add(CjguiComposableUiCommand(id, CjguiComposableUiNodeReference.manual(2),
+        "Apply", "Probe", 0, true, false,
+        completionPolicy: CjguiComposableUiCommandCompletionPolicy.DocumentHistoryOwnerReceipt))
+    let replaced = window.replaceCommands(replacement)
+    let refused = !window.invokeContextMenuCommand(requestId, id) &&
+        controller.commandDispatches == 0 && controller.ownerWrites() == 0 && controller.sinkCalls() == 0
+    window.close()
+    println("CJGUI_CONTEXT_MENU_FIFO window_declaration_change_refused=${declared && replaced && refused}")
+    return declared && replaced && refused
+}
+
 main(args: Array<String>): Int64 {
     let accepted = verifyAcceptedAndUndeclaredCommands()
     let aba = verifySameSelectionAbaRejects()
     let superseded = verifySupersededRequestCannotReachCurrentTarget()
     let rebound = verifySameNodeRebindRejectsOldRequest()
-    let allPassed = accepted && aba && superseded && rebound
-    println("CJGUI_CONTEXT_MENU_FIFO_RESULT pass=${allPassed} injection=kind56_fifo cg_event=false")
+    let localWrongTarget = verifyLocalWrongTargetRejected()
+    let revoked = verifyWindowCommandRevocationDoesNotDowngrade()
+    let changed = verifyWindowDeclarationChangeRejected()
+    let allPassed = accepted && aba && superseded && rebound && localWrongTarget && revoked && changed
+    println("CJGUI_CONTEXT_MENU_FIFO_RESULT pass=${allPassed} injection=kind56_fifo cg_event=false " +
+        "local_wrong_target=${localWrongTarget} window_revoke_no_downgrade=${revoked} " +
+        "window_declaration_change=${changed}")
     if (allPassed) { return 0 }
     return 1
 }

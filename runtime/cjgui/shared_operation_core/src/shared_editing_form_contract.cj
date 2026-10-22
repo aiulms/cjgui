@@ -97,6 +97,10 @@ public class CjguiSharedFormFieldProjection {
     public let appliedValue: CjguiSharedOperationValue
     public let draftText: String
     public let validationError: String
+    /// Version of THIS field's draft input basis. Unrelated field/Apply changes
+    /// should retain it; an owner using a form-wide version must provide its
+    /// own selection rebase policy for those advances. It is not contextVersion
+    /// or the expectedDraftVersion used by atomic form operations.
     public let draftFieldVersion: Int64
     public let isFocused: Bool
     public let selectionStart: Int64

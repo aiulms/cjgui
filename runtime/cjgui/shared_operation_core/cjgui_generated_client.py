@@ -23,6 +23,7 @@ What is deliberately NOT here:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable
 import re
 import socket
 import time
@@ -107,6 +108,54 @@ class GeneratedUiProtocolError(GeneratedUiError):
         super().__init__(f"{code}: {detail}" if detail else code)
 
 
+# Declared reason tokens the endpoint is known to publish. A code outside this
+# set is preserved as an unknown remote error, never rewritten into a known one.
+_KNOWN_ERROR_CODES = frozenset({
+    "authorization_revoked", "changes_unavailable", "endpoint_replaced",
+    "generated_ui_payload_too_large", "generated_ui_unavailable", "invalid_parameters",
+    "invalid_request", "invalid_snapshot", "malformed_error_envelope", "owner_busy",
+    "range_read_capacity", "range_read_failed", "range_read_unavailable",
+    "request_cancelled", "response_too_large", "server_busy", "unauthorized_action",
+    "unauthorized_caller", "unauthorized_resource", "unknown_window_target",
+})
+
+
+class GeneratedUiRemoteError(GeneratedUiError):
+    """A machine-readable refusal from the endpoint.
+
+    `code` is the declared reason token. `detail`, `versions` and `target` are
+    populated only from facts the endpoint actually published; missing facts stay
+    empty instead of being inferred. An unrecognised code is preserved with
+    `unknown=True` so a newer endpoint is never misreported as a known refusal.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        expected_kind: str,
+        detail: str = "",
+        versions: dict[str, int] | None = None,
+        target: str = "",
+        raw: tuple[str, ...] = (),
+        unknown: bool = False,
+    ) -> None:
+        self.code = code
+        self.expected_kind = expected_kind
+        self.detail = detail
+        self.versions = dict(versions or {})
+        # Named separately so a caller never has to treat a request CAS as the
+        # version the owner actually observed. Missing facts remain None.
+        self.request_version = self.versions.get("REQUEST_VERSION")
+        self.observed_version = self.versions.get("OBSERVED_VERSION")
+        self.target = target
+        self.raw = tuple(raw)
+        self.unknown = unknown
+        message = f"endpoint refused {expected_kind}: {code}"
+        if detail:
+            message += f": {detail}"
+        super().__init__(message)
+
+
 @dataclass(frozen=True)
 class GeneratedEndpointIdentity:
     """Opaque identity of ONE endpoint instance: the instance nonce plus the
@@ -145,7 +194,24 @@ def _result_values(response: SharedOperationResponse, expected_kind: str) -> dic
             reason = tokens[0]
             if reason == "endpoint_replaced":
                 raise GeneratedUiEndpointError("endpoint_replaced", reason)
-            raise GeneratedUiError(f"endpoint refused {expected_kind}: {reason}")
+            extras: dict[str, str] = {}
+            index = 1
+            while index < len(tokens):
+                if index + 1 >= len(tokens):
+                    raise GeneratedUiRemoteError("malformed_error_envelope", expected_kind, raw=tokens)
+                extras[tokens[index]] = tokens[index + 1]
+                index += 2
+            detail = ""
+            if "DETAIL_HEX" in extras:
+                detail = _hex_text(extras["DETAIL_HEX"], "ERROR DETAIL_HEX")
+            versions: dict[str, int] = {}
+            for key in ("VERSION", "VERSION_BEFORE", "VERSION_AFTER",
+                        "REQUEST_VERSION", "OBSERVED_VERSION"):
+                if key in extras:
+                    versions[key] = _token_int(extras[key], f"ERROR {key}")
+            raise GeneratedUiRemoteError(
+                reason, expected_kind, detail, versions, extras.get("TARGET", ""), tokens,
+                reason not in _KNOWN_ERROR_CODES)
         if tokens:
             values[label] = tokens[0]
     if response.kind != expected_kind:
@@ -196,6 +262,37 @@ def _hex_text(token: str, what: str) -> str:
     if len(token) % 2 != 0 or not _HEX.fullmatch(token):
         raise GeneratedUiError(f"{what} is not a UTF-8 hex value")
     return bytes.fromhex(token).decode("utf-8", "replace")
+
+
+def _decode_text_token(token: str, what: str, max_bytes: int = 4096) -> str:
+    """Decode the optional `u8:<hex>` discovery token; plain tokens stay literal.
+
+    The producer encodes only when a literal value would break the line/token
+    grammar, so an older reader still sees one opaque token and a current reader
+    recovers spaces and non-ASCII text exactly. Budget and control-character
+    checks run after decoding, so a plaintext token cannot bypass the same rule
+    its encoded form must satisfy.
+    """
+    if token.startswith("u8:"):
+        raw = token[3:]
+        if not raw or len(raw) % 2 != 0 or not _HEX.fullmatch(raw):
+            raise GeneratedUiError(f"{what} has a malformed u8 token")
+        data = bytes.fromhex(raw)
+        try:
+            value = data.decode("utf-8", "strict")
+        except UnicodeDecodeError as exc:
+            raise GeneratedUiError(f"{what} is not valid UTF-8") from exc
+    else:
+        value = token
+    if not value:
+        raise GeneratedUiError(f"{what} is empty")
+    if len(value.encode("utf-8")) > max_bytes:
+        raise GeneratedUiError(f"{what} exceeds its byte budget")
+    for character in value:
+        scalar = ord(character)
+        if scalar < 0x20 or scalar == 0x7F:
+            raise GeneratedUiError(f"{what} contains a control character")
+    return value
 
 
 def _token_int(token: str, what: str) -> int:
@@ -389,6 +486,85 @@ class GeneratedWindowBackgroundSpec:
 
 
 @dataclass(frozen=True)
+class GeneratedFontResource:
+    key: str
+    version: int
+    state: str
+    resolved_family: str
+    name: str
+
+
+_SUPPORT_STATES = frozenset({"available", "fallback", "unavailable", "unverified"})
+_EVIDENCE_STATES = frozenset({"verified", "unverified"})
+
+# Wire compatibility is checked from the SURFACE declaration itself. An absent
+# SURFACE line is a legacy producer and stays readable; a declared surface that
+# this client cannot read is refused by name instead of being parsed as if it
+# had published less.
+SUPPORTED_SURFACE_MAJOR = 1
+SUPPORTED_SURFACE_PROTOCOLS = frozenset({"2"})
+SUPPORTED_SURFACE_COMPATIBILITY = frozenset({"additive_only"})
+
+
+def _require_compatible_surface(surface: GeneratedSurface) -> None:
+    major_text = surface.version.split(".", 1)[0]
+    if not major_text.isdigit():
+        raise GeneratedUiError(f"capability SURFACE version {surface.version} is malformed")
+    if int(major_text) != SUPPORTED_SURFACE_MAJOR:
+        raise GeneratedUiError(
+            f"capability SURFACE version {surface.version} is not supported "
+            f"(supported major {SUPPORTED_SURFACE_MAJOR})")
+    if surface.protocol not in SUPPORTED_SURFACE_PROTOCOLS:
+        supported = ",".join(sorted(SUPPORTED_SURFACE_PROTOCOLS))
+        raise GeneratedUiError(
+            f"capability SURFACE protocol {surface.protocol} is not supported (supported {supported})")
+    if surface.compatibility not in SUPPORTED_SURFACE_COMPATIBILITY:
+        supported = ",".join(sorted(SUPPORTED_SURFACE_COMPATIBILITY))
+        raise GeneratedUiError(
+            f"capability SURFACE compatibility {surface.compatibility} is not supported "
+            f"(supported {supported})")
+
+
+
+@dataclass(frozen=True)
+class GeneratedSurface:
+    """The first public surface declaration carried by the same payload.
+
+    `compatibility` is the published rule (currently `additive_only`): new
+    optional lines/keys may appear, existing meanings are not renamed. Unknown
+    value tokens are preserved in `extra` so a forward-compatible reader does
+    not silently drop them.
+    """
+
+    version: str
+    stability: str
+    compatibility: str
+    protocol: str
+    subset: tuple[str, ...]
+    extra: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class GeneratedSupportFact:
+    """A registered capability and the admission source that accepts it."""
+
+    kind: str
+    item: str
+    state: str
+    reason: str
+    source: str
+
+
+@dataclass(frozen=True)
+class GeneratedDeliveryEvidence:
+    """Delivery evidence for one item; unverified is a first-class state."""
+
+    item: str
+    state: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class GeneratedCapabilities:
     max_depth: int
     max_nodes: int
@@ -401,6 +577,25 @@ class GeneratedCapabilities:
     fields: tuple[GeneratedFieldSpec, ...]
     image_resources: tuple[GeneratedImageResource, ...] = ()
     window_background: GeneratedWindowBackgroundSpec | None = None
+    font_resources: tuple[GeneratedFontResource, ...] = ()
+    surface: GeneratedSurface | None = None
+    support: tuple[GeneratedSupportFact, ...] = ()
+    evidence: tuple[GeneratedDeliveryEvidence, ...] = ()
+
+    def support_for(self, kind: str, item: str) -> GeneratedSupportFact | None:
+        for fact in self.support:
+            if fact.kind == kind and fact.item == item:
+                return fact
+        return None
+
+    def evidence_for(self, item: str) -> GeneratedDeliveryEvidence | None:
+        for fact in self.evidence:
+            if fact.item == item:
+                return fact
+        return None
+
+    def font_resource(self, key: str, version: int) -> GeneratedFontResource | None:
+        return next((font for font in self.font_resources if font.key == key and font.version == version), None)
 
     def image_resource(self, key: str, version: int) -> GeneratedImageResource | None:
         for resource in self.image_resources:
@@ -477,7 +672,18 @@ def _parse_property_extras(extras: str) -> dict[str, str]:
     return tokens
 
 
+def _key_value_tokens(parts: list[str], context: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for token in parts:
+        key, separator, value = token.partition("=")
+        if not separator or not key or not value or key in values:
+            raise GeneratedUiError(f"{context} has a malformed token")
+        values[key] = value
+    return values
+
+
 def parse_generated_capabilities(response: SharedOperationResponse) -> GeneratedCapabilities:
+    _result_values(response, "GENERATED_UI_CAPABILITIES")
     components: dict[str, list[GeneratedPropertySpec]] = {}
     component_children: dict[str, tuple[bool, int]] = {}
     composites: list[GeneratedCompositeSpec] = []
@@ -485,10 +691,57 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
     actions: list[GeneratedActionSpec] = []
     fields: list[GeneratedFieldSpec] = []
     image_resources: list[GeneratedImageResource] = []
+    font_resources: list[GeneratedFontResource] = []
     window_background: GeneratedWindowBackgroundSpec | None = None
+    surface: GeneratedSurface | None = None
+    support: list[GeneratedSupportFact] = []
+    evidence: list[GeneratedDeliveryEvidence] = []
+    support_keys: set[tuple[str, str]] = set()
+    evidence_items: set[str] = set()
     max_depth = max_nodes = max_properties = max_string = 0
     for line in _payload_lines(response):
-        if line.startswith("BOUNDS "):
+        if line.startswith("SURFACE "):
+            values = _key_value_tokens(line.split(" ")[1:], "capability SURFACE")
+            required = {"version", "stability", "compatibility", "protocol", "subset"}
+            if surface is not None or not required <= values.keys() or not values["version"]:
+                raise GeneratedUiError("capability SURFACE line is malformed")
+            subset = tuple(values["subset"].split(","))
+            if any(not item for item in subset):
+                raise GeneratedUiError("capability SURFACE subset is malformed")
+            extra = tuple(sorted((key, value) for key, value in values.items() if key not in required))
+            surface = GeneratedSurface(values["version"], values["stability"], values["compatibility"],
+                                       values["protocol"], subset, extra)
+        elif line.startswith("SUPPORT "):
+            parts = line.split(" ")
+            if len(parts) < 4 or not parts[1] or not parts[2]:
+                raise GeneratedUiError("capability SUPPORT line is malformed")
+            values = _key_value_tokens(parts[3:], "capability SUPPORT")
+            state, source = values.get("state", ""), values.get("source", "")
+            if state not in _SUPPORT_STATES or "reason" not in values or not source:
+                raise GeneratedUiError("capability SUPPORT line has an unknown state or missing fact")
+            item = _decode_text_token(parts[2], "capability SUPPORT item", 128)
+            reason = _decode_text_token(values["reason"], "capability SUPPORT reason", 512)
+            key = (parts[1], item)
+            if key in support_keys:
+                raise GeneratedUiError(
+                    f"capability SUPPORT repeats {parts[1]}:{item}; one effective fact is required")
+            support_keys.add(key)
+            support.append(GeneratedSupportFact(parts[1], item, state, reason, source))
+        elif line.startswith("EVIDENCE "):
+            parts = line.split(" ")
+            if len(parts) < 3 or not parts[1]:
+                raise GeneratedUiError("capability EVIDENCE line is malformed")
+            values = _key_value_tokens(parts[2:], "capability EVIDENCE")
+            state = values.get("state", "")
+            if state not in _EVIDENCE_STATES or "reason" not in values:
+                raise GeneratedUiError("capability EVIDENCE line has an unknown state or missing reason")
+            item = _decode_text_token(parts[1], "capability EVIDENCE item", 192)
+            reason = _decode_text_token(values["reason"], "capability EVIDENCE reason", 512)
+            if item in evidence_items:
+                raise GeneratedUiError(f"capability EVIDENCE repeats {item}")
+            evidence_items.add(item)
+            evidence.append(GeneratedDeliveryEvidence(item, state, reason))
+        elif line.startswith("BOUNDS "):
             parts = line.split(" ")
             if len(parts) != 5:
                 raise GeneratedUiError("capability BOUNDS line is malformed")
@@ -573,6 +826,21 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
                     raw = token.split("=", 1)[1]
                     arguments = () if raw == "none" else tuple(raw.split(","))
             actions.append(GeneratedActionSpec(parts[1], label, arguments))
+        elif line.startswith("FONT_RESOURCE "):
+            parts = line.split(" ", 4)
+            states = {"ready", "fallback_missing_family", "fallback_missing_file", "fallback_invalid_font",
+                      "fallback_capacity", "fallback_backend_failure", "unsupported_fallback", "withdrawn"}
+            if len(parts) != 5 or parts[3] not in states or "|" not in parts[4]:
+                raise GeneratedUiError("capability FONT_RESOURCE line is malformed")
+            resolved_family, name = parts[4].split("|", 1)
+            if resolved_family.startswith("u8:"):
+                resolved_family = _hex_text(resolved_family[3:], "FONT_RESOURCE family")
+            if name.startswith("u8:"):
+                name = _hex_text(name[3:], "FONT_RESOURCE name")
+            version = _token_int(parts[2], "FONT_RESOURCE version")
+            if not parts[1] or version < 1 or not resolved_family or not name:
+                raise GeneratedUiError("capability FONT_RESOURCE identity is malformed")
+            font_resources.append(GeneratedFontResource(parts[1], version, parts[3], resolved_family, name))
         elif line.startswith("IMAGE_RESOURCE "):
             parts, label = _split_label(line)
             if len(parts) != 5:
@@ -601,9 +869,12 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
                                          component_children.get(kind, (False, 0))[1],
                                          tuple(components.get(kind, [])))
                   for kind in components)
+    if surface is not None:
+        _require_compatible_surface(surface)
     return GeneratedCapabilities(max_depth, max_nodes, max_properties, max_string, built,
                                  tuple(composites), tuple(elements), tuple(actions), tuple(fields),
-                                 tuple(image_resources), window_background)
+                                 tuple(image_resources), window_background, tuple(font_resources),
+                                 surface, tuple(support), tuple(evidence))
 
 
 # --- structure objects -------------------------------------------------------
@@ -640,6 +911,91 @@ class GeneratedProperty:
 
 
 @dataclass(frozen=True)
+class GeneratedTextStyleRun:
+    """Experimental UTF-8 byte range; fonts use application key/version."""
+    start: int
+    end: int
+    font_size: float = 0
+    font_weight: int = -1
+    font_resource: str | None = None
+    font_version: int = 0
+    color: str | None = None
+
+
+def _validate_text_style_run(text: str, run: GeneratedTextStyleRun) -> None:
+    import math
+    import re
+    try:
+        body = text.encode("utf-8")
+    except UnicodeError as error:
+        raise GeneratedUiError("text runs require valid UTF-8") from error
+    if len(body) > 65536 or b"\0" in body:
+        raise GeneratedUiError("text runs text budget or encoding invalid")
+    if (type(run.start) is not int or type(run.end) is not int or
+        run.start < 0 or run.end <= run.start or run.end > len(body) or
+        (run.start < len(body) and body[run.start] & 0xC0 == 0x80) or
+        (run.end < len(body) and body[run.end] & 0xC0 == 0x80)):
+        raise GeneratedUiError("text run UTF-8 byte range invalid")
+    if (not isinstance(run.font_size, (float, int)) or isinstance(run.font_size, bool) or
+        not math.isfinite(run.font_size) or not 0 <= run.font_size <= 144 or
+        type(run.font_weight) is not int or not -1 <= run.font_weight <= 1000):
+        raise GeneratedUiError("text run font attributes invalid")
+    if type(run.font_version) is not int:
+        raise GeneratedUiError("text run font version invalid")
+    if run.font_resource is None:
+        if run.font_version != 0:
+            raise GeneratedUiError("text run font reference incomplete")
+    elif (not isinstance(run.font_resource, str) or
+          not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", run.font_resource) or
+          not 1 <= run.font_version <= 1000000):
+        raise GeneratedUiError("text run registered font key/version invalid")
+    if run.color is not None and (not isinstance(run.color, str) or
+        not re.fullmatch(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?", run.color)):
+        raise GeneratedUiError("text run color invalid")
+
+
+def styled_text_runs_property(text: str, runs: Iterable[GeneratedTextStyleRun]) -> GeneratedProperty:
+    """Build textRuns v1; business text is preserved in its original property."""
+    items = tuple(runs)
+    if len(items) > 64:
+        raise GeneratedUiError("text run count exceeds 64")
+    encoded = []
+    for run in items:
+        _validate_text_style_run(text, run)
+        encoded.append(f"{run.start}:{run.end}:{run.font_size}:{run.font_weight}:"
+                       f"{run.font_resource or 'base'}:{run.font_version}:{run.color or 'inherit'}")
+    value = ";".join(encoded)
+    if len(value.encode()) > 16384:
+        raise GeneratedUiError("text runs wire budget exceeded")
+    return GeneratedProperty("textRuns", value)
+
+
+def parse_text_style_runs(text: str, wire: str) -> tuple[GeneratedTextStyleRun, ...]:
+    if len(wire.encode()) > 16384:
+        raise GeneratedUiError("text runs wire budget exceeded")
+    if not wire:
+        return ()
+    items = wire.split(";")
+    if len(items) > 64:
+        raise GeneratedUiError("text run count exceeds 64")
+    result = []
+    for item in items:
+        parts = item.split(":")
+        if len(parts) != 7 or any(part != part.strip() for part in parts):
+            raise GeneratedUiError("text runs encoding invalid")
+        try:
+            version = int(parts[5])
+            base = parts[4] == "base" and version == 0
+            run = GeneratedTextStyleRun(int(parts[0]), int(parts[1]), float(parts[2]), int(parts[3]),
+                None if base else parts[4], version, None if parts[6] == "inherit" else parts[6])
+        except (ValueError, OverflowError) as error:
+            raise GeneratedUiError("text runs attribute encoding invalid") from error
+        _validate_text_style_run(text, run)
+        result.append(run)
+    return tuple(result)
+
+
+@dataclass(frozen=True)
 class GeneratedNode:
     depth: int
     key: str
@@ -664,6 +1020,7 @@ class GeneratedStructure:
 
 
 def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStructure:
+    _result_values(response, "GENERATED_UI_STRUCTURE")
     lines = response.raw.split("\n")
     version = 0
     candidate = 0
@@ -795,6 +1152,11 @@ class GeneratedFieldValue:
     #: Owner/target the decision applies to and the revision it was evaluated at.
     owner_resource_id: int
     state_version: int
+    #: Validation is independent of edit availability. Legacy ERROR none does
+    #: not establish a successful validation; an opt-in owner must confirm it.
+    validation_state: str = "unknown"
+    validation_version: int | None = None
+    field_version: int | None = None
 
 
 def _parse_field_focus(token: tuple[str, ...] | None) -> bool | None:
@@ -814,6 +1176,7 @@ def _parse_field_focus(token: tuple[str, ...] | None) -> bool | None:
 
 
 def parse_generated_fields(response: SharedOperationResponse) -> tuple[GeneratedFieldValue, ...]:
+    _result_values(response, "GENERATED_UI_FIELDS")
     values: list[GeneratedFieldValue] = []
     for line in _payload_lines(response):
         if not line.startswith("FIELD "):
@@ -846,11 +1209,22 @@ def parse_generated_fields(response: SharedOperationResponse) -> tuple[Generated
                 f"FIELD AVAILABLE carries unsupported value {available_token!r}")
         blocked_reason = None if tokens.get("REASON_HEX", ("-",))[0] == "-" else _hex_text(
             tokens.get("REASON_HEX", ("-",))[0], "FIELD REASON_HEX")
+        validation = tokens.get("VALIDATION_STATE", ("unknown",))[0]
+        if validation not in ("valid", "invalid", "unknown"):
+            raise GeneratedUiError(f"FIELD VALIDATION_STATE carries unsupported value {validation!r}")
+        message = _hex_text(tokens.get("VALIDATION_MESSAGE_HEX", ("-",))[0],
+                            "FIELD VALIDATION_MESSAGE_HEX")
+        if validation == "invalid" and not message:
+            raise GeneratedUiError("invalid FIELD has no validation message")
+        if validation == "valid" and message:
+            raise GeneratedUiError("valid FIELD carries a validation error")
+        validation_version = _token_int(tokens.get("VALIDATION_VERSION", ("-1",))[0], "FIELD validation version")
+        field_version = _token_int(tokens.get("FIELD_VERSION", ("-1",))[0], "FIELD input version")
         values.append(GeneratedFieldValue(
             parts[1], _token_int(parts[2], "FIELD resource"),
             _hex_text(tokens.get("DRAFT_HEX", ("-",))[0], "FIELD DRAFT_HEX"),
             _hex_text(tokens.get("APPLIED_HEX", ("-",))[0], "FIELD APPLIED_HEX"),
-            tokens.get("ERROR", ("none",))[0],
+            message if validation != "unknown" else tokens.get("ERROR", ("none",))[0],
             _parse_field_focus(tokens.get("FOCUS")),
             None if selection is None else _token_int(selection[0], "FIELD selection start"),
             None if selection is None else _token_int(selection[1], "FIELD selection end"),
@@ -858,8 +1232,110 @@ def parse_generated_fields(response: SharedOperationResponse) -> tuple[Generated
             available,
             blocked_reason,
             _token_int(tokens.get("TARGET", ("-1",))[0], "FIELD TARGET"),
-            _token_int(tokens.get("STATE_VERSION", ("0",))[0], "FIELD STATE_VERSION")))
+            _token_int(tokens.get("STATE_VERSION", ("0",))[0], "FIELD STATE_VERSION"),
+            validation,
+            None if validation_version < 0 else validation_version,
+            None if field_version < 0 else field_version))
     return tuple(values)
+
+
+@dataclass(frozen=True)
+class GeneratedActionState:
+    name: str
+    available: bool | None
+    blocked_reason: str | None
+    owner_resource_id: int
+    state_version: int
+
+
+@dataclass(frozen=True)
+class GeneratedFormState:
+    """One GET_GENERATED_UI_FIELDS read, never a join of live owner reads.
+
+    known=False preserves legacy/missing owner feedback. consistent=False
+    means a producer could not obtain a coherent read and published no values.
+    """
+    known: bool
+    consistent: bool
+    state_version: int | None
+    draft_version: int | None
+    applied_version: int | None
+    can_apply: bool | None
+    message: str | None
+    owner_resource_id: int
+    fields: tuple[GeneratedFieldValue, ...]
+    actions: tuple[GeneratedActionState, ...]
+
+
+def _state_tokens(parts: list[str], start: int, context: str) -> dict[str, str]:
+    if (len(parts) - start) % 2:
+        raise GeneratedUiError(f"{context} has an incomplete token")
+    tokens: dict[str, str] = {}
+    for index in range(start, len(parts), 2):
+        if parts[index] in tokens:
+            raise GeneratedUiError(f"{context} repeats {parts[index]}")
+        tokens[parts[index]] = parts[index + 1]
+    return tokens
+
+
+def _state_bool(value: str, context: str) -> bool | None:
+    if value == "unknown":
+        return None
+    if value in ("0", "1"):
+        return value == "1"
+    raise GeneratedUiError(f"{context} carries unsupported value {value!r}")
+
+
+def parse_generated_form_state(response: SharedOperationResponse) -> GeneratedFormState:
+    fields = parse_generated_fields(response)
+    header: dict[str, str] | None = None
+    actions: list[GeneratedActionState] = []
+    for line in _payload_lines(response):
+        parts = line.split(" ")
+        if parts[0] == "FORM_STATE":
+            if header is not None:
+                raise GeneratedUiError("repeated FORM_STATE")
+            header = _state_tokens(parts, 1, "FORM_STATE")
+        elif parts[0] == "ACTION_STATE":
+            if len(parts) < 2 or any(action.name == parts[1] for action in actions):
+                raise GeneratedUiError("missing or repeated ACTION_STATE name")
+            tokens = _state_tokens(parts, 2, "ACTION_STATE")
+            available = _state_bool(tokens.get("AVAILABLE", "unknown"), "ACTION_STATE AVAILABLE")
+            reason = _hex_text(tokens.get("REASON_HEX", "-"), "ACTION_STATE REASON_HEX")
+            actions.append(GeneratedActionState(
+                parts[1], available, reason or None,
+                _token_int(tokens.get("TARGET", "-1"), "ACTION_STATE TARGET"),
+                _token_int(tokens.get("STATE_VERSION", "-1"), "ACTION_STATE STATE_VERSION")))
+    if header is None:
+        return GeneratedFormState(False, False, None, None, None, None, None, -1, fields, tuple(actions))
+    known = _state_bool(header.get("KNOWN", "unknown"), "FORM_STATE KNOWN")
+    consistent = _state_bool(header.get("CONSISTENT", "unknown"), "FORM_STATE CONSISTENT")
+    if known is None or consistent is None:
+        raise GeneratedUiError("FORM_STATE must confirm KNOWN and CONSISTENT flags")
+    versions = [_token_int(header.get(key, "-1"), f"FORM_STATE {key}")
+                for key in ("VERSION", "DRAFT_VERSION", "APPLIED_VERSION")]
+    owner = _token_int(header.get("TARGET", "-1"), "FORM_STATE TARGET")
+    can_apply = _state_bool(header.get("CAN_APPLY", "unknown"), "FORM_STATE CAN_APPLY")
+    if not consistent and (known or fields or actions):
+        raise GeneratedUiError("inconsistent FORM_STATE must not publish mixed values")
+    if known:
+        if not consistent or min(versions) < 0 or owner < 0 or can_apply is None:
+            raise GeneratedUiError("known FORM_STATE lacks an owner decision/version")
+        for field in fields:
+            if field.validation_state != "unknown" and (
+                    field.validation_version != versions[0] or field.draft_version != versions[1]
+                    or field.field_version is None):
+                raise GeneratedUiError("FIELD validation does not belong to FORM_STATE version")
+            if field.available is not None and (field.state_version != versions[0]
+                                                or field.owner_resource_id != owner):
+                raise GeneratedUiError("FIELD availability does not belong to FORM_STATE owner/version")
+        for action in actions:
+            if action.available is not None and (action.state_version != versions[0]
+                                                 or action.owner_resource_id != owner):
+                raise GeneratedUiError("ACTION_STATE does not belong to FORM_STATE owner/version")
+    return GeneratedFormState(known, consistent, *[None if value < 0 else value for value in versions],
+                              can_apply, _hex_text(header.get("MESSAGE_HEX", "-"), "FORM_STATE MESSAGE_HEX") or None,
+                              owner, fields, tuple(actions))
 
 
 @dataclass(frozen=True)
@@ -890,6 +1366,9 @@ class GeneratedInstance:
     control_level: int = 0
     control_row_key: str = ""
     control_parent_key: str = ""
+    #: Owner target this accepted element is bound to; -1 when the producer did
+    #: not publish one. Use it with invoke/read to address the same object.
+    owner_resource_id: int = -1
 
 
 @dataclass(frozen=True)
@@ -907,6 +1386,7 @@ class GeneratedInstances:
 
 
 def parse_generated_instances(response: SharedOperationResponse) -> GeneratedInstances:
+    _result_values(response, "GENERATED_UI_INSTANCES")
     version = 0
     candidate = 0
     scene = "none"
@@ -955,7 +1435,8 @@ def parse_generated_instances(response: SharedOperationResponse) -> GeneratedIns
                 _token_bool(values.get("enabled", "1"), "instance enabled"),
                 _token_int(values.get("level", "0"), "instance level"),
                 _optional(values.get("row_key", "-")) or "",
-                _optional(values.get("parent_key", "-")) or ""))
+                _optional(values.get("parent_key", "-")) or "",
+                _token_int(values.get("owner", "-1"), "instance owner")))
     return GeneratedInstances(version, candidate, scene, tuple(instances))
 
 
@@ -1044,6 +1525,7 @@ class GeneratedSubmitResult:
 
 
 def parse_generated_submit(response: SharedOperationResponse) -> GeneratedSubmitResult:
+    _result_values(response, "GENERATED_UI_SUBMIT")
     values = {}
     for label, tokens in response.entries:
         if tokens:
@@ -1063,6 +1545,7 @@ def parse_generated_submit(response: SharedOperationResponse) -> GeneratedSubmit
 
 
 def parse_generated_candidate_state(response: SharedOperationResponse) -> GeneratedCandidateState:
+    _result_values(response, "GENERATED_UI_CANDIDATE")
     values = {}
     for label, tokens in response.entries:
         if tokens:
@@ -1231,6 +1714,7 @@ _GENERATED_SECTION_NAMES = ("FIELDS", "STRUCTURE", "INSTANCES", "STYLES", "EFFEC
 
 
 def parse_generated_section(response: SharedOperationResponse, section: str) -> GeneratedSection:
+    _result_values(response, "GENERATED_UI_SECTION")
     values = {}
     lines: list[str] = []
     prefix = {"FIELDS": "SNAPSHOT_FIELD", "STRUCTURE": "SNAPSHOT_STRUCTURE",
@@ -1255,6 +1739,7 @@ def parse_generated_section(response: SharedOperationResponse, section: str) -> 
 
 
 def parse_generated_snapshot(response: SharedOperationResponse) -> GeneratedSnapshot:
+    _result_values(response, "GENERATED_UI_SNAPSHOT")
     values = {}
     fields_lines: list[str] = []
     structure_lines: list[str] = []
@@ -1303,6 +1788,7 @@ def parse_generated_snapshot(response: SharedOperationResponse) -> GeneratedSnap
 
 
 def parse_generated_changes(response: SharedOperationResponse) -> GeneratedChanges:
+    _result_values(response, "GENERATED_UI_CHANGES")
     values = {}
     changes: list[GeneratedChange] = []
     for label, tokens in response.entries:
@@ -1354,6 +1840,7 @@ def parse_action_signatures(response: SharedOperationResponse) -> tuple[TypedAct
     client gets real value types / required flags / target bounds instead of the
     comma-separated name list the generated description carries.
     """
+    _result_values(response, "SNAPSHOT")
     heads: dict[str, tuple[int, int]] = {}
     names: dict[str, str] = {}
     parameters: dict[str, list[ActionParameterSpec]] = {}
@@ -1485,25 +1972,58 @@ class GeneratedUiSession:
     def capabilities(self, *, refresh: bool = False,
                      deadline_monotonic: float | None = None) -> GeneratedCapabilities:
         if self._capabilities is None or refresh:
+            self._capabilities = None
             self._capabilities = parse_generated_capabilities(
-                self.client.request(self._query("GET_GENERATED_UI_CAPABILITIES"),
-                                    deadline_monotonic=deadline_monotonic))
+                self._read("GET_GENERATED_UI_CAPABILITIES", "GENERATED_UI_CAPABILITIES",
+                                    deadline_monotonic))
         return self._capabilities
 
     def structure(self, *, deadline_monotonic: float | None = None) -> GeneratedStructure:
         return parse_generated_structure(
-            self.client.request(self._query("GET_GENERATED_UI_STRUCTURE"),
-                                deadline_monotonic=deadline_monotonic))
+            self._read("GET_GENERATED_UI_STRUCTURE", "GENERATED_UI_STRUCTURE",
+                                deadline_monotonic))
 
-    def fields(self, *, deadline_monotonic: float | None = None) -> tuple[GeneratedFieldValue, ...]:
+    @staticmethod
+    def _fields_command(instance_key: str | None, owner_resource_id: int | None) -> str:
+        """Same endpoint, compatible target argument. Exactly one target can
+        be named; no target keeps the legacy whole-projection read."""
+        if instance_key is not None and owner_resource_id is not None:
+            raise ValueError("name an instance key OR an owner id, not both")
+        if instance_key is not None:
+            if (not isinstance(instance_key, str) or not instance_key or len(instance_key) > 128
+                    or any(ord(char) <= 32 or ord(char) >= 127 for char in instance_key)):
+                raise ValueError("instance key must be a bounded printable token")
+            return f"GET_GENERATED_UI_FIELDS INSTANCE {instance_key}"
+        if owner_resource_id is not None:
+            if (not isinstance(owner_resource_id, int) or isinstance(owner_resource_id, bool)
+                    or owner_resource_id < 0):
+                raise ValueError("owner resource id cannot be negative")
+            return f"GET_GENERATED_UI_FIELDS OWNER {owner_resource_id}"
+        return "GET_GENERATED_UI_FIELDS"
+
+    def fields(self, *, instance_key: str | None = None, owner_resource_id: int | None = None,
+               deadline_monotonic: float | None = None) -> tuple[GeneratedFieldValue, ...]:
         return parse_generated_fields(
-            self.client.request(self._query("GET_GENERATED_UI_FIELDS"),
-                                deadline_monotonic=deadline_monotonic))
+            self._read(self._fields_command(instance_key, owner_resource_id), "GENERATED_UI_FIELDS",
+                                deadline_monotonic))
+
+    def form_state(self, *, instance_key: str | None = None, owner_resource_id: int | None = None,
+                   deadline_monotonic: float | None = None) -> GeneratedFormState:
+        """Read values, validation and action conditions in one owner projection.
+
+        An accepted composite instance can be named by its declared key or by
+        its owner resource id; every returned field/action belongs to that
+        object's own snapshot. An unknown/stale target is refused by the
+        endpoint instead of being answered with another live object.
+        """
+        return parse_generated_form_state(
+            self._read(self._fields_command(instance_key, owner_resource_id), "GENERATED_UI_FIELDS",
+                                deadline_monotonic))
 
     def instances(self, *, deadline_monotonic: float | None = None) -> GeneratedInstances:
         return parse_generated_instances(
-            self.client.request(self._query("GET_GENERATED_UI_INSTANCES"),
-                                deadline_monotonic=deadline_monotonic))
+            self._read("GET_GENERATED_UI_INSTANCES", "GENERATED_UI_INSTANCES",
+                                deadline_monotonic))
 
     def snapshot(self, *, deadline_monotonic: float | None = None) -> GeneratedSnapshot:
         """ONE atomic snapshot: cursor/stream identity, separated owner/scene
@@ -1758,7 +2278,7 @@ class GeneratedUiSession:
                 return GeneratedStructureWait("timeout", last)
             try:
                 observed = self.structure(deadline_monotonic=deadline)
-            except TimeoutError:
+            except (TimeoutError, GeneratedUiDeadlineExceeded):
                 return GeneratedStructureWait("timeout", last)
             if time.monotonic() > deadline:
                 # The read returned after the budget; never publish it.
@@ -1976,6 +2496,7 @@ class GeneratedUiSession:
 
 
 def parse_domain_version(response: SharedOperationResponse) -> int:
+    _result_values(response, "SNAPSHOT")
     for label, tokens in response.entries:
         if label == "VERSION" and tokens:
             return _token_int(tokens[0], "domain VERSION")

@@ -1,0 +1,459 @@
+file	line	condition	enclosing_function	branch_returns
+src/application_host.cj	20	os == "macOS"	cjguiCreatePlatformApplicationHost	真实逻辑:构造平台宿主 CjguiMacosApplicationHost
+src/application_host.cj	26	os == "Windows"	cjguiCreatePlatformApplicationHost	真实逻辑:构造平台宿主 CjguiWindowsApplicationHost
+src/application_host.cj	32	os == "Linux"	cjguiCreatePlatformApplicationHost	真实逻辑:构造平台宿主 CjguiLinuxApplicationHost
+src/application_host.cj	38	os == "macOS"	extension:CjguiMacosApplicationHost	空操作:空扩展仅声明协议符合
+src/application_host.cj	41	os == "Windows"	extension:CjguiWindowsApplicationHost	空操作:空扩展仅声明协议符合
+src/application_host.cj	44	os == "Linux"	extension:CjguiLinuxApplicationHost	空操作:空扩展仅声明协议符合
+src/application_host.cj	49	os == "macOS"	cjguiStopApplicationLoop	委托:CjguiMacosApplicationHost.stopApplicationLoop
+src/application_host.cj	54	os == "Windows"	cjguiStopApplicationLoop	委托:CjguiWindowsApplicationHost.stopApplicationLoop
+src/application_host.cj	59	os == "Linux"	cjguiStopApplicationLoop	委托:CjguiLinuxApplicationHost.stopApplicationLoop
+src/composable_ui_accepted_command_paint_test.cj	46	os == "macOS"	interactionPaintUsesAcceptedCommandIdentityAfterCandidateRetires	真实逻辑:测试流程（4 条语句，6 处 @Assert，调用 start）
+src/composable_ui_command_completion.cj	69	os == "macOS"	top-level	声明:foreign 块（2 个符号）
+src/composable_ui_command_completion.cj	77	os == "macOS"	internalRendererOwnerCommandReceiptSupported	true
+src/composable_ui_command_completion.cj	79	os != "macOS"	internalRendererOwnerCommandReceiptSupported	false
+src/composable_ui_command_completion.cj	82	os == "macOS"	internalRendererAcceptOwnerCommandReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_accept_owner_command_receipt，失败/边界返回 CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_command_completion.cj	90	os != "macOS"	internalRendererAcceptOwnerCommandReceipt	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_command_completion.cj	95	os == "macOS"	internalRendererRetireOwnerCommandPresentation	委托:cjgui_internal_renderer_retire_owner_command_presentation
+src/composable_ui_command_completion.cj	99	os != "macOS"	internalRendererRetireOwnerCommandPresentation	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_font_resource.cj	209	os == "macOS"	top-level	声明:foreign 块（5 个符号）
+src/composable_ui_font_resource.cj	224	os == "macOS"	cjguiFontResourceSupportVersion	委托:cjgui_internal_renderer_font_resource_version
+src/composable_ui_font_resource.cj	229	os != "macOS"	cjguiFontResourceSupportVersion	0u32
+src/composable_ui_font_resource.cj	234	os == "macOS"	cjguiRegisterFontResource	真实逻辑:调用 FFI cjgui_internal_renderer_font_resource_register 后返回 (status, code, if (count >= 0 && count <= bytes.size) { String.fromUt…
+src/composable_ui_font_resource.cj	260	os != "macOS"	cjguiRegisterFontResource	真实逻辑:返回 (-2, 0u32, spec.fallback)
+src/composable_ui_font_resource.cj	265	os == "macOS"	cjguiReleaseFontResource	真实逻辑:条件调用 FFI cjgui_internal_renderer_font_resource_release
+src/composable_ui_font_resource.cj	272	os != "macOS"	cjguiReleaseFontResource	空操作
+src/composable_ui_font_resource.cj	278	os == "macOS"	cjguiFontResourceDiagnostics	真实逻辑:调用 FFI cjgui_internal_renderer_font_resource_stats 后返回 values
+src/composable_ui_font_resource.cj	289	os != "macOS"	cjguiFontResourceDiagnostics	[0u64, 0u64, 0u64, 0u64, 0u64]
+src/composable_ui_mac_caret_edit.cj	3	os == "macOS"	top-level	声明:foreign 块（1 个符号）
+src/composable_ui_mac_caret_edit.cj	9	os == "macOS"	internalRendererMarkCaretEditApplied	委托:cjgui_internal_renderer_mark_caret_edit_applied
+src/composable_ui_mac_caret_edit.cj	16	os != "macOS"	internalRendererMarkCaretEditApplied	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_edge_scroll.cj	21	os == "macOS"	top-level	声明:foreign 块（2 个符号）
+src/composable_ui_mac_edge_scroll.cj	32	os == "macOS"	internalRendererRetireReversedDragEdgeRequest	委托:cjgui_internal_renderer_retire_reversed_drag_edge_request
+src/composable_ui_mac_edge_scroll.cj	41	os != "macOS"	internalRendererRetireReversedDragEdgeRequest	CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_mac_edge_scroll.cj	46	os == "macOS"	internalRendererAckDragEdgeViewport	委托:cjgui_internal_renderer_ack_drag_edge_viewport
+src/composable_ui_mac_edge_scroll.cj	55	os != "macOS"	internalRendererAckDragEdgeViewport	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_mac_edge_scroll.cj	61	os == "macOS"	internalRendererTerminateDragEdgeRequest	委托:cjgui_internal_renderer_ack_drag_edge_viewport
+src/composable_ui_mac_edge_scroll.cj	69	os != "macOS"	internalRendererTerminateDragEdgeRequest	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_mac_owner_handoff.cj	16	os == "macOS"	top-level	声明:foreign 块（8 个符号）
+src/composable_ui_mac_owner_handoff.cj	41	os == "macOS"	internalRendererOwnerHandoffSupported	true
+src/composable_ui_mac_owner_handoff.cj	46	os != "macOS"	internalRendererOwnerHandoffSupported	false
+src/composable_ui_mac_owner_handoff.cj	51	os == "macOS"	internalRendererHasParkedTextFocus	真实逻辑:比较 FFI cjgui_internal_renderer_parked_text_input_focus 返回值与 CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_mac_owner_handoff.cj	58	os != "macOS"	internalRendererHasParkedTextFocus	false
+src/composable_ui_mac_owner_handoff.cj	64	os == "macOS"	internalRendererBeginOwnerHandoff	真实逻辑:调用 FFI cjgui_internal_renderer_owner_handoff_begin_with_purpose 后返回 (status, identity)
+src/composable_ui_mac_owner_handoff.cj	84	os != "macOS"	internalRendererBeginOwnerHandoff	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u64)
+src/composable_ui_mac_owner_handoff.cj	91	os == "macOS"	internalRendererSealOwnerHandoff	委托:cjgui_internal_renderer_owner_handoff_seal
+src/composable_ui_mac_owner_handoff.cj	98	os != "macOS"	internalRendererSealOwnerHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_owner_handoff.cj	104	os == "macOS"	internalRendererBindOwnerHandoff	委托:cjgui_internal_renderer_owner_handoff_bind
+src/composable_ui_mac_owner_handoff.cj	109	os != "macOS"	internalRendererBindOwnerHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_owner_handoff.cj	114	os == "macOS"	internalRendererCompleteOwnerHandoff	委托:cjgui_internal_renderer_owner_handoff_complete
+src/composable_ui_mac_owner_handoff.cj	122	os != "macOS"	internalRendererCompleteOwnerHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_owner_handoff.cj	128	os == "macOS"	internalRendererAbortOwnerHandoff	委托:cjgui_internal_renderer_owner_handoff_abort
+src/composable_ui_mac_owner_handoff.cj	133	os == "macOS"	internalRendererOwnerHandoffState	委托:cjgui_internal_renderer_owner_handoff_state
+src/composable_ui_mac_owner_handoff.cj	138	os != "macOS"	internalRendererOwnerHandoffState	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_owner_handoff.cj	143	os != "macOS"	internalRendererAbortOwnerHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_resident_source.cj	6	os == "macOS"	top-level	声明:foreign 块（1 个符号）
+src/composable_ui_mac_resident_source.cj	14	os == "macOS"	internalRendererResidentTextSourceSupported	true
+src/composable_ui_mac_resident_source.cj	16	os != "macOS"	internalRendererResidentTextSourceSupported	false
+src/composable_ui_mac_resident_source.cj	19	os == "macOS"	internalRendererStageResidentTextSource	委托:cjgui_internal_renderer_stage_resident_text_source
+src/composable_ui_mac_resident_source.cj	30	os != "macOS"	internalRendererStageResidentTextSource	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_mac_resident_source.cj	36	os == "macOS"	cjgui_internal_renderer_resident_caret_source	声明:foreign 符号
+src/composable_ui_mac_resident_source.cj	40	os == "macOS"	internalRendererResidentCaretSource	真实逻辑:调用 FFI cjgui_internal_renderer_resident_caret_source，返回 (CJGUI_INTERNAL_RENDERER_SCENE_STALE, meta, "") / (status, meta, if (status == CJGUI_INTERNAL_RENDERER_O…
+src/composable_ui_mac_resident_source.cj	58	os != "macOS"	internalRendererResidentCaretSource	真实逻辑:返回 (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, [], "")
+src/composable_ui_mac_retirement.cj	6	os == "macOS" || os == "Windows"	top-level	声明:foreign 块（1 个符号）
+src/composable_ui_mac_retirement.cj	11	os == "macOS" || os == "Windows"	internalRendererDrainComposableRetirement	真实逻辑:调用 FFI cjgui_internal_renderer_drain_composable_retirement 后返回 (status, mayBegin == 1u8)
+src/composable_ui_mac_retirement.cj	20	os == "Linux"	internalRendererDrainComposableRetirement	(CJGUI_INTERNAL_RENDERER_OK, true)
+src/composable_ui_mac_retirement.cj	25	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererDrainComposableRetirement	(CJGUI_INTERNAL_RENDERER_OK, true)
+src/composable_ui_mac_text_continuation.cj	36	os == "macOS"	top-level	声明:foreign 块（3 个符号）
+src/composable_ui_mac_text_continuation.cj	46	os == "macOS"	internalRendererOfferTextCaptureContinuation	委托:cjgui_internal_renderer_offer_pointer_capture_continuation
+src/composable_ui_mac_text_continuation.cj	74	os != "macOS"	internalRendererOfferTextCaptureContinuation	CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_mac_text_continuation.cj	81	os == "macOS"	internalRendererCompleteTextCaptureContinuation	委托:cjgui_internal_renderer_complete_pointer_capture_continuation
+src/composable_ui_mac_text_continuation.cj	89	os != "macOS"	internalRendererCompleteTextCaptureContinuation	CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_mac_text_continuation.cj	93	os == "macOS"	internalRendererDiscardTextCaptureContinuation	委托:cjgui_internal_renderer_discard_pointer_capture_continuation
+src/composable_ui_mac_text_continuation.cj	97	os != "macOS"	internalRendererDiscardTextCaptureContinuation	空操作
+src/composable_ui_preparation_reuse_integration_test.cj	196	os == "macOS"	top-level	声明:foreign 块（1 个符号）
+src/composable_ui_preparation_reuse_integration_test.cj	201	os == "macOS"	preparedActualLegacyFrameCheckCount	真实逻辑:调用 FFI cjgui_internal_renderer_test_frame_resource_check_count 后返回 count
+src/composable_ui_preparation_reuse_integration_test.cj	211	os != "macOS"	preparedActualLegacyFrameCheckCount	0u64
+src/composable_ui_preparation_reuse_integration_test.cj	214	os == "macOS"	assertPreparedLegacyFrameChecksUnchanged	真实逻辑:断言检查
+src/composable_ui_preparation_reuse_integration_test.cj	219	os != "macOS"	assertPreparedLegacyFrameChecksUnchanged	空操作
+src/composable_ui_selection_observation.cj	108	os == "Windows"	cjgui_internal_renderer_selection_reveal_accepted	声明:foreign 符号
+src/composable_ui_selection_observation.cj	113	os == "Windows"	cjguiRevealAcceptedSelectionNative	真实逻辑:调用 FFI cjgui_internal_renderer_selection_reveal_accepted 后返回 (status, changed != 0u8, layoutLease)
+src/composable_ui_selection_observation.cj	133	os != "Windows"	cjguiRevealAcceptedSelectionNative	(CJGUI_INTERNAL_RENDERER_OK, false, 0u64)
+src/composable_ui_selection_observation.cj	139	os == "Windows"	cjgui_internal_renderer_selection_position_viewport_readonly	声明:foreign 符号
+src/composable_ui_selection_observation.cj	144	os == "Windows"	cjguiReadSelectionGeometryNative	真实逻辑:调用 FFI cjgui_internal_renderer_selection_position_viewport_readonly 后构造 CjguiAcceptedTextPosition
+src/composable_ui_selection_observation.cj	168	os != "Windows"	cjguiReadSelectionGeometryNative	真实逻辑:构造 CjguiAcceptedTextPosition
+src/composable_ui_selection_paint.cj	109	os == "macOS"	top-level	声明:foreign 块（3 个符号）
+src/composable_ui_selection_paint.cj	123	os == "macOS"	internalRendererActualSelectionReceipt	真实逻辑:组装 CjguiInternalSelectionTransferReceipt（14 条语句）
+src/composable_ui_selection_paint.cj	135	os == "macOS"	internalRendererPublishInstalledSelectionOwner	委托:cjgui_internal_renderer_publish_installed_selection_owner
+src/composable_ui_selection_paint.cj	143	os != "macOS"	internalRendererPublishInstalledSelectionOwner	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_selection_paint.cj	148	os == "macOS"	internalRendererFinishSelectionPaint	真实逻辑:调用 FFI cjgui_internal_renderer_finish_selection_paint_publication 后返回 (status, needs == 1u8)
+src/composable_ui_selection_paint.cj	160	os != "macOS"	internalRendererFinishSelectionPaint	(CJGUI_INTERNAL_RENDERER_OK, false)
+src/composable_ui_selection_paint.cj	164	os == "macOS"	internalRendererStageSelectionPaint	委托:cjgui_internal_renderer_stage_selection_paint_publication
+src/composable_ui_selection_paint.cj	173	os != "macOS"	internalRendererStageSelectionPaint	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_selection_paint.cj	177	os == "Windows"	cjgui_internal_renderer_stage_preview_selection_decoration	声明:foreign 符号
+src/composable_ui_selection_paint.cj	183	os == "Windows"	cjgui_internal_renderer_clear_preview_selection_decoration	声明:foreign 符号
+src/composable_ui_selection_paint.cj	186	os == "Windows"	internalRendererClearPreviewSelectionDecoration	委托:cjgui_internal_renderer_clear_preview_selection_decoration
+src/composable_ui_selection_paint.cj	191	os != "Windows"	internalRendererClearPreviewSelectionDecoration	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_selection_paint.cj	194	os == "Windows"	internalRendererStagePreviewSelectionPaint	真实逻辑:调用 FFI cjgui_internal_renderer_stage_preview_selection_decoration，失败/边界返回 CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_selection_paint.cj	229	os != "Windows"	internalRendererStagePreviewSelectionPaint	-1
+src/composable_ui_selection_paint.cj	234	os == "Windows"	internalRendererStagePreviewSelectionDecoration	委托:internalRendererStagePreviewSelectionDecorationForCurrentOwner
+src/composable_ui_selection_paint.cj	244	os == "Windows"	internalRendererStagePreviewSelectionDecorationForCurrentOwner	真实逻辑:调用 FFI cjgui_internal_renderer_stage_preview_selection_decoration，失败/边界返回 CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_selection_paint.cj	287	os != "Windows"	internalRendererStagePreviewSelectionDecoration	-1
+src/composable_ui_selection_paint.cj	294	os != "Windows"	internalRendererStagePreviewSelectionDecorationForCurrentOwner	-1
+src/composable_ui_selection_paint.cj	305	os == "macOS"	internalRendererSupportsProxySelectionPaint	true
+src/composable_ui_selection_paint.cj	308	os != "macOS"	internalRendererSupportsProxySelectionPaint	false
+src/composable_ui_selection_paint.cj	318	os == "Windows"	internalRendererSupportsStagedPreviewSelectionPaint	true
+src/composable_ui_selection_paint.cj	321	os != "Windows"	internalRendererSupportsStagedPreviewSelectionPaint	false
+src/composable_ui_selection_paint.cj	468	os == "macOS"	cjgui_internal_renderer_stage_accepted_selection_decoration	声明:foreign 符号
+src/composable_ui_selection_paint.cj	475	os == "macOS"	internalRendererStageAcceptedSelectionDecoration	真实逻辑:调用 FFI cjgui_internal_renderer_stage_accepted_selection_decoration，失败/边界返回 CJGUI_INTERNAL_RENDERER_SCENE_STALE
+src/composable_ui_selection_paint.cj	515	os != "macOS"	internalRendererStageAcceptedSelectionDecoration	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/composable_ui_source_handoff_test.cj	3407	os == "macOS"	sourceHandoffResidentProjectionFixture	真实逻辑:调用 FFI cjgui_internal_renderer_test_insert_actual_composable_proxy（14 条语句）
+src/composable_ui_source_handoff_test.cj	3490	os == "macOS"	sourceHandoffResidentPassiveOriginKeepsInstalledFirstInputWithoutFakeOwnerOperation	真实逻辑:测试流程（1 条语句，调用 sourceHandoffResidentProjectionFixture）
+src/composable_ui_source_handoff_test.cj	3496	os == "macOS"	sourceHandoffResidentMissingPaintWithoutOriginTicketRetiresSource	真实逻辑:测试流程（1 条语句，调用 sourceHandoffResidentProjectionFixture）
+src/composable_ui_source_recovery.cj	53	os == "Windows"	top-level	声明:foreign 块（2 个符号）
+src/composable_ui_source_recovery.cj	61	os == "Windows"	internalRendererPeekSourceInstallRecovery	真实逻辑:调用 FFI cjgui_internal_renderer_peek_install_recovery_v1，返回 (status, None) / (status, Some(CjguiSourceInstallRecoveryRecord(session…
+src/composable_ui_source_recovery.cj	82	os != "Windows"	internalRendererPeekSourceInstallRecovery	(CJGUI_INTERNAL_RENDERER_OK, None)
+src/composable_ui_source_recovery.cj	87	os == "Windows"	internalRendererAckSourceInstallRecovery	委托:cjgui_internal_renderer_ack_install_recovery_v1
+src/composable_ui_source_recovery.cj	91	os != "Windows"	internalRendererAckSourceInstallRecovery	CJGUI_INTERNAL_RENDERER_OK
+src/composable_ui_window.cj	2662	os == "macOS"	preparationCorrelationThread	委托:cjgui_internal_renderer_owner_thread_id
+src/composable_ui_window.cj	2666	os != "macOS"	preparationCorrelationThread	UInt64.Max
+src/composable_ui_window.cj	2820	os == "macOS"	hasActiveOwnerSchedulingRound	真实逻辑:match 分支返回 budget.isActive() / false
+src/composable_ui_window.cj	2825	os != "macOS"	hasActiveOwnerSchedulingRound	false
+src/composable_ui_window.cj	7224	os == "macOS"	readWorkloadAttemptCounts	真实逻辑:调用 FFI cjgui_internal_renderer_workload_attempt_counts 后构造 InternalRendererWorkloadAttemptCountsResult
+src/composable_ui_window.cj	7233	os != "macOS"	readWorkloadAttemptCounts	真实逻辑:调用 FFI cjgui_internal_renderer_diagnostic_workload 后构造 InternalRendererWorkloadAttemptCountsResult
+src/composable_ui_window.cj	8005	os == "Windows"	restageAcceptedPreviewSelectionDecoration	真实逻辑:调用 internalRendererStagePreviewSelectionDecorationForCurrentOwner 等 12 条语句
+src/composable_ui_window.cj	8065	os != "Windows"	restageAcceptedPreviewSelectionDecoration	空操作
+src/composable_ui_window.cj	10397	os == "Windows"	traceSmallDisplayTransport	真实逻辑:打印诊断日志（CJGUI_WINDOWS_DISPLAY）
+src/composable_ui_window.cj	10414	os != "Windows"	traceSmallDisplayTransport	空操作
+src/composable_ui_window.cj	16964	os == "Windows"	traceWindowsSliderBeginRefusal	真实逻辑:打印诊断日志（CJGUI_WINDOWS_SLIDER_BEGIN_REFUSE）
+src/composable_ui_window.cj	16974	os != "Windows"	traceWindowsSliderBeginRefusal	空操作
+src/composable_ui_window.cj	22092	os == "Windows"	finishWindowsSelectionGestureDecision	真实逻辑:调用 cjguiWindowsSelectionGestureNative 等 13 条语句
+src/composable_ui_window.cj	22114	os != "Windows"	finishWindowsSelectionGestureDecision	空操作
+src/composable_ui_window.cj	22179	os == "Windows"	freezeCandidateSelectionObservation	真实逻辑:按条件返回 None / Some(request)
+src/composable_ui_window.cj	22191	os != "Windows"	freezeCandidateSelectionObservation	None
+src/composable_ui_window.cj	22255	os == "Windows"	semanticSelectionGeometryVersion	真实逻辑:返回字段 nativeInputScene.version
+src/composable_ui_window.cj	22257	os != "Windows"	semanticSelectionGeometryVersion	真实逻辑:返回变量 candidate
+src/composable_ui_window.cj	24274	os == "Windows"	certifySliderBeforeParticipantCommit	空操作
+src/composable_ui_window.cj	24276	os != "Windows"	certifySliderBeforeParticipantCommit	真实逻辑:条件调用 certifyMacSliderCaptureAfterProjection
+src/composable_ui_window.cj	24280	os == "Windows"	certifySliderAfterParticipantCommit	真实逻辑:条件调用 certifyMacSliderCaptureAfterProjection
+src/composable_ui_window.cj	24284	os != "Windows"	certifySliderAfterParticipantCommit	空操作
+src/composable_ui_windows_selection_gesture.cj	5	os == "Windows"	cjgui_windows_selection_gesture_v1	声明:foreign 符号
+src/composable_ui_windows_selection_gesture.cj	9	os == "Windows"	cjguiWindowsSelectionGestureNative	真实逻辑:调用 FFI cjgui_windows_selection_gesture_v1，条件分支返回 output / []
+src/composable_ui_windows_selection_gesture.cj	24	os != "Windows"	cjguiWindowsSelectionGestureNative	[]
+src/linux_application_host.cj	12	os == "Linux"	class:CjguiLinuxApplicationHost	声明:平台类 CjguiLinuxApplicationHost（7 个方法）
+src/macos_application_cleanup.cj	7	os == "macOS"	cjguiRunMacosApplication	真实逻辑:调用 FFI cjgui_internal_renderer_acquire_application_cleanup 等 3 个符号，失败/边界返回 1
+src/macos_application_cleanup.cj	23	os != "macOS"	cjguiRunMacosApplication	委托:参数闭包 body
+src/native_text_typography.cj	6	os == "macOS"	cjgui_internal_renderer_measure_composable_styled_text	声明:foreign 符号
+src/native_text_typography.cj	11	os == "macOS"	cjgui_async_composable_styled_text_begin	声明:foreign 符号
+src/native_text_typography.cj	15	os == "macOS"	cjgui_internal_renderer_measure_composable_text_typography	声明:foreign 符号
+src/native_text_typography.cj	19	os == "macOS"	cjgui_internal_renderer_measure_composable_multiline_natural_height_typography	声明:foreign 符号
+src/native_text_typography.cj	23	os == "macOS"	cjgui_async_composable_text_metrics_typography_begin	声明:foreign 符号
+src/native_text_typography.cj	27	os == "macOS"	cjgui_async_composable_multiline_typography_begin	声明:foreign 符号
+src/native_text_typography.cj	33	os == "macOS"	cjguiStyledTextSupportVersion	1
+src/native_text_typography.cj	35	os != "macOS"	cjguiStyledTextSupportVersion	0
+src/native_text_typography.cj	38	os == "macOS"	cjguiMeasureStyledTypography	真实逻辑:调用 FFI cjgui_internal_renderer_measure_composable_styled_text 后返回 (status, output.width, output.height, output.lineHeight, output.basel…
+src/native_text_typography.cj	48	os != "macOS"	cjguiMeasureStyledTypography	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u32, 0u32, 0u32, 0u32)
+src/native_text_typography.cj	54	os == "macOS"	cjguiBeginAsyncStyledTypography	真实逻辑:调用 FFI cjgui_async_composable_styled_text_begin 后返回 (status, output)
+src/native_text_typography.cj	64	os != "macOS"	cjguiBeginAsyncStyledTypography	(CJGUI_ASYNC_MEASURE_INVALID_ARGUMENT, 0u64)
+src/native_text_typography.cj	70	os == "macOS"	cjguiMeasureTextTypography	真实逻辑:调用 FFI cjgui_internal_renderer_measure_composable_text_typography 后返回 (status, output.width, output.height, output.lineHeight, output.basel…
+src/native_text_typography.cj	77	os != "macOS"	cjguiMeasureTextTypography	真实逻辑:调用 FFI cjgui_internal_renderer_measure_composable_text 后返回 (status, output.width, output.height, output.lineHeight, output.basel…
+src/native_text_typography.cj	84	os == "macOS"	cjguiMeasureMultilineTypography	真实逻辑:调用 FFI cjgui_internal_renderer_measure_composable_multiline_natural_height_typography 后返回 (status, output)
+src/native_text_typography.cj	91	os != "macOS"	cjguiMeasureMultilineTypography	真实逻辑:调用 FFI cjgui_internal_renderer_measure_composable_multiline_natural_height 后返回 (status, output)
+src/native_text_typography.cj	98	os == "macOS"	cjguiBeginAsyncTextTypography	真实逻辑:调用 FFI cjgui_async_composable_text_metrics_typography_begin 后返回 (status, output)
+src/native_text_typography.cj	105	os != "macOS"	cjguiBeginAsyncTextTypography	真实逻辑:调用 FFI cjgui_async_composable_text_metrics_begin 后返回 (status, output)
+src/native_text_typography.cj	112	os == "macOS"	cjguiBeginAsyncMultilineTypography	真实逻辑:调用 FFI cjgui_async_composable_multiline_typography_begin 后返回 (status, output)
+src/native_text_typography.cj	119	os != "macOS"	cjguiBeginAsyncMultilineTypography	真实逻辑:调用 FFI cjgui_async_composable_multiline_begin 后返回 (status, output)
+src/owner_turn_budget.cj	8	os == "macOS"	cjguiSchedulingWorkRevision	委托:cjgui_internal_renderer_owner_work_revision
+src/owner_turn_budget.cj	16	os == "Windows" || os == "Linux"	cjguiSchedulingWorkRevision	0u64
+src/owner_turn_budget.cj	19	os != "macOS" && os != "Windows" && os != "Linux"	cjguiSchedulingWorkRevision	0u64
+src/owner_turn_budget.cj	22	os == "macOS"	cjguiCommonSchedulingEnabled	true
+src/owner_turn_budget.cj	25	os == "Windows" || os == "Linux"	cjguiCommonSchedulingEnabled	false
+src/owner_turn_budget.cj	28	os != "macOS" && os != "Windows" && os != "Linux"	cjguiCommonSchedulingEnabled	false
+src/owner_turn_budget.cj	31	os == "macOS"	cjguiWaitSchedulingWork	真实逻辑:调用 FFI cjgui_internal_renderer_owner_wait_work，条件分支返回 Int64.Max / Int64(idle)
+src/owner_turn_budget.cj	38	os == "Windows" || os == "Linux"	cjguiWaitSchedulingWork	0
+src/owner_turn_budget.cj	41	os != "macOS" && os != "Windows" && os != "Linux"	cjguiWaitSchedulingWork	0
+src/owner_turn_budget.cj	44	os == "macOS"	cjguiOwnerTraceBoundary	委托:cjgui_internal_renderer_owner_trace_boundary
+src/owner_turn_budget.cj	53	os == "Windows" || os == "Linux"	cjguiOwnerTraceBoundary	空操作
+src/owner_turn_budget.cj	57	os != "macOS" && os != "Windows" && os != "Linux"	cjguiOwnerTraceBoundary	空操作
+src/owner_turn_budget.cj	63	os == "macOS"	cjguiOwnerTraceElapsedValue	真实逻辑:按条件返回 UInt64(nanoseconds) / UInt64.Max
+src/owner_turn_budget.cj	75	os == "macOS"	cjguiOwnerTraceRecord	真实逻辑:调用 FFI cjgui_internal_renderer_owner_trace_ns 等 2 个符号，失败/边界返回 0u64
+src/owner_turn_budget.cj	124	os == "macOS"	cjguiOwnerTraceLegacySpan	委托:cjgui_internal_renderer_owner_trace_legacy_span
+src/owner_turn_budget.cj	130	os == "Windows"	cjguiOwnerTraceLegacySpan	委托:cjgui_internal_renderer_owner_trace_managed_record
+src/owner_turn_budget.cj	137	os == "Linux"	cjguiOwnerTraceLegacySpan	空操作
+src/owner_turn_budget.cj	141	os != "macOS" && os != "Windows" && os != "Linux"	cjguiOwnerTraceLegacySpan	空操作
+src/owner_turn_budget.cj	145	os == "Windows"	cjguiOwnerTraceRecord	委托:cjgui_internal_renderer_owner_trace_managed_record
+src/owner_turn_budget.cj	152	os == "Linux"	cjguiOwnerTraceRecord	0u64
+src/owner_turn_budget.cj	158	os != "macOS" && os != "Windows" && os != "Linux"	cjguiOwnerTraceRecord	0u64
+src/owner_turn_budget.cj	164	os == "macOS"	cjguiOwnerTraceSetTurn	委托:cjgui_internal_renderer_owner_trace_set_turn
+src/owner_turn_budget.cj	169	os == "Windows" || os == "Linux"	cjguiOwnerTraceSetTurn	空操作
+src/owner_turn_budget.cj	172	os != "macOS" && os != "Windows" && os != "Linux"	cjguiOwnerTraceSetTurn	空操作
+src/owner_turn_budget.cj	175	os == "macOS"	cjguiOwnerTraceExport	委托:cjgui_internal_renderer_owner_trace_export
+src/owner_turn_budget.cj	180	os == "Windows" || os == "Linux"	cjguiOwnerTraceExport	空操作
+src/owner_turn_budget.cj	183	os != "macOS" && os != "Windows" && os != "Linux"	cjguiOwnerTraceExport	空操作
+src/owner_turn_budget_test.cj	6	os == "macOS"	testOwnerTraceElapsedClockFailureStaysUnknown	真实逻辑:断言检查
+src/runtime_renderer_session.cj	1287	os == "macOS" || os == "Windows"	cjgui_internal_renderer_owner_consumed_pointer_fifo	声明:foreign 符号
+src/runtime_renderer_session.cj	1292	os == "macOS"	cjgui_internal_renderer_pointer_begin_frame_retained	声明:foreign 符号
+src/runtime_renderer_session.cj	1294	os == "macOS"	cjgui_internal_renderer_publish_pointer_begin_source	声明:foreign 符号
+src/runtime_renderer_session.cj	1297	os == "macOS"	cjgui_internal_renderer_consume_pointer_begin_origin	声明:foreign 符号
+src/runtime_renderer_session.cj	1305	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_selection_background_version	声明:foreign 符号
+src/runtime_renderer_session.cj	1366	os == "macOS" || os == "Windows"	cjgui_internal_renderer_prepare_composable_node_batch	声明:foreign 符号
+src/runtime_renderer_session.cj	1371	os == "macOS" || os == "Windows"	cjgui_internal_renderer_reuse_composable_node_batch	声明:foreign 符号
+src/runtime_renderer_session.cj	1425	os == "macOS"	cjgui_internal_renderer_set_composable_node_semantic_help	声明:foreign 符号
+src/runtime_renderer_session.cj	1569	os == "macOS"	cjgui_internal_renderer_workload_attempt_counts	声明:foreign 符号
+src/runtime_renderer_session.cj	1573	os == "macOS"	cjgui_internal_renderer_diagnostic_scalar_snapshot	声明:foreign 符号
+src/runtime_renderer_session.cj	1586	os == "macOS"	cjgui_internal_renderer_owner_thread_id	声明:foreign 符号
+src/runtime_renderer_session.cj	1588	os == "macOS"	cjgui_internal_renderer_owner_work_revision	声明:foreign 符号
+src/runtime_renderer_session.cj	1590	os == "macOS"	cjgui_internal_renderer_owner_wait_work	声明:foreign 符号
+src/runtime_renderer_session.cj	1594	os == "Windows"	cjgui_internal_renderer_debug_preparation_scalar	声明:foreign 符号
+src/runtime_renderer_session.cj	1596	os == "macOS"	cjgui_internal_renderer_owner_trace_record	声明:foreign 符号
+src/runtime_renderer_session.cj	1603	os == "macOS"	cjgui_internal_renderer_owner_trace_boundary	声明:foreign 符号
+src/runtime_renderer_session.cj	1607	os == "macOS"	cjgui_internal_renderer_owner_trace_dispatch_begin	声明:foreign 符号
+src/runtime_renderer_session.cj	1610	os == "macOS"	cjgui_internal_renderer_owner_trace_set_turn	声明:foreign 符号
+src/runtime_renderer_session.cj	1612	os == "macOS"	cjgui_internal_renderer_owner_trace_dispatch_event	声明:foreign 符号
+src/runtime_renderer_session.cj	1616	os == "macOS"	cjgui_internal_renderer_owner_trace_export	声明:foreign 符号
+src/runtime_renderer_session.cj	1618	os == "macOS"	cjgui_internal_renderer_finalize_owner_trace	声明:foreign 符号
+src/runtime_renderer_session.cj	1620	os == "macOS"	cjgui_internal_renderer_acquire_application_cleanup	声明:foreign 符号
+src/runtime_renderer_session.cj	1622	os == "macOS"	cjgui_internal_renderer_complete_application_cleanup	声明:foreign 符号
+src/runtime_renderer_session.cj	1624	os == "macOS"	cjgui_internal_renderer_owner_trace_legacy_span	声明:foreign 符号
+src/runtime_renderer_session.cj	1628	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_installed_range_arm	声明:foreign 符号
+src/runtime_renderer_session.cj	1631	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_installed_range_receipt	声明:foreign 符号
+src/runtime_renderer_session.cj	1634	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_installed_range_active_receipt	声明:foreign 符号
+src/runtime_renderer_session.cj	1637	os == "macOS"	cjgui_internal_renderer_unchanged_capture_receipt	声明:foreign 符号
+src/runtime_renderer_session.cj	1641	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_installed_range_activate	声明:foreign 符号
+src/runtime_renderer_session.cj	1644	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_installed_range_cancel	声明:foreign 符号
+src/runtime_renderer_session.cj	1646	os == "macOS"	cjgui_internal_renderer_stage_modal_return	声明:foreign 符号
+src/runtime_renderer_session.cj	1648	os == "macOS"	cjgui_internal_renderer_modal_return_receipt	声明:foreign 符号
+src/runtime_renderer_session.cj	1651	os == "macOS"	cjgui_internal_renderer_stage_candidate_caret_identity	声明:foreign 符号
+src/runtime_renderer_session.cj	1655	os == "macOS"	cjgui_internal_renderer_accepted_caret_value	声明:foreign 符号
+src/runtime_renderer_session.cj	1659	os == "macOS"	cjgui_internal_renderer_stage_candidate_caret	声明:foreign 符号
+src/runtime_renderer_session.cj	1662	os == "macOS"	cjgui_internal_renderer_capture_candidate_selection	声明:foreign 符号
+src/runtime_renderer_session.cj	1667	os == "macOS"	cjgui_internal_renderer_prepare_candidate_selection	声明:foreign 符号
+src/runtime_renderer_session.cj	1670	os == "macOS"	cjgui_internal_renderer_candidate_selection_receipt	声明:foreign 符号
+src/runtime_renderer_session.cj	1673	os == "macOS"	cjgui_internal_renderer_selection_transfer_create	声明:foreign 符号
+src/runtime_renderer_session.cj	1675	os == "macOS"	cjgui_internal_renderer_selection_transfer_publish_pending	声明:foreign 符号
+src/runtime_renderer_session.cj	1677	os == "macOS"	cjgui_internal_renderer_selection_transfer_begin_finalizing	声明:foreign 符号
+src/runtime_renderer_session.cj	1679	os == "macOS"	cjgui_internal_renderer_selection_transfer_request_cancel	声明:foreign 符号
+src/runtime_renderer_session.cj	1681	os == "macOS"	cjgui_internal_renderer_selection_transfer_commit	声明:foreign 符号
+src/runtime_renderer_session.cj	1683	os == "macOS"	cjgui_internal_renderer_selection_transfer_finish_abort	声明:foreign 符号
+src/runtime_renderer_session.cj	1685	os == "macOS"	cjgui_internal_renderer_selection_transfer_recovery_blocked	声明:foreign 符号
+src/runtime_renderer_session.cj	1687	os == "macOS"	cjgui_internal_renderer_selection_transfer_state	声明:foreign 符号
+src/runtime_renderer_session.cj	1690	os == "macOS"	cjgui_internal_renderer_selection_transfer_admit_input	声明:foreign 符号
+src/runtime_renderer_session.cj	1693	os == "macOS"	cjgui_internal_renderer_selection_transfer_retain	声明:foreign 符号
+src/runtime_renderer_session.cj	1695	os == "macOS"	cjgui_internal_renderer_selection_transfer_release	声明:foreign 符号
+src/runtime_renderer_session.cj	1697	os == "macOS"	cjgui_internal_renderer_selection_transfer_capture_a	声明:foreign 符号
+src/runtime_renderer_session.cj	1700	os == "macOS"	cjgui_internal_renderer_selection_transfer_capture_current	声明:foreign 符号
+src/runtime_renderer_session.cj	1703	os == "macOS"	cjgui_internal_renderer_selection_transfer_prepare_b	声明:foreign 符号
+src/runtime_renderer_session.cj	1706	os == "macOS"	cjgui_internal_renderer_selection_transfer_install_b	声明:foreign 符号
+src/runtime_renderer_session.cj	1709	os == "macOS"	cjgui_internal_renderer_selection_transfer_install_b_retiring	声明:foreign 符号
+src/runtime_renderer_session.cj	1712	os == "macOS"	cjgui_internal_renderer_selection_transfer_verify_b	声明:foreign 符号
+src/runtime_renderer_session.cj	1715	os == "macOS"	cjgui_internal_renderer_selection_transfer_restore_a	声明:foreign 符号
+src/runtime_renderer_session.cj	1717	os == "macOS"	cjgui_internal_renderer_selection_transfer_replay_input	声明:foreign 符号
+src/runtime_renderer_session.cj	1719	os == "macOS"	cjgui_internal_renderer_selection_transfer_discard_capsule	声明:foreign 符号
+src/runtime_renderer_session.cj	1721	os == "macOS"	cjgui_internal_renderer_source_handoff_arm	声明:foreign 符号
+src/runtime_renderer_session.cj	1725	os == "macOS"	cjgui_internal_renderer_source_handoff_confirm_selection	声明:foreign 符号
+src/runtime_renderer_session.cj	1728	os == "macOS"	cjgui_internal_renderer_source_handoff_activate	声明:foreign 符号
+src/runtime_renderer_session.cj	1731	os == "macOS"	cjgui_internal_renderer_source_handoff_finish	声明:foreign 符号
+src/runtime_renderer_session.cj	1733	os == "macOS"	cjgui_internal_renderer_source_handoff_cancel	声明:foreign 符号
+src/runtime_renderer_session.cj	1735	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_claim_last_pumped_range	声明:foreign 符号
+src/runtime_renderer_session.cj	1739	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_copy_claimed_range_bytes	声明:foreign 符号
+src/runtime_renderer_session.cj	1744	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_ack_installed_range	声明:foreign 符号
+src/runtime_renderer_session.cj	1747	os == "macOS" || os == "Windows" || os == "Linux"	cjgui_internal_renderer_release_installed_range	声明:foreign 符号
+src/runtime_renderer_session.cj	1775	os == "Windows"	cjgui_internal_renderer_restore_composable_selection_paint_result	声明:foreign 符号
+src/runtime_renderer_session.cj	1910	os == "macOS"	cjgui_internal_renderer_owner_pump_has_unconsumed_input	声明:foreign 符号
+src/runtime_renderer_session.cj	2058	os == "macOS"	internalRendererSupportsPointerBeginOrigin	true
+src/runtime_renderer_session.cj	2063	os == "Linux"	internalRendererSupportsPointerBeginOrigin	false
+src/runtime_renderer_session.cj	2066	os != "macOS" && os != "Linux"	internalRendererSupportsPointerBeginOrigin	false
+src/runtime_renderer_session.cj	2068	os == "macOS"	internalRendererPointerBeginFrameRetained	真实逻辑:比较 FFI cjgui_internal_renderer_pointer_begin_frame_retained 返回值与 1
+src/runtime_renderer_session.cj	2072	os == "Linux"	internalRendererPointerBeginFrameRetained	false
+src/runtime_renderer_session.cj	2075	os != "macOS" && os != "Linux"	internalRendererPointerBeginFrameRetained	false
+src/runtime_renderer_session.cj	2077	os == "macOS"	internalRendererPublishPointerBeginSource	委托:cjgui_internal_renderer_publish_pointer_begin_source
+src/runtime_renderer_session.cj	2082	os == "Linux"	internalRendererPublishPointerBeginSource	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2086	os != "macOS" && os != "Linux"	internalRendererPublishPointerBeginSource	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2089	os == "macOS"	internalRendererConsumePointerBeginOrigin	真实逻辑:调用 FFI cjgui_internal_renderer_consume_pointer_begin_origin，条件分支返回 Some(origin) / None
+src/runtime_renderer_session.cj	2095	os == "Linux"	internalRendererConsumePointerBeginOrigin	None
+src/runtime_renderer_session.cj	2100	os != "macOS" && os != "Linux"	internalRendererConsumePointerBeginOrigin	None
+src/runtime_renderer_session.cj	2105	os == "macOS" || os == "Windows"	internalRendererConsumedPointerFifo	真实逻辑:调用 FFI cjgui_internal_renderer_owner_consumed_pointer_fifo，条件分支返回 CjguiMacSliderPointerFifo(generation, binding, first, last,…
+src/runtime_renderer_session.cj	2123	os == "Linux"	internalRendererConsumedPointerFifo	CjguiMacSliderPointerFifo(0u64, 0u64, 0u64, 0u64, 0u64, 0u32)
+src/runtime_renderer_session.cj	2128	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererConsumedPointerFifo	CjguiMacSliderPointerFifo(0u64, 0u64, 0u64, 0u64, 0u64, 0u32)
+src/runtime_renderer_session.cj	2136	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererSelectionBackgroundVersion	委托:cjgui_internal_renderer_selection_background_version
+src/runtime_renderer_session.cj	2143	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererSelectionBackgroundVersion	0u32
+src/runtime_renderer_session.cj	2210	os == "macOS"	internalRendererOwnerPumpHasUnconsumedInput	委托:cjgui_internal_renderer_owner_pump_has_unconsumed_input
+src/runtime_renderer_session.cj	2215	os != "macOS"	internalRendererOwnerPumpHasUnconsumedInput	false
+src/runtime_renderer_session.cj	2283	os == "Windows"	top-level	声明:foreign 块（4 个符号）
+src/runtime_renderer_session.cj	2303	os == "macOS"	top-level	声明:foreign 块（12 个符号）
+src/runtime_renderer_session.cj	2336	os == "macOS"	internalRendererSetComposableCommandCompletionPolicy	委托:cjgui_internal_renderer_set_composable_command_completion_policy
+src/runtime_renderer_session.cj	2340	os != "macOS"	internalRendererSetComposableCommandCompletionPolicy	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	2346	os == "macOS"	internalRendererSetComposableCommandIdentity	委托:cjgui_internal_renderer_set_composable_command_identity
+src/runtime_renderer_session.cj	2351	os != "macOS"	internalRendererSetComposableCommandIdentity	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	2359	os == "macOS"	internalRendererConsumedCommandCompletionPolicy	真实逻辑:调用 FFI cjgui_internal_renderer_owner_consumed_command_source，条件分支返回 source.completionPolicy / 0u32
+src/runtime_renderer_session.cj	2368	os != "macOS"	internalRendererConsumedCommandCompletionPolicy	0u32
+src/runtime_renderer_session.cj	2371	os == "macOS"	internalRendererOwnerConsumedCommandSource	真实逻辑:调用 FFI cjgui_internal_renderer_owner_consumed_command_source，失败/边界返回 None
+src/runtime_renderer_session.cj	2381	os != "macOS"	internalRendererOwnerConsumedCommandSource	None
+src/runtime_renderer_session.cj	2386	os == "macOS"	internalRendererAdmitCommandTextContext	委托:cjgui_internal_renderer_admit_command_text_context
+src/runtime_renderer_session.cj	2395	os != "macOS"	internalRendererAdmitCommandTextContext	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2403	os == "macOS"	internalRendererFinishCommandTextContextAdmission	委托:cjgui_internal_renderer_finish_command_text_context_admission
+src/runtime_renderer_session.cj	2409	os != "macOS"	internalRendererFinishCommandTextContextAdmission	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2415	os == "macOS"	internalRendererCommitInstalledSelectionCommands	委托:cjgui_internal_renderer_commit_installed_selection_command_menu
+src/runtime_renderer_session.cj	2421	os != "macOS"	internalRendererCommitInstalledSelectionCommands	委托:internalRendererCommitComposableCommandMenu
+src/runtime_renderer_session.cj	2426	os == "macOS"	internalRendererBindCaretSelectionTransfer	委托:cjgui_internal_renderer_bind_caret_selection_transfer
+src/runtime_renderer_session.cj	2432	os != "macOS"	internalRendererBindCaretSelectionTransfer	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2438	os == "macOS"	internalRendererBindCaretProjectionTransfer	委托:cjgui_internal_renderer_bind_caret_projection_transfer
+src/runtime_renderer_session.cj	2444	os != "macOS"	internalRendererBindCaretProjectionTransfer	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2450	os == "macOS"	internalRendererFinishCaretInput	委托:cjgui_internal_renderer_finish_caret_input
+src/runtime_renderer_session.cj	2461	os != "macOS"	internalRendererFinishCaretInput	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2467	os == "macOS"	internalRendererCaretInputWasRetired	真实逻辑:调用 FFI cjgui_internal_renderer_caret_input_terminal 后返回 status == CJGUI_INTERNAL_RENDERER_OK && retired == 1u8
+src/runtime_renderer_session.cj	2474	os != "macOS"	internalRendererCaretInputWasRetired	false
+src/runtime_renderer_session.cj	2492	os == "macOS"	top-level	声明:foreign 块（4 个符号）
+src/runtime_renderer_session.cj	2505	os == "macOS"	internalRendererPeekCaretRecovery	真实逻辑:调用 FFI cjgui_internal_renderer_peek_caret_recovery 等 2 个符号，失败/边界返回 (CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, None)
+src/runtime_renderer_session.cj	2539	os != "macOS"	internalRendererPeekCaretRecovery	(CJGUI_INTERNAL_RENDERER_OK, None)
+src/runtime_renderer_session.cj	2544	os == "macOS"	internalRendererFinishCaretRecovery	委托:cjgui_internal_renderer_finish_caret_recovery
+src/runtime_renderer_session.cj	2550	os != "macOS"	internalRendererFinishCaretRecovery	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2555	os == "macOS"	internalRendererCancelCaretPrefix	委托:cjgui_internal_renderer_cancel_caret_prefix
+src/runtime_renderer_session.cj	2560	os != "macOS"	internalRendererCancelCaretPrefix	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	2565	os == "macOS"	internalRendererConsumedActivationPrefix	真实逻辑:调用 FFI cjgui_internal_renderer_consumed_activation_prefix 后构造 InternalRendererActivationPrefixResult
+src/runtime_renderer_session.cj	2573	os != "macOS"	internalRendererConsumedActivationPrefix	InternalRendererActivationPrefixResult(CJGUI_INTERNAL_RENDERER_OK, InternalRendererActivationPrefix…
+src/runtime_renderer_session.cj	2595	os == "macOS"	internalRendererConsumedInputProvenance	真实逻辑:调用 FFI cjgui_internal_renderer_owner_consumed_input_provenance，失败/边界返回 InternalRendererInputProvenance(0u64, 0u64, 0u64,…
+src/runtime_renderer_session.cj	2610	os == "Linux"	internalRendererConsumedInputProvenance	InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
+src/runtime_renderer_session.cj	2615	os != "macOS" && os != "Linux"	internalRendererConsumedInputProvenance	InternalRendererInputProvenance(0u64, 0u64, 0u64, 0u32)
+src/runtime_renderer_session.cj	2620	os == "macOS"	internalRendererInstalledRangeSupported	true
+src/runtime_renderer_session.cj	2623	os == "Linux"	internalRendererInstalledRangeSupported	false
+src/runtime_renderer_session.cj	2626	os != "macOS" && os != "Linux"	internalRendererInstalledRangeSupported	false
+src/runtime_renderer_session.cj	2631	os == "macOS" || os == "Windows"	internalRendererSourceRangeSupported	true
+src/runtime_renderer_session.cj	2637	os == "Linux"	internalRendererSourceRangeSupported	true
+src/runtime_renderer_session.cj	2640	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererSourceRangeSupported	false
+src/runtime_renderer_session.cj	2645	os == "macOS"	internalRendererSelectionTransferSupported	true
+src/runtime_renderer_session.cj	2649	os == "Linux"	internalRendererSelectionTransferSupported	false
+src/runtime_renderer_session.cj	2652	os != "macOS" && os != "Linux"	internalRendererSelectionTransferSupported	false
+src/runtime_renderer_session.cj	2657	os == "Windows"	internalRendererWindowsSourceSettlementSupported	true
+src/runtime_renderer_session.cj	2659	os != "Windows"	internalRendererWindowsSourceSettlementSupported	false
+src/runtime_renderer_session.cj	2666	os == "Windows"	internalRendererSourceInstallReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_source_install_receipt 后返回 (status, nonce)
+src/runtime_renderer_session.cj	2674	os != "Windows"	internalRendererSourceInstallReceipt	(0, 0u64)
+src/runtime_renderer_session.cj	2681	os == "Windows"	internalRendererFinishSourceInstall	委托:cjgui_internal_renderer_finish_source_install
+src/runtime_renderer_session.cj	2688	os != "Windows"	internalRendererFinishSourceInstall	0
+src/runtime_renderer_session.cj	2698	os == "Windows"	internalRendererSourceInstallGateState	真实逻辑:调用 FFI cjgui_internal_renderer_source_install_gate_state 后返回 (status, pending != 0u8, provisional != 0u8)
+src/runtime_renderer_session.cj	2708	os != "Windows"	internalRendererSourceInstallGateState	(0, false, false)
+src/runtime_renderer_session.cj	2718	os == "macOS"	internalRendererCreateSelectionTransfer	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_create 后返回 (status, transferId)
+src/runtime_renderer_session.cj	2724	os != "macOS"	internalRendererCreateSelectionTransfer	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u64)
+src/runtime_renderer_session.cj	2729	os == "macOS"	internalRendererPublishSelectionTransferPending	委托:cjgui_internal_renderer_selection_transfer_publish_pending
+src/runtime_renderer_session.cj	2733	os != "macOS"	internalRendererPublishSelectionTransferPending	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2738	os == "macOS"	internalRendererBeginSelectionTransferFinalizing	委托:cjgui_internal_renderer_selection_transfer_begin_finalizing
+src/runtime_renderer_session.cj	2742	os != "macOS"	internalRendererBeginSelectionTransferFinalizing	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2747	os == "macOS"	internalRendererRequestSelectionTransferCancel	委托:cjgui_internal_renderer_selection_transfer_request_cancel
+src/runtime_renderer_session.cj	2751	os != "macOS"	internalRendererRequestSelectionTransferCancel	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2756	os == "macOS"	internalRendererCommitSelectionTransfer	委托:cjgui_internal_renderer_selection_transfer_commit
+src/runtime_renderer_session.cj	2760	os != "macOS"	internalRendererCommitSelectionTransfer	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2765	os == "macOS"	internalRendererFinishSelectionTransferAbort	委托:cjgui_internal_renderer_selection_transfer_finish_abort
+src/runtime_renderer_session.cj	2769	os != "macOS"	internalRendererFinishSelectionTransferAbort	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2774	os == "macOS"	internalRendererBlockSelectionTransferRecovery	委托:cjgui_internal_renderer_selection_transfer_recovery_blocked
+src/runtime_renderer_session.cj	2778	os != "macOS"	internalRendererBlockSelectionTransferRecovery	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2783	os == "macOS"	internalRendererSelectionTransferState	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_state 后返回 (status, state, cancelled, references)
+src/runtime_renderer_session.cj	2792	os != "macOS"	internalRendererSelectionTransferState	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u32, 0u8, 0u32)
+src/runtime_renderer_session.cj	2797	os == "macOS"	internalRendererAdmitSelectionTransferInput	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_admit_input 后返回 (status, admission)
+src/runtime_renderer_session.cj	2803	os != "macOS"	internalRendererAdmitSelectionTransferInput	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 3u32)
+src/runtime_renderer_session.cj	2808	os == "macOS"	internalRendererRetainSelectionTransfer	委托:cjgui_internal_renderer_selection_transfer_retain
+src/runtime_renderer_session.cj	2812	os != "macOS"	internalRendererRetainSelectionTransfer	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2817	os == "macOS"	internalRendererReleaseSelectionTransfer	委托:cjgui_internal_renderer_selection_transfer_release
+src/runtime_renderer_session.cj	2821	os != "macOS"	internalRendererReleaseSelectionTransfer	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2826	os == "macOS"	internalRendererCaptureSelectionTransferCandidate	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_capture_a 后返回 status
+src/runtime_renderer_session.cj	2846	os != "macOS"	internalRendererCaptureSelectionTransferCandidate	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2852	os == "macOS"	internalRendererCaptureSelectionTransferA	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_capture_a 后返回 status
+src/runtime_renderer_session.cj	2887	os != "macOS"	internalRendererCaptureSelectionTransferA	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2906	os == "macOS"	internalRendererCaptureCurrentSelectionTransfer	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_capture_current 后构造 InternalRendererCaptureSelectionResult
+src/runtime_renderer_session.cj	2927	os != "macOS"	internalRendererCaptureCurrentSelectionTransfer	InternalRendererCaptureSelectionResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, candidate, "")
+src/runtime_renderer_session.cj	2934	os == "macOS"	internalRendererPrepareSelectionTransferB	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_prepare_b 后返回 (status, ready != 0u8)
+src/runtime_renderer_session.cj	2942	os != "macOS"	internalRendererPrepareSelectionTransferB	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, false)
+src/runtime_renderer_session.cj	2948	os == "macOS"	internalRendererInstallSelectionTransferB	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_install_b_retiring 后构造 InternalRendererSelectionTransferVerifyBResult
+src/runtime_renderer_session.cj	2958	os != "macOS"	internalRendererInstallSelectionTransferB	InternalRendererSelectionTransferVerifyBResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Cj…
+src/runtime_renderer_session.cj	2965	os == "macOS"	internalRendererVerifySelectionTransferB	真实逻辑:调用 FFI cjgui_internal_renderer_selection_transfer_verify_b 后构造 InternalRendererSelectionTransferVerifyBResult
+src/runtime_renderer_session.cj	2972	os != "macOS"	internalRendererVerifySelectionTransferB	InternalRendererSelectionTransferVerifyBResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Cj…
+src/runtime_renderer_session.cj	2979	os == "macOS"	internalRendererRestoreSelectionTransferA	委托:cjgui_internal_renderer_selection_transfer_restore_a
+src/runtime_renderer_session.cj	2983	os != "macOS"	internalRendererRestoreSelectionTransferA	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2988	os == "macOS"	internalRendererReplaySelectionTransferInput	委托:cjgui_internal_renderer_selection_transfer_replay_input
+src/runtime_renderer_session.cj	2992	os != "macOS"	internalRendererReplaySelectionTransferInput	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	2997	os == "macOS"	internalRendererDiscardSelectionTransferCapsule	委托:cjgui_internal_renderer_selection_transfer_discard_capsule
+src/runtime_renderer_session.cj	3001	os != "macOS"	internalRendererDiscardSelectionTransferCapsule	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3006	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererArmInstalledRange	真实逻辑:调用 FFI cjgui_internal_renderer_installed_range_arm 后返回 status
+src/runtime_renderer_session.cj	3026	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererArmInstalledRange	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3030	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererInstalledRangeReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_installed_range_receipt，条件分支返回 Some(receipt) / None
+src/runtime_renderer_session.cj	3037	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererInstalledRangeReceipt	None
+src/runtime_renderer_session.cj	3040	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererActiveInstalledRangeReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_installed_range_active_receipt，条件分支返回 Some(receipt) / None
+src/runtime_renderer_session.cj	3048	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererActiveInstalledRangeReceipt	None
+src/runtime_renderer_session.cj	3052	os == "macOS"	internalRendererUnchangedCaptureReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_unchanged_capture_receipt，条件分支返回 Some(receipt) / None
+src/runtime_renderer_session.cj	3060	os != "macOS"	internalRendererUnchangedCaptureReceipt	None
+src/runtime_renderer_session.cj	3064	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererActivateInstalledRange	委托:cjgui_internal_renderer_installed_range_activate
+src/runtime_renderer_session.cj	3070	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererActivateInstalledRange	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3074	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererCancelInstalledRange	委托:cjgui_internal_renderer_installed_range_cancel
+src/runtime_renderer_session.cj	3079	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererCancelInstalledRange	空操作
+src/runtime_renderer_session.cj	3082	os == "macOS"	internalRendererArmSourceHandoff	真实逻辑:调用 FFI cjgui_internal_renderer_source_handoff_arm 后返回 status
+src/runtime_renderer_session.cj	3104	os != "macOS"	internalRendererArmSourceHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3110	os == "macOS"	internalRendererConfirmSourceHandoffSelection	委托:cjgui_internal_renderer_source_handoff_confirm_selection
+src/runtime_renderer_session.cj	3116	os != "macOS"	internalRendererConfirmSourceHandoffSelection	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3120	os == "macOS"	internalRendererActivateSourceHandoff	委托:cjgui_internal_renderer_source_handoff_activate
+src/runtime_renderer_session.cj	3125	os != "macOS"	internalRendererActivateSourceHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3129	os == "macOS"	internalRendererFinishSourceHandoff	委托:cjgui_internal_renderer_source_handoff_finish
+src/runtime_renderer_session.cj	3133	os != "macOS"	internalRendererFinishSourceHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3136	os == "macOS"	internalRendererCancelSourceHandoff	委托:cjgui_internal_renderer_source_handoff_cancel
+src/runtime_renderer_session.cj	3140	os != "macOS"	internalRendererCancelSourceHandoff	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3143	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererReleaseInstalledRange	委托:cjgui_internal_renderer_release_installed_range
+src/runtime_renderer_session.cj	3148	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererReleaseInstalledRange	空操作
+src/runtime_renderer_session.cj	3151	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererAckInstalledRange	真实逻辑:调用 FFI cjgui_internal_renderer_ack_installed_range（2 条语句）
+src/runtime_renderer_session.cj	3159	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererAckInstalledRange	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3163	os == "macOS" || os == "Windows" || os == "Linux"	internalRendererClaimInstalledRange	真实逻辑:调用 FFI cjgui_internal_renderer_claim_last_pumped_range 等 3 个符号，失败/边界返回 (false, None)
+src/runtime_renderer_session.cj	3208	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererClaimInstalledRange	(false, None)
+src/runtime_renderer_session.cj	3218	os == "macOS"	top-level	声明:foreign 块（1 个符号）
+src/runtime_renderer_session.cj	3223	os == "macOS"	internalRendererPrepareFrameResources	真实逻辑:调用 FFI cjgui_internal_renderer_prepare_frame_resources 后返回 (status, ready == 1u32)
+src/runtime_renderer_session.cj	3230	os != "macOS"	internalRendererPrepareFrameResources	(CJGUI_INTERNAL_RENDERER_OK, true)
+src/runtime_renderer_session.cj	3234	os == "macOS"	top-level	声明:foreign 块（1 个符号）
+src/runtime_renderer_session.cj	3239	os == "macOS"	internalRendererReserveComposableDrawable	真实逻辑:调用 FFI cjgui_internal_renderer_reserve_composable_drawable 后返回 (status, ready == 1u32)
+src/runtime_renderer_session.cj	3247	os != "macOS"	internalRendererReserveComposableDrawable	(CJGUI_INTERNAL_RENDERER_OK, true)
+src/runtime_renderer_session.cj	3254	os == "macOS"	internalRendererCancelComposableDrawable	委托:cjgui_internal_renderer_cancel_composable_preparation
+src/runtime_renderer_session.cj	3258	os != "macOS"	internalRendererCancelComposableDrawable	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	3284	os == "Windows"	internalRendererPreparationDiagnosticScalar	委托:cjgui_internal_renderer_debug_preparation_scalar
+src/runtime_renderer_session.cj	3288	os != "Windows"	internalRendererPreparationDiagnosticScalar	0u64
+src/runtime_renderer_session.cj	3294	os == "Windows"	internalRendererComposableDisplayValue	真实逻辑:返回变量 value
+src/runtime_renderer_session.cj	3302	os == "Windows" || os == "Linux"	internalRendererComposableDisplayValue	真实逻辑:返回变量 value
+src/runtime_renderer_session.cj	3310	os != "Windows" && os != "Linux"	internalRendererComposableDisplayValue	真实逻辑:条件分支返回 "" / value
+src/runtime_renderer_session.cj	3352	os == "macOS" || os == "Windows"	internalRendererPrepareComposableNodeBatch	真实逻辑:调用 FFI cjgui_internal_renderer_prepare_composable_node_batch，失败/边界返回 (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0u32)
+src/runtime_renderer_session.cj	3412	os == "Linux"	internalRendererPrepareComposableNodeBatch	委托:internalRendererPrepareComposableNodeBatchScalar
+src/runtime_renderer_session.cj	3420	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererPrepareComposableNodeBatch	委托:internalRendererPrepareComposableNodeBatchScalar
+src/runtime_renderer_session.cj	3428	os == "macOS" || os == "Windows"	internalRendererReuseComposableNodeBatch	真实逻辑:调用 FFI cjgui_internal_renderer_reuse_composable_node_batch，失败/边界返回 (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, 0u32)
+src/runtime_renderer_session.cj	3453	os == "Linux"	internalRendererReuseComposableNodeBatch	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u32)
+src/runtime_renderer_session.cj	3460	os != "macOS" && os != "Windows" && os != "Linux"	internalRendererReuseComposableNodeBatch	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, 0u32)
+src/runtime_renderer_session.cj	3750	os == "macOS"	internalRendererAtomicModalReturnSupported	true
+src/runtime_renderer_session.cj	3752	os != "macOS"	internalRendererAtomicModalReturnSupported	false
+src/runtime_renderer_session.cj	3755	os == "macOS"	internalRendererStageModalReturn	真实逻辑:调用 FFI cjgui_internal_renderer_stage_modal_return，失败/边界返回 CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+src/runtime_renderer_session.cj	3769	os != "macOS"	internalRendererStageModalReturn	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	3773	os == "macOS"	internalRendererModalReturnReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_modal_return_receipt 后返回 (status, receipt)
+src/runtime_renderer_session.cj	3783	os != "macOS"	internalRendererModalReturnReceipt	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Array<UInt64>(19, repeat: 0u64))
+src/runtime_renderer_session.cj	3915	os == "macOS"	internalRendererDiagnosticScalarSnapshot	真实逻辑:调用 FFI cjgui_internal_renderer_diagnostic_scalar_snapshot 后构造 InternalRendererDiagnosticScalarSnapshotResult
+src/runtime_renderer_session.cj	3927	os != "macOS"	internalRendererDiagnosticScalarSnapshot	InternalRendererDiagnosticScalarSnapshotResult(CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, CjguiInterna…
+src/runtime_renderer_session.cj	3963	os == "macOS"	internalRendererPublishedComposableDisplayProgress	真实逻辑:调用 internalRendererDiagnosticScalarSnapshot 后构造 InternalRendererComposableDisplayProgressResult（3 条语句）
+src/runtime_renderer_session.cj	3985	os != "macOS"	internalRendererPublishedComposableDisplayProgress	委托:internalRendererComposableDisplayProgress
+src/runtime_renderer_session.cj	4021	os == "Windows"	internalRendererRestoreComposableSelectionForPaint	真实逻辑:调用 FFI cjgui_internal_renderer_restore_composable_selection_paint_result，失败/边界返回 (CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID, 0, 0…
+src/runtime_renderer_session.cj	4048	os != "Windows"	internalRendererRestoreComposableSelectionForPaint	真实逻辑:返回 (result[0], result[1], result[2], None)
+src/runtime_renderer_session.cj	5048	os == "macOS"	internalRendererRequestCloseBeforeDestroy	空操作
+src/runtime_renderer_session.cj	5051	os != "macOS"	internalRendererRequestCloseBeforeDestroy	委托:internalRendererRequestClose
+src/runtime_renderer_session.cj	5056	os == "macOS"	internalRendererCloseStopsNewOwnerWork	真实逻辑:返回 closePending || retryPending
+src/runtime_renderer_session.cj	5061	os != "macOS"	internalRendererCloseStopsNewOwnerWork	false
+src/runtime_renderer_session.cj	5215	os == "macOS"	internalRendererAcceptedCaretValue	真实逻辑:调用 FFI cjgui_internal_renderer_accepted_caret_value，返回 (CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR, meta, rect) / (status, meta, rect)
+src/runtime_renderer_session.cj	5230	os != "macOS"	internalRendererAcceptedCaretValue	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Array<UInt64>(16, repeat: 0u64), Array<Float64>(…
+src/runtime_renderer_session.cj	5237	os == "macOS"	internalRendererStageCandidateCaret	真实逻辑:调用 FFI cjgui_internal_renderer_stage_candidate_caret_identity，失败/边界返回 CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+src/runtime_renderer_session.cj	5250	os != "macOS"	internalRendererStageCandidateCaret	CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+src/runtime_renderer_session.cj	5257	os == "macOS"	internalRendererCaptureCandidateSelection	真实逻辑:调用 FFI cjgui_internal_renderer_capture_candidate_selection 后构造 InternalRendererCaptureSelectionResult
+src/runtime_renderer_session.cj	5283	os != "macOS"	internalRendererCaptureCandidateSelection	InternalRendererCaptureSelectionResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, candidate, "")
+src/runtime_renderer_session.cj	5289	os == "macOS"	internalRendererPrepareCandidateSelection	真实逻辑:调用 FFI cjgui_internal_renderer_prepare_candidate_selection 后返回 (status, ready != 0u8)
+src/runtime_renderer_session.cj	5295	os != "macOS"	internalRendererPrepareCandidateSelection	(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, false)
+src/runtime_renderer_session.cj	5299	os == "macOS"	internalRendererCandidateSelectionReceipt	真实逻辑:调用 FFI cjgui_internal_renderer_candidate_selection_receipt 后构造 InternalRendererSelectionTransferVerifyBResult
+src/runtime_renderer_session.cj	5305	os != "macOS"	internalRendererCandidateSelectionReceipt	InternalRendererSelectionTransferVerifyBResult(CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Cj…
+src/runtime_renderer_session.cj	5312	os == "macOS"	top-level	声明:foreign 块（4 个符号）
+src/runtime_renderer_session.cj	5325	os == "macOS"	internalRendererFreezePointerSelectionDispatch	真实逻辑:调用 FFI cjgui_internal_renderer_freeze_pointer_selection_dispatch，条件分支返回 identity / 0u64
+src/runtime_renderer_session.cj	5339	os != "macOS"	internalRendererFreezePointerSelectionDispatch	0u64
+src/runtime_renderer_session.cj	5342	os == "macOS"	internalRendererBindPointerSelectionDispatch	委托:cjgui_internal_renderer_bind_pointer_selection_dispatch
+src/runtime_renderer_session.cj	5346	os != "macOS"	internalRendererBindPointerSelectionDispatch	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	5350	os == "macOS"	internalRendererCompletePointerSelectionDispatch	委托:cjgui_internal_renderer_complete_pointer_selection_dispatch
+src/runtime_renderer_session.cj	5359	os != "macOS"	internalRendererCompletePointerSelectionDispatch	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	5362	os == "macOS"	internalRendererRefusePointerSelectionDispatch	委托:cjgui_internal_renderer_refuse_pointer_selection_dispatch
+src/runtime_renderer_session.cj	5366	os != "macOS"	internalRendererRefusePointerSelectionDispatch	CJGUI_INTERNAL_RENDERER_OK
+src/runtime_renderer_session.cj	5373	os == "macOS"	internalRendererSetComposableSemanticHelp	真实逻辑:调用 FFI cjgui_internal_renderer_set_composable_node_semantic_help 后返回 status
+src/runtime_renderer_session.cj	5384	os != "macOS"	internalRendererSetComposableSemanticHelp	CJGUI_INTERNAL_RENDERER_OK
+src/windows_application_host.cj	8	os == "Windows"	class:CjguiWindowsApplicationHost	声明:平台类 CjguiWindowsApplicationHost（7 个方法）

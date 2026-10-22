@@ -25,9 +25,13 @@
 # Test run outputs — large binary corpora, must never enter history
 /artifacts/
 
-# Per-round build output inside the framework tree (test binaries, .cjo, .a).
-# Round notes and small evidence files stay tracked; only compiled output is excluded.
-/runtime/cjgui/artifacts/*/work/
+# Per-round evidence under the framework tree: SDK exports, screenshots,
+# source snapshots and compiled output. Regenerated every round, never part
+# of the framework source, and large enough to wreck history if committed
+# (the 2026-10-20 rewrite removed 10.6 GiB of exactly this).
+# Files already tracked stay tracked; add a new one deliberately with `git add -f`.
+/runtime/cjgui/artifacts/
+/runtime/cjgui/platforms/*/evidence/
 
 # Build outputs and compiled artifacts
 build/

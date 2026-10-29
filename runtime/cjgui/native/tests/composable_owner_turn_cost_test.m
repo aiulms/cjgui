@@ -1,6 +1,20 @@
 #define CJGUI_INTERNAL_TESTING 1
 #import "../cjgui_internal_renderer.m"
 static int failed;
+static BOOL injectedForeignLine;
+static void foreignLine(void) {
+    const char line[]="CJGUI_APPLICATION_STOP fixture=concurrent_stderr\n";
+    (void)write(STDERR_FILENO,line,sizeof(line)-1);
+    injectedForeignLine=YES;
+}
+static int interleavedOutput(void *cookie,const char *bytes,int count) {
+    (void)cookie;
+    ssize_t written=write(STDOUT_FILENO,bytes,(size_t)count);
+    // Reproduce the real merged stdout/stderr failure at a stdio flush
+    // boundary, without changing or reconstructing the metric records.
+    if(written>0 && bytes[written-1]!='\n' && !injectedForeignLine)foreignLine();
+    return (int)written;
+}
 #define COST_CHECK(c,n) do { BOOL ok=(c);fprintf(stderr,"owner_turn_cost case=%s result=%s\n",n,ok?"PASS":"FAIL");if(!ok)failed++; } while(0)
 static void pair(uint64_t turn,uint64_t start,uint64_t end,uint64_t idle) {
     CjguiOwnerTurnCostObserve(144,0,turn,start,101,0);
@@ -10,6 +24,21 @@ static void pair(uint64_t turn,uint64_t start,uint64_t end,uint64_t idle) {
 int main(void) { @autoreleasepool {
     setenv("CJGUI_OWNER_TURN_COST","1",1);
     COST_CHECK(CjguiOwnerTurnCostEnabled(),"explicit_opt_in");
+    if (getenv("CJGUI_COST_EXPORT_INTERLEAVE_CONTROL")) {
+        for(uint64_t i=0;i<96;i++)pair(i+1,i*100000,i*100000+50000,10000);
+        FILE *original=stdout;
+        FILE *hooked=funopen(NULL,NULL,interleavedOutput,NULL,NULL);
+        if(!hooked)return 2;
+        char storage[1024];
+        if(setvbuf(hooked,storage,_IOFBF,sizeof(storage))!=0)return 2;
+        stdout=hooked;
+        uint8_t terminal=cjgui_internal_renderer_finalize_owner_trace();
+        fflush(hooked);stdout=original;fclose(hooked);
+        if(!injectedForeignLine)foreignLine();
+        COST_CHECK(terminal==2 && gCjguiOwnerTurnCostExportSucceeded,
+            "interleaved_output_reaches_terminal_raw_rows_checked_independently");
+        return failed?1:0;
+    }
     if (getenv("CJGUI_COST_EXPORT_FULL_CONTROL")) {
         for (uint64_t i=0;i<CJGUI_OWNER_TURN_COST_CAPACITY;i++) pair(i+1,i*100000,i*100000+50000,10000);
         uint8_t terminal=cjgui_internal_renderer_finalize_owner_trace();

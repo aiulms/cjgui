@@ -472,6 +472,11 @@ def run(args):
         child, record = None, None
         try:
             env, _ = toolchain_environment(Path(receipt["toolchain_environment"]))
+            # Fontconfig initialisation on the normal Linux entry needs a deeper
+            # main-thread stack than the runtime default. An explicit user value
+            # wins; 4 MiB is an operating condition, not a root-cause claim for
+            # every historical teardown crash.
+            env.setdefault("cjStackSize", "4mb")
             command = [receipt["executable"], *args.arguments]
             # The app owns its own process group so a descendant that ignores
             # TERM cannot outlive the runner while the output lock is released.
@@ -664,6 +669,10 @@ def package(args):
                     "bundled": bundled,
                     "system": sorted(system, key=lambda item: item["name"]),
                 },
+                "runtime_environment": {
+                    "cjStackSize": {"default": "4mb", "override": "preserved",
+                                    "reason": "Fontconfig initialisation on the normal Linux entry"},
+                },
                 "launch": "./run.sh",
             }
             save(root / "manifest.json", manifest_value)
@@ -674,6 +683,7 @@ def package(args):
                 'cd "$HERE"\n'
                 'LD_LIBRARY_PATH="$HERE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
                 "export LD_LIBRARY_PATH\n"
+                'export cjStackSize="${cjStackSize:-4mb}"\n'
                 'if [[ -z "${DISPLAY:-}" ]]; then\n'
                 '  echo "CJGUI_PREVIEW no DISPLAY; start this script inside an X11 desktop session" >&2\n'
                 "  exit 2\n"
@@ -696,6 +706,7 @@ def package(args):
                 "```bash\n./run.sh\n```\n\n"
                 f"- 随包运行库：{bundled_names}（位于 `lib/`，启动脚本设置相对 `LD_LIBRARY_PATH`）。\n"
                 f"- 需由系统提供的运行库：{system_names}。缺少时启动脚本列出具体名称并以 2 退出。\n"
+                "- 启动脚本默认 `cjStackSize=4mb`（Fontconfig 初始化条件）；显式设置的 `cjStackSize` 优先。\n"
                 "- 二进制、资源与构建回执身份见 `manifest.json`；原始回执在 `identity/build-receipt.json`。\n"
                 "- 该包只覆盖当前 Linux X11 会话；Wayland 与跨发行版未声明。\n")
             (root / "identity/REPRODUCE.md").write_text(

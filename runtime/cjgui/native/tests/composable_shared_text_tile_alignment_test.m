@@ -223,7 +223,7 @@ static BOOL compareForcedPartition(CJGuiInternalMetalView *view, NSString *text,
 
     // One full preparation and two halves use the same TextKit layout; their
     // stitched pixels must agree at the seam despite the coverage guard.
-    CjguiPreparedTextNodeLayout *shared = CjguiPrepareTextNodeLayout(node, text, 2.0, nil);
+    CjguiPreparedTextNodeLayout *shared = CjguiPrepareTextNodeLayout(node, text, 2.0, nil, nil);
     if (!shared) {
         fprintf(stderr, "PARTITION_FAIL fixture=%s shared TextKit preparation returned nil\n",
                 unicodeFixture ? "unicode" : "ascii");
@@ -424,7 +424,7 @@ static BOOL verifyPreparationRollbackAndEmptyInset(CJGuiInternalMetalView *view)
     emptyInset.node = emptyGeometry;
     NSRect emptyTextRect = NSInsetRect(NSMakeRect(0, 0, emptyGeometry.width, emptyGeometry.height), 7.0, 6.0);
     BOOL prepareNilIsLegal = NSIsEmptyRect(emptyTextRect) &&
-        CjguiPrepareTextNodeLayout(emptyInset, emptyInset.value, scale, nil) == nil;
+        CjguiPrepareTextNodeLayout(emptyInset, emptyInset.value, scale, nil, nil) == nil;
     id<MTLTexture> emptyInsetTexture = CjguiComposableTextTexture(
         view, emptyInset, scale, scale, emptyInset.value, CjguiInternalTextWorkReasonUnknown);
     uint64_t emptyInsetBytes = emptyInset.textTextureByteCount;

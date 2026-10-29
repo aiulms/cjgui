@@ -265,13 +265,173 @@ func ordinaryModalReturnWithoutBookmarkDoesNotBlockClosingSceneOrInventSelection
     let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
     let facts = window.testOrdinaryModalReturnWithoutBookmark()
     @Assert(facts.size, 7)
-    @Assert(facts[0], "none")
-    @Assert(facts[1], "none")
-    @Assert(facts[2], "bookmark_unavailable")
-    @Assert(facts[3], "false")
-    @Assert(facts[4], "-1")
+    @Assert(facts[0], "present")
+    @Assert(facts[1], "")
+    @Assert(facts[2], "pending")
+    @Assert(facts[3], "true")
+    @Assert(facts[4] != "-1")
     @Assert(facts[5], "3:5")
-    @Assert(facts[6], "bookmark_unavailable")
+    @Assert(facts[6], "pending")
+}
+
+private func modalReturnPendingPanel(): CjguiSearchableSelectionPanel {
+    let panel = CjguiSearchableSelectionPanel("modal-return-confirmation")
+    panel.open("Choose", ArrayList<CjguiSearchableSelectionItem>([
+        CjguiSearchableSelectionItem("chosen", "Chosen")]), CjguiComposableUiNodeReference.manual(9901))
+    @Assert(panel.requestConfirm())
+    return panel
+}
+
+@Test
+func ordinaryModalReturnConfirmationWaitsForClosingCandidateReceipt(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let prepared = window.testModalConfirmationClosingCandidate()
+        @Assert(prepared[0], "3")
+        @Assert(prepared[1], "pending")
+        @Assert(prepared[2], "-1:-1:false")
+        @Assert(panel.takeConfirmed(window).isNone())
+        @Assert(panel.takeConfirmationFailure(), "")
+        let completed = window.testModalConfirmationClosingCandidate(complete: true)
+        @Assert(completed[0], "true")
+        @Assert(completed[1], "focused")
+        @Assert(panel.takeConfirmed(window).getOrThrow().key, "chosen")
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnConfirmationWaitsAfterOwnedCalibrationRefusal(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let owner = ModalReturnRejectingOwner("abcdef")
+    let session = window.bindRangeTextSession(9901, "return-body", owner, owner, 9123,
+        CJGUI_COMPOSABLE_UI_TEXT_INPUT)
+    let _ = session.refuseCapturedInstalledRange()
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let prepared = window.testModalConfirmationClosingCandidate(withBookmark: true)
+        @Assert(prepared[0], "3")
+        @Assert(prepared[1], "pending")
+        @Assert(prepared[2], "-1:-1:false")
+        @Assert(panel.takeConfirmed(window).isNone())
+        @Assert(panel.takeConfirmationFailure(), "")
+        let completed = window.testModalConfirmationClosingCandidate(complete: true)
+        @Assert(completed[0], "true")
+        @Assert(completed[1], "focused")
+        @Assert(panel.takeConfirmed(window).getOrThrow().key, "chosen")
+        @Assert(session.awaitingCalibration())
+        @Assert(owner.selectionWrites, 0)
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnConfirmationFailsOnCancelledFocusCandidate(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let prepared = window.testModalConfirmationClosingCandidate()
+        @Assert(prepared[1], "pending")
+        @Assert(panel.takeConfirmed(window).isNone())
+        let cancelled = window.testModalConfirmationClosingCandidate(complete: true, cancel: true)
+        @Assert(cancelled[0], "candidate_cancelled_test")
+        @Assert(panel.takeConfirmed(window).isNone())
+        @Assert(panel.takeConfirmationFailure(), "candidate_cancelled_test")
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnWithoutBookmarkReleasesTheActualPanelChoice(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let facts = window.testModalReturnConfirmationState()
+        let chosen = panel.takeConfirmed(window)
+        @Assert(chosen.isSome())
+        @Assert(chosen.getOrThrow().key, "chosen")
+        @Assert(panel.takeConfirmationFailure(), "")
+        @Assert(facts[0], "true")
+        @Assert(facts[1], "focused")
+        @Assert(facts[2], "-1")
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnRefusedOwnedCalibrationCannotInstallItsOldBookmark(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let owner = ModalReturnRejectingOwner("abcdef")
+    let session = window.bindRangeTextSession(9901, "return-body", owner, owner, 9123,
+        CJGUI_COMPOSABLE_UI_TEXT_INPUT)
+    session.setSelection16(2, 4)
+    // Enter the real failed-native-observation calibration gate. A pure
+    // setSelection16 has not installed a proxy, so replaceRange16 there would
+    // stop earlier at selection_native_alignment_required.
+    let rejected = session.refuseCapturedInstalledRange()
+    @Assert(!rejected.accepted)
+    @Assert(session.awaitingCalibration())
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let writes = owner.selectionWrites
+        let facts = window.testModalReturnConfirmationState(withBookmark: true)
+        @Assert(facts[0], "true")
+        @Assert(facts[1], "focused")
+        @Assert(facts[2], "-1")
+        @Assert(panel.takeConfirmed(window).getOrThrow().key, "chosen")
+        @Assert(session.awaitingCalibration())
+        @Assert(owner.selectionWrites, writes)
+        @Assert(owner.textValue, "abcdef")
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnRefusedOwnedVersionCannotInstallItsOldBookmark(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let owner = ModalReturnRejectingOwner("abcdef")
+    let session = window.bindRangeTextSession(9901, "return-body", owner, owner, 9123,
+        CJGUI_COMPOSABLE_UI_TEXT_INPUT)
+    session.setSelection16(2, 4)
+    owner.externalWholeValue("abcdefgh")
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let writes = owner.selectionWrites
+        let facts = window.testModalReturnConfirmationState(withBookmark: true, body: "abcdefgh")
+        @Assert(facts[0], "true")
+        @Assert(facts[1], "focused")
+        @Assert(facts[2], "-1")
+        @Assert(panel.takeConfirmed(window).getOrThrow().key, "chosen")
+        @Assert(owner.selectionVersionValue, 1)
+        @Assert(owner.selectionWrites, writes)
+        @Assert(owner.textValue, "abcdefgh")
+    } finally { window.close() }
+}
+
+@Test
+func ordinaryModalReturnSourceSurfaceCannotBypassRefusedOwnedProof(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let owner = ModalReturnRejectingOwner("abcdef")
+    let session = window.bindRangeTextSession(9901, "return-body", owner, owner, 9123,
+        CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+    session.setSelection16(2, 4)
+    session.invalidate()
+    @Assert(window.start())
+    try {
+        let panel = modalReturnPendingPanel()
+        let writes = owner.selectionWrites
+        let facts = window.testModalReturnConfirmationState(withBookmark: true, sourceSurface: true)
+        @Assert(facts[0], "false")
+        @Assert(facts[1], "restore_refused")
+        @Assert(facts[2], "-1")
+        @Assert(facts[3], "0")
+        @Assert(panel.takeConfirmed(window).isNone())
+        @Assert(panel.takeConfirmationFailure(), "restore_refused")
+        @Assert(!session.isBound())
+        @Assert(owner.selectionWrites, writes)
+    } finally { window.close() }
 }
 
 @Test
@@ -316,4 +476,57 @@ func modalReturnOldCarrierReceiptCannotCompleteReplacementOrOverwriteInstalled()
     @Assert(facts[9], "false")
     @Assert(facts[10], "installed")
     @Assert(facts[11], "0:2")
+}
+
+@Test
+func ordinaryLocalFilterReturnRetainsSentinelIdentityAndExactSelection(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testOrdinaryModalReturnWithoutBookmark(localTarget: true)
+    @Assert(facts.size, 8)
+    @Assert(facts[0], "present")
+    @Assert(facts[1], "")
+    @Assert(facts[2], "pending")
+    @Assert(facts[3], "true")
+    @Assert(facts[5], "3:5")
+    @Assert(facts[6], "pending")
+    @Assert(facts[7], UInt64.Max.toString())
+}
+
+@Test
+func ordinaryNontextLayerReturnHasFocusFactWithoutTextSelectionTicket(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testNontextLayerFocusCandidate()
+    @Assert(facts.size, 10)
+    @Assert(facts[0], "true")
+    @Assert(facts[1], "2")
+    @Assert(facts[2], UInt64.Max.toString())
+    @Assert(facts[3], UInt64.Max.toString())
+    @Assert(facts[4], "false")
+    @Assert(facts[5], "true")
+    @Assert(facts[6], "true")
+    @Assert(facts[7], "true")
+    @Assert(facts[8], "focused")
+    @Assert(facts[9], "true")
+}
+
+@Test
+func initialLayerFocusKeepsRealReturnSelection(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testInitialLayerFocusPreservesReturnBookmark()
+    @Assert(facts.size, 4)
+    @Assert(facts[0], "true")
+    @Assert(facts[1], "true")
+    @Assert(facts[2], "true")
+    @Assert(facts[3], "3:5")
+}
+
+@Test
+func nestedLayerReturnsRealSelectionToStillLiveParent(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testInitialLayerFocusPreservesReturnBookmark(nested: true)
+    @Assert(facts.size, 4)
+    @Assert(facts[0], "true")
+    @Assert(facts[1], "true")
+    @Assert(facts[2], "true")
+    @Assert(facts[3], "3:5")
 }

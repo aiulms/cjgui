@@ -1,5 +1,30 @@
 # 创建、运行和接入混合表单
 
+### macOS 测试依赖闭包
+
+`input_route_test.cj` 与 `primary_route_regression_test.cj` 使用框架的
+`macos_owner_fixture_test.cj`，由 AppKit owner loop 托管真实 controller/window fixture。
+开发树中的 `native/scripts/verify_cjpm_mac_testing_link.py --consumer` 会把框架源改写为
+消费者包名并注入隔离测试包；导出的 SDK 则在本模板 `src/` 中携带同一 helper 的包名改写副本，
+因此从 SDK 创建的应用仍能直接解析这些模板测试。helper 是仅供测试的输入，不属于生产源码集合；
+native-backed 测试须链接 testing archive，正常 archive 与标准 Cangjie test runner 的职责不变。
+
+SDK 自带消费者测试入口及其依赖（`macos_build_config.py`、sidecar builder、source-set
+helper）。从解压后的 SDK 根直接运行包内 driver；`--consumer` 指向用该 SDK 创建的应用。
+应用构建/测试仍要求本机 Cangjie 1.1.3 和 macOS SDK 环境。三个 filter 分进程运行：
+
+```sh
+python3 framework/cjgui/native/scripts/verify_cjpm_mac_testing_link.py \
+  --runtime framework/cjgui --consumer "/你的目录/My Print Tool" \
+  --filter '*mixedRouteOwnedWhole*'
+python3 framework/cjgui/native/scripts/verify_cjpm_mac_testing_link.py \
+  --runtime framework/cjgui --consumer "/你的目录/My Print Tool" \
+  --filter '*mixedRouteWholeValue*'
+python3 framework/cjgui/native/scripts/verify_cjpm_mac_testing_link.py \
+  --runtime framework/cjgui --consumer "/你的目录/My Print Tool" \
+  --filter '*mixedRoutePrimaryWhole*'
+```
+
 可选字体资源模式：`./run.sh --fonts`（包含公共组合入口）。手写 Georgia、生成 Lilex 与同 owner 的多行只读字段
 共享原文字链；点击“字体换版／缺失回退”后，`client.py DESCRIPTOR font-switch --font-resource preview-mono`
 提交引用目录当前版本的结构。`font-switch --font-resource preview-serif` 可选择已公开的系统字体；`reorder` 保留同 key。
@@ -17,6 +42,10 @@ Experimental，当前交付 macOS / Cangjie 1.1.3。此模板是内存中的打�
 
 此模式同时展示同一份数声明的整数步进和滑块、原布尔字段、公共错误汇总与字段帮助、
 完整语义文本的最多两行省略、共同字距／行高，以及 catalog 声明的 PNG。
+窗口内还挂载“主详情布局”和“辅助摘要布局”两个独立文档工作区：各自有真实 Surface、
+session 和界面文件，关闭前由同一保护检查全部工作区的未保存界面/在途票据，再进入业务
+关闭策略；保存界面不会应用业务草稿。路径输入、打开和另存始终可用，空路径保存具名拒绝，
+已有其他目标不覆盖。
 点击“开启本地协作”后，`client.py generate` 再按实际目录创建同字段的生成编辑器、滑块及图片；
 `client.py reorder` 保留 key 调整真实结构。手写／生成区都不存第二份业务草稿。
 `--commands --collaboration` 可以显式组合启动；两个选项均非默认。
@@ -56,11 +85,26 @@ python3 client.py DESCRIPTOR apply
 
 `generate` 先发现公开字段/动作再提交实际节点；`reorder` 移动已经接受的树，保留 key/binding。聚焦生成输入后重排，直接续写仍进入同一草稿。`set` 和 `apply` 使用同一公开业务操作；错误由原 owner 返回，不用客户端猜业务范围。命令支持 `--output result.json` 留存完整结果。连接由现有 Application 接管关闭并在同一业务线程有界泵送；主窗关闭后统一关闭可选 Inspector 和连接，不另起业务线程。
 
+read --instance KEY 或 read --owner ID 把选择交给同一 typed 请求；输出完整的
+form_state、逐字段 owner_resource_id/draft/applied/draft_version/state_version/field_version，
+以及已有的可用性、blocked/validation 原因。相同字段名属于不同 owner 时分别保留；
+缺失正文/版本输出 null，旧投影未发布的 owner 仍为 -1，不据此推断真实 owner 或版本。
+读取不会执行编辑。公开示例也按完整 typed 字段读取，不把字段名当成跨 owner 唯一键。
+有效请求被端点拒绝时，--output 仍保存已取得的submit/terminal及错误code/版本/target，未取得的form_state/fields/actions为null，退出码1；不会换成默认owner的成功值。card操作也透传显式expected版本，用于真实的过期请求拒绝。
+
+文档启动只调用 documentWorkspace.beginStartup(path)；普通 turn 对两个 workspace
+调用 finish()，关闭使用原 close guard。准确票据、实际文件观察和终态留在同一个
+session；应用无需复制启动观察者。同步启动预算结束后仍由普通 turn 完成原操作，
+不会重投或用默认生成候选抢占。业务类继续负责草稿/已应用值和持久化；此内存模板
+保存的是界面定义，不是打印预设数据库，重开进程会建立新的默认业务 owner。
+
 接入自己的业务只改三处：
 
 - `src/domain.cj`：字段及约束只在 `formBinding()` 的声明中出现一次；校验读取这份声明。实现既有 `CjguiSharedEditableFormDomain`，保留一个真实草稿/已应用 owner，按自己的业务决定 Apply、版本和持久化。
 - `src/main.cj`：用 `cjguiComposableBoundFormField` 画手写字段、公共 `CjguiNumericStepper` 画整数编辑与步进，均消费相同声明和 owner；调整容器/样式即可换布局。`CjguiGeneratedUiFormBinding` 读写原领域；其 `capabilityCatalog()` 提供可选标准表单词汇。若需要其他组件，用已有 catalog 注册接口，自行选择允许的范围。
 - 动态区继续用 `CjguiGeneratedUiWindowRegion`；将 scene refresh 和事件委派给 region，再将手写事件交给 form binding。TEXT 绑定范围会话，宿主须启用模板已有的 `rangeTextEditDeltaDelivery: true`，避免将整值预览误作另一笔写入。窗口焦点/选择、输入队列、候选接受和完成协议都由已有框架负责。业务变化不需要修改 native。
+
+选中对象的手写字段在 `buildSelectedDetail` 清理、重声明 instance alias；这些声明随原 scene 一起准备、接受或回滚，准备时不会使旧 accepted TEXT 源失效。接受换属或移除时，region 复用窗口的输入结算和解绑协议，并退休旧范围适配器；未完成输入仍由原会话保留，不重放到新 owner。窗口若保留旧输入载体，region 不把新绑定写成已安装；实际新聚焦仍须通过完整节点、owner 和版本检查。相同 node id 的其他 region 会话也不归本 region 释放。
 
 字段 TEXT / INTEGER / BOOLEAN、标签、必填、长度、数字范围和动作签名供手写、生成和外部发现共同消费。只读文本可用 `textMaxLines` / `textOverflow`，完整业务值不截断。此模板不承诺其他平台宿主、任意并行业务数据库、真实模型生成或完整 IME 验收。
 
@@ -127,4 +171,17 @@ Inspector 默认关闭，开发按钮显式打开；普通运行无需该副窗�
 
 ## 公共多样式文本
 
-`./run.sh --styled-text` 启动自动高度的多字体/字号说明；`client.py DESCRIPTOR styled-generate` 读取同一 `assets/styled-description.tsv`。`styled-color` / `styled-size` / `styled-font-current` 修改原声明并保留完整正文和 owner。窄窗生成操作按钮按列排列。双窗口与结束核对入口见 [STYLED_TEXT.md](../../../STYLED_TEXT.md)。
+`./run.sh --styled-text` 启动自动高度的多字体/字号说明；`client.py DESCRIPTOR styled-generate` 读取同一 `assets/styled-description.tsv`。`styled-color` / `styled-size` / `styled-font-current` 修改原声明并保留完整正文和 owner。窄窗生成操作按钮按列排列。双窗口与结束核对入口见 [STYLED_TEXT.md](<../../../STYLED_TEXT.md>)。
+
+## 会话内界面撤销与重做（experimental）
+
+主界面文档 session 默认示范可选 UI history：32 个完整接受点（含当前锚点）、序列化总量 2 MiB；摘要 surface 未开启。已有应用不传 `historyPolicy` 时保持关闭。工具栏“撤销界面 / 重做界面”与公开客户端同用 workspace、当前 CAS/digest 和准确票据；这是界面声明的历史，不回滚业务草稿、已应用预设、选择或授权，也不占用正文 Cmd-Z。
+
+```sh
+python3 client.py DESCRIPTOR ui-history > observed.json
+python3 client.py DESCRIPTOR ui-undo --history-baseline observed.json
+# 返回 candidate_pending / 退出9时尚未完成；用同一endpoint的现有票据接口观察。
+# 接受后重新读取一次 ui-history，再把新观察交给 ui-redo。
+```
+
+客户端只把这三项转交公共 `cjgui_generated_edit`，不暗中刷新旧观察或重投。撤销后有新接受修改会裁掉 redo；错过外部版本、条目超限和文件/会话切换有明确边界。保存不持久化历史；正常关闭会断开旧 workspace，重新打开从新会话开始。完整能力事实、拒绝、限制与公共 Python 用法见框架 `shared_operation_core/GENERATED_EDITING.md` 的 Optional UI-document undo/redo。

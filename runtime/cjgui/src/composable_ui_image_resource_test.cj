@@ -117,8 +117,9 @@ private func imageTestNode(resource: String, version: String, contentMode!: Stri
 func generatedImageResourceDeclarationIsValidatedAndPublished(): Unit {
     let catalog = imageTestCatalog()
     // Unsupported type, non-positive version, empty name/path are refused.
+    // PNG and static RGB JPEG are the accepted formats on macOS.
     @Assert(catalog.registerImageResource(
-        CjguiGeneratedUiImageResourceSpec("bad-type", "JPEG", 1, "名称", "a.jpeg")), false)
+        CjguiGeneratedUiImageResourceSpec("bad-type", "WEBP", 1, "名称", "a.webp")), false)
     @Assert(catalog.lastRegistrationRejection().startsWith("image_resource_declaration_invalid"), true)
     @Assert(catalog.registerImageResource(imageTestSpec("zero", 0, "a.png")), false)
     @Assert(catalog.registerImageResource(
@@ -797,4 +798,40 @@ func supersededRepeatedBuildCandidateDoesNotDisturbAnotherHolder(): Unit {
     @Assert(catalog.liveImageIdentityHoldCount(), 1)
     stable.releaseAcceptedImageIdentities()
     @Assert(catalog.liveImageIdentityHoldCount(), 0)
+}
+
+
+@Test
+func imageResourceAcceptsPngAndStaticRgbJpeg(): Unit {
+    let catalog = imageTestCatalog()
+    let png = CjguiGeneratedUiImageResourceSpec("preview-png", "PNG", 1, "色块 PNG",
+        "resources/preview-swatch.png")
+    let jpeg = CjguiGeneratedUiImageResourceSpec("preview-jpeg", "JPEG", 1, "色块 JPEG",
+        "resources/preview-swatch.jpg")
+    @Assert(png.isValid(), true)
+    @Assert(jpeg.isValid(), true)
+    @Assert(CjguiGeneratedUiImageResourceSpec("bad", "JPG", 1, "x", "x.jpg").isValid(), false)
+    @Assert(CjguiGeneratedUiImageResourceSpec("bad", "jpeg", 1, "x", "x.jpg").isValid(), false)
+    @Assert(catalog.registerImageResource(png), true)
+    @Assert(catalog.registerImageResource(jpeg), true)
+    let described = CjguiGeneratedUiEncoding.describe(catalog)
+    @Assert(described.contains("IMAGE_RESOURCE preview-png PNG 1 色块 PNG"), true)
+    @Assert(described.contains("IMAGE_RESOURCE preview-jpeg JPEG 1 色块 JPEG"), true)
+    @Assert(described.contains("preview-swatch"), false)
+    // The SAME version may not be re-pointed at another raster; a new version
+    // with a different path is the declared way to change content.
+    @Assert(catalog.updateImageResource(CjguiGeneratedUiImageResourceSpec("preview-jpeg", "JPEG", 1,
+        "色块 JPEG", "resources/preview-swatch-v2.jpg")), false)
+    @Assert(catalog.imageResourceFor("preview-jpeg", 1).getOrThrow().rasterPath,
+        "resources/preview-swatch.jpg")
+    @Assert(catalog.updateImageResource(CjguiGeneratedUiImageResourceSpec("preview-jpeg", "JPEG", 2,
+        "色块 JPEG v2", "resources/preview-swatch-v2.jpg")), true)
+    @Assert(catalog.imageResourceFor("preview-jpeg", 2).isSome(), true)
+    @Assert(catalog.imageResourceFor("preview-jpeg", 1).isNone(), true)
+    // The thin composition helper takes key/version/path from the ONE declaration.
+    let node = cjguiComposableImageResource(150, "preview", catalog.imageResourceFor(
+        "preview-jpeg", 2).getOrThrow(), CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64))
+    @Assert(node.imageResourceId, "preview-jpeg")
+    @Assert(node.imageResourceVersion, 2)
+    @Assert(node.imageResourcePath, "resources/preview-swatch-v2.jpg")
 }

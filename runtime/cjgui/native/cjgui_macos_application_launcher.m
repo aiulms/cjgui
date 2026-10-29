@@ -36,6 +36,22 @@ static void CjguiTraceApplicationPointer(CGEventRef cg,const char *phase,NSEvent
         (unsigned long long)cjgui_internal_renderer_owner_clock_ns());
 }
 static BOOL CjguiIsObservedTestKey(CGEventRef event) {
+    if (!event) return NO;
+    const char *filter=getenv("CJGUI_EARLY_KEY_FILTER");
+    if (filter && *filter) {
+        uint64_t key=(uint64_t)CGEventGetIntegerValueField(event,kCGKeyboardEventKeycode);
+        BOOL matched=NO;
+        for (const char *p=filter;*p;) {
+            char *end=NULL;
+            unsigned long wanted=strtoul(p,&end,10);
+            if (end==p || wanted>255 || (*end && *end!=',')) return NO;
+            matched |= key==wanted;
+            if (!*end) break;
+            p=end+1;
+            if (!*p) return NO;
+        }
+        return matched;
+    }
     int64_t userData = event ? CGEventGetIntegerValueField(event, kCGEventSourceUserData) : 0;
     return userData >= 1 && userData <= (getenv("CJGUI_OWNED_POINTER_TRACE") ? 16 : 6) &&
         CGEventGetIntegerValueField(event, kCGKeyboardEventKeycode) == 0;

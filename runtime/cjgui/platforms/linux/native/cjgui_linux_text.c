@@ -38,6 +38,8 @@
 #include "cjgui_linux_text.h"
 #include "cjgui_linux_font_resource.h"
 
+#include <pthread.h>
+
 #include <fontconfig/fontconfig.h>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -49,6 +51,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static int cjgui_linux_trace_flag(const char *name) {
+    const char *value = getenv(name);
+    if (value == NULL || value[0] == '\0' || strcmp(value, "0") == 0) return 0;
+    return 1;
+}
+
+// Diagnostic A/B only: force every prepare to reshape/wrap so a run with reuse
+// and a run without it can be compared on the same binary and load.
+static int lt_no_reuse(void) {
+    static int enabled = -1;
+    if (enabled < 0) enabled = cjgui_linux_trace_flag("CJGUI_LINUX_TEXT_NO_REUSE");
+    return enabled;
+}
 
 #define LT_FACE_CAP 96        // 一个实例最多打开的 FT_Face 数
 #define LT_CHAIN_CAP 64       // 每个族集最多参与回退的 fontconfig 候选项
@@ -251,6 +267,8 @@ struct CjguiLinuxText {
     int memo_valid;
     uint64_t prepare_calls;
     uint64_t prepare_reuses;
+    uint64_t shape_calls;
+    uint64_t wrap_calls;
     uint64_t glyph_rasters;
     uint64_t glyph_cache_hits;
 };
@@ -273,11 +291,32 @@ static uint64_t lt_hash_mix(uint64_t h, const void *data, size_t n) {
     return h;
 }
 
+// The memo is shared by the plain and styled paths, so the declaration kind is
+// part of the key. Without this tag a styled result could satisfy a plain
+// request that happens to carry the same bytes and geometry.
+static uint64_t lt_plain_memo_key(const char *utf8, size_t len, double fontSize,
+                                  uint32_t fontWeight, uint32_t fontFamily, double maxWidth,
+                                  uint64_t revision) {
+    uint64_t h = 1469598103934665603ull;
+    uint64_t tag = 0x504c41494e4d454full;  // "PLAINMEMO"
+    h = lt_hash_mix(h, &tag, sizeof tag);
+    h = lt_hash_mix(h, &revision, sizeof revision);
+    h = lt_hash_mix(h, &fontSize, sizeof fontSize);
+    h = lt_hash_mix(h, &fontWeight, sizeof fontWeight);
+    h = lt_hash_mix(h, &fontFamily, sizeof fontFamily);
+    h = lt_hash_mix(h, &maxWidth, sizeof maxWidth);
+    h = lt_hash_mix(h, &len, sizeof len);
+    if (utf8 && len) h = lt_hash_mix(h, utf8, len);
+    return h;
+}
+
 static uint64_t lt_styled_memo_key(const char *utf8, size_t len, double fontSize,
                                    uint32_t fontWeight, uint32_t fontFamily, double maxWidth,
                                    const CjguiLinuxTextStyleRun *runs, uint32_t runCount,
                                    uint64_t revision) {
     uint64_t h = 1469598103934665603ull;
+    uint64_t tag = 0x5354594c45444d4full;  // "STYLEDMO"
+    h = lt_hash_mix(h, &tag, sizeof tag);
     h = lt_hash_mix(h, &revision, sizeof revision);
     h = lt_hash_mix(h, &fontSize, sizeof fontSize);
     h = lt_hash_mix(h, &fontWeight, sizeof fontWeight);
@@ -292,15 +331,10 @@ static uint64_t lt_styled_memo_key(const char *utf8, size_t len, double fontSize
         h = lt_hash_mix(h, &r->fontSize, sizeof r->fontSize);
         h = lt_hash_mix(h, &r->fontWeight, sizeof r->fontWeight);
         h = lt_hash_mix(h, &r->fontFamily, sizeof r->fontFamily);
-        h = lt_hash_mix(h, &r->red, sizeof r->red);
-        h = lt_hash_mix(h, &r->green, sizeof r->green);
-        h = lt_hash_mix(h, &r->blue, sizeof r->blue);
-        h = lt_hash_mix(h, &r->alpha, sizeof r->alpha);
-        h = lt_hash_mix(h, &r->hasBackground, sizeof r->hasBackground);
-        h = lt_hash_mix(h, &r->backgroundRed, sizeof r->backgroundRed);
-        h = lt_hash_mix(h, &r->backgroundGreen, sizeof r->backgroundGreen);
-        h = lt_hash_mix(h, &r->backgroundBlue, sizeof r->backgroundBlue);
-        h = lt_hash_mix(h, &r->backgroundAlpha, sizeof r->backgroundAlpha);
+        // Draw colors and run backgrounds are deliberately excluded: they
+        // never move a glyph. The current runs are still passed to the draw
+        // call, so a color-only declaration reuses the accepted geometry and
+        // paints with the new colors instead of keeping the old style values.
     }
     return h;
 }
@@ -1487,6 +1521,18 @@ static int lt_prepare(CjguiLinuxText *t, const char *utf8, size_t len, double fo
                       uint32_t fontWeight, uint32_t fontFamily, double maxWidth, int32_t *out_ps) {
     if (!t) return CJGUI_LINUX_TEXT_INVALID;
     if (!utf8 && len) return CJGUI_LINUX_TEXT_INVALID;
+    uint64_t revision = cjgui_linux_font_resource_revision();
+    uint64_t key = lt_plain_memo_key(utf8, len, fontSize, fontWeight, fontFamily, maxWidth,
+                                     revision);
+    t->prepare_calls += 1u;
+    if (!lt_no_reuse() && t->memo_valid && t->memo_key == key && t->memo_revision == revision) {
+        // Same declaration as the previous prepare: a measure→caret→quads run
+        // reuses the shaped clusters and wrapped lines. The body, geometry,
+        // style slots and font generation are all part of the key.
+        t->prepare_reuses += 1u;
+        if (out_ps) *out_ps = t->styles[0].size26_6;
+        return CJGUI_LINUX_TEXT_OK;
+    }
     t->memo_valid = 0;
     int status = lt_prepare_base(t, fontSize, fontWeight, fontFamily);
     if (status != CJGUI_LINUX_TEXT_OK) return status;
@@ -1498,11 +1544,16 @@ static int lt_prepare(CjguiLinuxText *t, const char *utf8, size_t len, double fo
 
     uint64_t fb_hash = 0;
     uint32_t fb_count = 0;
+    t->shape_calls += 1u;
     if (!lt_build(t, t->styles[0].set, t->styles[0].primary, utf8, len, ps, &fb_hash, &fb_count)) {
         return CJGUI_LINUX_TEXT_SHAPE_FAILED;
     }
+    t->wrap_calls += 1u;
     lt_wrap(t, maxWidth);
     lt_commit_fallback_log(t, fb_hash, fb_count);
+    t->memo_key = key;
+    t->memo_revision = revision;
+    t->memo_valid = 1;
     if (out_ps) *out_ps = ps;
     return CJGUI_LINUX_TEXT_OK;
 }
@@ -1728,7 +1779,7 @@ static int lt_prepare_styled(CjguiLinuxText *t, const char *utf8, size_t len, do
     uint64_t key = lt_styled_memo_key(utf8, len, fontSize, fontWeight, fontFamily, maxWidth,
                                       runs, runCount, revision);
     t->prepare_calls += 1u;
-    if (t->memo_valid && t->memo_key == key && t->memo_revision == revision) {
+    if (!lt_no_reuse() && t->memo_valid && t->memo_key == key && t->memo_revision == revision) {
         // Same declaration as the previous prepare: keep its shaped clusters,
         // wrapped lines and style slots. This is the measure→quads repeat.
         t->prepare_reuses += 1u;
@@ -1747,9 +1798,11 @@ static int lt_prepare_styled(CjguiLinuxText *t, const char *utf8, size_t len, do
 
     uint64_t fb_hash = 0;
     uint32_t fb_count = 0;
+    t->shape_calls += 1u;
     int built = lt_build_styled(t, utf8, len, runs, runCount, &fb_hash, &fb_count);
     if (built < 0) return CJGUI_LINUX_TEXT_INVALID;
     if (built == 0) return CJGUI_LINUX_TEXT_SHAPE_FAILED;
+    t->wrap_calls += 1u;
     lt_wrap(t, maxWidth);
     lt_commit_fallback_log(t, fb_hash, fb_count);
     t->memo_key = key;
@@ -1810,9 +1863,50 @@ static void lt_line_bytes(const CjguiLinuxText *t, uint32_t li, size_t len, size
 
 // ---------------------------------------------------------------- 公开接口
 
+// 仓颉主线程的 CJThread 栈只有约 132KiB；FcInit 首次解析 fontconfig 配置时要
+// 递归下降 80KiB 以上，深调用链上的消费者会直接踩穿栈底（SIGSEGV 落在
+// libfontconfig 里）。fontconfig 的配置是进程级单例，改在一次性的大栈线程上
+// 初始化，之后本线程只做已初始化的查询。
+static pthread_mutex_t g_fontconfig_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_fontconfig_ready = 0;
+
+typedef struct LtFontconfigInit {
+    int ok;
+} LtFontconfigInit;
+
+static void *lt_fontconfig_init_thread(void *arg) {
+    LtFontconfigInit *init = (LtFontconfigInit *)arg;
+    init->ok = FcInit() ? 1 : 0;
+    return NULL;
+}
+
+static int lt_ensure_fontconfig(void) {
+    pthread_mutex_lock(&g_fontconfig_lock);
+    if (!g_fontconfig_ready) {
+        LtFontconfigInit init = {0};
+        pthread_attr_t attr;
+        pthread_t thread;
+        int started = 0;
+        if (pthread_attr_init(&attr) == 0) {
+            if (pthread_attr_setstacksize(&attr, 1024u * 1024u) == 0 &&
+                pthread_create(&thread, &attr, lt_fontconfig_init_thread, &init) == 0) {
+                started = 1;
+            }
+            pthread_attr_destroy(&attr);
+        }
+        if (started) {
+            pthread_join(thread, NULL);
+        }
+        g_fontconfig_ready = init.ok;
+    }
+    int ready = g_fontconfig_ready;
+    pthread_mutex_unlock(&g_fontconfig_lock);
+    return ready;
+}
+
 CjguiLinuxText *cjgui_linux_text_create(int *outStatus) {
     if (outStatus) *outStatus = CJGUI_LINUX_TEXT_OK;
-    if (!FcInit()) {
+    if (!lt_ensure_fontconfig()) {
         if (outStatus) *outStatus = CJGUI_LINUX_TEXT_NO_FONT;
         return NULL;
     }
@@ -1857,11 +1951,12 @@ CjguiLinuxText *cjgui_linux_text_create(int *outStatus) {
 
 void cjgui_linux_text_destroy(CjguiLinuxText *text) {
     if (!text) return;
-    if (getenv("CJGUI_LINUX_TEXT_STATS")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_TEXT_STATS")) {
         fprintf(stderr,
-                "CJGUI_LINUX_TEXT_STATS prepares=%llu reused=%llu glyph_rasters=%llu "
-                "glyph_cache_hits=%llu\n",
+                "CJGUI_LINUX_TEXT_STATS prepares=%llu reused=%llu shapes=%llu wraps=%llu "
+                "glyph_rasters=%llu glyph_cache_hits=%llu\n",
                 (unsigned long long)text->prepare_calls, (unsigned long long)text->prepare_reuses,
+                (unsigned long long)text->shape_calls, (unsigned long long)text->wrap_calls,
                 (unsigned long long)text->glyph_rasters,
                 (unsigned long long)text->glyph_cache_hits);
         fflush(stderr);
@@ -2331,6 +2426,14 @@ uint32_t cjgui_linux_text_take_fallback_log(CjguiLinuxText *text, CjguiLinuxText
     text->pend_count -= n;
     if (text->pend_count == 0) text->pend_head = 0;
     return n;
+}
+
+void cjgui_linux_text_prepare_stats(CjguiLinuxText *text, uint32_t *outPrepares,
+                                    uint32_t *outReused, uint32_t *outShapes, uint32_t *outWraps) {
+    if (outPrepares) *outPrepares = text ? (uint32_t)text->prepare_calls : 0u;
+    if (outReused) *outReused = text ? (uint32_t)text->prepare_reuses : 0u;
+    if (outShapes) *outShapes = text ? (uint32_t)text->shape_calls : 0u;
+    if (outWraps) *outWraps = text ? (uint32_t)text->wrap_calls : 0u;
 }
 
 void cjgui_linux_text_stats(CjguiLinuxText *text, uint32_t *outGlyphCount, uint32_t *outAtlasBytes) {

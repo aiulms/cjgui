@@ -211,6 +211,17 @@ public class CjguiCompositeElementBinding {
     /// handwritten form (a legally empty draft stays an empty draft).
     public let draftText: String
     public let draftBoolean: Bool
+    /// role field: the provider's ONE declared select binding for this field,
+    /// when the application declared one. A runtime composition may therefore
+    /// mount a select/radio/segmented presentation without creating a second
+    /// controller or losing the shared option/query state.
+    public let selectBinding: ?CjguiSelectFieldBinding
+    /// role field: the field's CURRENT declared option set, frozen with the
+    /// accepted binding. A runtime instance renders radio/segmented rows from
+    /// this same fact and resolves an activation back into the instance's own
+    /// field writer, so a second per-instance Select controller (and its
+    /// single-owner commit closure) is never introduced.
+    public let choiceOptions: ArrayList<CjguiSelectOption>
     /// role projection: the owner text this element presents, resolved from the
     /// instance's ONE frozen snapshot (a field's validation error, a field's or
     /// action's blocking reason, or the owner's status message). Empty means the
@@ -231,7 +242,8 @@ public class CjguiCompositeElementBinding {
                 actionName!: String = "", actionEnabled!: Bool = false, draftText!: String = "",
                 draftBoolean!: Bool = false, ownerAvailable!: Bool = true,
                 blockedReason!: String = "", projectionText!: String = "",
-                projectionSource!: String = "") {
+                projectionSource!: String = "", selectBinding!: ?CjguiSelectFieldBinding = None,
+                choiceOptions!: ArrayList<CjguiSelectOption> = ArrayList<CjguiSelectOption>()) {
         this.instanceKey = instanceKey
         this.instanceIncarnation = instanceIncarnation
         this.elementKey = elementKey
@@ -255,11 +267,31 @@ public class CjguiCompositeElementBinding {
         this.draftBoolean = draftBoolean
         this.projectionText = projectionText
         this.projectionSource = projectionSource
+        this.selectBinding = selectBinding
+        this.choiceOptions = ArrayList<CjguiSelectOption>(choiceOptions)
     }
 
     public func isFieldLike(): Bool {
         return role == CJGUI_COMPOSITE_ELEMENT_FIELD || role == CJGUI_COMPOSITE_ELEMENT_PRESET
     }
+}
+
+/// One framework-allocated identity for a template node that is not itself a
+/// declared element. It is still an allocated instance slot: the expansion
+/// audit accepts it, and a rebuild/reorder maps the SAME template key to the
+/// SAME identity.
+public class CjguiCompositeAllocatedIdentity {
+    public let nodeId: Int64
+    public let semanticId: String
+
+    public init(nodeId: Int64, semanticId: String) {
+        this.nodeId = nodeId
+        this.semanticId = semanticId
+    }
+}
+
+public interface CjguiCompositeIdentityAllocator {
+    func allocate(slot: String): CjguiCompositeAllocatedIdentity
 }
 
 /// Everything a factory is allowed to work with. It carries no catalog, no
@@ -286,13 +318,65 @@ public class CjguiCompositeBuildContext {
     /// and action availability all belong to one owner snapshot; the factory
     /// renders them instead of issuing a second per-field owner read.
     private let ownerFeedback: ?CjguiGeneratedUiFormFeedback
+    /// The SAME named-style directory the built-in generated nodes resolve
+    /// through. A runtime composition may name a style and receive its current
+    /// base/interaction pair without a second style table.
+    private let namedStylesValue: ?CjguiComposableUiNamedStyleCatalog
+    /// Element bindings keyed by their OCCURRENCE slot (reference path plus
+    /// element key), not only by element key. A legal template may reference
+    /// one composition twice; each reference needs its own presentation
+    /// identity while both keep the same business owner binding.
+    private let scopedElementsValue: ?HashMap<String, CjguiCompositeElementBinding>
+    /// Allocates one instance-scoped identity for a structural template node.
+    /// A factory cannot invent an id; this is the same registry the element
+    /// identities come from, and the expansion audit sees the ids.
+    private let identityAllocatorValue: ?CjguiCompositeIdentityAllocator
+    /// The scope of the REGION this instance is mounted in. A factory that
+    /// materialises data-dependent rows must place their caller-declared
+    /// identities below it, so the same source can be mounted twice in one
+    /// window without sharing an identity table entry.
+    private let holderScopeValue: ?CjguiComposableUiIdentityScope
+    /// Accepted instance generation for this build. Removed/re-added
+    /// instances receive a new generation; a factory uses it only as part of
+    /// its own per-mount view-state key, never as a business identity.
+    private let instanceIncarnationValue: Int64
+    /// True when this build publishes the accepted scene, false for a
+    /// candidate. A factory may retire stale mount state only on this signal;
+    /// a rejected candidate must leave the accepted mount state untouched.
+    private let acceptedBuildValue: Bool
+    /// Every composite instance key the accepted structure declares for this
+    /// region. A factory that keeps per-mount view state needs the WHOLE set
+    /// on an accepted build: an instance that disappeared has no replacement
+    /// to build, so only the scene can tell the factory its mount is gone.
+    /// None means the caller has no accepted-scene information and the
+    /// factory must not retire anything.
+    private let acceptedSceneKeysValue: ?HashSet<String>
+    /// Stability: experimental (DS51 §12). Identity of the REAL structure holder
+    /// this instance is mounted under. A factory that keeps holder-scoped view
+    /// state (a collection viewport, virtual-list geometry or reveal target) keys
+    /// it with this value: a canonical scope string alone cannot say which
+    /// holder a mount belongs to. 0 means the caller built without a holder.
+    private let holderIdentityValue: Int64
+    /// Stability: experimental (DS51 §12). The holder's OPEN view-state
+    /// transaction this build belongs to (0 for a caller that builds without
+    /// one). A factory must PREPARE mounts for a nonzero transaction and let the
+    /// holder publish/roll them back with the scene it accepts; only a build
+    /// outside every transaction may publish immediately (handwritten/direct).
+    private let viewStateTransactionValue: Int64
 
     public init(instanceKey: String, properties: HashMap<String, String>,
                 elements: ArrayList<CjguiCompositeElementBinding>,
                 children!: ArrayList<CjguiComposableUiNode> = ArrayList<CjguiComposableUiNode>(),
                 resolvedStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
                 resolvedInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
-                ownerFeedback!: ?CjguiGeneratedUiFormFeedback = None) {
+                ownerFeedback!: ?CjguiGeneratedUiFormFeedback = None,
+                namedStyles!: ?CjguiComposableUiNamedStyleCatalog = None,
+                scopedElements!: ?HashMap<String, CjguiCompositeElementBinding> = None,
+                identityAllocator!: ?CjguiCompositeIdentityAllocator = None,
+                holderScope!: ?CjguiComposableUiIdentityScope = None,
+                instanceIncarnation!: Int64 = 0, acceptedBuild!: Bool = true,
+                acceptedSceneKeys!: ?HashSet<String> = None,
+                holderIdentity!: Int64 = 0, viewStateTransaction!: Int64 = 0) {
         this.instanceKey = instanceKey
         this.properties = properties
         this.elements = elements
@@ -300,6 +384,66 @@ public class CjguiCompositeBuildContext {
         this.resolvedStyle = resolvedStyle
         this.resolvedInteraction = resolvedInteraction
         this.ownerFeedback = ownerFeedback
+        this.namedStylesValue = namedStyles
+        this.scopedElementsValue = scopedElements
+        this.identityAllocatorValue = identityAllocator
+        this.holderScopeValue = holderScope
+        this.instanceIncarnationValue = instanceIncarnation
+        this.acceptedBuildValue = acceptedBuild
+        this.acceptedSceneKeysValue = acceptedSceneKeys
+        this.holderIdentityValue = holderIdentity
+        this.viewStateTransactionValue = viewStateTransaction
+    }
+
+    /// Stability: experimental (DS51 §12). The real holder this instance is
+    /// mounted under (0 = no holder). See the class field.
+    public func holderIdentity(): Int64 {
+        return holderIdentityValue
+    }
+
+    /// Stability: experimental (DS51 §12). The holder's open view-state
+    /// transaction (0 = this build publishes outside a transaction). A factory
+    /// must not publish or retire holder-scoped mounts for a nonzero value.
+    public func viewStateTransaction(): Int64 {
+        return viewStateTransactionValue
+    }
+
+    /// Accepted lifecycle generation of THIS instance. A factory that keeps
+    /// per-mount view state keys it with this value together with its own
+    /// accepted instance key; a re-added instance is a new mount.
+    public func instanceIncarnation(): Int64 {
+        return instanceIncarnationValue
+    }
+
+    /// Whether this build is publishing the accepted scene (false = candidate).
+    public func acceptedBuild(): Bool {
+        return acceptedBuildValue
+    }
+
+    /// Composite instance keys the accepted structure declares for this region.
+    /// Only an accepted build carries them; a candidate (or a caller with no
+    /// scene) sees None and must not treat absence as removal.
+    public func acceptedSceneKeys(): ?HashSet<String> {
+        return acceptedSceneKeysValue
+    }
+
+    public func holderScope(): ?CjguiComposableUiIdentityScope {
+        return holderScopeValue
+    }
+
+    public func allocate(slot: String): CjguiCompositeAllocatedIdentity {
+        return match (identityAllocatorValue) {
+            case Some(allocator) => allocator.allocate(slot)
+            case None => CjguiCompositeAllocatedIdentity(-1, "")
+        }
+    }
+
+    public func namedStyle(name: String): ?CjguiComposableUiNamedStyle {
+        if (name.size == 0) { return None }
+        return match (namedStylesValue) {
+            case Some(catalog) => catalog.forName(name)
+            case None => None
+        }
     }
 
     /// This instance's own snapshot, or None when the provider does not
@@ -342,6 +486,20 @@ public class CjguiCompositeBuildContext {
             }
         }
         return None
+    }
+
+    /// The element binding for ONE occurrence (reference path + element key).
+    /// The plain `element(key)` stays the single-occurrence accessor; a factory
+    /// expanding a nested reference uses this one so two references to the same
+    /// declaration mount distinct presentation identities while keeping the SAME
+    /// owner/field/writer binding.
+    public func elementAt(path: String, elementKey: String): ?CjguiCompositeElementBinding {
+        if (let Some(table) <- scopedElementsValue) {
+            if (let Some(value) <- table.get(cjguiCompositionElementSlotKey(path, elementKey))) {
+                return Some(value)
+            }
+        }
+        return element(elementKey)
     }
 }
 
@@ -400,12 +558,18 @@ public class CjguiGeneratedUiIntent {
     /// never re-resolved from the mutable instance-key mapping at execution.
     public let nodeId: Int64
     public let instanceIncarnation: Int64
+    /// Caret/selection carried by the original field-change event. -1 means the
+    /// producer did not publish one; a whole-value owner write then applies the
+    /// text without claiming a caret position.
+    public let selectionStart: Int64
+    public let selectionEnd: Int64
 
     public init(kind: String, nodeKey: String, reason: String, fieldId!: String = "",
                 writerOperation!: String = "", ownerTargetResourceId!: Int64 = -1,
                 argumentName!: String = "", value!: CjguiSharedOperationValue =
                     CjguiSharedOperationValue.string(""), actionName!: String = "",
-                instanceKey!: String = "", nodeId!: Int64 = -1, instanceIncarnation!: Int64 = 0) {
+                instanceKey!: String = "", nodeId!: Int64 = -1, instanceIncarnation!: Int64 = 0,
+                selectionStart!: Int64 = -1, selectionEnd!: Int64 = -1) {
         this.kind = kind
         this.nodeKey = nodeKey
         this.reason = reason
@@ -418,6 +582,8 @@ public class CjguiGeneratedUiIntent {
         this.instanceKey = instanceKey
         this.nodeId = nodeId
         this.instanceIncarnation = instanceIncarnation
+        this.selectionStart = selectionStart
+        this.selectionEnd = selectionEnd
     }
 
     public static func none(reason: String): CjguiGeneratedUiIntent {

@@ -23,21 +23,46 @@ public interface CjguiGeneratedUiRegionBinding <: CjguiGeneratedUiBindingProvide
         let _ = fieldId
         return "owner_projection"
     }
+    /// Select fields declared once by this binding. Handwritten controls use
+    /// the same controller object, so owner writes and availability stay shared.
+    func generatedSelectBindings(): ArrayList<CjguiSelectFieldBinding> {
+        return ArrayList<CjguiSelectFieldBinding>()
+    }
 }
 
 /// A generated declaration belongs to exactly one window transaction. The
 /// holder supplies candidate identity/rollback; this adapter publishes its
 /// common protocol, observations and event route to any application domain.
+public class CjguiGeneratedUiAcceptedDocument {
+    public let text: String
+    public let version: Int64
+    public let digest: String
+
+    public init(text: String, version: Int64, digest: String) {
+        this.text = text
+        this.version = version
+        this.digest = digest
+    }
+}
+
 public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProvider {
+    private let documentSurfaceIdentityValue: Int64 = cjguiNextUiDocumentSurfaceIdentity()
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let binding: CjguiGeneratedUiRegionBinding
+    private let rootScopeValue: CjguiComposableUiIdentityScope
     private let holder: CjguiGeneratedUiStructureHolder
     private let fieldSliders: CjguiFieldSliderAdapter
+    private let compositionSelects: CjguiCompositionSelectHost
     private let tracker: CjguiGeneratedUiObservationTracker
     private let lock: Mutex
     private var attachedWindow: ?CjguiComposableUiWindow
     private var revisionValue: Int64
     private var sceneTransactionActive: Bool
+    // DS51 §12 C2: the candidate token THIS scene was built against (0 when it
+    // renders the accepted structure). A candidate admitted later belongs to a
+    // later scene; settling it here would publish or roll back definitions the
+    // accepted scene never carried.
+    private var sceneCandidateToken: Int64 = 0
     private var closedSceneOutcome: String
     private var acceptedOwnerStamp: Int64
     private var hasAcceptedOwnerStamp: Bool
@@ -72,13 +97,18 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     private var rangeSessionOwnerTarget: Int64 = -1
     private var rangeSessionInstanceKey: String = ""
     private var rangeSessionInstanceIncarnation: Int64 = 0
+    private var rangeSessionOwned: ?CjguiTextSession = None
+    private var rangeSessionBridge: ?CjguiGeneratedFieldRangeSession = None
+    private var documentHistoryAccessValue: ?CjguiUiDocumentHistoryAccess = None
 
     public init(catalog: CjguiGeneratedUiCapabilityCatalog, binding: CjguiGeneratedUiRegionBinding,
                 rootScopeName: String) {
         this.catalog = catalog
         this.binding = binding
-        this.holder = CjguiGeneratedUiStructureHolder(catalog, rootScope: CjguiComposableUiIdentityScope(rootScopeName))
+        this.rootScopeValue = CjguiComposableUiIdentityScope(rootScopeName)
+        this.holder = CjguiGeneratedUiStructureHolder(catalog, rootScope: this.rootScopeValue)
         this.fieldSliders = CjguiFieldSliderAdapter(binding, {id => catalog.fieldFor(id)})
+        this.compositionSelects = CjguiCompositionSelectHost(this.holder)
         this.tracker = CjguiGeneratedUiObservationTracker()
         this.lock = Mutex()
         this.attachedWindow = None
@@ -112,6 +142,10 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         return synchronized(lock) { revisionValue }
     }
 
+    public func uiDocumentSurfaceIdentity(): Int64 {
+        return documentSurfaceIdentityValue
+    }
+
     public func acceptedNodeIdForKey(key: String): Int64 {
         return synchronized(lock) { holder.nodeIdForKey(key) }
     }
@@ -121,6 +155,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             if (sceneTransactionActive) { return false }
             closedSceneOutcome = ""
             sceneTransactionActive = true
+            sceneCandidateToken = holder.pendingCandidateToken()
             holder.beginStyleRefresh()
             if (!holder.beginCandidateRefresh()) {
                 holder.rollbackCandidateRefresh()
@@ -128,6 +163,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 revisionValue += 1
                 return false
             }
+            holder.beginHandwrittenInstanceAliasRefresh()
             return true
         }
     }
@@ -148,19 +184,79 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
     }
 
+    /// Wrap the generated root with any open Select popup AFTER the rest of the
+    /// scene exists. The popup is a layer host, never a clipped form child.
+    public func attachTransientLayers(root: CjguiComposableUiNode): CjguiComposableUiNode {
+        var scene = root
+        for (declaredSelect in binding.generatedSelectBindings()) {
+            if (declaredSelect.select.isOpen() && declaredSelect.select.presentedIn(root)) {
+                scene = declaredSelect.select.attachTo(scene)
+            }
+        }
+        return compositionSelects.attach(scene)
+    }
+
+    /// Commands of every OPEN Select this region owns. Handwritten declared
+    /// selects and runtime-composition instance popups publish through the
+    /// same candidate-scene command list, so arrows/Enter/Esc reach the
+    /// component that owns the popup and confirm through its owner writer.
+    public func generatedSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return synchronized(lock) {
+            let result = ArrayList<CjguiComposableUiCommand>()
+            for (declaredSelect in binding.generatedSelectBindings()) {
+                if (!declaredSelect.select.isOpen()) { continue }
+                for (command in declaredSelect.select.commands()) { result.add(command) }
+            }
+            for (command in compositionSelects.commands()) { result.add(command) }
+            result
+        }
+    }
+
     public func prepareSceneRefresh(): Bool {
-        return synchronized(lock) { holder.prepareCandidateRefresh() }
+        return synchronized(lock) {
+            if (!holder.prepareCandidateRefresh()) { return false }
+            if (let Some(window) <- attachedWindow) {
+                if (ownsCurrentRangeSession(window) && preparedRangeBindingChanged()) {
+                    // Freeze/retain unfinished input under the OLD accepted
+                    // owner. This does not release the session or publish any
+                    // alias, and a refusal rejects the original scene.
+                    return window.prepareTextSessionUnbind()
+                }
+            }
+            return true
+        }
     }
 
     public func commitSceneRefresh(): Unit {
         synchronized(lock) {
+            // Only the currently open scene owns a terminal hook. A late
+            // duplicate must not settle a subsequently admitted declaration.
+            if (!sceneTransactionActive) { return }
             sceneCommits += 1
             acceptedOwnerStamp = pendingOwnerStamp
             hasAcceptedOwnerStamp = true
-            let hadCandidate = holder.hasPendingCandidate()
+            let sceneToken = sceneCandidateToken
+            sceneCandidateToken = 0
+            let superseded = sceneToken > 0 && holder.pendingCandidateToken() != sceneToken
+            let hadCandidate = sceneToken > 0 && !superseded
             let started = MonoTime.now()
+            // The native scene is accepted now. Only a session this region
+            // actually installed may be retired; another region may own the
+            // same numeric node. Old input is settled before alias publication.
+            let rebindAcceptedFocus = retireRangeSessionForAcceptedScene()
             if (hadCandidate) {
-                let _ = holder.commitCandidateRefresh()
+                let committed = holder.commitCandidateRefresh()
+                if (committed) {
+                    // Definitions and instances became visible in the SAME
+                    // accepted scene; only now may the catalog change.
+                    catalog.commitStagedComposites()
+                } else {
+                    // The candidate this scene carried could not be published:
+                    // settle it as rejected so it cannot poison a later build
+                    // with a definition floor this commit just dropped.
+                    holder.rollbackCandidateRefresh(holder.lastSceneOutcome())
+                    catalog.rollbackStagedComposites()
+                }
                 // Build sampled the previous accepted bindings. A prepared
                 // image may already be ready when this candidate is accepted,
                 // with no later completion epoch to refresh its public state.
@@ -169,8 +265,30 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                     case None => ()
                 }
             } else {
+                // An ordinary scene (or one superseded before it built) must
+                // NOT touch the definition overlay: it may belong to a candidate
+                // admitted after this scene began.
                 holder.commitStyleRefresh()
             }
+            // A style-only refresh builds the ACCEPTED structure as its scene:
+            // the mounts that render prepared become accepted only now. With a
+            // candidate, the candidate commit already published its own mounts
+            // and any accepted-render staging is superseded.
+            if (hadCandidate) {
+                holder.discardSceneViewState()
+            } else {
+                holder.settleAcceptedRenderViewState()
+            }
+            let acceptedNodes: ?ArrayList<CjguiComposableUiLayoutNode> = match (attachedWindow) {
+                case Some(window) => Some(window.acceptedSceneNodes())
+                case None => None
+            }
+            holder.commitHandwrittenInstanceAliasRefresh(acceptedNodes: acceptedNodes)
+            // Only now is the accepted element table the new authority. A
+            // popup whose instance was removed/rebound/disabled is closed here,
+            // before another event can reach its stale rows.
+            compositionSelects.reconcile()
+            if (rebindAcceptedFocus) { bindAcceptedFocusedRangeSession() }
             commitNanoseconds += (MonoTime.now() - started).toNanoseconds()
             sceneTransactionActive = false
             if (hadCandidate) { revisionValue += 1 }
@@ -183,14 +301,32 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
 
     public func rollbackSceneRefresh(reason: String): Unit {
         synchronized(lock) {
+            // Only the currently open scene owns a terminal hook. A late
+            // duplicate must not settle a subsequently admitted declaration.
+            if (!sceneTransactionActive) { return }
             sceneRollbacks += 1
-            let hadCandidate = holder.hasPendingCandidate()
+            let sceneToken = sceneCandidateToken
+            sceneCandidateToken = 0
+            let superseded = sceneToken > 0 && holder.pendingCandidateToken() != sceneToken
+            let hadCandidate = sceneToken > 0 && !superseded
             let started = MonoTime.now()
             if (hadCandidate) {
                 holder.rollbackCandidateRefresh(reason)
+                // A rejected candidate never leaves ITS definitions installed.
+                // A transport supersession keeps the candidate pending: the
+                // staged overlay belongs to the still-pending candidate and
+                // must survive for the re-carrying scene transaction.
+                if (!(holder.hasPendingCandidate() && holder.pendingCandidateToken() == sceneToken)) {
+                    catalog.rollbackStagedComposites()
+                }
             } else {
                 holder.rollbackStyleRefresh()
             }
+            // No transaction this scene opened may survive the rejection: the
+            // candidate's and the accepted fallback render's staged mounts are
+            // dropped with it, so the accepted interface keeps its own facts.
+            holder.discardSceneViewState()
+            holder.rollbackHandwrittenInstanceAliasRefresh()
             rollbackNanoseconds += (MonoTime.now() - started).toNanoseconds()
             sceneTransactionActive = false
             if (hadCandidate) { revisionValue += 1 }
@@ -204,6 +340,8 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             if (!holder.hasPendingCandidate()) { return }
             holder.rejectCandidateAttempt(holder.pendingCandidateToken(), "window_closed", "")
             holder.rollbackCandidateRefresh()
+            holder.discardSceneViewState()
+            catalog.rollbackStagedComposites()
             closedSceneOutcome = "scene_rejected:window_closed"
             sceneTransactionActive = false
             revisionValue += 1
@@ -211,13 +349,47 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     }
 
     public func disposeSceneRefreshResources(): Unit {
-        synchronized(lock) { holder.releaseAcceptedImageIdentities() }
+        synchronized(lock) {
+            compositionSelects.closeAll()
+            catalog.rollbackStagedComposites()
+            holder.discardSceneViewState()
+            holder.rollbackHandwrittenInstanceAliasRefresh()
+            holder.disposeViewState()
+            holder.releaseAcceptedImageIdentities()
+        }
     }
 
     public func handleEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return handleEventIfClaimed(event).getOrDefault({ => CjguiComposableUiDispatchResult(false) })
+    }
+
+    /// None means this region does not own the event. Some(false) preserves an
+    /// owned observation, no change or refusal; a caller must not retry it via
+    /// another writer. The legacy handleEvent keeps its didApply contract.
+    public func handleEventIfClaimed(event: CjguiComposableUiEvent): ?CjguiComposableUiDispatchResult {
+        // An open instance popup owns its trigger/query/rows/outside guard. Its
+        // action family is instance-qualified, so a sibling card's popup can
+        // never claim these events.
+        if (let Some(result) <- compositionSelects.handleEvent(event, binding)) {
+            revisionValue += 1
+            return Some(result)
+        }
+        for (declaredSelect in binding.generatedSelectBindings()) {
+            if (let Some(result) <- declaredSelect.select.applyUiEvent(event)) {
+                var didApply = result.didApply
+                if (let Some(option) <- declaredSelect.takeConfirmed()) {
+                    didApply = declaredSelect.commit(option)
+                    if (!didApply) {
+                        getStdOut().writeln("CJGUI_GENERATED_SELECT phase=refused field=${declaredSelect.fieldId} reason=${declaredSelect.lastFailure()}")
+                    }
+                    revisionValue += 1
+                }
+                return Some(CjguiComposableUiDispatchResult(didApply))
+            }
+        }
         if (event.node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER) {
             let current = synchronized(lock) { holder.matchesFieldSlider(event.node) }
-            return if (current) { fieldSliders.handle(event) } else { CjguiComposableUiDispatchResult(false) }
+            return if (current) { Some(fieldSliders.handle(event)) } else { None }
         }
         synchronized(lock) {
             bindFieldRangeSessionIfFocused(event)
@@ -229,31 +401,27 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 if (getVariable("CJGUI_RANGE_ROUTE_TRACE").isSome()) {
                     println("CJGUI_GEN_RANGE_OBSERVE event=28 node=${event.node.nodeId} field=${intent.fieldId} owner_version=${binding.ownerRevision()}")
                 }
-                return CjguiComposableUiDispatchResult(false)
+                return Some(CjguiComposableUiDispatchResult(false))
             }
-            return binding.applyFieldIntent(intent)
+            return Some(binding.applyFieldIntent(intent))
         }
         if (intent.isAction()) {
-            if (intent.instanceKey.size > 0) {
-                // Resolution and execution are separate steps: the owner
-                // mapping can change in between. Re-check the SAME accepted
-                // element first, then hand the ORIGINAL target and generation
-                // to the owner transaction. Never re-resolve the key here.
-                let stillBound = synchronized(lock) {
-                    holder.compositeActionIntentIsBound(intent.nodeId, intent.actionName, intent.instanceKey,
-                        intent.ownerTargetResourceId, intent.instanceIncarnation)
-                }
-                if (!stillBound) {
-                    return CjguiComposableUiDispatchResult(false)
-                }
-                let outcome = binding.executeAction(intent.actionName, intent.nodeKey, intent.instanceKey,
-                    intent.ownerTargetResourceId, intent.instanceIncarnation)
-                return CjguiComposableUiDispatchResult(outcome.applied)
-            }
-            let outcome = binding.executeAction(intent.actionName, intent.nodeKey)
-            return CjguiComposableUiDispatchResult(outcome.applied)
+            // Resolution and execution are separate steps: the owner mapping
+            // can change in between. The holder's shared dispatch route
+            // re-checks the SAME accepted element and hands the ORIGINAL
+            // target and generation to the owner transaction; it never
+            // re-resolves the key here. Execution stays outside this region's
+            // lock, exactly as before: the provider takes its own owner locks.
+            return Some(holder.dispatchActionIntent(intent, binding))
         }
-        return CjguiComposableUiDispatchResult(false)
+        // Even a metadata mismatch or unsupported event on an accepted target
+        // belongs to this route. Lookup uses accepted tables, never staging or
+        // an application's current selection.
+        let claimed = synchronized(lock) {
+            holder.keyForNodeId(event.node.nodeId).size > 0 ||
+                holder.compositeInstanceKeyForNodeId(event.node.nodeId).size > 0
+        }
+        return if (claimed) { Some(CjguiComposableUiDispatchResult(false)) } else { None }
     }
 
     /// Manual and generated INTEGER sliders use this same field writer.
@@ -313,11 +481,71 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
     ///      会话换走（A→B→A 反例）；只满足前者不跳过：同 node 换 semantic/
     ///      换绑是真正新绑定（semantic_rebind 反例）。真重复聚焦不重建会话，
     ///      组合态与选区保留。
+    private func ownsCurrentRangeSession(window: CjguiComposableUiWindow): Bool {
+        let expected = match (rangeSessionOwned) { case Some(value) => value; case None => return false }
+        let current = match (window.textSession()) { case Some(value) => value; case None => return false }
+        return refEq(expected, current)
+    }
+
+    private func preparedRangeBindingChanged(): Bool {
+        let key = holder.compositeInstanceKeyForPreparedNodeId(rangeSessionNodeId)
+        return key != rangeSessionInstanceKey ||
+            holder.compositeInstanceIncarnationForPreparedNodeId(rangeSessionNodeId) !=
+                rangeSessionInstanceIncarnation ||
+            binding.fieldOperationResourceId(rangeSessionFieldId, key) != rangeSessionOwnerTarget
+    }
+
+    private func rangeSessionMatchesNode(node: CjguiComposableUiLayoutNode): Bool {
+        return node.nodeId == rangeSessionNodeId && node.semanticId == rangeSessionSemanticId &&
+            node.nodeKind == rangeSessionNodeKind && node.fieldId == rangeSessionFieldId &&
+            node.operationActionName == rangeSessionWriterOperation &&
+            node.resourceId == rangeSessionFieldResource && node.operationResourceId == rangeSessionOwnerTarget
+    }
+
+    private func retireRangeSessionForAcceptedScene(): Bool {
+        let window = match (attachedWindow) { case Some(value) => value; case None => return false }
+        if (!ownsCurrentRangeSession(window)) { return false }
+        var unchanged = false
+        if (!preparedRangeBindingChanged()) {
+            for (node in window.acceptedSceneNodes()) {
+                if (rangeSessionMatchesNode(node)) { unchanged = true; break }
+            }
+        }
+        if (unchanged) { return false }
+        window.releaseTextSession()
+        // Release can retain its original carrier when an input/recovery
+        // receipt is unfinished. Retire the adapter in either case: keeping
+        // that carrier cannot write through a newly accepted owner binding.
+        if (let Some(bridge) <- rangeSessionBridge) { bridge.retireAcceptedBinding() }
+        if (ownsCurrentRangeSession(window)) {
+            generatedRegionDiagLog("GEN_RANGE_RETIRE_PENDING node=${rangeSessionNodeId} reason=input_unsettled")
+            return false
+        }
+        rangeSessionOwned = None
+        rangeSessionBridge = None
+        return true
+    }
+
+    private func bindAcceptedFocusedRangeSession(): Unit {
+        let window = match (attachedWindow) { case Some(value) => value; case None => return }
+        let focus = window.windowProgress()
+        if (focus.focusState != CJGUI_WINDOW_FOCUS_STATE_VALID) { return }
+        for (node in window.acceptedSceneNodes()) {
+            if (node.semanticId == focus.focusedControlId) {
+                bindAcceptedFieldRangeSession(node)
+                return
+            }
+        }
+    }
+
     private func bindFieldRangeSessionIfFocused(event: CjguiComposableUiEvent): Unit {
         if (event.eventKind != CJGUI_COMPOSABLE_UI_EVENT_FOCUS) {
             return
         }
-        let node = event.node
+        bindAcceptedFieldRangeSession(event.node)
+    }
+
+    private func bindAcceptedFieldRangeSession(node: CjguiComposableUiLayoutNode): Unit {
         if (node.fieldId.size == 0) {
             generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} reason=no_field_id")
             return
@@ -354,6 +582,24 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 "instance=${instanceKey} reason=provider_unsupported")
             return
         }
+        // The provider that WILL own the session must be the owner the accepted
+        // node froze: a handwritten node outside the generated holder resolves
+        // to the DEFAULT instance, whose provider may serve a different owner
+        // (mixed: root 6200 fallback vs the selected card's 6301 on the same
+        // fieldId). Binding anyway installs a session whose every delta is then
+        // rejected as owner_target_retired AND suppresses the node's ordinary
+        // whole-value writer, so a legal editor goes dead. Mismatch never
+        // builds an owned session here; the node keeps its declared writer and
+        // the correct provider is wired by the consumer's own alias (see the
+        // selected-card detail in the mixed consumer). A legal EMPTY instance
+        // key still binds exactly as before when the owners agree.
+        let providerOwner = binding.fieldOperationResourceId(field.fieldId, instanceKey)
+        if (providerOwner != node.operationResourceId) {
+            generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} field=${field.fieldId} " +
+                "instance=${instanceKey} reason=provider_owner_mismatch " +
+                "providerOwner=${providerOwner} nodeOwner=${node.operationResourceId}")
+            return
+        }
         var acceptedMatched = false
         for (accepted in window.acceptedSceneNodes()) {
             if (accepted.nodeId != node.nodeId) {
@@ -371,7 +617,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 "semantic=${node.semanticId} reason=stale_focus_not_accepted")
             return
         }
-        if (window.ownedTextSessionBoundNodeId() == node.nodeId &&
+        if (ownsCurrentRangeSession(window) && window.ownedTextSessionBoundNodeId() == node.nodeId &&
             rangeSessionNodeId == node.nodeId && rangeSessionSemanticId == node.semanticId &&
             rangeSessionNodeKind == node.nodeKind && rangeSessionFieldId == field.fieldId &&
             rangeSessionWriterOperation == field.writeActionName &&
@@ -388,8 +634,17 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
         let session = CjguiGeneratedFieldRangeSession(binding, field.fieldId, instanceKey: instanceKey,
             ownerTarget: node.operationResourceId, bindingCurrent: bindingCurrent)
-        let _ = window.bindRangeTextSession(node.nodeId, node.semanticId, session, session,
+        let previous = window.textSession()
+        let installed = window.bindRangeTextSession(node.nodeId, node.semanticId, session, session,
             field.resourceId, node.nodeKind)
+        if (let Some(old) <- previous) {
+            if (refEq(old, installed)) {
+                generatedRegionDiagLog("GEN_RANGE_BIND_SKIP node=${node.nodeId} reason=previous_input_unsettled")
+                return
+            }
+        }
+        rangeSessionOwned = Some(installed)
+        rangeSessionBridge = Some(session)
         rangeSessionNodeId = node.nodeId
         rangeSessionSemanticId = node.semanticId
         rangeSessionNodeKind = node.nodeKind
@@ -400,12 +655,48 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         rangeSessionInstanceKey = instanceKey
         rangeSessionInstanceIncarnation = acceptedIncarnation
     }
+    private func documentHistoryAccess(): CjguiUiDocumentHistoryAccess {
+        return synchronized(lock) {
+            if (let Some(value) <- documentHistoryAccessValue) { return value }
+            let value = CjguiUiDocumentHistoryAccess(this)
+            documentHistoryAccessValue = Some(value)
+            value
+        }
+    }
     public func capabilitiesPayload(): String {
-        return CjguiGeneratedUiEncoding.describe(catalog)
+        return CjguiUiDocumentHistoryAccess.capabilitiesPayload(CjguiGeneratedUiEncoding.describe(catalog))
+    }
+    public func attachUiDocumentWorkspace(workspace: CjguiUiDocumentWorkspace): String {
+        return documentHistoryAccess().attach(workspace)
+    }
+    public func detachUiDocumentWorkspace(workspace: CjguiUiDocumentWorkspace): Unit {
+        let access = synchronized(lock) { documentHistoryAccessValue }
+        if (let Some(value) <- access) { value.detach(workspace) }
+    }
+    public func uiDocumentHistoryPayload(): String { return documentHistoryAccess().payload() }
+    public func submitUiDocumentHistory(action: String, expectedVersion: Int64, expectedDigest: String,
+        surfaceIdentity: Int64, historyEpoch: Int64): CjguiSharedOperationGeneratedUiSubmit {
+        return documentHistoryAccess().submit(action, expectedVersion, expectedDigest, surfaceIdentity, historyEpoch)
     }
 
     private func hexValue(value: String): String {
         return if (value.isEmpty()) { "-" } else { CjguiSharedOperationFrame.encodeUtf8Hex(value) }
+    }
+
+    /// Declares the DECLARED instance key one of the consumer's HANDWRITTEN
+    /// field editors belongs to (outside any accepted composite). The consumer
+    /// refreshes this mapping with its own selection. During a scene build it
+    /// changes staging only; acceptance/rollback settle it with that scene.
+    /// The range-session entry
+    /// still verifies the resolved provider's actual owner against the node's
+    /// frozen operationResourceId before building an owned session.
+    public func declareHandwrittenInstanceAlias(nodeId: Int64, instanceKey: String): Unit {
+        synchronized(lock) { holder.declareHandwrittenInstanceAlias(nodeId, instanceKey) }
+    }
+
+    /// Drops every handwritten alias in one call (selection change).
+    public func clearHandwrittenInstanceAliases(): Unit {
+        synchronized(lock) { holder.clearHandwrittenInstanceAliases() }
     }
 
     private func acceptedInstances(): ArrayList<CjguiGeneratedUiAcceptedInstance> {
@@ -577,15 +868,93 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
 
     private func structurePayloadUnlocked(): String {
         structureSerializations += 1
-        return CjguiGeneratedUiEncoding.encode(holder.acceptedStructure(), holder.structureVersion())
+        // Definitions and nodes are read under the SAME lock and the SAME
+        // structure version: a reader can prove what the accepted instances
+        // were expanded from instead of trusting a local submission copy.
+        return CjguiGeneratedUiEncoding.encode(holder.acceptedStructure(), holder.structureVersion(),
+            definitions: catalog.acceptedCompositionPayload())
+    }
+
+    /// The accepted collection mount of THIS region/holder for one declared
+    /// instance key. The scope-only collection query refuses ambiguity across
+    /// holders; the region always answers for its own holder.
+    public func acceptedCollectionView(collection: CjguiGeneratedUiCollection,
+        instanceKey: String): ?CjguiGeneratedCollectionView {
+        return synchronized(lock) {
+            collection.acceptedView(rootScopeValue, instanceKey, holder.holderIdentity())
+        }
+    }
+
+    /// Resolve the accepted collection mount a key/focus event belongs to from
+    /// the EXACT viewport object the event carries. A stale generation or a
+    /// foreign viewport resolves to None; the caller then leaves the event
+    /// unhandled instead of moving some other mount.
+    public func acceptedCollectionViewForEvent(collection: CjguiGeneratedUiCollection,
+        event: CjguiComposableUiEvent): ?CjguiGeneratedCollectionView {
+        return synchronized(lock) {
+            let viewport = match (event.node.scrollViewport) {
+                case Some(value) => value
+                case None => return None
+            }
+            for (instance in acceptedInstances()) {
+                if (instance.kindToken != collection.kind) { continue }
+                if (let Some(view) <- collection.acceptedView(rootScopeValue,
+                    instance.key, holder.holderIdentity())) {
+                    if (!view.isRetired() && refEq(view.viewport, viewport)) {
+                        return Some(view)
+                    }
+                }
+            }
+            return None
+        }
     }
 
     public func acceptedStructurePayload(): String {
         return synchronized(lock) { structurePayloadUnlocked() }
     }
 
+    private func acceptedUiDocumentUnlocked(): CjguiGeneratedUiAcceptedDocument {
+        let definitions = catalog.acceptedCompositionPayload()
+        let formatVersion = if (definitions.size > 0) { 2 } else { 1 }
+        let text = CjguiGeneratedUiEncoding.encodeCandidate(holder.acceptedStructure(),
+            formatVersion, definitions: definitions)
+        return CjguiGeneratedUiAcceptedDocument(text, holder.structureVersion(),
+            cjguiUiDocumentDigest(text))
+    }
+
+    /// ONE consistent accepted document fact: the portable structure text (the
+    /// exact bytes a `cjgui.ui-document` embeds), its accepted version and its
+    /// structure digest, all read under the same lock.
+    public func acceptedUiDocument(): CjguiGeneratedUiAcceptedDocument {
+        return synchronized(lock) { acceptedUiDocumentUnlocked() }
+    }
+
+    /// One document ticket AND the accepted document it was compared against,
+    /// read under the region's one lock. The session never turns a digest match
+    /// into an acceptance claim: only the holder's terminal record settles it.
+    public func uiDocumentTicketSnapshot(token: Int64): CjguiUiDocumentTicket {
+        return synchronized(lock) {
+            let accepted = acceptedUiDocumentUnlocked()
+            let record = match (holder.candidateRecord(token)) {
+                case Some(value) => value
+                case None => return CjguiUiDocumentTicket(token, false, "UNKNOWN",
+                    "none", "", 0, accepted.version, accepted.digest)
+            }
+            return CjguiUiDocumentTicket(token, true, record.terminalState(),
+                if (record.sceneState().size > 0) { record.sceneState() } else { "none" },
+                record.reason(), record.acceptedVersion(), accepted.version, accepted.digest)
+        }
+    }
+
     public func acceptedStructureVersion(): Int64 {
         return synchronized(lock) { holder.structureVersion() }
+    }
+
+    /// True when no scene transaction spans the current turn. A startup
+    /// document is submitted only at such an idle boundary; submitting inside
+    /// an in-flight transaction is refused as busy rather than queued.
+    public func sceneTransactionIdle(): Bool {
+        return synchronized(lock) { !sceneTransactionActive }
     }
 
     public func candidateStructureVersion(): Int64 {
@@ -604,6 +973,21 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         return synchronized(lock) { holder.candidateTicketPayload(token) }
     }
 
+    /// Bounded diagnostic for the DS seam: the ticket of the pending candidate,
+    /// or of the most recent attempt when none is pending. It names the REAL
+    /// rejection reason/path instead of the window's generic internal_error, and
+    /// never publishes or mutates candidate state.
+    public func candidateTicketForDiagnosis(): String {
+        return synchronized(lock) {
+            let token = if (holder.pendingCandidateToken() > 0) {
+                holder.pendingCandidateToken()
+            } else {
+                holder.latestCandidateToken()
+            }
+            holder.candidateTicketPayload(token)
+        }
+    }
+
     private func instancesPayloadUnlocked(instances: ArrayList<CjguiGeneratedUiAcceptedInstance>): String {
         instancesSerializations += 1
         return CjguiGeneratedUiEncoding.acceptedInstancesPayload(instances)
@@ -611,6 +995,12 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
 
     public func acceptedInstancesPayload(): String {
         return synchronized(lock) { instancesPayloadUnlocked(acceptedInstances()) }
+    }
+
+    private func rejectedSubmit(token: Int64, current: Int64,
+        reason: String): CjguiSharedOperationGeneratedUiSubmit {
+        return CjguiSharedOperationGeneratedUiSubmit(false, reason, "", current, current,
+            candidateToken: token, receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
     }
 
     public func submitStructure(candidatePayload: String, expectedVersion: Int64): CjguiSharedOperationGeneratedUiSubmit {
@@ -654,13 +1044,58 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             }
             if (expectedVersion != current) {
                 holder.rejectCandidateAttempt(token, "structure_version_conflict", "")
-                return CjguiSharedOperationGeneratedUiSubmit(false, "structure_version_conflict", "", current, current,
-                    candidateToken: token, receipt: CjguiGeneratedUiStructureHolder.receiptForToken(token))
+                return rejectedSubmit(token, current, "structure_version_conflict")
+            }
+            // The definition, its deletions and its instances travel in ONE
+            // candidate ticket. Start this attempt from an EMPTY overlay: a
+            // legal replacement retires the previous pending definition, while
+            // an invalid B restores the snapshot below and keeps A pending.
+            let previousOverlay = catalog.snapshotStagedComposites()
+            catalog.rollbackStagedComposites()
+            // Every definition of the ticket is staged before any removal or
+            // instance validation. A failure at any position restores the
+            // overlay the previous candidate owned, so a partly staged batch is
+            // never observable.
+            let definitionIssue = cjguiStageRuntimeCompositions(catalog, decoded.definitions)
+            if (definitionIssue.size > 0) {
+                catalog.restoreStagedComposites(previousOverlay)
+                holder.rejectCandidateAttempt(token, definitionIssue, "")
+                return rejectedSubmit(token, current, definitionIssue)
+            }
+            for (removed in decoded.removals) {
+                let removalIssue = catalog.stageCompositionRemoval(removed)
+                if (removalIssue.size > 0) {
+                    catalog.restoreStagedComposites(previousOverlay)
+                    holder.rejectCandidateAttempt(token, removalIssue, "")
+                    return rejectedSubmit(token, current, removalIssue)
+                }
+                if (cjguiCompositionReferences(root, removed)) {
+                    catalog.restoreStagedComposites(previousOverlay)
+                    let issue = "composition_remove_still_referenced:${removed}"
+                    holder.rejectCandidateAttempt(token, issue, "")
+                    return rejectedSubmit(token, current, issue)
+                }
+                // §16: a definition REMAINING in the effective set may compose
+                // the removed name; removing it would strand the reference.
+                // The effective set = the staged batch + accepted minus every
+                // name this candidate removes or replaces.
+                if (cjguiCompositionReferencedByDefinitions(catalog,
+                    decoded.definitions, removed)) {
+                    catalog.restoreStagedComposites(previousOverlay)
+                    let issue = "composition_remove_still_referenced:${removed}"
+                    holder.rejectCandidateAttempt(token, issue, "")
+                    return rejectedSubmit(token, current, issue)
+                }
             }
             candidateValidations += 1
             let validationStarted = MonoTime.now()
             let result = holder.submit(root, binding, attemptToken: token)
             validationNanoseconds += (MonoTime.now() - validationStarted).toNanoseconds()
+            if (!result.candidateAccepted) {
+                // An invalid reference/budget/binding keeps the previous
+                // candidate's definition, every accepted instance and data.
+                catalog.restoreStagedComposites(previousOverlay)
+            }
             if (result.candidateAccepted) { revisionValue += 1 }
             CjguiSharedOperationGeneratedUiSubmit(result.candidateAccepted, result.reason, result.path,
                 result.structureVersionBefore, result.structureVersionAfter,

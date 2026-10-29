@@ -34,6 +34,13 @@ class UiOnlyStarterController <: CjguiComposableUiController {
         content.add(cjguiComposableImage(5, "ui-only-beacon", "composable-beacon.png",
             CjguiComposableUiStyle(fixedWidth: 96, fixedHeight: 72, cornerRadius: 14, clipsContent: true),
             imageResourceId: "ui-only-beacon", imageResourceVersion: 1))
+        // The SAME ordinary image + the thinnest resource composition: a local
+        // RGB JPEG resolved from the app bundle, no generated region required.
+        let jpegSwatch = CjguiGeneratedUiImageResourceSpec("ui-only-swatch", "JPEG", 1,
+            "四色色块 JPEG", "preview-swatch.jpg")
+        content.add(cjguiComposableImageResource(9, "ui-only-jpeg", jpegSwatch,
+            CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, cornerRadius: 10,
+                clipsContent: true), contentMode: 1))
         content.add(cjguiComposableTextInput(6, "ui-only-note", "短注释", note, 0, theme.input,
             fieldId: "note", operationActionName: "EDIT_TEXT", displayValueRole: "local"))
         content.add(cjguiComposableButton(7, "ui-only-increment", "计数 +1", "INCREMENT", 0,

@@ -25,6 +25,7 @@ public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRang
     /// answers whether the exact accepted composite element (including its
     /// instance generation) still exists.
     private let bindingCurrent: ?(() -> Bool)
+    private var acceptedBindingRetired: Bool = false
 
     public init(binding: CjguiGeneratedUiBindingProvider, fieldId: String, instanceKey!: String = "",
         ownerTarget!: Int64 = -1, bindingCurrent!: ?(() -> Bool) = None) {
@@ -43,11 +44,19 @@ public class CjguiGeneratedFieldRangeSession <: CjguiRangeTextSource & CjguiRang
         return this.instanceKey
     }
 
+    /// Experimental accepted-scene lifecycle terminal. The window may retain
+    /// an old session while it owns an unfinished input/recovery receipt;
+    /// retaining that carrier never authorizes another owner write.
+    public func retireAcceptedBinding(): Unit {
+        acceptedBindingRetired = true
+    }
+
     /// Empty means the session still belongs to the exact accepted object it
     /// was bound for. A removed/rebound accepted binding or a provider that now
     /// resolves the key to another owner retires the session BEFORE any read or
     /// write, so a matching numeric version cannot keep it alive.
     private func retiredReason(): String {
+        if (acceptedBindingRetired) { return "binding_retired" }
         if (let Some(current) <- bindingCurrent) {
             if (!current()) {
                 return "binding_retired"

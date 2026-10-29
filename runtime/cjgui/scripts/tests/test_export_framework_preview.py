@@ -1,7 +1,9 @@
 """Small source-transport checks; no SDK, compiler, UI or author checkout dependency."""
 from pathlib import Path
 import hashlib
+import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -10,9 +12,82 @@ import unittest
 
 RUNTIME = Path(__file__).resolve().parents[2]
 IGNORED = shutil.ignore_patterns("target", ".cjgui", "artifacts", "__pycache__", ".DS_Store")
+DRIVER_SPEC = importlib.util.spec_from_file_location(
+    "cjgui_testing_driver", RUNTIME / "native/scripts/verify_cjpm_mac_testing_link.py")
+DRIVER = importlib.util.module_from_spec(DRIVER_SPEC)
+DRIVER_SPEC.loader.exec_module(DRIVER)
 
 
 class ExportPreviewTest(unittest.TestCase):
+    def test_injected_fixture_preserves_source_bytes_for_graph_reuse(self):
+        with tempfile.TemporaryDirectory(prefix="cjgui-fixture-reuse-") as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            consumer = root / "consumer/src"
+            package = root / "package"
+            (runtime / "src").mkdir(parents=True)
+            consumer.mkdir(parents=True)
+            fixture = runtime / "src/macos_owner_fixture_test.cj"
+            original = "package cjgui\n\nimport std.unittest.*\n\nfunc cjguiMacosOwnerTest(): Unit {}\n"
+            fixture.write_text(original)
+            (consumer / "case.cj").write_text("package consumer\nfunc test(): Unit { cjguiMacosOwnerTest() }\n")
+            DRIVER.ensure_consumer_owner_fixture(consumer, runtime, package, {}, "consumer",
+                lambda path: hashlib.sha256(path.read_bytes()).hexdigest())
+            expected = re.sub(r"^package cjgui$", "package consumer", original, count=1, flags=re.M)
+            self.assertEqual((package / "src/cjgui_macos_owner_fixture_test.cj").read_text(), expected)
+
+    def test_consumer_fixture_is_optional_and_reuses_sdk_template_source_when_needed(self):
+        with tempfile.TemporaryDirectory(prefix="cjgui-consumer-fixture-") as temporary:
+            root = Path(temporary)
+            runtime = root / "framework/cjgui"
+            consumer = root / "consumers/rule_set_window_app"
+            package = root / "testing/application"
+            (runtime / "src").mkdir(parents=True)
+            template = runtime / "templates/macos_application/mixed_form/src"
+            template.mkdir(parents=True)
+            raw = (RUNTIME / "src/macos_owner_fixture_test.cj").read_text()
+            template_fixture = template / "cjgui_macos_owner_fixture_test.cj"
+            template_fixture.write_text(raw.replace("package cjgui", "package cjgui_mixed_form_starter", 1))
+            (consumer / "src").mkdir(parents=True)
+            (consumer / "src/startup_document_test.cj").write_text(
+                "package cjgui_rule_set_window_app\n"
+                "func testHost(): Unit { cjguiMacosOwnerTest({ => }) }\n")
+            package.mkdir(parents=True)
+            sources = {}
+            DRIVER.ensure_consumer_owner_fixture(
+                consumer / "src", runtime, package, sources, "cjgui_rule_set_window_app",
+                lambda path: hashlib.sha256(path.read_bytes()).hexdigest())
+            installed = package / "src/cjgui_macos_owner_fixture_test.cj"
+            self.assertIn("package cjgui_rule_set_window_app", installed.read_text())
+            self.assertIn(str(template_fixture), sources)
+
+            ordinary = root / "consumers/ordinary"
+            (ordinary / "src").mkdir(parents=True)
+            (ordinary / "src/test.cj").write_text("package ordinary\nfunc test(): Unit {}\n")
+            ordinary_package = root / "testing/ordinary"
+            ordinary_package.mkdir(parents=True)
+            DRIVER.ensure_consumer_owner_fixture(
+                ordinary / "src", runtime, ordinary_package, {}, "ordinary",
+                lambda path: hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertFalse((ordinary_package / "src/cjgui_macos_owner_fixture_test.cj").exists())
+
+    def test_consumer_fixture_existing_file_is_reused_without_rewrite(self):
+        with tempfile.TemporaryDirectory(prefix="cjgui-existing-fixture-") as temporary:
+            root = Path(temporary)
+            consumer = root / "consumer"
+            (consumer / "src").mkdir(parents=True)
+            (consumer / "src/test.cj").write_text(
+                "package consumer\nfunc test(): Unit { cjguiMacosOwnerTest({ => }) }\n")
+            runtime = root / "runtime"
+            package = root / "package"
+            destination = package / "src/cjgui_macos_owner_fixture_test.cj"
+            destination.parent.mkdir(parents=True)
+            destination.write_text("preserve existing source\n")
+            DRIVER.ensure_consumer_owner_fixture(
+                consumer / "src", runtime, package, {}, "consumer",
+                lambda path: hashlib.sha256(path.read_bytes()).hexdigest())
+            self.assertEqual(destination.read_text(), "preserve existing source\n")
+
     def test_package_sources_follow_new_modules_without_changing_probe_profile(self):
         library = RUNTIME / "native/scripts/lib_cjgui_source_set.sh"
         with tempfile.TemporaryDirectory(prefix="cjgui-source-set-") as temporary:
@@ -44,17 +119,23 @@ class ExportPreviewTest(unittest.TestCase):
             shutil.copy2(RUNTIME / "build.cj", runtime / "build.cj")
             shutil.copy2(RUNTIME / "native/scripts/build_cjgui_internal_renderer_sidecar.sh",
                          runtime / "native/scripts/build_cjgui_internal_renderer_sidecar.sh")
+            shutil.copy2(RUNTIME / "native/scripts/verify_cjpm_mac_testing_link.py",
+                         runtime / "native/scripts/verify_cjpm_mac_testing_link.py")
             shutil.copytree(RUNTIME / "templates/macos_application", runtime / "templates/macos_application", ignore=IGNORED)
             for package in [runtime, runtime / "shared_operation_core"]:
                 shutil.copy2(RUNTIME / ("shared_operation_core/cjpm.toml" if package.name == "shared_operation_core" else "cjpm.toml"), package / "cjpm.toml")
                 (package / "src/current.cj").write_text("package fixture\n")
                 (package / "src/future_public.cj").write_text("package fixture\n")
                 (package / "src/current_test.cj").write_text("not production\n")
+            (runtime / "src/macos_owner_fixture_test.cj").write_text(
+                "package cjgui\n\nfunc macosOwnerFixtureAvailable(): Bool { true }\n")
             for p in (RUNTIME / "native").iterdir():
                 if p.suffix in [".m", ".h"]:
                     (runtime / "native" / p.name).write_text("// fixture\n")
             for p in (RUNTIME / "shared_operation_core").glob("*.py"):
                 shutil.copy2(p, runtime / "shared_operation_core" / p.name)
+            shutil.copy2(RUNTIME / "shared_operation_core/GENERATED_EDITING.md",
+                         runtime / "shared_operation_core/GENERATED_EDITING.md")
             for p in (RUNTIME / "preview").glob("*.md"):
                 shutil.copy2(p, runtime / "preview" / p.name)
             for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md", "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md"]:
@@ -69,6 +150,7 @@ class ExportPreviewTest(unittest.TestCase):
                 example = runtime / "examples" / name
                 (example / "src").mkdir(parents=True)
                 (example / "src/main.cj").write_text("package fixture\n")
+                (example / "src/main.cj.orig").write_text("preserve local editor backup\n")
                 (example / "cjpm.toml").write_text('[dependencies]\ncjgui = { path = "../.." }\n')
                 for script in ["run.sh", "cjgui_macos_app.sh"]:
                     (example / script).write_text("#!/usr/bin/env zsh\n")
@@ -82,13 +164,20 @@ class ExportPreviewTest(unittest.TestCase):
                 args = ["zsh", str(runtime / "scripts/export_framework_preview.sh"), str(destination)]
                 if profile != "full":
                     args += ["--profile", profile]
-                subprocess.run(args, check=True, capture_output=True, text=True)
+                exported = subprocess.run(args, capture_output=True, text=True)
+                self.assertEqual(exported.returncode, 0, exported.stderr)
                 framework = destination / "framework/cjgui"
                 self.assertTrue((framework / "src/future_public.cj").is_file())
                 self.assertFalse((framework / "src/current_test.cj").exists())
                 self.assertTrue((framework / "native/cjgui_async_multiline_bridge.m").is_file())
                 self.assertTrue((framework / "templates/macos_application/mixed_form/client.py").is_file())
+                fixture = framework / "templates/macos_application/mixed_form/src/cjgui_macos_owner_fixture_test.cj"
+                self.assertTrue(fixture.is_file(), "mixed template SDK must close over the native-backed fixture helper")
+                self.assertIn("package cjgui_mixed_form_starter", fixture.read_text())
+                self.assertNotIn("package cjgui\n", fixture.read_text())
                 self.assertTrue((framework / "scripts/macos_build_config.py").is_file())
+                self.assertTrue((framework / "native/scripts/verify_cjpm_mac_testing_link.py").is_file(),
+                                "SDK must carry its consumer test entry point")
                 self.assertTrue((framework / "LAYOUT_PRIMITIVES.md").is_file())
                 self.assertTrue((framework / "ACCESSIBILITY.md").is_file())
                 self.assertTrue((framework / "FIELD_CONTROLS.md").is_file())
@@ -98,6 +187,8 @@ class ExportPreviewTest(unittest.TestCase):
                 self.assertTrue((destination / "consumers/generated_collection/client.py").is_file())
                 self.assertTrue((destination / "consumers/generated_collection/README.md").is_file())
                 self.assertTrue((destination / "framework/rule_set_application/src/main.cj").is_file())
+                self.assertFalse(any(p.name.endswith('.cj.orig') for p in destination.rglob('*')),
+                                 "source editor backups must stay in the checkout")
                 # Transported example must resolve against this package, not
                 # the author's original runtime tree.
                 collection_toml = (destination / "consumers/generated_collection/cjpm.toml").read_text()
@@ -168,6 +259,8 @@ class ExportPreviewTest(unittest.TestCase):
                 shutil.copy2(RUNTIME / "scripts" / name, runtime / "scripts" / name)
             for name in ["lib_cjgui_source_set.sh", "build_cjgui_internal_renderer_sidecar.sh"]:
                 shutil.copy2(RUNTIME / "native/scripts" / name, runtime / "native/scripts" / name)
+            shutil.copy2(RUNTIME / "native/scripts/verify_cjpm_mac_testing_link.py",
+                         runtime / "native/scripts/verify_cjpm_mac_testing_link.py")
             shutil.copy2(RUNTIME / "build.cj", runtime / "build.cj")
             shutil.copytree(RUNTIME / "templates/macos_application", runtime / "templates/macos_application",
                             ignore=IGNORED)
@@ -175,6 +268,8 @@ class ExportPreviewTest(unittest.TestCase):
                 shutil.copy2(RUNTIME / ("shared_operation_core/cjpm.toml" if package.name == "shared_operation_core"
                                         else "cjpm.toml"), package / "cjpm.toml")
                 (package / "src/source.cj").write_text("package fixture\n")
+            (runtime / "src/macos_owner_fixture_test.cj").write_text(
+                "package cjgui\n\nfunc macosOwnerFixtureAvailable(): Bool { true }\n")
             # One native translation unit and one script are the two inputs a
             # .cj-only lock could never pin.
             (runtime / "native/renderer.m").write_text("// native fixture v1\n")
@@ -182,6 +277,8 @@ class ExportPreviewTest(unittest.TestCase):
                 "#!/usr/bin/env zsh\necho script v1\n")
             for p in (RUNTIME / "shared_operation_core").glob("*.py"):
                 shutil.copy2(p, runtime / "shared_operation_core" / p.name)
+            shutil.copy2(RUNTIME / "shared_operation_core/GENERATED_EDITING.md",
+                         runtime / "shared_operation_core/GENERATED_EDITING.md")
             for p in (RUNTIME / "preview").glob("*.md"):
                 shutil.copy2(p, runtime / "preview" / p.name)
             for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md",
@@ -213,8 +310,12 @@ class ExportPreviewTest(unittest.TestCase):
             # script, the template source and the assets.
             self.assertIn("native/renderer.m", inputs)
             self.assertIn("native/scripts/build_cjgui_internal_renderer_sidecar.sh", inputs)
+            self.assertIn("native/scripts/verify_cjpm_mac_testing_link.py", inputs)
+            self.assertEqual(payload["categories"]["native/scripts/verify_cjpm_mac_testing_link.py"], "script")
             self.assertIn("build.cj", inputs)
             self.assertIn("templates/macos_application/mixed_form/src/main.cj", inputs)
+            self.assertIn("src/macos_owner_fixture_test.cj", inputs)
+            self.assertEqual(payload["categories"]["src/macos_owner_fixture_test.cj"], "test-fixture")
             self.assertIn("resources/composable-beacon.png", inputs)
             self.assertNotIn("README.md", inputs)
             manifest_a = json.loads((root / "SDK A" / "source-manifest.json").read_text())

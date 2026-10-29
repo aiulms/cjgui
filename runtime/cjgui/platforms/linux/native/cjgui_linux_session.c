@@ -30,6 +30,10 @@
 #include <math.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #include "cjgui_internal_renderer.h"
 #include "cjgui_linux_window.h"
@@ -39,6 +43,14 @@
 #include "cjgui_linux_services.h"
 #include "cjgui_linux_installed_range.h"
 #include "cjgui_linux_image.h"
+
+// Trace switches are opt-in: an explicitly empty or "0" value disables them,
+// unlike a bare getenv() existence check.
+static int cjgui_linux_trace_flag(const char *name) {
+    const char *value = getenv(name);
+    if (value == NULL || value[0] == '\0' || strcmp(value, "0") == 0) return 0;
+    return 1;
+}
 
 #define CJGUI_LINUX_MAX_SESSIONS 2u
 #define CJGUI_LINUX_MAX_NODES 1024u
@@ -220,6 +232,59 @@ static uint32_t cjgui_linux_utf16_for_byte_offset(const char *text, size_t lengt
     return cjgui_linux_utf16_length(text, offset);
 }
 
+// Grapheme navigation uses the shared text service, the same cluster rules the
+// caret/IME paths use. No second segmenter lives here.
+static int cjgui_linux_grapheme_range_at(const char *text, size_t length, size_t byte,
+                                         size_t *outStart, size_t *outEnd) {
+    if (!text || !outStart || !outEnd || byte >= length) return 0;
+    // Fault injection for the rejection path only; normal runs never set it.
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_GRAPHEME_FAULT")) return 0;
+    uint64_t start = 0u;
+    uint64_t end = 0u;
+    CjguiInternalRendererStatus status =
+        cjgui_internal_renderer_grapheme_cluster_range(text, (uint64_t)length, (uint64_t)byte,
+                                                       &start, &end);
+    if (status != CJGUI_INTERNAL_RENDERER_OK || end <= start || end > (uint64_t)length) return 0;
+    *outStart = (size_t)start;
+    *outEnd = (size_t)end;
+    return 1;
+}
+
+// A failed cluster query is a named refusal. It must never degrade to byte 0 or
+// the end of the document: Backspace/Delete would then remove the whole body.
+static void cjgui_linux_note_text_nav_reject(const char *action) {
+    fprintf(stderr, "CJGUI_LINUX_TEXT_NAV_REJECTED reason=grapheme_range action=%s\n", action);
+    fflush(stderr);
+}
+
+// One cluster left of caret16. A caret inside a surrogate pair snaps to the
+// containing cluster start first, then steps to the previous cluster.
+static int cjgui_linux_prev_grapheme_start16(const char *text, size_t length, uint32_t caret16,
+                                             uint32_t *out16) {
+    if (out16 == NULL) return 0;
+    size_t byte = cjgui_linux_byte_offset_for_utf16(text, length, caret16);
+    if (byte == 0u) { *out16 = 0u; return 1; }
+    size_t start = 0u;
+    size_t end = 0u;
+    if (!cjgui_linux_grapheme_range_at(text, length, byte - 1u, &start, &end)) return 0;
+    *out16 = cjgui_linux_utf16_for_byte_offset(text, length, start);
+    return 1;
+}
+
+// One cluster right of caret16. Probing at the caret byte returns the cluster
+// that begins there; probing inside a cluster returns that cluster's end.
+static int cjgui_linux_next_grapheme_end16(const char *text, size_t length, uint32_t caret16,
+                                           uint32_t *out16) {
+    if (out16 == NULL) return 0;
+    size_t byte = cjgui_linux_byte_offset_for_utf16(text, length, caret16);
+    if (byte >= length) { *out16 = cjgui_linux_utf16_length(text, length); return 1; }
+    size_t start = 0u;
+    size_t end = 0u;
+    if (!cjgui_linux_grapheme_range_at(text, length, byte, &start, &end)) return 0;
+    *out16 = cjgui_linux_utf16_for_byte_offset(text, length, end);
+    return 1;
+}
+
 // ---------------------------------------------------------------- 会话状态
 
 typedef struct CjguiLinuxNodeSlot {
@@ -265,6 +330,21 @@ typedef struct CjguiLinuxActiveTextProxy {
     char *value;
     uint32_t selectionStart16;
     uint32_t selectionEnd16;
+    // View-only scroll of a multiline proxy. The authoritative body stays in
+    // value; paint/hit-test/caret all share this one offset so they cannot
+    // disagree about which visual line is visible.
+    double scrollTop;
+    uint64_t scrollNodeId;
+    // A run of Up/Down keeps the caret's original visual column even when a
+    // short line clamps the actual x. The focus offset is the validity token:
+    // any click/edit/horizontal move changes it and starts a new column.
+    double preferredColumnX;
+    uint32_t preferredColumnFocus16;
+    int preferredColumnValid;
+    uint64_t preferredColumnNodeId;
+    // 1 when the caret sits at a soft-wrap boundary and belongs visually to the
+    // line before it (End). Other moves clear it.
+    int lineAffinityPrevious;
 } CjguiLinuxActiveTextProxy;
 
 typedef struct CjguiLinuxSession {
@@ -314,9 +394,57 @@ typedef struct CjguiLinuxSession {
     int64_t transferSourceId;
     int64_t transferExpectedOwnerVersion;
     uint64_t transferDeliveryOrdinal;
-    uint8_t transferBytes[4096];
+    uint8_t *transferBytes;
     uint32_t transferByteLength;
     uint64_t transferEventId;
+    uint64_t nextTransferEventId;
+    // 声明目标的一次异步读取冻结：节点身份、绑定代、owner 版本与类型都在
+    // Ctrl+V 当刻捕获；SelectionNotify 迟到、换焦、换绑或删除后只丢弃，
+    // 不改投新的目标，也不退回文本代理写入。
+    int transferPastePending;
+    uint64_t transferPasteNodeId;
+    int64_t transferPasteResourceId;
+    uint32_t transferPasteNodeKind;
+    uint64_t transferPasteBindingEpoch;
+    int64_t transferPasteExpectedOwnerVersion;
+    uint32_t transferPasteFormat;
+    // 混合目标：text/plain 读失败时对同一冻结接收者再试一次 image/png。
+    int transferPasteRetried;
+    // Xdnd 落点冻结：窗口在 XdndDrop 当刻调用格式 provider，把命中的已接受
+    // 节点身份与两类声明的 bindingEpoch/owner 版本一并保存。载荷返回后只认
+    // 这份身份；换绑、移除、关窗或被新一笔拖入替代后旧载荷不再改投。
+    int dropFreezeActive;
+    uint64_t dropFreezeNodeId;
+    int64_t dropFreezeResourceId;
+    uint32_t dropFreezeNodeKind;
+    double dropFreezeX;
+    double dropFreezeY;
+    int dropFreezeHasText;
+    int dropFreezeHasPng;
+    uint64_t dropFreezeTextEpoch;
+    int64_t dropFreezeTextOwner;
+    uint64_t dropFreezePngEpoch;
+    int64_t dropFreezePngOwner;
+    // 单文件 URI 的有界读取任务。队列容量 1，读取在 worker 线程完成；事件泵
+    // 只在结果就绪后按提交时冻结的节点/绑定代/owner 版本结算。
+    pthread_mutex_t fileReadLock;
+    pthread_cond_t fileReadCond;
+    pthread_t fileReadThread;
+    int fileReadThreadStarted;
+    int fileReadShutdown;
+    int fileReadJobPending;
+    int fileReadJobActive;
+    int fileReadResultReady;
+    char fileReadPath[CJGUI_LINUX_WINDOW_EVENT_TEXT_CAPACITY];
+    uint32_t fileReadLimit;
+    uint64_t fileReadNodeId;
+    int64_t fileReadResourceId;
+    uint32_t fileReadNodeKind;
+    uint64_t fileReadBindingEpoch;
+    int64_t fileReadOwnerVersion;
+    uint8_t *fileReadResultBytes;
+    uint32_t fileReadResultLength;
+    char fileReadResultReason[64];
 
     // 指针路由：按下时认定的目标，抬起时只有同一目标才算激活。
     int pointerDown;
@@ -335,6 +463,16 @@ typedef struct CjguiLinuxSession {
     int64_t pointerResourceId;
     uint32_t pointerNodeKind;
     CjguiInternalRendererPointerEventGeometry lastGeometry;
+    // 一次物理手势的代。BEGIN 分配，UPDATE/END/CANCEL 沿用同一值。共同层的
+    // 指针捕获以“非零 bindingEpoch + 逐相位相等”识别同一次拖动（Windows 的
+    // mouseGestureEpoch 走同一契约）；恒为 0 时 BEGIN 之后的每个相位都会被
+    // 当成过期手势丢弃，分栏和滑块只能拿到按下的第一帧。
+    uint64_t pointerGestureEpoch;
+    // 物理手势是否仍打开（DOWN→UP/LEAVE）。它与 pointerDown 分开：共同层对
+    // “按下被拒”的指针捕获调用 CANCEL 时只能退休拖动捕获，不能让同一次物理
+    // 按压失去手势代，否则抬起时的 PRESS_END/ACTIVATE 无法收口按下租约。
+    uint32_t pointerGestureOpen;
+    uint32_t pointerCaptureCancelled;
 
     // 窗口背景（stage + 快照读回）。
     int backgroundStaged;
@@ -378,8 +516,18 @@ typedef struct CjguiLinuxSession {
     int compositionOwned;
 
     // 异步粘贴：请求发出后普通泵继续跑，结果到达再走一次范围编辑。
+    // 发起时的目标身份、绑定代、正文与有序选区在这里冻结；迟到结果只能落回
+    // 这一目标，换焦/换绑/正文变化都必须具名拒绝，绝不改投当前代理。
     int pastePending;
     uint64_t pasteDeadlineMs;
+    int pasteTargetValid;
+    uint64_t pasteNodeId;
+    int64_t pasteResourceId;
+    uint32_t pasteNodeKind;
+    uint64_t pasteBindingEpoch;
+    char *pasteTargetValue;
+    uint32_t pasteStart16;
+    uint32_t pasteEnd16;
 
     // Platform-level source install gate（本阶段只有门状态，不做数据搬运）。
     int sourceGatePending;
@@ -452,6 +600,18 @@ typedef struct CjguiLinuxSession {
         char *rangePreBody;
         char *rangePostBody;
         char *rangeReplacement;
+        // 数据交换事件的逐事件载荷。文本复用上面的 text（64 KiB）；
+        // image/png 要完整字节，用本事件自己的有界堆块，出队时移交。
+        int hasTransfer;
+        char transferFormat[32];
+        char transferSourceKind[128];
+        char transferSourceIdentity[128];
+        int64_t transferSourceId;
+        int64_t transferExpectedOwnerVersion;
+        uint64_t transferEventId;
+        uint32_t transferRecordIndex;
+        uint8_t *transferBinary;
+        uint32_t transferBinaryLength;
     } pending[CJGUI_LINUX_PENDING_EVENTS];
     uint32_t pendingCount;
     uint32_t pendingHead;
@@ -462,9 +622,18 @@ typedef struct CjguiLinuxSession {
 
 static CjguiLinuxSession g_sessions[CJGUI_LINUX_MAX_SESSIONS];
 static uint64_t g_nextToken = 1u;
+
+static void cjgui_linux_transfer_clear_paste(CjguiLinuxSession *session);
 static int g_stopRequested = 0;
 static int g_exitLifecycleRetainCount = 0;
 static int g_exitLifecycleOwnerHeld = 0;
+
+static CjguiLinuxSession *cjgui_linux_lookup(uint64_t token);
+
+CjguiLinuxImageDomain *cjgui_linux_session_image_domain(uint64_t token) {
+    CjguiLinuxSession *session = cjgui_linux_lookup(token);
+    return session != NULL ? session->image : NULL;
+}
 
 static CjguiLinuxSession *cjgui_linux_lookup(uint64_t token) {
     for (uint32_t i = 0u; i < CJGUI_LINUX_MAX_SESSIONS; i += 1u) {
@@ -2274,19 +2443,36 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
         double originY = multiline ? (boxTop + deviceInset * 0.5)
                                    : (boxTop + ((boxBottom - boxTop) - lineHeightDevice) * 0.5);
         if (originY < boxTop) originY = boxTop;
+        // Multiline proxy scroll is view state shared by paint, caret, selection
+        // and hit-test. It clips inside the node instead of moving the node.
+        double textScrollTop = 0.0;
+        if (multiline && session->proxy.active && session->proxy.nodeId == node->nodeId) {
+            textScrollTop = session->proxy.scrollTop;
+        }
+        double drawOriginY = originY - textScrollTop * scale;
+        double textClipTop = multiline && clipY < boxTop ? boxTop : clipY;
+        double textClipBottom = multiline && clipBottom > boxBottom ? boxBottom : clipBottom;
         // 选区底色：本阶段画的是"native 自己拥有的那份选区"（正在编辑的文本代理）。
         // 消费者经 encodedRuns 声明的预览选区本阶段不解析（见文件头"刻意不做的事"），
         // 所以这里不冒充"所有选区都画了"。
         CjguiLinuxActiveTextProxy *proxy = &session->proxy;
+        // The proxy keeps directional anchor/focus; painting and offsets use
+        // the ordered span so a reverse selection is drawn as well.
+        uint32_t selectionLow16 = proxy->selectionStart16 < proxy->selectionEnd16
+                                      ? proxy->selectionStart16
+                                      : proxy->selectionEnd16;
+        uint32_t selectionHigh16 = proxy->selectionStart16 < proxy->selectionEnd16
+                                       ? proxy->selectionEnd16
+                                       : proxy->selectionStart16;
         if (proxy->active && proxy->nodeId == node->nodeId && proxy->value &&
-            proxy->selectionEnd16 > proxy->selectionStart16) {
+            selectionHigh16 > selectionLow16) {
             double x0 = 0.0, x1 = 0.0, top0 = 0.0, top1 = 0.0, lineHeight = 0.0;
             size_t lineStart = 0u, lineEnd = 0u;
             uint32_t lineIndex = 0u;
             size_t startByte = cjgui_linux_byte_offset_for_utf16(proxy->value, strlen(proxy->value),
-                                                                proxy->selectionStart16);
+                                                                selectionLow16);
             size_t endByte = cjgui_linux_byte_offset_for_utf16(proxy->value, strlen(proxy->value),
-                                                              proxy->selectionEnd16);
+                                                              selectionHigh16);
             if (cjgui_linux_text_caret_position(session->text, proxy->value, strlen(proxy->value),
                                                 fontSizePoints, node->fontWeight, node->fontFamily,
                                                 node->width - 12.0, startByte, &x0, &top0, &lineHeight,
@@ -2295,7 +2481,34 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                                                 fontSizePoints, node->fontWeight, node->fontFamily,
                                                 node->width - 12.0, endByte, &x1, &top1, &lineHeight,
                                                 &lineIndex, &lineStart, &lineEnd) == CJGUI_LINUX_TEXT_OK) {
-                double selectionTop = originY + top0 * scale;
+                // Shift+End on a soft-wrapped line belongs to that visual
+                // line's end, not the next line's zero column.
+                if (proxy->lineAffinityPrevious && selectionHigh16 == proxy->selectionEnd16) {
+                    uint32_t visualLines = 0u;
+                    if (cjgui_linux_text_line_count(session->text, proxy->value,
+                                                    strlen(proxy->value), fontSizePoints,
+                                                    node->fontWeight, node->fontFamily,
+                                                    node->width - 12.0, &visualLines) ==
+                        CJGUI_LINUX_TEXT_OK) {
+                        for (uint32_t visual = 0u; visual < visualLines; visual += 1u) {
+                            double rx = 0.0, ry = 0.0, rw = 0.0, rh = 0.0;
+                            size_t rs = 0u, re = 0u;
+                            if (cjgui_linux_text_line_rect(session->text, proxy->value,
+                                                           strlen(proxy->value), fontSizePoints,
+                                                           node->fontWeight, node->fontFamily,
+                                                           node->width - 12.0, visual, &rx, &ry,
+                                                           &rw, &rh, &rs, &re) != CJGUI_LINUX_TEXT_OK) {
+                                break;
+                            }
+                            if (re == endByte && rs < re) {
+                                x1 = rw;
+                                top1 = ry;
+                                break;
+                            }
+                        }
+                    }
+                }
+                double selectionTop = drawOriginY + top0 * scale;
                 double selectionHeight = lineHeightDevice;
                 double selectionLeft = textLeft + x0 * scale;
                 double selectionRight = textLeft + x1 * scale;
@@ -2339,18 +2552,18 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
         if (composed == NULL && slot->encodedRuns != NULL && slot->encodedRuns[0] != '\0') {
             cjgui_linux_builder_styled_text(builder, session->text, drawBody, slot->encodedRuns,
                                             fontSizeDevice, node->fontWeight, node->fontFamily,
-                                            textRight - textLeft, textLeft, originY, clipX, clipY,
-                                            clipRight, clipBottom, &aperture,
+                                            textRight - textLeft, textLeft, drawOriginY, clipX,
+                                            textClipTop, clipRight, textClipBottom, &aperture,
                                             node->textRed, node->textGreen, node->textBlue,
                                             textAlpha, transform.active ? &transform : NULL,
                                             lineLimit, ellipsis);
         } else {
             cjgui_linux_builder_text(builder, session->text, drawBody, fontSizeDevice,
                                      node->fontWeight, node->fontFamily, textRight - textLeft,
-                                     textLeft, originY, clipX, clipY, clipRight, clipBottom,
-                                     &aperture, node->textRed, node->textGreen, node->textBlue,
-                                     textAlpha, transform.active ? &transform : NULL, lineLimit,
-                                     ellipsis);
+                                     textLeft, drawOriginY, clipX, textClipTop, clipRight,
+                                     textClipBottom, &aperture, node->textRed, node->textGreen,
+                                     node->textBlue, textAlpha,
+                                     transform.active ? &transform : NULL, lineLimit, ellipsis);
         }
         if (composed != NULL) {
             // preedit 下划线：让用户看得到组合段（系统 IME 的候选窗另有定位）。
@@ -2379,7 +2592,7 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                 double underlineRight = textLeft + x1 * scale;
                 if (underlineRight > underlineLeft) {
                     cjgui_linux_builder_rect_painted(builder, &transform, underlineLeft,
-                                                     originY + top0 * scale + lineHeightDevice - 2.0 * scale,
+                                                     drawOriginY + top0 * scale + lineHeightDevice - 2.0 * scale,
                                                      underlineRight - underlineLeft, 2.0 * scale,
                                                      clipX, clipY, clipRight, clipBottom, &aperture,
                                                      0.15, 0.35, 0.90, 1.0);
@@ -2410,7 +2623,7 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                     if (caretHeightDevice <= 0.0) caretHeightDevice = lineHeightDevice;
                     cjgui_linux_builder_rect_painted(builder, &transform,
                                                      textLeft + xc * scale,
-                                                     originY + topc * scale,
+                                                     drawOriginY + topc * scale,
                                                      1.5 * scale, caretHeightDevice,
                                                      clipX, clipY, clipRight, clipBottom, &aperture,
                                                      0.10, 0.10, 0.10, 1.0);
@@ -2422,7 +2635,7 @@ static void cjgui_linux_append_scene(CjguiLinuxSession *session, CjguiLinuxVerte
                 // 旋转，和 macOS 一致；这里不作为已验证能力宣传）。
                 if (scale > 0.0) {
                     double spotX = textLeft / scale + xc;
-                    double spotY = (originY + topc * scale + lineHeightC * scale) / scale;
+                    double spotY = (drawOriginY + topc * scale + lineHeightC * scale) / scale;
                     cjgui_linux_window_set_ime_spot(session->window, spotX, spotY, lineHeightC);
                 }
             }
@@ -2570,6 +2783,8 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
     }
     session->token = g_nextToken++;
     session->alive = 1;
+    pthread_mutex_init(&session->fileReadLock, NULL);
+    pthread_cond_init(&session->fileReadCond, NULL);
     cjgui_linux_aux_on_create(slot);
     cjgui_linux_installed_range_on_create(slot);
     cjgui_linux_owner_bind_window(session->window);
@@ -2577,9 +2792,10 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
     return session->token;
 }
 
+static void cjgui_linux_paste_clear_target(CjguiLinuxSession *session);
+
 CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t sessionToken) {
-    int slot = cjgui_linux_session_slot(sessionToken);
-    if (slot < 0) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    int slot = cjgui_linux_session_slot(sessionToken);    if (slot < 0) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     CjguiLinuxSession *session = &g_sessions[slot];
     // 顺序固定：停止图片 worker 并回收其纹理 → 停止提交 → 等待设备空闲 →
     // 销毁交换链与图像 → 管线/图集 → device → surface → instance；窗口在
@@ -2587,12 +2803,25 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t sessionToke
     // 否则 worker 完成唤醒会触碰已释放的窗口。
     // Unbind before the image workers and window go away: a transport notify
     // on another thread must never write into a freed wake pipe.
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_RENDERER_DESTROY slot=%d token=%llu gpu=%p window=%p\n",
                 slot, (unsigned long long)session->token, (void *)session->gpu,
                 (void *)session->window);
         fflush(stderr);
     }
+    if (session->fileReadThreadStarted) {
+        pthread_mutex_lock(&session->fileReadLock);
+        session->fileReadShutdown = 1;
+        pthread_cond_signal(&session->fileReadCond);
+        pthread_mutex_unlock(&session->fileReadLock);
+        pthread_join(session->fileReadThread, NULL);
+        session->fileReadThreadStarted = 0;
+        free(session->fileReadResultBytes);
+        session->fileReadResultBytes = NULL;
+        session->fileReadResultLength = 0u;
+    }
+    pthread_cond_destroy(&session->fileReadCond);
+    pthread_mutex_destroy(&session->fileReadLock);
     if (session->window) cjgui_linux_owner_unbind_window(session->window);
     if (session->image) cjgui_linux_image_domain_destroy(session->image);
     if (session->gpu) {
@@ -2612,14 +2841,23 @@ CjguiInternalRendererStatus cjgui_internal_renderer_destroy(uint64_t sessionToke
     cjgui_linux_strfree(&session->rangePreBody);
     cjgui_linux_strfree(&session->rangePostBody);
     cjgui_linux_strfree(&session->rangeReplacement);
+    free(session->transferBytes);
+    session->transferBytes = NULL;
+    session->transferByteLength = 0u;
+    session->transferEventId = 0u;
+    cjgui_linux_transfer_clear_paste(session);
     // 尚未出队的逐事件 range 载荷也归本会话所有，销毁时一并释放。
     for (uint32_t i = 0u; i < CJGUI_LINUX_PENDING_EVENTS; i += 1u) {
         cjgui_linux_strfree(&session->pending[i].rangePreBody);
         cjgui_linux_strfree(&session->pending[i].rangePostBody);
         cjgui_linux_strfree(&session->pending[i].rangeReplacement);
+        free(session->pending[i].transferBinary);
+        session->pending[i].transferBinary = NULL;
+        session->pending[i].transferBinaryLength = 0u;
     }
     cjgui_linux_installed_range_on_destroy(slot);
     cjgui_linux_strfree(&session->proxy.value);
+    cjgui_linux_paste_clear_target(session);
     cjgui_linux_aux_on_destroy(slot);
     memset(session, 0, sizeof(*session));
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -2739,7 +2977,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_window_frame(uint64_t sessio
 CjguiInternalRendererStatus cjgui_internal_renderer_stage_window_background(uint64_t sessionToken,
                                                                            uint64_t projectionVersion,
                                                                            uint32_t mode, uint32_t colorScheme) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI stage_window_background\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI stage_window_background\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     session->backgroundStaged = 1;
@@ -2794,6 +3032,18 @@ uint64_t cjgui_internal_renderer_owner_thread_cpu_ns(void) {
 
 uint64_t cjgui_internal_renderer_owner_trace_ns(void) { return cjgui_linux_now_ns(); }
 
+// Linux has no managed owner-trace store. The common declaration is
+// unconditional, so provide the platform symbol explicitly and report
+// "not recorded" (0), matching the disabled-trace contract on macOS. Do not
+// claim a zero return means a trace entry was written.
+uint64_t cjgui_internal_renderer_owner_trace_managed_record(uint32_t kind, uint64_t session,
+    uint64_t turn, uint64_t request, uint64_t dispatch, uint64_t generation,
+    uint32_t phase, uint64_t span, uint64_t managedId, uint8_t withWatch) {
+    (void)kind; (void)session; (void)turn; (void)request; (void)dispatch;
+    (void)generation; (void)phase; (void)span; (void)managedId; (void)withWatch;
+    return 0;
+}
+
 uint32_t cjgui_internal_renderer_selection_background_version(void) {
     // 1 = 选区背景由共同层的 text runs 画（与 Windows 同）；版本 0 会让
     // composable_ui_window.cj 直接拒绝整个候选场景，2 才表示平台自绘。
@@ -2814,7 +3064,7 @@ static CjguiInternalRendererStatus cjgui_linux_hit_test_text_body(CjguiLinuxSess
 CjguiInternalRendererStatus cjgui_internal_renderer_present_clear(uint64_t sessionToken,
                                                                  const CjguiInternalRendererClearColor *color,
                                                                  CjguiInternalRendererFrameObservation *outObservation) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI present_clear\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI present_clear\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (color) {
@@ -2876,9 +3126,24 @@ static CjguiInternalRendererStatus cjgui_linux_present_scene(
             (void)cjgui_linux_commit_candidate(session);
         }
     }
-    if (getenv("CJGUI_LINUX_PRESENT_TRACE")) {
-        fprintf(stderr, "CJGUI_LINUX_PRESENT_ENTER frame=%llu nodes=%u\n", (unsigned long long)session->frameIndex,
-                session->accepted.nodeCount);
+    unsigned long traceWindow = 0;
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PRESENT_TRACE")) {
+        void *traceDisplay = NULL, *traceConnection = NULL;
+        int traceScreen = 0;
+        (void)cjgui_linux_window_native(session->window, &traceDisplay, &traceWindow,
+                                        &traceScreen, &traceConnection);
+        fprintf(stderr, "CJGUI_LINUX_PRESENT_ENTER frame=%llu window=0x%lx nodes=%u\n",
+                (unsigned long long)session->frameIndex, traceWindow, session->accepted.nodeCount);
+    }
+    // A minimized/unmapped window is not a destroyed one. The candidate is
+    // committed above, but no frame is submitted and no completion is faked;
+    // the restore path repaints the accepted scene.
+    if (!cjgui_linux_window_is_mapped(session->window)) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PRESENT_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_PRESENT_SKIP reason=unmapped window=0x%lx\n", traceWindow);
+        }
+        cjgui_linux_fill_observation(session, outObservation);
+        return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
     }
 
     // 先把 worker 已完成的结果上传为纹理；上传发生在 begin_frame 之外，
@@ -2916,7 +3181,7 @@ static CjguiInternalRendererStatus cjgui_linux_present_scene(
         cjgui_linux_fill_observation(session, outObservation);
         return CJGUI_INTERNAL_RENDERER_METAL_DRAWABLE_UNAVAILABLE;
     }
-    if (getenv("CJGUI_LINUX_PRESENT_TRACE") && (session->frameIndex % 600u) == 0u) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PRESENT_TRACE") && (session->frameIndex % 600u) == 0u) {
         fprintf(stderr, "CJGUI_LINUX_PRESENT frame=%llu nodes=%u vertices=%u accepted=%d candidate=%d\n",
                 (unsigned long long)session->frameIndex, session->accepted.nodeCount, builder.count,
                 session->accepted.valid, session->candidate.valid);
@@ -3176,8 +3441,6 @@ static void cjgui_linux_sync_ordinary_proxy(CjguiLinuxSession *session) {
         uint32_t units = cjgui_linux_utf16_length(accepted, strlen(accepted));
         if (session->proxy.selectionStart16 > units) session->proxy.selectionStart16 = units;
         if (session->proxy.selectionEnd16 > units) session->proxy.selectionEnd16 = units;
-        if (session->proxy.selectionEnd16 < session->proxy.selectionStart16)
-            session->proxy.selectionEnd16 = session->proxy.selectionStart16;
     }
     session->proxy.sceneVersion = session->accepted.projectionVersion;
 }
@@ -3232,11 +3495,15 @@ static void cjgui_linux_prune_run_declarations(CjguiLinuxSession *session) {
     session->runCount = kept;
 }
 
+static int cjgui_linux_drop_format_at(void *user, double x, double y);
+
 static int cjgui_linux_commit_candidate(CjguiLinuxSession *session) {
     if (!session->candidate.valid) return 0;
     cjgui_linux_scene_move(&session->accepted, &session->candidate);
     session->accepted.valid = 1;
-    if (getenv("CJGUI_LINUX_SCENE_TRACE")) {
+    // 声明与场景同代发布：失败候选不会走到这里，已接受声明不受影响。
+    cjgui_linux_aux_commit_transfer(session->token, session->accepted.projectionVersion);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_SCENE_TRACE")) {
         // Bounded geometry record for the exact rects the native hit test uses.
         // Node bounds are layout space; translate is the paint-alignment sidecar.
         uint32_t shown = 0u;
@@ -3257,6 +3524,23 @@ static int cjgui_linux_commit_candidate(CjguiLinuxSession *session) {
         fflush(stderr);
     }
     cjgui_linux_prune_run_declarations(session);
+    {
+        uint32_t mask = 0u;
+        int localPngFileAllowed = 0;
+        if (cjgui_linux_aux_transfer_declared(session->token, session->accepted.projectionVersion,
+                                              CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 1,
+                                              &localPngFileAllowed)) {
+            mask |= CJGUI_LINUX_DROP_TEXT;
+        }
+        if (cjgui_linux_aux_transfer_declared(session->token, session->accepted.projectionVersion,
+                                              CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2,
+                                              &localPngFileAllowed) && localPngFileAllowed) {
+            mask |= CJGUI_LINUX_DROP_PNG_FILE;
+        }
+        cjgui_linux_window_set_drop_mask(session->window, mask);
+        cjgui_linux_window_set_drop_format_provider(session->window,
+                                                     cjgui_linux_drop_format_at, session);
+    }
     session->preparationActive = 0;
     session->preparationId = 0u;
     cjgui_linux_refresh_image_references(session);
@@ -3273,7 +3557,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_configure_composable_scene(u
                                                                               uint32_t nodeCount) {
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI configure_scene nodes=%u prep=%d\n", nodeCount, session ? session->preparationActive : -1);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI configure_scene nodes=%u prep=%d\n", nodeCount, session ? session->preparationActive : -1);
     if (nodeCount == 0u || nodeCount > CJGUI_LINUX_MAX_NODES) {
         return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
     }
@@ -3321,7 +3605,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_begin_composable_preparation
     if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
     session->preparationActive = 1;
     session->preparationId = preparationId;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI begin_prep id=%llu nodes=%u\n", (unsigned long long)preparationId, nodeCount);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI begin_prep id=%llu nodes=%u\n", (unsigned long long)preparationId, nodeCount);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3347,15 +3631,15 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node(
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->candidate.valid || !node) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u NOT_STAGED\n", index);
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u NOT_STAGED\n", index);
         return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
     }
     if (session->preparationActive && preparationId != session->preparationId) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u STALE prep=%llu have=%llu\n", index, (unsigned long long)preparationId, (unsigned long long)session->preparationId);
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u STALE prep=%llu have=%llu\n", index, (unsigned long long)preparationId, (unsigned long long)session->preparationId);
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     }
     if (index >= session->candidate.nodeCount) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u NOT_FOUND count=%u\n", index, session->candidate.nodeCount);
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare idx=%u NOT_FOUND count=%u\n", index, session->candidate.nodeCount);
         return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
     }
     CjguiLinuxNodeSlot *slot = &session->candidate.slots[index];
@@ -3367,7 +3651,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node(
     cjgui_linux_run_apply(session, slot);
     cjgui_linux_request_slot_image(session, slot);
     session->nodeWriteCount += 1u;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare_ok idx=%u\n", index);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI prepare_ok idx=%u\n", index);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -3384,20 +3668,20 @@ CjguiInternalRendererStatus cjgui_internal_renderer_advance_composable_preparati
     // 本实现的准备是同步写入内存，没有独立的 native worker，所以"就绪"就是
     // "候选已完整声明"。不伪报一个后台进度。
     if (outReady) *outReady = session->candidate.valid ? 1u : 0u;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI advance id=%llu ready=%u\n", (unsigned long long)preparationId, outReady ? *outReady : 0u);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI advance id=%llu ready=%u\n", (unsigned long long)preparationId, outReady ? *outReady : 0u);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_promote_composable_preparation(uint64_t sessionToken,
                                                                                   uint64_t preparationId) {
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI promote_enter prep=%llu active=%d have=%llu\n", (unsigned long long)preparationId, session ? session->preparationActive : -1, session ? (unsigned long long)session->preparationId : 0ull);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI promote_enter prep=%llu active=%d have=%llu\n", (unsigned long long)preparationId, session ? session->preparationActive : -1, session ? (unsigned long long)session->preparationId : 0ull);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->preparationActive || preparationId != session->preparationId) {
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     }
     if (!cjgui_linux_commit_candidate(session)) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI promote NOT_STAGED\n");
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI promote NOT_STAGED\n");
         return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
     }
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -3405,13 +3689,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_promote_composable_preparati
 
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_preparation(uint64_t sessionToken,
                                                                                  uint64_t preparationId) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI cancel_prep id=%llu\n", (unsigned long long)preparationId);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI cancel_prep id=%llu\n", (unsigned long long)preparationId);
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->preparationActive || preparationId != session->preparationId) {
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     }
     cjgui_linux_scene_reset(&session->candidate);
+    cjgui_linux_aux_discard_transfer(session->token);
     cjgui_linux_prune_run_declarations(session);
     session->preparationActive = 0;
     session->preparationId = 0u;
@@ -3419,10 +3704,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_preparatio
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_discard_composable_scene_candidate(uint64_t sessionToken) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI discard_candidate\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI discard_candidate\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     cjgui_linux_scene_reset(&session->candidate);
+    cjgui_linux_aux_discard_transfer(session->token);
     cjgui_linux_prune_run_declarations(session);
     session->preparationActive = 0;
     session->preparationId = 0u;
@@ -3476,7 +3762,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node(
     uint64_t sessionToken, uint32_t nodeIndex, const CjguiInternalRendererComposableNode *node,
     const char *label, const char *value, const char *imageResourcePath, const char *imageResourceId,
     uint64_t imageResourceVersion) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_node_call idx=%u\n", nodeIndex);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_node_call idx=%u\n", nodeIndex);
     return cjgui_linux_store_scene_node(sessionToken, nodeIndex, node, label, value, imageResourcePath,
                                         imageResourceId, imageResourceVersion);
 }
@@ -3485,17 +3771,30 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_scene_node_by
     uint64_t sessionToken, uint32_t nodeIndex, const CjguiInternalRendererComposableNode *node,
     const char *label, const char *value, const char *imageResourcePath, const char *imageResourceId,
     uint64_t imageResourceVersion, const uint8_t *bytes, uint32_t length) {
-    // 本阶段不做图片解码与上传：节点照常入库，字节被显式拒绝而不是静默丢弃。
+    // 共同层的场景内联 PNG 用 `cjgui-transfer:<offerIdentity>` 作为资源身份，
+    // 字节由应用内存提供；节点先入候选场景，再交给同一图片域异步解码/缓存/
+    // 纹理上传。非该身份或空字节仍显式拒绝，不做静默丢图。
     CjguiInternalRendererStatus status = cjgui_linux_store_scene_node(
         sessionToken, nodeIndex, node, label, value, imageResourcePath, imageResourceId, imageResourceVersion);
     if (status != CJGUI_INTERNAL_RENDERER_OK) return status;
     if (!bytes || length == 0u) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    if (imageResourcePath == NULL || imageResourceId == NULL ||
+        strncmp(imageResourcePath, "cjgui-transfer:", 15) != 0 ||
+        strcmp(imageResourcePath, imageResourceId) != 0) {
+        return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    }
+    CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
+    if (session == NULL) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if (session->image == NULL) return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    uint32_t state = cjgui_linux_image_prepare_bytes(session->image, imageResourcePath, imageResourceId,
+                                                     imageResourceVersion, bytes, length);
+    if (state == CJGUI_LINUX_IMAGE_FAILED) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic_identity(
     uint64_t sessionToken, uint32_t nodeIndex, const char *semanticId) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_node_semantic_identity\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_node_semantic_identity\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->candidate.valid) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
@@ -3507,7 +3806,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic_metadata(
     uint64_t sessionToken, uint32_t nodeIndex, const char *bindingKey, const char *rowKey,
     const char *parentRowKey, const char *semanticLabel) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_node_semantic_metadata\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_node_semantic_metadata\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!session->candidate.valid) return CJGUI_INTERNAL_RENDERER_SCENE_NOT_STAGED;
@@ -3523,7 +3822,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_node_semantic
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_text_runs(uint64_t sessionToken,
                                                                             uint64_t nodeId,
                                                                             const char *encoded) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_text_runs\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_text_runs\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     // 声明按 nodeId 保存，**不要求该节点此刻已在候选/已接受场景里**：共同层在
@@ -3565,7 +3864,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_composable_viewport(uint64_t
     cjgui_linux_image_pump(session->image);
     uint32_t width = 0u, height = 0u; int resized = 0;
     (void)cjgui_linux_window_size(session->window, &width, &height, &resized);
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI viewport w=%u h=%u\n", width, height);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI viewport w=%u h=%u\n", width, height);
     memset(outViewport, 0, sizeof(*outViewport));
     outViewport->width = width;
     outViewport->height = height;
@@ -3681,7 +3980,7 @@ static CjguiLinuxNodeSlot *cjgui_linux_hit_test(CjguiLinuxSession *session, doub
         fallback = slot;
         if (node->isInteractive) interactive = slot;
     }
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI hit x=%.1f y=%.1f -> node=%llu kind=%u interactive=%d\n", x, y,
                 interactive ? (unsigned long long)interactive->node.nodeId : (fallback ? (unsigned long long)fallback->node.nodeId : 0ull),
                 interactive ? interactive->node.nodeKind : (fallback ? fallback->node.nodeKind : 0u),
@@ -3734,7 +4033,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(
                                          (double)maximumWidth, 0.0, 0.0, 0, NULL, 0u, &quadCount, &width,
                                          &height, &ascent);
     if (status != CJGUI_LINUX_TEXT_OK && status != CJGUI_LINUX_TEXT_BUDGET_EXCEEDED) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_ABI measure_text FAIL status=%d bytes=%zu maxW=%u font=%.1f family=%u\n",
                     status, strlen(text), maximumWidth, fontSize, fontFamily);
         }
@@ -3747,7 +4046,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_text(
     // reason=layout_native_measurement_failed。所以这里必须给真实行高。
     double lineHeight = cjgui_linux_text_line_height(session->text, fontSize, fontWeight, fontFamily);
     if (lineHeight <= 0.0) lineHeight = fontSize * 1.2;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI measure_text ok bytes=%zu w=%.1f h=%.1f lh=%.1f\n", strlen(text), width,
                 height, lineHeight);
     }
@@ -3787,14 +4086,14 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_styled_te
         maximumLines, overflow != 0u ? 1 : 0, parsed.runs, parsed.count, 0.0, 0.0, 0, NULL, 0u,
         NULL, 0u, &quadCount, &spanCount, &width, &height, &ascent, &resultLineHeight);
     if (status != CJGUI_LINUX_TEXT_OK && status != CJGUI_LINUX_TEXT_BUDGET_EXCEEDED) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_ABI measure_styled FAIL status=%d bytes=%zu runs=%u\n",
                     status, textLength, parsed.count);
         }
         return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
     }
     session->textLayoutPreparationCount += 1u;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI measure_styled ok bytes=%zu runs=%u w=%.1f h=%.1f lh=%.1f\n",
                 textLength, parsed.count, width, height, resultLineHeight);
     }
@@ -3824,7 +4123,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline
         return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
     }
     session->textLayoutPreparationCount += 1u;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI multiline_h ok bytes=%zu h=%.1f\n", strlen(text), height);
     }
     if (outHeight) {
@@ -3840,7 +4139,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_measure_composable_multiline
 
 int32_t cjgui_internal_renderer_declare_input_caret(uint64_t sessionToken, int64_t nodeId, double x, double y,
                                                    double width, double height) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI declare_input_caret\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI declare_input_caret\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return (int32_t)CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     session->caretNodeId = nodeId;
@@ -3876,15 +4175,16 @@ static uint32_t cjgui_linux_pending_free(const CjguiLinuxSession *session) {
     return CJGUI_LINUX_PENDING_EVENTS - session->pendingCount;
 }
 
-static int cjgui_linux_pending_push(CjguiLinuxSession *session, uint32_t kind, const CjguiLinuxNodeSlot *slot,
-                                    int64_t pointerX, int64_t pointerY, int64_t modifiers,
-                                    const char *text) {
+static int cjgui_linux_pending_push_with_epoch(CjguiLinuxSession *session, uint32_t kind,
+                                               const CjguiLinuxNodeSlot *slot,
+                                               int64_t pointerX, int64_t pointerY, int64_t modifiers,
+                                               uint32_t sourceGestureEpoch, const char *text) {
     if (session->pendingCount >= CJGUI_LINUX_PENDING_EVENTS) {
         // 不变式：泵在每个 X11 事件之前按 PER_EVENT 上界预留槽位，这里不该满。
         // 万一满了也绝不清 pendingCount/pendingHead：那会把已经接收、尚未被共同层
         // 消费的事件整批丢掉。只记具名计数并拒绝这一条，让调用方先在下一轮消费。
         session->pendingOverflowCount += 1u;
-        if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_QUEUE_OVERFLOW kind=%u queued=%u\n", kind, session->pendingCount);
         }
         return 0;
@@ -3901,6 +4201,13 @@ static int cjgui_linux_pending_push(CjguiLinuxSession *session, uint32_t kind, c
     // 节点字段实测恒为 1，会让每一条真实输入都被判"原控件已刷新或移除"而拒绝。
     // Windows 侧同样用 s->acceptedScene.version（cjgui_windows_renderer.c）。
     event->projectionVersion = session->accepted.projectionVersion;
+    // 手势代只由真实指针生产路径显式附带（cjgui_linux_pending_push_pointer /
+    // _geometry_pointer）。键盘激活、焦点、文本和生命周期事件即使恰好发生在
+    // 鼠标按住期间也保持 0；不能用“当前是否 open”反推事件来源。指针相位、
+    // 按压意图和抬起时的激活/布尔翻转共用一次手势代：共同层用 45 建立按下
+    // 租约、46 结束，27/29 按该代找回原控件。代次必须**逐次单调递增**
+    // （Windows 的 mouseGestureEpoch 同样如此）：共同层把它当成按下序列。
+    event->bindingEpoch = sourceGestureEpoch;
     if (slot) {
         event->nodeId = slot->node.nodeId;
         event->resourceId = slot->node.resourceId;
@@ -3915,12 +4222,28 @@ static int cjgui_linux_pending_push(CjguiLinuxSession *session, uint32_t kind, c
         memcpy(session->pending[index].text, text, length);
         session->pending[index].text[length] = '\0';
     }
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_QUEUE kind=%u node=%llu epoch=%llu\n", kind,
                 (unsigned long long)event->nodeId, (unsigned long long)event->bindingEpoch);
     }
     session->pendingCount += 1u;
     return 1;
+}
+
+// 键盘、焦点、文本、生命周期等非指针来源：手势代恒为 0。
+static int cjgui_linux_pending_push(CjguiLinuxSession *session, uint32_t kind, const CjguiLinuxNodeSlot *slot,
+                                    int64_t pointerX, int64_t pointerY, int64_t modifiers,
+                                    const char *text) {
+    return cjgui_linux_pending_push_with_epoch(session, kind, slot, pointerX, pointerY, modifiers, 0u, text);
+}
+
+// 真实指针生产路径：相位、按压意图和抬起激活都带上这次物理手势的代次。
+static int cjgui_linux_pending_push_pointer(CjguiLinuxSession *session, uint32_t kind,
+                                            const CjguiLinuxNodeSlot *slot,
+                                            int64_t pointerX, int64_t pointerY, int64_t modifiers,
+                                            const char *text) {
+    return cjgui_linux_pending_push_with_epoch(session, kind, slot, pointerX, pointerY, modifiers,
+                                               session->pointerGestureEpoch, text);
 }
 
 static void cjgui_linux_capture_pointer_geometry(const CjguiLinuxSession *session,
@@ -3943,17 +4266,18 @@ static void cjgui_linux_capture_pointer_geometry(const CjguiLinuxSession *sessio
     out->translateY = cjgui_linux_slot_translate_y(slot);
 }
 
-static int cjgui_linux_pending_push_geometry(CjguiLinuxSession *session, uint32_t kind,
-                                             const CjguiLinuxNodeSlot *slot, int64_t pointerX, int64_t pointerY,
-                                             int64_t modifiers, const char *text,
-                                             const CjguiInternalRendererPointerEventGeometry *geometry) {
-    if (!cjgui_linux_pending_push(session, kind, slot, pointerX, pointerY, modifiers, text)) return 0;
+static int cjgui_linux_pending_push_geometry_with_epoch(
+    CjguiLinuxSession *session, uint32_t kind, const CjguiLinuxNodeSlot *slot,
+    int64_t pointerX, int64_t pointerY, int64_t modifiers, uint32_t sourceGestureEpoch,
+    const char *text, const CjguiInternalRendererPointerEventGeometry *geometry) {
+    if (!cjgui_linux_pending_push_with_epoch(session, kind, slot, pointerX, pointerY, modifiers,
+                                             sourceGestureEpoch, text)) return 0;
     if (!geometry) return 1;
     uint32_t index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
     session->pending[index].geometry = *geometry;
     session->pending[index].geometry.kind = kind;
     session->pending[index].hasGeometry = 1;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_QUEUE_GEOM kind=%u ev_node=%llu ev_proj=%llu geom_node=%llu geom_proj=%llu\n",
                 kind, (unsigned long long)session->pending[index].event.nodeId,
                 (unsigned long long)session->pending[index].event.projectionVersion,
@@ -3962,13 +4286,102 @@ static int cjgui_linux_pending_push_geometry(CjguiLinuxSession *session, uint32_
     return 1;
 }
 
+static int cjgui_linux_pending_push_geometry(CjguiLinuxSession *session, uint32_t kind,
+                                             const CjguiLinuxNodeSlot *slot, int64_t pointerX, int64_t pointerY,
+                                             int64_t modifiers, const char *text,
+                                             const CjguiInternalRendererPointerEventGeometry *geometry) {
+    return cjgui_linux_pending_push_geometry_with_epoch(session, kind, slot, pointerX, pointerY, modifiers,
+                                                        0u, text, geometry);
+}
+
+static int cjgui_linux_pending_push_geometry_pointer(
+    CjguiLinuxSession *session, uint32_t kind, const CjguiLinuxNodeSlot *slot,
+    int64_t pointerX, int64_t pointerY, int64_t modifiers, const char *text,
+    const CjguiInternalRendererPointerEventGeometry *geometry) {
+    return cjgui_linux_pending_push_geometry_with_epoch(session, kind, slot, pointerX, pointerY, modifiers,
+                                                        session->pointerGestureEpoch, text, geometry);
+}
+
+// 数据交换事件：节点身份来自已接受场景，bindingEpoch 取**声明**的代次，
+// 不是物理指针代。文本/二进制载荷与事件同槽，出队时一起移交，避免快速
+// 连续粘贴时后一笔覆盖前一笔。
+static int cjgui_linux_pending_push_transfer(CjguiLinuxSession *session, uint32_t kind,
+                                             const CjguiLinuxNodeSlot *slot,
+                                             uint64_t bindingEpoch, const char *text,
+                                             const char *format, const char *sourceKind,
+                                             const char *sourceIdentity, int64_t sourceId,
+                                             int64_t expectedOwnerVersion,
+                                             const uint8_t *binary, uint32_t binaryLength,
+                                             uint32_t recordIndex, uint64_t eventId) {
+    if (session->pendingCount >= CJGUI_LINUX_PENDING_EVENTS) {
+        session->pendingOverflowCount += 1u;
+        return 0;
+    }
+    uint32_t index = (session->pendingHead + session->pendingCount) % CJGUI_LINUX_PENDING_EVENTS;
+    CjguiInternalRendererEvent *event = &session->pending[index].event;
+    memset(event, 0, sizeof(*event));
+    event->kind = kind;
+    event->projectionVersion = session->accepted.projectionVersion;
+    event->bindingEpoch = bindingEpoch;
+    event->recordIndex = recordIndex;
+    event->dataTransferEventId = eventId;
+    if (slot) {
+        event->nodeId = slot->node.nodeId;
+        event->resourceId = slot->node.resourceId;
+        event->nodeKind = slot->node.nodeKind;
+        event->acceptedBindingEpoch = slot->node.acceptedBindingEpoch;
+    }
+    session->pending[index].hasText = (text && text[0]) ? 1 : 0;
+    session->pending[index].text[0] = '\0';
+    if (session->pending[index].hasText) {
+        snprintf(session->pending[index].text, sizeof(session->pending[index].text), "%s", text);
+    }
+    session->pending[index].hasTransfer = 1;
+    snprintf(session->pending[index].transferFormat,
+             sizeof(session->pending[index].transferFormat), "%s", format ? format : "");
+    snprintf(session->pending[index].transferSourceKind,
+             sizeof(session->pending[index].transferSourceKind), "%s",
+             sourceKind ? sourceKind : "");
+    snprintf(session->pending[index].transferSourceIdentity,
+             sizeof(session->pending[index].transferSourceIdentity), "%s",
+             sourceIdentity ? sourceIdentity : "");
+    session->pending[index].transferSourceId = sourceId;
+    session->pending[index].transferExpectedOwnerVersion = expectedOwnerVersion;
+    session->pending[index].transferEventId = eventId;
+    session->pending[index].transferRecordIndex = recordIndex;
+    if (binary != NULL && binaryLength > 0u) {
+        uint8_t *copy = (uint8_t *)malloc(binaryLength);
+        if (copy == NULL) {
+            session->pending[index].hasTransfer = 0;
+            session->pending[index].hasText = 0;
+            return 0;
+        }
+        memcpy(copy, binary, binaryLength);
+        session->pending[index].transferBinary = copy;
+        session->pending[index].transferBinaryLength = binaryLength;
+    } else {
+        session->pending[index].transferBinary = NULL;
+        session->pending[index].transferBinaryLength = 0u;
+    }
+    session->pendingCount += 1u;
+    return 1;
+}
+
+static uint64_t cjgui_linux_next_transfer_event_id(CjguiLinuxSession *session) {
+    session->nextTransferEventId += 1u;
+    if (session->nextTransferEventId == 0u) session->nextTransferEventId = 1u;
+    return session->nextTransferEventId;
+}
+
+static void cjgui_linux_reveal_proxy_caret(CjguiLinuxSession *session);
+
 // 对当前文本代理应用一次编辑；成功返回 1 并把新值与选区写回代理。
 static int cjgui_linux_proxy_insert(CjguiLinuxSession *session, uint32_t replacementStart16,
                                     uint32_t replacementLength16, const char *inserted) {
     // 用产生这笔输入的会话，不扫描全局第一个 active proxy；否则双窗口时
     // A 窗口的按键会写进 B 窗口的代理。
     if (!session || !session->proxy.active) return 0;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_INPUT_SESSION session=%p start=%u len=%u\n", (void *)session,
                 replacementStart16, replacementLength16);
     }
@@ -3992,6 +4405,9 @@ static int cjgui_linux_proxy_insert(CjguiLinuxSession *session, uint32_t replace
         cjgui_linux_utf16_for_byte_offset(insertedText, insertLength, insertLength);
     session->proxy.selectionStart16 = caret16;
     session->proxy.selectionEnd16 = caret16;
+    session->proxy.preferredColumnValid = 0;
+    session->proxy.lineAffinityPrevious = 0;
+    cjgui_linux_reveal_proxy_caret(session);
     return 1;
 }
 
@@ -4003,7 +4419,7 @@ static int cjgui_linux_emit_text_edit(CjguiLinuxSession *session, uint32_t repla
     if (!session->proxy.active) return 0;
     if (cjgui_linux_pending_free(session) < 2u) {
         session->pendingOverflowCount += 1u;
-        if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_EDIT_DEFERRED queued=%u\n", session->pendingCount);
         }
         return 0;
@@ -4043,6 +4459,11 @@ static int cjgui_linux_emit_text_edit(CjguiLinuxSession *session, uint32_t repla
     {
         uint32_t last = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
         session->pending[last].event.bindingEpoch = session->proxy.bindingEpoch;
+        // The whole-value channel carries the post-edit caret, matching the
+        // macOS event. The range channel below keeps its distinct meaning
+        // (the replaced range), so consumers of either cannot confuse them.
+        session->pending[last].event.selectionStart = (int64_t)session->proxy.selectionStart16;
+        session->pending[last].event.selectionEnd = (int64_t)session->proxy.selectionEnd16;
         if (session->rangeEditDeltaEnabled) {
             session->pending[last].event.replacementStart16 = (int64_t)replaceStart16;
             session->pending[last].event.replacementLength16 = (int64_t)replaceLength16;
@@ -4071,6 +4492,34 @@ static int cjgui_linux_emit_text_edit(CjguiLinuxSession *session, uint32_t repla
     return 1;
 }
 
+// Keyboard caret/selection moves already update the proxy, but the common
+// layer cannot see them unless they are published like pointer drags and
+// Ctrl+A. This is the same channel, not a second selection state.
+static int cjgui_linux_emit_selection_changed(CjguiLinuxSession *session,
+                                              uint32_t selectionStart16, uint32_t selectionEnd16) {
+    if (session == NULL || !session->proxy.active) return 0;
+    CjguiLinuxNodeSlot routing;
+    memset(&routing, 0, sizeof(routing));
+    routing.node.nodeId = session->proxy.nodeId;
+    routing.node.projectionVersion = session->accepted.valid ? session->accepted.projectionVersion
+                                                            : session->proxy.sceneVersion;
+    routing.node.resourceId = session->proxy.resourceId;
+    routing.node.nodeKind = session->proxy.nodeKind;
+    if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED,
+                                  &routing, 0, 0, 0, NULL)) return 0;
+    // The proxy keeps the real anchor/focus orientation for editing. The
+    // published bookmark is an ordered UTF-16 range, like pointer drags and
+    // Ctrl+A already publish; an inverted pair would collapse to a caret.
+    uint32_t orderedStart = selectionStart16 < selectionEnd16 ? selectionStart16 : selectionEnd16;
+    uint32_t orderedEnd = selectionStart16 < selectionEnd16 ? selectionEnd16 : selectionStart16;
+    uint32_t index = (session->pendingHead + session->pendingCount - 1u) % CJGUI_LINUX_PENDING_EVENTS;
+    session->pending[index].event.selectionStart = (int64_t)orderedStart;
+    session->pending[index].event.selectionEnd = (int64_t)orderedEnd;
+    session->pending[index].event.bindingEpoch = session->proxy.bindingEpoch;
+    cjgui_linux_reveal_proxy_caret(session);
+    return 1;
+}
+
 // UTF-8 完整性检查：粘贴只接受完整字符序列，不把半个字符写进正文。
 static int cjgui_linux_utf8_complete(const char *text, size_t length) {
     size_t index = 0u;
@@ -4093,23 +4542,84 @@ static int cjgui_linux_utf8_complete(const char *text, size_t length) {
 }
 
 // 一次粘贴 = 一笔逻辑编辑，复用既有范围编辑入口；不改另一套剪贴板状态。
+static void cjgui_linux_paste_clear_target(CjguiLinuxSession *session) {
+    if (session == NULL) return;
+    cjgui_linux_strfree(&session->pasteTargetValue);
+    session->pasteTargetValid = 0;
+    session->pasteNodeId = 0u;
+    session->pasteResourceId = 0;
+    session->pasteNodeKind = 0u;
+    session->pasteBindingEpoch = 0u;
+    session->pasteStart16 = 0u;
+    session->pasteEnd16 = 0u;
+}
+
+// Freeze the complete basis of a Ctrl+V request before the round-trip starts.
+// A result that arrives after focus/binding/body changed is not this request's
+// result and must not be applied to the new proxy.
+static void cjgui_linux_paste_capture_target(CjguiLinuxSession *session) {
+    cjgui_linux_paste_clear_target(session);
+    if (session == NULL || !session->proxy.active) return;
+    session->pasteNodeId = session->proxy.nodeId;
+    session->pasteResourceId = session->proxy.resourceId;
+    session->pasteNodeKind = session->proxy.nodeKind;
+    session->pasteBindingEpoch = session->proxy.bindingEpoch;
+    session->pasteTargetValue = cjgui_linux_strdup(session->proxy.value ? session->proxy.value : "");
+    if (session->pasteTargetValue == NULL) return;
+    uint32_t a = session->proxy.selectionStart16;
+    uint32_t b = session->proxy.selectionEnd16;
+    session->pasteStart16 = a < b ? a : b;
+    session->pasteEnd16 = a < b ? b : a;
+    session->pasteTargetValid = 1;
+}
+
+static int cjgui_linux_paste_target_matches(const CjguiLinuxSession *session) {
+    if (!session->pasteTargetValid || session->pasteTargetValue == NULL) return 0;
+    if (!session->proxy.active) return 0;
+    if (session->proxy.nodeId != session->pasteNodeId ||
+        session->proxy.resourceId != session->pasteResourceId ||
+        session->proxy.nodeKind != session->pasteNodeKind ||
+        session->proxy.bindingEpoch != session->pasteBindingEpoch) return 0;
+    const char *current = session->proxy.value ? session->proxy.value : "";
+    if (strcmp(current, session->pasteTargetValue) != 0) return 0;
+    uint32_t units = cjgui_linux_utf16_length(current, strlen(current));
+    return session->pasteStart16 <= session->pasteEnd16 && session->pasteEnd16 <= units;
+}
+
 static int cjgui_linux_apply_paste(CjguiLinuxSession *session, const char *text, size_t length) {
-    if (!session->proxy.active) {
-        fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=no_text_proxy bytes=%zu\n", length);
+    if (!session->pasteTargetValid || session->pasteTargetValue == NULL) {
+        fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=no_target bytes=%zu\n", length);
+        fflush(stderr);
+        return 0;
+    }
+    if (!cjgui_linux_paste_target_matches(session)) {
+        fprintf(stderr,
+                "CJGUI_LINUX_PASTE_REJECTED reason=stale_target expected_node=%llu actual_node=%llu "
+                "bytes=%zu\n",
+                (unsigned long long)session->pasteNodeId,
+                (unsigned long long)(session->proxy.active ? session->proxy.nodeId : 0u), length);
+        fflush(stderr);
+        cjgui_linux_paste_clear_target(session);
         return 0;
     }
     if (length >= CJGUI_LINUX_FORM_TEXT_CAPACITY) {
         fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=too_large bytes=%zu capacity=%u\n",
                 length, CJGUI_LINUX_FORM_TEXT_CAPACITY - 1u);
         fflush(stderr);
+        cjgui_linux_paste_clear_target(session);
         return 0;
     }
-    if (length == 0u) return 1;
-    const char *current = session->proxy.value ? session->proxy.value : "";
+    if (length == 0u) {
+        cjgui_linux_paste_clear_target(session);
+        return 1;
+    }
+    const char *current = session->pasteTargetValue;
     size_t currentLength = strlen(current);
-    uint32_t start16 = session->proxy.selectionStart16;
-    uint32_t end16 = session->proxy.selectionEnd16;
-    if (start16 > end16) { uint32_t swap = start16; start16 = end16; end16 = swap; }
+    // The frozen range is the request's own basis, not whatever caret the live
+    // proxy has now. The body match above proves these offsets still describe
+    // the same text; moving the caret alone must not retarget the paste.
+    uint32_t start16 = session->pasteStart16;
+    uint32_t end16 = session->pasteEnd16;
     // 容量判据看这笔编辑**之后**的正文：替换非空选区时旧字节会被换掉，
     // 不能用"旧全文 + 插入串"把其实放得下的替换误拒。
     size_t replaceFrom = cjgui_linux_byte_offset_for_utf16(current, currentLength, start16);
@@ -4121,11 +4631,13 @@ static int cjgui_linux_apply_paste(CjguiLinuxSession *session, const char *text,
         fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=document_too_large bytes=%zu resulting=%zu\n",
                 length, resulting);
         fflush(stderr);
+        cjgui_linux_paste_clear_target(session);
         return 0;
     }
     if (memchr(text, '\0', length) != NULL || !cjgui_linux_utf8_complete(text, length)) {
         fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=invalid_utf8 bytes=%zu\n", length);
         fflush(stderr);
+        cjgui_linux_paste_clear_target(session);
         return 0;
     }
     memcpy(session->formText, text, length);
@@ -4135,6 +4647,7 @@ static int cjgui_linux_apply_paste(CjguiLinuxSession *session, const char *text,
         fprintf(stderr, "CJGUI_LINUX_PASTE bytes=%zu replace=%u:%u\n", length, start16,
                 end16 - start16);
     }
+    cjgui_linux_paste_clear_target(session);
     return applied;
 }
 
@@ -4178,7 +4691,7 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
                 // Focus/rebind/removal happened while the preedit was open.
                 // The next update belongs to a different target; do not
                 // reinterpret the frozen range on it.
-                if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+                if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
                     fprintf(stderr,
                             "CJGUI_LINUX_COMPOSITION_TARGET_CHANGED phase=update node=%llu action=drop\n",
                             (unsigned long long)session->compositionNodeId);
@@ -4225,7 +4738,7 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
             // After a focus switch, rebind or removal it ends only that old
             // composition; it must not write the current proxy even when both
             // fields carry the same body text.
-            if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
                 fprintf(stderr,
                         "CJGUI_LINUX_COMPOSITION_STALE_TARGET phase=%u node=%llu action=drop\n",
                         phase, (unsigned long long)session->compositionNodeId);
@@ -4250,7 +4763,7 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
                     uint32_t units = cjgui_linux_utf16_length(acceptedValue, strlen(acceptedValue));
                     session->proxy.selectionStart16 = units;
                     session->proxy.selectionEnd16 = units;
-                    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+                    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
                         fprintf(stderr, "CJGUI_LINUX_COMPOSITION_STALE node=%llu action=refuse_reanchor\n",
                                 (unsigned long long)session->compositionNodeId);
                     }
@@ -4297,7 +4810,7 @@ static int cjgui_linux_emit_composition(CjguiLinuxSession *session, uint32_t pha
     out->selectionStart = innerCaret16;
     out->selectionEnd = innerCaret16;
     out->bindingEpoch = session->compositionBindingEpoch;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr,
                 "CJGUI_LINUX_COMPOSITION_PUSH phase=%u id=%u node=%llu start=%u len=%u text16=%u caret16=%u\n",
                 phase, session->compositionId, (unsigned long long)session->compositionNodeId,
@@ -4327,6 +4840,7 @@ static void cjgui_linux_clipboard_poll(CjguiLinuxSession *session) {
     char *buffer = (char *)malloc(CJGUI_LINUX_FORM_TEXT_CAPACITY);
     if (!buffer) {
         session->pastePending = 0;
+        cjgui_linux_paste_clear_target(session);
         return;
     }
     size_t length = 0u;
@@ -4340,6 +4854,9 @@ static void cjgui_linux_clipboard_poll(CjguiLinuxSession *session) {
     if (status == CJGUI_LINUX_CLIPBOARD_READ_READY) {
         (void)cjgui_linux_apply_paste(session, buffer, length);
     } else {
+        // A failed/timed-out response ends this paste attempt; the next Ctrl+V
+        // freezes a fresh target instead of reusing a stale one.
+        cjgui_linux_paste_clear_target(session);
         fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=clipboard_%s status=%d\n",
                 cjgui_linux_clipboard_status_name(status), status);
         fflush(stderr);
@@ -4356,6 +4873,628 @@ static CjguiLinuxNodeSlot *cjgui_linux_focused_slot(CjguiLinuxSession *session) 
             slot->node.nodeKind == session->focusNodeKind) return slot;
     }
     return NULL;
+}
+
+// ---------------------------------------------------------------- 数据交换
+// 声明来自共同层经 aux 暂存的同一代条目；这里只做路由与有界运输，不保存
+// 第二套应用状态。键盘目标优先真实焦点，其次仍存活的文本代理节点。
+
+static int cjgui_linux_transfer_find(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot,
+                                     uint32_t role, uint32_t want,
+                                     CjguiInternalRendererComposableDataTransferItem *outItem,
+                                     const char **outPayload, const uint8_t **outBytes,
+                                     uint32_t *outLen) {
+    return cjgui_linux_aux_transfer_find(session->token, session->accepted.projectionVersion,
+                                         slot->node.nodeId, slot->node.resourceId,
+                                         slot->node.nodeKind, role, want, outItem, outPayload,
+                                         outBytes, outLen);
+}
+
+// Called by the window while negotiating XdndDrop: report only the formats
+// declared by the node under the drop point, so a mixed window does not ask a
+// text target for a file URI (or vice versa).
+static int cjgui_linux_drop_format_at(void *user, double x, double y) {
+    CjguiLinuxSession *session = (CjguiLinuxSession *)user;
+    if (session == NULL) return 0;
+    session->dropFreezeActive = 0;
+    session->dropFreezeHasText = 0;
+    session->dropFreezeHasPng = 0;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, x, y);
+    if (slot == NULL) return 0;
+    session->dropFreezeNodeId = slot->node.nodeId;
+    session->dropFreezeResourceId = slot->node.resourceId;
+    session->dropFreezeNodeKind = slot->node.nodeKind;
+    session->dropFreezeX = x;
+    session->dropFreezeY = y;
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *bytes = NULL;
+    uint32_t length = 0u;
+    int format = 0;
+    if (cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2,
+                                  &item, &payload, &bytes, &length)) {
+        format |= (int)CJGUI_LINUX_DROP_PNG_FILE;
+        session->dropFreezeHasPng = 1;
+        session->dropFreezePngEpoch = item.bindingEpoch;
+        session->dropFreezePngOwner = item.expectedOwnerVersion;
+    }
+    if (cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 1,
+                                  &item, &payload, &bytes, &length)) {
+        format |= (int)CJGUI_LINUX_DROP_TEXT;
+        session->dropFreezeHasText = 1;
+        session->dropFreezeTextEpoch = item.bindingEpoch;
+        session->dropFreezeTextOwner = item.expectedOwnerVersion;
+    }
+    session->dropFreezeActive = format != 0;
+    return format;
+}
+
+static CjguiLinuxNodeSlot *cjgui_linux_transfer_keyboard_slot(CjguiLinuxSession *session) {
+    CjguiLinuxNodeSlot *slot = cjgui_linux_focused_slot(session);
+    if (slot != NULL) return slot;
+    if (session->proxy.active) {
+        CjguiLinuxNodeSlot *proxy =
+            cjgui_linux_accepted_slot(session, session->proxy.nodeId);
+        if (proxy != NULL && proxy->node.resourceId == session->proxy.resourceId &&
+            proxy->node.nodeKind == session->proxy.nodeKind) return proxy;
+    }
+    return NULL;
+}
+
+static int cjgui_linux_transfer_copy_source(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot) {
+    if (slot == NULL) return 0;
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *bytes = NULL;
+    uint32_t byteLength = 0u;
+    int want = 0;
+    if (cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE, 1,
+                                  &item, &payload, &bytes, &byteLength)) {
+        want = 1;
+    } else if (cjgui_linux_transfer_find(session, slot,
+                                         CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_SOURCE, 2,
+                                         &item, &payload, &bytes, &byteLength)) {
+        want = 2;
+    }
+    if (want == 0) return 0;
+    int status = -1;
+    if (want == 1) {
+        if (payload == NULL || payload[0] == '\0') return 0;
+        status = cjgui_linux_window_set_clipboard_format(
+            session->window, CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT, payload, strlen(payload));
+    } else {
+        if (bytes == NULL || byteLength == 0u || byteLength > item.maximumPayloadBytes) return 0;
+        status = cjgui_linux_window_set_clipboard_format(
+            session->window, CJGUI_LINUX_CLIPBOARD_FORMAT_PNG, bytes, byteLength);
+    }
+    if (status != CJGUI_LINUX_WINDOW_OK) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_COPY_REJECTED format=%s status=%d\n",
+                want == 1 ? "text/plain" : "image/png", status);
+        fflush(stderr);
+        return 1;
+    }
+    uint64_t eventId = cjgui_linux_next_transfer_event_id(session);
+    (void)cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_COPY, slot,
+        item.bindingEpoch, want == 1 ? payload : "", want == 1 ? "text/plain" : "image/png",
+        "declared_source", "linux", item.sourceId, item.expectedOwnerVersion, NULL, 0u, 0u,
+        eventId);
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_COPY node=%llu epoch=%llu format=%s bytes=%u event=%llu\n",
+                (unsigned long long)slot->node.nodeId, (unsigned long long)item.bindingEpoch,
+                want == 1 ? "text/plain" : "image/png", want == 1 ? (uint32_t)strlen(payload) : byteLength,
+                (unsigned long long)eventId);
+    }
+    return 1;
+}
+
+static void cjgui_linux_transfer_clear_paste(CjguiLinuxSession *session) {
+    session->transferPastePending = 0;
+    session->transferPasteNodeId = 0u;
+    session->transferPasteResourceId = -1;
+    session->transferPasteNodeKind = 0u;
+    session->transferPasteBindingEpoch = 0u;
+    session->transferPasteExpectedOwnerVersion = -1;
+    session->transferPasteFormat = 0u;
+    session->transferPasteRetried = 0;
+}
+
+static void cjgui_linux_transfer_poll(CjguiLinuxSession *session) {
+    if (session->transferPastePending == 0) return;
+    int want = (int)session->transferPasteFormat;
+    size_t capacity = want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG
+                          ? CJGUI_LINUX_CLIPBOARD_BINARY_CAPACITY
+                          : CJGUI_LINUX_CLIPBOARD_CAPACITY;
+    uint8_t *buffer = (uint8_t *)malloc(capacity);
+    if (buffer == NULL) {
+        cjgui_linux_transfer_clear_paste(session);
+        return;
+    }
+    size_t length = 0u;
+    int status = cjgui_linux_window_take_clipboard_format(session->window, want, buffer, capacity,
+                                                          &length);
+    if (status == CJGUI_LINUX_CLIPBOARD_READ_PENDING) {
+        free(buffer);
+        return;
+    }
+    uint64_t nodeId = session->transferPasteNodeId;
+    int64_t resourceId = session->transferPasteResourceId;
+    uint32_t nodeKind = session->transferPasteNodeKind;
+    uint64_t bindingEpoch = session->transferPasteBindingEpoch;
+    int64_t expectedOwnerVersion = session->transferPasteExpectedOwnerVersion;
+    if (status != CJGUI_LINUX_CLIPBOARD_READ_READY) {
+        // 混合目标：声明同时有 text/plain 与 image/png 时，源端不提供文本
+        // 就对同一冻结接收者改请求 PNG；仍失败才具名拒绝，不静默改写。
+        if (want == CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT && !session->transferPasteRetried) {
+            CjguiLinuxNodeSlot *retrySlot = NULL;
+            for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+                CjguiLinuxNodeSlot *candidate = &session->accepted.slots[i];
+                if (candidate->node.nodeId == nodeId && candidate->node.resourceId == resourceId &&
+                    candidate->node.nodeKind == nodeKind) {
+                    retrySlot = candidate;
+                    break;
+                }
+            }
+            CjguiInternalRendererComposableDataTransferItem retryItem;
+            const char *retryPayload = NULL;
+            const uint8_t *retryBytes = NULL;
+            uint32_t retryLength = 0u;
+            if (retrySlot != NULL &&
+                cjgui_linux_transfer_find(session, retrySlot,
+                                          CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2,
+                                          &retryItem, &retryPayload, &retryBytes, &retryLength) &&
+                retryItem.bindingEpoch == bindingEpoch &&
+                cjgui_linux_window_request_clipboard_format(
+                    session->window, CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) == CJGUI_LINUX_WINDOW_OK) {
+                session->transferPasteRetried = 1;
+                session->transferPasteFormat = CJGUI_LINUX_CLIPBOARD_FORMAT_PNG;
+                session->transferPastePending = 1;
+                free(buffer);
+                cjgui_linux_transfer_poll(session);
+                return;
+            }
+        }
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_PASTE_REJECTED reason=clipboard_%s status=%d\n",
+                cjgui_linux_clipboard_status_name(status), status);
+        fflush(stderr);
+        cjgui_linux_transfer_clear_paste(session);
+        free(buffer);
+        return;
+    }
+    cjgui_linux_transfer_clear_paste(session);
+    CjguiLinuxNodeSlot *slot = NULL;
+    for (uint32_t i = 0u; i < session->accepted.nodeCount; i += 1u) {
+        CjguiLinuxNodeSlot *candidate = &session->accepted.slots[i];
+        if (candidate->node.nodeId == nodeId && candidate->node.resourceId == resourceId &&
+            candidate->node.nodeKind == nodeKind) {
+            slot = candidate;
+            break;
+        }
+    }
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *bytes = NULL;
+    uint32_t byteLength = 0u;
+    int wantFormat = want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? 2 : 1;
+    int stillDeclared = slot != NULL &&
+        cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET,
+                                  wantFormat, &item, &payload, &bytes, &byteLength) &&
+        item.bindingEpoch == bindingEpoch;
+    if (!stillDeclared) {
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_PASTE_DROPPED reason=stale_target node=%llu epoch=%llu\n",
+                (unsigned long long)nodeId, (unsigned long long)bindingEpoch);
+        fflush(stderr);
+        free(buffer);
+        return;
+    }
+    if (want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG && length > item.maximumPayloadBytes) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_PASTE_REJECTED reason=payload_too_large bytes=%zu\n",
+                length);
+        fflush(stderr);
+        free(buffer);
+        return;
+    }
+    uint64_t eventId = cjgui_linux_next_transfer_event_id(session);
+    (void)cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_PASTE, slot,
+        bindingEpoch, want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? "" : (const char *)buffer,
+        want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? "image/png" : "text/plain",
+        "external_pasteboard", "x11", 0, expectedOwnerVersion,
+        want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? buffer : NULL,
+        want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? (uint32_t)length : 0u, 0u, eventId);
+    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_PASTE node=%llu epoch=%llu format=%s bytes=%zu event=%llu "
+                "expected_owner=%lld proj=%llu\n",
+                (unsigned long long)nodeId, (unsigned long long)bindingEpoch,
+                want == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? "image/png" : "text/plain", length,
+                (unsigned long long)eventId, (long long)expectedOwnerVersion,
+                (unsigned long long)session->accepted.projectionVersion);
+    }
+    free(buffer);
+}
+
+// Ctrl+V on a declared target: freeze the receiver identity and request the
+// matching system type. A failure is consumed here; it must not fall through to
+// the ordinary text proxy, or the same paste would be written twice.
+static int cjgui_linux_transfer_request_paste(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot) {
+    if (slot == NULL) return 0;
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *bytes = NULL;
+    uint32_t byteLength = 0u;
+    int want = 0;
+    if (cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 1,
+                                  &item, &payload, &bytes, &byteLength)) {
+        want = 1;
+    } else if (cjgui_linux_transfer_find(session, slot,
+                                         CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2,
+                                         &item, &payload, &bytes, &byteLength)) {
+        want = 2;
+    }
+    if (want == 0) return 0;
+    // 同一已声明目标的读取在途时，重复 Ctrl+V 必须在这里消费：返回 0 会让
+    // 同一次粘贴继续落入普通文本代理，造成重复写入。
+    if (session->transferPastePending != 0) return 1;
+    session->transferPasteNodeId = slot->node.nodeId;
+    session->transferPasteResourceId = slot->node.resourceId;
+    session->transferPasteNodeKind = slot->node.nodeKind;
+    session->transferPasteBindingEpoch = item.bindingEpoch;
+    session->transferPasteExpectedOwnerVersion = item.expectedOwnerVersion;
+    session->transferPasteFormat = want == 2 ? CJGUI_LINUX_CLIPBOARD_FORMAT_PNG
+                                             : CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT;
+    int status = cjgui_linux_window_request_clipboard_format(
+        session->window, (int)session->transferPasteFormat);
+    if (status != CJGUI_LINUX_WINDOW_OK) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_PASTE_REJECTED reason=request_status_%d\n", status);
+        fflush(stderr);
+        cjgui_linux_transfer_clear_paste(session);
+        return 1;
+    }
+    session->transferPastePending = 1;
+    cjgui_linux_transfer_poll(session);
+    return 1;
+}
+
+// 本地 PNG 文件：单次有界读取，拒绝非普通文件/超限/短读。失败时只发
+// FILE_TRANSFER_REJECTED，不尝试从剪贴板或其他类型回退。
+static int cjgui_linux_read_local_png(const char *path, uint32_t limit, uint8_t **outBytes,
+                                      uint32_t *outLength, const char **outReason) {
+    *outBytes = NULL;
+    *outLength = 0u;
+    *outReason = NULL;
+    if (path == NULL || path[0] == '\0') { *outReason = "file_path_unavailable"; return 0; }
+    struct stat pathState;
+    if (lstat(path, &pathState) != 0) { *outReason = "file_open_failed"; return 0; }
+    if (!S_ISREG(pathState.st_mode)) { *outReason = "file_not_regular"; return 0; }
+    if (pathState.st_size <= 0) { *outReason = "file_empty"; return 0; }
+    if ((uint64_t)pathState.st_size > limit) { *outReason = "file_payload_too_large"; return 0; }
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) { *outReason = "file_open_failed"; return 0; }
+    struct stat before;
+    if (fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) ||
+        before.st_dev != pathState.st_dev || before.st_ino != pathState.st_ino ||
+        before.st_size <= 0 || (uint64_t)before.st_size > limit) {
+        close(fd);
+        *outReason = "file_changed_during_read";
+        return 0;
+    }
+    size_t wanted = (size_t)before.st_size;
+    uint8_t *buffer = (uint8_t *)malloc(wanted);
+    if (buffer == NULL) { close(fd); *outReason = "file_read_allocation_failed"; return 0; }
+    size_t offset = 0u;
+    while (offset < wanted) {
+        ssize_t count = read(fd, buffer + offset, wanted - offset);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        offset += (size_t)count;
+    }
+    struct stat after;
+    int stable = offset == wanted && fstat(fd, &after) == 0 &&
+                 after.st_dev == before.st_dev && after.st_ino == before.st_ino &&
+                 after.st_size == before.st_size;
+    close(fd);
+    if (!stable) {
+        free(buffer);
+        *outReason = "file_changed_during_read";
+        return 0;
+    }
+    *outBytes = buffer;
+    *outLength = (uint32_t)wanted;
+    return 1;
+}
+
+// Single bounded read job. The worker only reads the frozen path; target
+// identity is settled on the owner thread when the result is consumed.
+static void *cjgui_linux_file_read_worker(void *user) {
+    CjguiLinuxSession *session = (CjguiLinuxSession *)user;
+    for (;;) {
+        char path[CJGUI_LINUX_WINDOW_EVENT_TEXT_CAPACITY];
+        uint32_t limit = 0u;
+        pthread_mutex_lock(&session->fileReadLock);
+        while (!session->fileReadShutdown && !session->fileReadJobPending) {
+            pthread_cond_wait(&session->fileReadCond, &session->fileReadLock);
+        }
+        if (session->fileReadShutdown) {
+            pthread_mutex_unlock(&session->fileReadLock);
+            break;
+        }
+        session->fileReadJobPending = 0;
+        session->fileReadJobActive = 1;
+        memcpy(path, session->fileReadPath, sizeof(path));
+        limit = session->fileReadLimit;
+        pthread_mutex_unlock(&session->fileReadLock);
+
+        uint8_t *bytes = NULL;
+        uint32_t length = 0u;
+        const char *reason = NULL;
+        int ok = cjgui_linux_read_local_png(path, limit, &bytes, &length, &reason);
+
+        pthread_mutex_lock(&session->fileReadLock);
+        session->fileReadResultBytes = ok ? bytes : NULL;
+        session->fileReadResultLength = ok ? length : 0u;
+        snprintf(session->fileReadResultReason, sizeof(session->fileReadResultReason), "%s",
+                 ok ? "" : (reason != NULL ? reason : "file_read_failed"));
+        session->fileReadResultReady = 1;
+        session->fileReadJobActive = 0;
+        pthread_mutex_unlock(&session->fileReadLock);
+        // Wake the serialized owner loop; it consumes the result in its pump.
+        cjgui_internal_renderer_owner_notify_work_linux();
+    }
+    return NULL;
+}
+
+static int cjgui_linux_file_read_submit(CjguiLinuxSession *session, const char *path,
+                                        uint32_t limit, const CjguiLinuxNodeSlot *slot,
+                                        const CjguiInternalRendererComposableDataTransferItem *item) {
+    if (path == NULL || path[0] == '\0' || strlen(path) >= sizeof(session->fileReadPath)) return 0;
+    int submitted = 0;
+    pthread_mutex_lock(&session->fileReadLock);
+    if (!session->fileReadJobActive && !session->fileReadJobPending &&
+        !session->fileReadResultReady) {
+        if (!session->fileReadThreadStarted) {
+            if (pthread_create(&session->fileReadThread, NULL, cjgui_linux_file_read_worker,
+                               session) == 0) {
+                session->fileReadThreadStarted = 1;
+            }
+        }
+        if (session->fileReadThreadStarted) {
+            memcpy(session->fileReadPath, path, strlen(path) + 1u);
+            session->fileReadLimit = limit;
+            session->fileReadNodeId = slot->node.nodeId;
+            session->fileReadResourceId = slot->node.resourceId;
+            session->fileReadNodeKind = slot->node.nodeKind;
+            session->fileReadBindingEpoch = item->bindingEpoch;
+            session->fileReadOwnerVersion = item->expectedOwnerVersion;
+            session->fileReadJobPending = 1;
+            pthread_cond_signal(&session->fileReadCond);
+            submitted = 1;
+        }
+    }
+    pthread_mutex_unlock(&session->fileReadLock);
+    return submitted;
+}
+
+static void cjgui_linux_drop_finish(CjguiLinuxSession *session, int success) {
+    if (session->window != NULL) cjgui_linux_window_finish_drop(session->window, success);
+}
+
+static void cjgui_linux_emit_file_rejected(CjguiLinuxSession *session, CjguiLinuxNodeSlot *slot,
+                                           const CjguiInternalRendererComposableDataTransferItem *item,
+                                           const char *reason) {
+    uint64_t eventId = cjgui_linux_next_transfer_event_id(session);
+    (void)cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_REJECTED, slot,
+        item->bindingEpoch, reason != NULL ? reason : "file_rejected", "image/png",
+        "local_file_url", "x11", 0, item->expectedOwnerVersion, NULL, 0u,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, eventId);
+    fprintf(stderr, "CJGUI_LINUX_TRANSFER_FILE_REJECTED reason=%s node=%llu epoch=%llu event=%llu\n",
+            reason != NULL ? reason : "file_rejected",
+            (unsigned long long)slot->node.nodeId, (unsigned long long)item->bindingEpoch,
+            (unsigned long long)eventId);
+    fflush(stderr);
+}
+
+static void cjgui_linux_handle_drop_event(CjguiLinuxSession *session,
+                                          const CjguiLinuxWindowEvent *event) {
+    if (event->kind == CJGUI_LINUX_WINDOW_EVENT_DROP_LEAVE) return;
+    // The window froze this drop at XdndDrop time (provider call). Payload
+    // delivery may happen later; only that same accepted node is eligible.
+    if (!session->dropFreezeActive) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=no_frozen_target x=%.1f y=%.1f\n",
+                event->x, event->y);
+        fflush(stderr);
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    const uint64_t frozenNodeId = session->dropFreezeNodeId;
+    const int64_t frozenResourceId = session->dropFreezeResourceId;
+    const uint32_t frozenNodeKind = session->dropFreezeNodeKind;
+    const int frozenHasText = session->dropFreezeHasText;
+    const int frozenHasPng = session->dropFreezeHasPng;
+    const uint64_t frozenTextEpoch = session->dropFreezeTextEpoch;
+    const int64_t frozenTextOwner = session->dropFreezeTextOwner;
+    const uint64_t frozenPngEpoch = session->dropFreezePngEpoch;
+    const int64_t frozenPngOwner = session->dropFreezePngOwner;
+    session->dropFreezeActive = 0;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, frozenNodeId);
+    if (slot == NULL || slot->node.resourceId != frozenResourceId ||
+        slot->node.nodeKind != frozenNodeKind) {
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=stale_target node=%llu epoch=%llu\n",
+                (unsigned long long)frozenNodeId, (unsigned long long)frozenPngEpoch);
+        fflush(stderr);
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *declaredBytes = NULL;
+    uint32_t declaredLength = 0u;
+    if (event->kind == CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE) {
+        if (!cjgui_linux_transfer_find(session, slot,
+                                       CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2, &item,
+                                       &payload, &declaredBytes, &declaredLength)) {
+            fprintf(stderr, "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=no_png_target node=%llu\n",
+                    (unsigned long long)slot->node.nodeId);
+            fflush(stderr);
+            cjgui_linux_drop_finish(session, 0);
+            return;
+        }
+        if (!frozenHasPng || item.bindingEpoch != frozenPngEpoch ||
+            item.expectedOwnerVersion != frozenPngOwner) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=drop_target_rebound node=%llu "
+                    "frozen_epoch=%llu current_epoch=%llu frozen_owner=%lld current_owner=%lld\n",
+                    (unsigned long long)slot->node.nodeId, (unsigned long long)frozenPngEpoch,
+                    (unsigned long long)item.bindingEpoch, (long long)frozenPngOwner,
+                    (long long)item.expectedOwnerVersion);
+            fflush(stderr);
+            cjgui_linux_drop_finish(session, 0);
+            return;
+        }
+        if (!item.localPngFileAllowed) {
+            cjgui_linux_emit_file_rejected(session, slot, &item, "local_png_file_not_allowed");
+            cjgui_linux_drop_finish(session, 0);
+            return;
+        }
+        uint32_t limit = item.maximumPayloadBytes > 512u * 1024u
+                             ? 512u * 1024u : item.maximumPayloadBytes;
+        if (!cjgui_linux_file_read_submit(session, event->utf8, limit, slot, &item)) {
+            cjgui_linux_emit_file_rejected(session, slot, &item, "file_read_busy");
+            cjgui_linux_drop_finish(session, 0);
+            return;
+        }
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_DROP_FILE_QUEUED node=%llu epoch=%llu limit=%u path=%s\n",
+                (unsigned long long)slot->node.nodeId, (unsigned long long)item.bindingEpoch, limit,
+                event->utf8);
+        fflush(stderr);
+        return;
+    }
+    // text/plain drop
+    if (!cjgui_linux_transfer_find(session, slot, CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 1,
+                                   &item, &payload, &declaredBytes, &declaredLength)) {
+        fprintf(stderr, "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=no_text_target node=%llu\n",
+                (unsigned long long)slot->node.nodeId);
+        fflush(stderr);
+        return;
+    }
+    if (!frozenHasText || item.bindingEpoch != frozenTextEpoch ||
+        item.expectedOwnerVersion != frozenTextOwner) {
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_DROP_REJECTED reason=drop_target_rebound node=%llu "
+                "frozen_epoch=%llu current_epoch=%llu frozen_owner=%lld current_owner=%lld\n",
+                (unsigned long long)slot->node.nodeId, (unsigned long long)frozenTextEpoch,
+                (unsigned long long)item.bindingEpoch, (long long)frozenTextOwner,
+                (long long)item.expectedOwnerVersion);
+        fflush(stderr);
+        return;
+    }
+    uint64_t eventId = cjgui_linux_next_transfer_event_id(session);
+    (void)cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, slot,
+        item.bindingEpoch, event->utf8, "text/plain", "external_drop", "x11", 0,
+        item.expectedOwnerVersion, NULL, 0u,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, eventId);
+    fprintf(stderr, "CJGUI_LINUX_TRANSFER_DROP_TEXT node=%llu epoch=%llu bytes=%u event=%llu\n",
+            (unsigned long long)slot->node.nodeId, (unsigned long long)item.bindingEpoch,
+            event->utf8Length, (unsigned long long)eventId);
+    fflush(stderr);
+}
+
+// Owner-thread settlement of the bounded read job. The job froze node/resource/
+// kind, binding epoch and expected owner version at submission; a removed,
+// rebound or replaced receiver drops the bytes instead of retargeting them.
+static void cjgui_linux_file_read_consume(CjguiLinuxSession *session) {
+    pthread_mutex_lock(&session->fileReadLock);
+    if (!session->fileReadResultReady) {
+        pthread_mutex_unlock(&session->fileReadLock);
+        return;
+    }
+    uint8_t *bytes = session->fileReadResultBytes;
+    uint32_t length = session->fileReadResultLength;
+    char reason[64];
+    snprintf(reason, sizeof(reason), "%s", session->fileReadResultReason);
+    const uint64_t nodeId = session->fileReadNodeId;
+    const int64_t resourceId = session->fileReadResourceId;
+    const uint32_t nodeKind = session->fileReadNodeKind;
+    const uint64_t bindingEpoch = session->fileReadBindingEpoch;
+    const int64_t ownerVersion = session->fileReadOwnerVersion;
+    session->fileReadResultBytes = NULL;
+    session->fileReadResultLength = 0u;
+    session->fileReadResultReason[0] = '\0';
+    session->fileReadResultReady = 0;
+    pthread_mutex_unlock(&session->fileReadLock);
+
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, nodeId);
+    CjguiInternalRendererComposableDataTransferItem item;
+    const char *payload = NULL;
+    const uint8_t *declaredBytes = NULL;
+    uint32_t declaredLength = 0u;
+    int valid = slot != NULL && slot->node.resourceId == resourceId &&
+                slot->node.nodeKind == nodeKind &&
+                cjgui_linux_transfer_find(session, slot,
+                                          CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_TARGET, 2, &item,
+                                          &payload, &declaredBytes, &declaredLength) &&
+                item.bindingEpoch == bindingEpoch && item.expectedOwnerVersion == ownerVersion;
+    if (!valid) {
+        fprintf(stderr,
+                "CJGUI_LINUX_TRANSFER_FILE_REJECTED reason=stale_target node=%llu epoch=%llu\n",
+                (unsigned long long)nodeId, (unsigned long long)bindingEpoch);
+        fflush(stderr);
+        free(bytes);
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    if (!item.localPngFileAllowed) {
+        free(bytes);
+        cjgui_linux_emit_file_rejected(session, slot, &item, "local_png_file_not_allowed");
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    if (bytes == NULL) {
+        cjgui_linux_emit_file_rejected(session, slot, &item, reason[0] != '\0' ? reason
+                                                                             : "file_read_failed");
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    uint64_t eventId = cjgui_linux_next_transfer_event_id(session);
+    int began = cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FILE_TRANSFER_BEGIN, slot,
+        bindingEpoch, "", "image/png", "local_file_url", "x11", 0, ownerVersion, NULL, 0u,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, eventId);
+    if (!began) {
+        free(bytes);
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    int dropped = cjgui_linux_pending_push_transfer(
+        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, slot,
+        bindingEpoch, "", "image/png", "local_file_url", "x11", 0, ownerVersion, bytes, length,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DATA_TRANSFER_DROP, eventId);
+    free(bytes);
+    if (!dropped) {
+        cjgui_linux_emit_file_rejected(session, slot, &item, "file_completion_queue_full");
+        cjgui_linux_drop_finish(session, 0);
+        return;
+    }
+    fprintf(stderr, "CJGUI_LINUX_TRANSFER_DROP_FILE node=%llu epoch=%llu bytes=%u event=%llu\n",
+            (unsigned long long)slot->node.nodeId, (unsigned long long)bindingEpoch, length,
+            (unsigned long long)eventId);
+    fflush(stderr);
+    cjgui_linux_drop_finish(session, 1);
+}
+
+int cjgui_linux_try_declared_transfer_key(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
+    if ((event->modifiers & CJGUI_LINUX_MOD_CONTROL) == 0u ||
+        (event->modifiers & CJGUI_LINUX_MOD_SHIFT) != 0u) return 0;
+    if (event->keySym != 0x0063u /* c */ && event->keySym != 0x0076u /* v */) return 0;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_transfer_keyboard_slot(session);
+    if (slot == NULL) return 0;
+    if (event->keySym == 0x0063u) return cjgui_linux_transfer_copy_source(session, slot);
+    return cjgui_linux_transfer_request_paste(session, slot);
 }
 
 // With no remembered focus, start in the topmost scoped layer rather than in
@@ -4381,8 +5520,14 @@ static int cjgui_linux_push_focus_event(CjguiLinuxSession *session, const CjguiL
         session->proxy.nodeId == slot->node.nodeId && session->proxy.resourceId == slot->node.resourceId &&
         session->proxy.nodeKind == slot->node.nodeKind) {
         text = session->proxy.value;
-        start = (int64_t)session->proxy.selectionStart16;
-        end = (int64_t)session->proxy.selectionEnd16;
+        // The published FOCUS range stays ordered even when the native proxy
+        // keeps a directional anchor/focus for Shift+arrow shrinking.
+        start = (int64_t)(session->proxy.selectionStart16 < session->proxy.selectionEnd16
+                              ? session->proxy.selectionStart16
+                              : session->proxy.selectionEnd16);
+        end = (int64_t)(session->proxy.selectionStart16 < session->proxy.selectionEnd16
+                            ? session->proxy.selectionEnd16
+                            : session->proxy.selectionStart16);
         binding = session->proxy.bindingEpoch;
     }
     if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, slot, 0, 0,
@@ -4445,7 +5590,7 @@ static int cjgui_linux_focus_next(CjguiLinuxSession *session, int backwards, int
         if (slot->node.inputScope == scope && cjgui_linux_slot_keyboard_focusable(slot) &&
             cjgui_linux_tab_title_is_stop(session, slot, activeGroup, scope)) {
             if (cjgui_linux_focus_slot(session, slot, 1, modifiers)) {
-                if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+                if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                     fprintf(stderr, "CJGUI_LINUX_ABI focus_tab node=%llu kind=%u scope=%llu back=%d\n",
                             (unsigned long long)slot->node.nodeId, slot->node.nodeKind,
                             (unsigned long long)scope, backwards);
@@ -4493,7 +5638,7 @@ static int cjgui_linux_dismiss_layer(CjguiLinuxSession *session, int64_t modifie
         }
     }
     if (!slot || slot->node.inputScope == 0u) return 0;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI dismiss_escape node=%llu scope=%llu\n",
                 (unsigned long long)slot->node.nodeId, (unsigned long long)slot->node.inputScope);
     }
@@ -4540,7 +5685,7 @@ static void cjgui_linux_build_shortcut(char *out, size_t capacity, char key,
 static int cjgui_linux_try_command_shortcut(CjguiLinuxSession *session,
                                             const CjguiLinuxWindowEvent *event) {
     uint32_t mods = event->modifiers;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_CHORD sym=0x%x mods=%u proxy=%d composing=%d\n",
                 event->keySym, mods, session->proxy.active, session->compositionActive);
     }
@@ -4577,7 +5722,7 @@ static int cjgui_linux_try_command_shortcut(CjguiLinuxSession *session,
     CjguiLinuxNodeSlot *focused = cjgui_linux_focused_slot(session);
     uint64_t scope = focused ? focused->node.inputScope : cjgui_linux_default_focus_scope(session);
     int declared = cjgui_linux_aux_shortcut_declared(session->token, shortcut, scope);
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_DECL shortcut=%s scope=%llu declared=%d plain=%d\n", shortcut,
                 (unsigned long long)scope, declared, plain);
     }
@@ -4590,14 +5735,304 @@ static int cjgui_linux_try_command_shortcut(CjguiLinuxSession *session,
     if (!declared) return 0;
     if (!cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND,
                                   NULL, 0, 0, (int64_t)mods, shortcut)) return 0;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_COMMAND shortcut=%s scope=%llu\n", shortcut,
                 (unsigned long long)scope);
     }
     return 1;
 }
 
+// ------------------------------------------------------- 多行视觉导航
+//
+// All helpers below consume the same proxy body and the same text-service
+// caret/line geometry the paint and pointer paths use. No character-count
+// column guess and no accepted-scene geometry enters a move.
+
+static int cjgui_linux_proxy_text_slot(CjguiLinuxSession *session, CjguiLinuxNodeSlot **outSlot,
+                                       double *outFontSize, double *outMaxWidth, int *outMultiline) {
+    if (!session->proxy.active) return 0;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, session->proxy.nodeId);
+    if (!slot) return 0;
+    if (outSlot) *outSlot = slot;
+    if (outFontSize) *outFontSize = slot->node.fontSize > 0.0 ? slot->node.fontSize : 14.0;
+    if (outMaxWidth) *outMaxWidth = (double)slot->node.width - 12.0 > 0.0
+                                        ? (double)slot->node.width - 12.0
+                                        : 0.0;
+    if (outMultiline) {
+        *outMultiline =
+            slot->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+    }
+    return 1;
+}
+
+// Byte offset at a content-local point. The line scan and caret comparison are
+// the same ones the pointer hit-test uses; callers add the view scroll before
+// calling so paint and hit-test share one coordinate.
+static CjguiInternalRendererStatus cjgui_linux_text_offset_at_local(
+    CjguiLinuxSession *session, const CjguiLinuxNodeSlot *slot, const char *body, size_t length,
+    double localX, double localY, uint32_t *outByteOffset) {
+    if (!body || length == 0u) {
+        if (outByteOffset) *outByteOffset = 0u;
+        return CJGUI_INTERNAL_RENDERER_GEOMETRY_EMPTY;
+    }
+    double fontSize = slot->node.fontSize > 0.0 ? slot->node.fontSize : 14.0;
+    double maxWidth = (double)slot->node.width - 12.0;
+    if (maxWidth <= 0.0) maxWidth = 0.0;
+    uint32_t lineCount = 0u;
+    if (cjgui_linux_text_line_count(session->text, body, length, fontSize, slot->node.fontWeight,
+                                    slot->node.fontFamily, maxWidth, &lineCount) !=
+            CJGUI_LINUX_TEXT_OK ||
+        lineCount == 0u) {
+        return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    }
+    uint32_t lineIndex = 0u;
+    size_t lineStart = 0u, lineEnd = 0u;
+    for (uint32_t index = 0u; index < lineCount; index += 1u) {
+        double originX = 0.0, originY = 0.0, width = 0.0, height = 0.0;
+        size_t startByte = 0u, endByte = 0u;
+        if (cjgui_linux_text_line_rect(session->text, body, length, fontSize, slot->node.fontWeight,
+                                       slot->node.fontFamily, maxWidth, index, &originX, &originY,
+                                       &width, &height, &startByte, &endByte) !=
+            CJGUI_LINUX_TEXT_OK) {
+            return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        }
+        lineIndex = index;
+        lineStart = startByte;
+        lineEnd = endByte;
+        if (localY < originY + height) break;
+    }
+    size_t best = lineStart;
+    size_t cursor = lineStart;
+    while (cursor <= lineEnd) {
+        double caretX = 0.0, top = 0.0, height = 0.0;
+        uint32_t caretLine = 0u;
+        size_t startByte = 0u, endByte = 0u;
+        if (cjgui_linux_text_caret_position(session->text, body, length, fontSize,
+                                            slot->node.fontWeight, slot->node.fontFamily, maxWidth,
+                                            cursor, &caretX, &top, &height, &caretLine, &startByte,
+                                            &endByte) != CJGUI_LINUX_TEXT_OK) {
+            break;
+        }
+        // The wrap offset is published as the next line's start; it must not
+        // become a hit inside this visual line.
+        if (caretLine != lineIndex) break;
+        if (caretX <= localX) {
+            best = cursor;
+        } else {
+            break;
+        }
+        if (cursor >= lineEnd) break;
+        cursor += 1u;
+        while (cursor < lineEnd && ((unsigned char)body[cursor] & 0xC0u) == 0x80u) cursor += 1u;
+    }
+    if (best < length) {
+        size_t clusterStart = 0u, clusterEnd = 0u;
+        if (!cjgui_linux_grapheme_range_at(body, length, best, &clusterStart, &clusterEnd)) {
+            return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        }
+        best = clusterStart;
+    }
+    if (outByteOffset) *outByteOffset = (uint32_t)best;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+// Up/Down preserve the caret's x within the body and land on the neighbouring
+// visual line. First-line Up and last-line Down use the platform convention
+// (document start/end) instead of staying put.
+static int cjgui_linux_proxy_vertical_move16(CjguiLinuxSession *session, const char *body,
+                                             size_t length, uint32_t focus16, int direction,
+                                             uint32_t *out16) {
+    CjguiLinuxNodeSlot *slot = NULL;
+    double fontSize = 14.0, maxWidth = 0.0;
+    if (!cjgui_linux_proxy_text_slot(session, &slot, &fontSize, &maxWidth, NULL)) return 0;
+    size_t focusByte = cjgui_linux_byte_offset_for_utf16(body, length, focus16);
+    double x = 0.0, top = 0.0, lineHeight = 0.0;
+    uint32_t lineIndex = 0u;
+    size_t lineStart = 0u, lineEnd = 0u;
+    if (cjgui_linux_text_caret_position(session->text, body, length, fontSize,
+                                        slot->node.fontWeight, slot->node.fontFamily, maxWidth,
+                                        focusByte, &x, &top, &lineHeight, &lineIndex, &lineStart,
+                                        &lineEnd) != CJGUI_LINUX_TEXT_OK) {
+        return 0;
+    }
+    uint32_t lineCount = 0u;
+    if (cjgui_linux_text_line_count(session->text, body, length, fontSize, slot->node.fontWeight,
+                                    slot->node.fontFamily, maxWidth, &lineCount) !=
+            CJGUI_LINUX_TEXT_OK ||
+        lineCount == 0u) {
+        return 0;
+    }
+    if (direction < 0 && lineIndex == 0u) {
+        *out16 = 0u;
+        return 1;
+    }
+    if (direction > 0 && lineIndex + 1u >= lineCount) {
+        *out16 = cjgui_linux_utf16_length(body, length);
+        return 1;
+    }
+    CjguiLinuxActiveTextProxy *proxy = &session->proxy;
+    double targetX = x;
+    if (proxy->preferredColumnValid && proxy->preferredColumnNodeId == proxy->nodeId &&
+        proxy->preferredColumnFocus16 == focus16) {
+        targetX = proxy->preferredColumnX;
+    } else {
+        proxy->preferredColumnX = x;
+        proxy->preferredColumnFocus16 = focus16;
+        proxy->preferredColumnValid = 1;
+        proxy->preferredColumnNodeId = proxy->nodeId;
+    }
+    double targetY = top + (direction < 0 ? -lineHeight * 0.5 : lineHeight * 1.5);
+    uint32_t targetByte = 0u;
+    if (cjgui_linux_text_offset_at_local(session, slot, body, length, targetX, targetY,
+                                         &targetByte) != CJGUI_INTERNAL_RENDERER_OK) {
+        return 0;
+    }
+    *out16 = cjgui_linux_utf16_for_byte_offset(body, length, (size_t)targetByte);
+    proxy->preferredColumnFocus16 = *out16;
+    proxy->lineAffinityPrevious = 0;
+    return 1;
+}
+
+// Home/End are line boundaries; the caller keeps Ctrl+Home/End as document
+// boundaries. A wrap offset belongs to the next line, so End backs up to the
+// last scalar of the visual line instead of jumping to the next line start.
+static int cjgui_linux_proxy_line_boundary16(CjguiLinuxSession *session, const char *body,
+                                             size_t length, uint32_t focus16, int toEnd,
+                                             uint32_t *out16) {
+    CjguiLinuxNodeSlot *slot = NULL;
+    double fontSize = 14.0, maxWidth = 0.0;
+    if (!cjgui_linux_proxy_text_slot(session, &slot, &fontSize, &maxWidth, NULL)) return 0;
+    size_t focusByte = cjgui_linux_byte_offset_for_utf16(body, length, focus16);
+    uint32_t lineCount = 0u;
+    if (cjgui_linux_text_line_count(session->text, body, length, fontSize, slot->node.fontWeight,
+                                    slot->node.fontFamily, maxWidth, &lineCount) !=
+            CJGUI_LINUX_TEXT_OK ||
+        lineCount == 0u) {
+        return 0;
+    }
+    uint32_t lineIndex = 0u;
+    size_t lineStart = 0u, lineEnd = 0u;
+    int found = 0;
+    uint32_t previousLine = 0u;
+    size_t previousStart = 0u, previousEnd = 0u;
+    int hasPrevious = 0;
+    for (uint32_t index = 0u; index < lineCount; index += 1u) {
+        double rx = 0.0, ry = 0.0, rw = 0.0, rh = 0.0;
+        size_t startByte = 0u, endByte = 0u;
+        if (cjgui_linux_text_line_rect(session->text, body, length, fontSize,
+                                       slot->node.fontWeight, slot->node.fontFamily, maxWidth,
+                                       index, &rx, &ry, &rw, &rh, &startByte, &endByte) !=
+            CJGUI_LINUX_TEXT_OK) {
+            return 0;
+        }
+        if (focusByte >= startByte && focusByte <= endByte) {
+            if (found == 0) {
+                lineIndex = index; lineStart = startByte; lineEnd = endByte; found = 1;
+            } else if (startByte == focusByte) {
+                // The second line sharing a soft-wrap boundary is the caret's
+                // default (next-line) home.
+                lineIndex = index; lineStart = startByte; lineEnd = endByte;
+                break;
+            }
+        }
+        if (endByte == focusByte && startByte < endByte) {
+            previousLine = index; previousStart = startByte; previousEnd = endByte;
+            hasPrevious = 1;
+        }
+    }
+    if (!found) return 0;
+    // A soft-wrap boundary is shared by two visual lines. It belongs to the
+    // previous line only when the caret reached it through End; otherwise the
+    // caret is drawn at the next line's start. End therefore extends within the
+    // line the caret is on, and Home follows the same affinity.
+    int softBoundary = hasPrevious && focusByte > 0u && focusByte < length &&
+                       body[focusByte] != '\n' && previousEnd == focusByte;
+    CjguiLinuxActiveTextProxy *proxy = &session->proxy;
+    if (softBoundary && proxy->lineAffinityPrevious) {
+        lineIndex = previousLine; lineStart = previousStart; lineEnd = previousEnd;
+    }
+    size_t target = toEnd ? lineEnd : lineStart;
+    if (target < length) {
+        size_t clusterStart = 0u, clusterEnd = 0u;
+        if (!cjgui_linux_grapheme_range_at(body, length, target, &clusterStart, &clusterEnd)) {
+            return 0;
+        }
+        target = clusterStart;
+    }
+    proxy->lineAffinityPrevious = toEnd && softBoundary ? 1 : 0;
+    proxy->preferredColumnValid = 0;
+    *out16 = cjgui_linux_utf16_for_byte_offset(body, length, target);
+    return 1;
+}
+
+// Minimal reveal: the multiline view scrolls just enough to keep the focus
+// line inside the node. The offset is view state, never a second body.
+static void cjgui_linux_reveal_proxy_caret(CjguiLinuxSession *session) {
+    CjguiLinuxActiveTextProxy *proxy = &session->proxy;
+    if (!proxy->active) return;
+    CjguiLinuxNodeSlot *slot = NULL;
+    double fontSize = 14.0, maxWidth = 0.0;
+    int multiline = 0;
+    if (!cjgui_linux_proxy_text_slot(session, &slot, &fontSize, &maxWidth, &multiline)) return;
+    if (proxy->scrollNodeId != proxy->nodeId) {
+        proxy->scrollTop = 0.0;
+        proxy->scrollNodeId = proxy->nodeId;
+    }
+    if (!multiline) { proxy->scrollTop = 0.0; return; }
+    const char *body = proxy->value ? proxy->value : "";
+    size_t length = strlen(body);
+    size_t focusByte =
+        cjgui_linux_byte_offset_for_utf16(body, length, proxy->selectionEnd16);
+    double x = 0.0, top = 0.0, lineHeight = 0.0;
+    uint32_t lineIndex = 0u;
+    size_t lineStart = 0u, lineEnd = 0u;
+    if (cjgui_linux_text_caret_position(session->text, body, length, fontSize,
+                                        slot->node.fontWeight, slot->node.fontFamily, maxWidth,
+                                        focusByte, &x, &top, &lineHeight, &lineIndex, &lineStart,
+                                        &lineEnd) != CJGUI_LINUX_TEXT_OK) {
+        return;
+    }
+    uint32_t lineCount = 0u;
+    if (cjgui_linux_text_line_count(session->text, body, length, fontSize, slot->node.fontWeight,
+                                    slot->node.fontFamily, maxWidth, &lineCount) !=
+        CJGUI_LINUX_TEXT_OK) {
+        return;
+    }
+    double viewport = (double)slot->node.height - 6.0;
+    if (viewport < lineHeight) viewport = lineHeight;
+    double content = (double)lineCount * lineHeight;
+    double maxScroll = content - viewport;
+    if (maxScroll < 0.0) maxScroll = 0.0;
+    double next = proxy->scrollTop;
+    if (top < next) {
+        next = top;
+    } else if (top + lineHeight > next + viewport) {
+        next = top + lineHeight - viewport;
+    }
+    if (next < 0.0) next = 0.0;
+    if (next > maxScroll) next = maxScroll;
+    if (next < proxy->scrollTop - 0.5 || next > proxy->scrollTop + 0.5) {
+        proxy->scrollTop = next;
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_SCROLL_TRACE")) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_TEXT_SCROLL node=%llu line=%u top=%.1f offset=%.1f max=%.1f\n",
+                    (unsigned long long)proxy->nodeId, lineIndex, top, proxy->scrollTop, maxScroll);
+            fflush(stderr);
+        }
+    }
+}
+
 // 处理一次按键：命中已声明的文本代理时产生一次编辑意图（整值 + 增量）。
+static const char *cjgui_linux_nav_text(uint32_t keySym) {
+    switch (keySym) {
+        case CJGUI_LINUX_XK_LEFT: return "left";
+        case CJGUI_LINUX_XK_RIGHT: return "right";
+        case CJGUI_LINUX_XK_UP: return "up";
+        case CJGUI_LINUX_XK_DOWN: return "down";
+        default: return NULL;
+    }
+}
+
 static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
     int composing = session->compositionActive;
     int commandModifier = (event->modifiers & (CJGUI_LINUX_MOD_CONTROL | CJGUI_LINUX_MOD_ALT |
@@ -4605,6 +6040,31 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
     // Composition keeps XIM priority: no command shortcut runs while the IME
     // owns the keystroke.
     if (!composing && cjgui_linux_try_command_shortcut(session, event)) return;
+    // A declared SOURCE/TARGET owns Ctrl+C/V for its node. It runs before the
+    // text proxy so the same paste/copy is never written twice; with no
+    // declaration the ordinary proxy path below remains unchanged.
+    if (!composing && cjgui_linux_try_declared_transfer_key(session, event)) return;
+    const char *nav = cjgui_linux_nav_text(event->keySym);
+    if (!composing && !commandModifier && !session->proxy.active && nav != NULL) {
+        CjguiLinuxNodeSlot *focused = cjgui_linux_focused_slot(session);
+        if (focused &&
+            (focused->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER ||
+             focused->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SPLIT_DIVIDER)) {
+            // The shared layer owns slider/split semantics (step, clamp,
+            // quantization). Native only transports the key to the focused
+            // accepted node instead of traversing focus.
+            if (cjgui_linux_pending_push(session,
+                                         CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
+                                         focused, 0, 0, (int64_t)event->modifiers, nav)) {
+                if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
+                    fprintf(stderr, "CJGUI_LINUX_CONTROL_KEY node=%llu kind=%u key=%s\n",
+                            (unsigned long long)focused->node.nodeId,
+                            (unsigned int)focused->node.nodeKind, nav);
+                }
+                return;
+            }
+        }
+    }
     if (!composing && !commandModifier && !session->proxy.active &&
         (event->keySym == CJGUI_LINUX_XK_UP || event->keySym == CJGUI_LINUX_XK_DOWN)) {
         // Focus order is scene order inside the current scope; Up/Down move it
@@ -4627,7 +6087,7 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
             (void)cjgui_linux_pending_push_geometry(
                 session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST,
                 focused, (int64_t)pointX, (int64_t)pointY, (int64_t)event->modifiers, NULL, &geometry);
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_CONTEXT_KEY node=%llu\n",
                         (unsigned long long)focused->node.nodeId);
             }
@@ -4671,11 +6131,21 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
         }
         return;
     }
-    uint32_t start16 = session->proxy.selectionStart16;
-    uint32_t end16 = session->proxy.selectionEnd16;
-    if (start16 > end16) { uint32_t swap = start16; start16 = end16; end16 = swap; }
     const char *current = session->proxy.value ? session->proxy.value : "";
     size_t length = strlen(current);
+    uint32_t units16 = cjgui_linux_utf16_length(current, length);
+    // The proxy keeps a directional anchor (selectionStart16) and focus
+    // (selectionEnd16). Ordered endpoints are derived only for copy/cut/
+    // replace, so Shift+Left after Shift+Right shrinks the selection instead
+    // of moving the wrong edge. Each movement step is one grapheme cluster
+    // from the shared renderer service; UTF-16 +/-1 would split emoji
+    // surrogate pairs.
+    if (session->proxy.selectionStart16 > units16) session->proxy.selectionStart16 = units16;
+    if (session->proxy.selectionEnd16 > units16) session->proxy.selectionEnd16 = units16;
+    uint32_t anchor16 = session->proxy.selectionStart16;
+    uint32_t focus16 = session->proxy.selectionEnd16;
+    uint32_t start16 = anchor16 < focus16 ? anchor16 : focus16;
+    uint32_t end16 = anchor16 < focus16 ? focus16 : anchor16;
     // 系统剪贴板：复制/粘贴走与打字同一条编辑路径（同一份 TEXT_RANGE_CHANGED），
     // 不另造一套 Linux 剪贴板状态。选区的字节范围由代理的 UTF-16 选区换算。
     if ((event->modifiers & CJGUI_LINUX_MOD_CONTROL) && !(event->modifiers & CJGUI_LINUX_MOD_SHIFT)) {
@@ -4716,9 +6186,15 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
         if (event->keySym == 0x0076u /* v */) {
             // 异步：只发起请求，继续泵键鼠/关闭；SelectionNotify 到达后由
             // clipboard_poll 以一笔范围编辑落字。超限/不支持在代理前具名拒绝。
+            // The target (identity, bindingEpoch, body and ordered selection) is
+            // frozen here; a late response only lands if the live proxy still
+            // matches it, so switching focus while the request is in flight
+            // must not paste into the newly focused field.
             if (session->pastePending) return;
+            cjgui_linux_paste_capture_target(session);
             int status = cjgui_linux_window_request_clipboard(session->window);
             if (status != CJGUI_LINUX_WINDOW_OK) {
+                cjgui_linux_paste_clear_target(session);
                 fprintf(stderr, "CJGUI_LINUX_PASTE_REJECTED reason=request_status_%d\n", status);
                 return;
             }
@@ -4741,16 +6217,33 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
     const char *inserted = NULL;
     switch (event->keySym) {
         case CJGUI_LINUX_XK_BACKSPACE:
-            if (start16 == end16) {
-                if (start16 == 0u) return;
-                start16 -= 1u;
+            if (start16 != end16) {
+                // Ordered selection deletes the same span in either direction.
+            } else if (focus16 > 0u) {
+                uint32_t target = 0u;
+                if (!cjgui_linux_prev_grapheme_start16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("backspace");
+                    return;
+                }
+                start16 = target;
+                end16 = focus16;
+            } else {
+                return;
             }
             inserted = "";
             break;
         case CJGUI_LINUX_XK_DELETE:
-            if (start16 == end16) {
-                if (end16 >= cjgui_linux_utf16_length(current, length)) return;
-                end16 += 1u;
+            if (start16 != end16) {
+            } else if (focus16 < units16) {
+                uint32_t target = 0u;
+                if (!cjgui_linux_next_grapheme_end16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("delete");
+                    return;
+                }
+                start16 = focus16;
+                end16 = target;
+            } else {
+                return;
             }
             inserted = "";
             break;
@@ -4758,42 +6251,97 @@ static void cjgui_linux_handle_key(CjguiLinuxSession *session, const CjguiLinuxW
             if (session->proxy.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) return;
             inserted = "\n";
             break;
-        // 带 Shift 的方向/首尾键扩展选区（锚点留在原处），不带 Shift 时移动插入点。
-        // 选择与替换走同一条代理路径：选中后打字就是替换，不另造一套状态。
-        case CJGUI_LINUX_XK_LEFT:
+        // 带 Shift 的方向/首尾键只移动焦点、锚点留在原处，因此可以越过锚点
+        // 形成反向选区并逐字符收缩；不带 Shift 时折叠选区后移动插入点。
+        case CJGUI_LINUX_XK_LEFT: {
+            uint32_t target = start16;
             if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
-                session->proxy.selectionEnd16 = start16 > 0u ? start16 - 1u : 0u;
-            } else if (start16 > 0u) {
-                session->proxy.selectionStart16 = start16 - 1u;
-                session->proxy.selectionEnd16 = start16 - 1u;
+                if (!cjgui_linux_prev_grapheme_start16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("left");
+                    return;
+                }
+                session->proxy.selectionEnd16 = target;
+            } else {
+                if (start16 == end16 &&
+                    !cjgui_linux_prev_grapheme_start16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("left");
+                    return;
+                }
+                session->proxy.selectionStart16 = target;
+                session->proxy.selectionEnd16 = target;
             }
+            session->proxy.preferredColumnValid = 0;
+            session->proxy.lineAffinityPrevious = 0;
+            (void)cjgui_linux_emit_selection_changed(session, session->proxy.selectionStart16,
+                                                     session->proxy.selectionEnd16);
             return;
+        }
         case CJGUI_LINUX_XK_RIGHT: {
-            uint32_t units = cjgui_linux_utf16_length(current, length);
+            uint32_t target = end16;
             if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
-                session->proxy.selectionEnd16 = end16 < units ? end16 + 1u : units;
-            } else if (end16 < units) {
-                session->proxy.selectionStart16 = end16 + 1u;
-                session->proxy.selectionEnd16 = end16 + 1u;
+                if (!cjgui_linux_next_grapheme_end16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("right");
+                    return;
+                }
+                session->proxy.selectionEnd16 = target;
+            } else {
+                if (start16 == end16 &&
+                    !cjgui_linux_next_grapheme_end16(current, length, focus16, &target)) {
+                    cjgui_linux_note_text_nav_reject("right");
+                    return;
+                }
+                session->proxy.selectionStart16 = target;
+                session->proxy.selectionEnd16 = target;
             }
+            session->proxy.preferredColumnValid = 0;
+            session->proxy.lineAffinityPrevious = 0;
+            (void)cjgui_linux_emit_selection_changed(session, session->proxy.selectionStart16,
+                                                     session->proxy.selectionEnd16);
+            return;
+        }
+        case CJGUI_LINUX_XK_UP:
+        case CJGUI_LINUX_XK_DOWN: {
+            uint32_t target = focus16;
+            int direction = event->keySym == CJGUI_LINUX_XK_UP ? -1 : 1;
+            if (!cjgui_linux_proxy_vertical_move16(session, current, length, focus16, direction,
+                                                   &target)) {
+                cjgui_linux_note_text_nav_reject(direction < 0 ? "up" : "down");
+                return;
+            }
+            if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
+                session->proxy.selectionEnd16 = target;
+            } else {
+                session->proxy.selectionStart16 = target;
+                session->proxy.selectionEnd16 = target;
+            }
+            (void)cjgui_linux_emit_selection_changed(session, session->proxy.selectionStart16,
+                                                     session->proxy.selectionEnd16);
             return;
         }
         case CJGUI_LINUX_XK_HOME:
-            if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
-                session->proxy.selectionEnd16 = 0u;
-            } else {
-                session->proxy.selectionStart16 = 0u;
-                session->proxy.selectionEnd16 = 0u;
-            }
-            return;
         case CJGUI_LINUX_XK_END: {
-            uint32_t units = cjgui_linux_utf16_length(current, length);
-            if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
-                session->proxy.selectionEnd16 = units;
-            } else {
-                session->proxy.selectionStart16 = units;
-                session->proxy.selectionEnd16 = units;
+            int toEnd = event->keySym == CJGUI_LINUX_XK_END;
+            uint32_t target = toEnd ? units16 : 0u;
+            int documentBoundary =
+                (event->modifiers & CJGUI_LINUX_MOD_CONTROL) != 0u;
+            if (!documentBoundary &&
+                !cjgui_linux_proxy_line_boundary16(session, current, length, focus16, toEnd,
+                                                   &target)) {
+                cjgui_linux_note_text_nav_reject(toEnd ? "end" : "home");
+                return;
             }
+            if (documentBoundary) {
+                session->proxy.preferredColumnValid = 0;
+                session->proxy.lineAffinityPrevious = 0;
+            }
+            if (event->modifiers & CJGUI_LINUX_MOD_SHIFT) {
+                session->proxy.selectionEnd16 = target;
+            } else {
+                session->proxy.selectionStart16 = target;
+                session->proxy.selectionEnd16 = target;
+            }
+            (void)cjgui_linux_emit_selection_changed(session, session->proxy.selectionStart16,
+                                                     session->proxy.selectionEnd16);
             return;
         }
         default:
@@ -4837,7 +6385,7 @@ static void cjgui_linux_pointer_drag_text(CjguiLinuxSession *session, const Cjgu
         // accepted scene. End the old gesture instead of applying A's anchor
         // to whatever is focused now.
         if (session->pointerTextTarget) {
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI text_drag_aborted node=%llu focus=%llu proxy=%d\n",
                         (unsigned long long)session->pointerTextNodeId,
                         (unsigned long long)session->focusNodeId, session->proxy.active);
@@ -4853,7 +6401,7 @@ static void cjgui_linux_pointer_drag_text(CjguiLinuxSession *session, const Cjgu
     CjguiInternalRendererStatus hitStatus = cjgui_linux_hit_test_text_body(session, slot, value, event->x,
                                                                            event->y, &byteOffset, &affinity);
     if (hitStatus != CJGUI_INTERNAL_RENDERER_OK) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_ABI text_drag_hit_failed status=%d x=%.1f y=%.1f\n",
                     (int)hitStatus, event->x, event->y);
         }
@@ -4866,13 +6414,15 @@ static void cjgui_linux_pointer_drag_text(CjguiLinuxSession *session, const Cjgu
     if (anchor > units) anchor = units;
     uint32_t start = anchor < caret ? anchor : caret;
     uint32_t end = anchor < caret ? caret : anchor;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI text_drag x=%.1f y=%.1f byte=%u anchor=%u sel=%u:%u\n",
                 event->x, event->y, byteOffset, anchor, start, end);
     }
     if (start == session->proxy.selectionStart16 && end == session->proxy.selectionEnd16) return;
     session->proxy.selectionStart16 = start;
     session->proxy.selectionEnd16 = end;
+    session->proxy.preferredColumnValid = 0;
+    session->proxy.lineAffinityPrevious = 0;
     CjguiInternalRendererPointerEventGeometry geometry;
     cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
     if (!cjgui_linux_pending_push_geometry(session,
@@ -4897,6 +6447,19 @@ static void cjgui_linux_repaint_composition_frame(CjguiLinuxSession *session) {
     (void)cjgui_linux_present_scene(session, &observation, 0);
 }
 
+// A press captures one accepted node. Moves/release keep reporting that node
+// even after the pointer leaves its bounds, so a slider or split handle can be
+// dragged across the window without the gesture falling onto whatever is under
+// the cursor. Text owns a separate proxy path and never enters this helper.
+static CjguiLinuxNodeSlot *cjgui_linux_captured_pointer_slot(CjguiLinuxSession *session) {
+    if (!session->pointerDown || session->pointerNodeId == 0u) return NULL;
+    CjguiLinuxNodeSlot *slot = cjgui_linux_accepted_slot(session, session->pointerNodeId);
+    if (!slot) return NULL;
+    if (slot->node.resourceId != session->pointerResourceId ||
+        slot->node.nodeKind != session->pointerNodeKind) return NULL;
+    return slot;
+}
+
 static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const CjguiLinuxWindowEvent *event) {
     switch (event->kind) {
         case CJGUI_LINUX_WINDOW_EVENT_CLOSE:
@@ -4915,14 +6478,33 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                                      (int64_t)width, (int64_t)height, 0, NULL);
             break;
         }
+        case CJGUI_LINUX_WINDOW_EVENT_DROP_TEXT:
+        case CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE:
+        case CJGUI_LINUX_WINDOW_EVENT_DROP_LEAVE:
+            cjgui_linux_handle_drop_event(session, event);
+            break;
+        case CJGUI_LINUX_WINDOW_EVENT_EXPOSE: {
+            // Reveal/restore repaints the latest accepted frame. Expose is not
+            // an owner change and must not promote an uncommitted candidate.
+            if (session->accepted.valid && session->gpu != NULL) {
+                CjguiInternalRendererFrameObservation observation;
+                memset(&observation, 0, sizeof(observation));
+                (void)cjgui_linux_present_scene(session, &observation, 0);
+            }
+            break;
+        }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_DOWN: {
             CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI pointer_down x=%.1f y=%.1f node=%llu kind=%u\n",
                         event->x, event->y,
                         (unsigned long long)(slot ? slot->node.nodeId : 0u),
                         (unsigned int)(slot ? slot->node.nodeKind : 0u));
             }
+            session->pointerGestureEpoch += 1u;
+            if (session->pointerGestureEpoch == 0u) session->pointerGestureEpoch = 1u;
+            session->pointerGestureOpen = 1u;
+            session->pointerCaptureCancelled = 0u;
             session->pointerDown = 1;
             session->pointerTextTarget = 0;
             session->pointerTextAborted = 0;
@@ -4959,7 +6541,8 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
             CjguiInternalRendererPointerEventGeometry geometry;
             cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
             if (slot) {
-                cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN,
+                cjgui_linux_pending_push_geometry_pointer(
+                    session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN,
                                                   slot, (int64_t)event->x, (int64_t)event->y,
                                                   (int64_t)event->modifiers, NULL, &geometry);
                 if (event->button == CJGUI_LINUX_BUTTON_RIGHT) {
@@ -4967,8 +6550,8 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                         session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_CONTEXT_MENU_REQUEST, slot,
                         (int64_t)event->x, (int64_t)event->y, (int64_t)event->modifiers, NULL, &geometry);
                 } else {
-                    cjgui_linux_pending_push_geometry(session,
-                                                      CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN, slot,
+                    cjgui_linux_pending_push_geometry_pointer(
+                        session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_BEGIN, slot,
                                                       (int64_t)event->x, (int64_t)event->y,
                                                       (int64_t)event->modifiers, NULL, &geometry);
                 }
@@ -4980,6 +6563,8 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                 session->pointerDown = 0;
                 session->pointerTextTarget = 0;
                 session->pointerTextAborted = 0;
+                session->pointerGestureOpen = 0u;
+                session->pointerCaptureCancelled = 0u;
                 break;
             }
             if (session->pointerTextTarget) {
@@ -4988,24 +6573,30 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                 cjgui_linux_pointer_drag_text(session, event);
                 session->pointerDown = 0;
                 session->pointerTextTarget = 0;
+                session->pointerGestureOpen = 0u;
+                session->pointerCaptureCancelled = 0u;
                 break;
             }
             CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
+            CjguiLinuxNodeSlot *captured = cjgui_linux_captured_pointer_slot(session);
             int sameNode = slot && session->pointerDown && slot->node.nodeId == session->pointerNodeId;
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI pointer_up x=%.1f y=%.1f node=%llu kind=%u text_target=%d\n",
                         event->x, event->y,
                         (unsigned long long)(slot ? slot->node.nodeId : 0u),
                         (unsigned int)(slot ? slot->node.nodeKind : 0u), session->pointerTextTarget);
             }
+            CjguiLinuxNodeSlot *endSlot = captured ? captured : slot;
             CjguiInternalRendererPointerEventGeometry geometry;
-            cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
-            if (slot) {
-                cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END,
-                                                  slot, (int64_t)event->x, (int64_t)event->y,
+            cjgui_linux_capture_pointer_geometry(session, endSlot, event->x, event->y, &geometry);
+            if (endSlot) {
+                cjgui_linux_pending_push_geometry_pointer(
+                    session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END,
+                                                  endSlot, (int64_t)event->x, (int64_t)event->y,
                                                   (int64_t)event->modifiers, NULL, &geometry);
-                cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END,
-                                                  slot, (int64_t)event->x, (int64_t)event->y,
+                cjgui_linux_pending_push_geometry_pointer(
+                    session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_END,
+                                                  endSlot, (int64_t)event->x, (int64_t)event->y,
                                                   (int64_t)event->modifiers, NULL, &geometry);
                 // 只有"按下与抬起落在同一节点"才算激活：短命的鼠标路由留在 native，
                 // 语义判决仍归共同层。布尔控件与键盘路径发送同一 owner 变更事件；
@@ -5015,12 +6606,12 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                         slot->node.isInteractive != 0u && slot->node.isReadOnly == 0u) {
                         const char *next =
                             (slot->value && strcmp(slot->value, "true") == 0) ? "false" : "true";
-                        cjgui_linux_pending_push_geometry(
+                        cjgui_linux_pending_push_geometry_pointer(
                             session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED,
                             slot, (int64_t)event->x, (int64_t)event->y,
                             (int64_t)event->modifiers, next, &geometry);
                     } else {
-                        cjgui_linux_pending_push_geometry(
+                        cjgui_linux_pending_push_geometry_pointer(
                             session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE,
                             slot, (int64_t)event->x, (int64_t)event->y,
                             (int64_t)event->modifiers, NULL, &geometry);
@@ -5028,33 +6619,41 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
                 }
             }
             session->pointerDown = 0;
+            session->pointerGestureOpen = 0u;
+            session->pointerCaptureCancelled = 0u;
             break;
         }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_MOVE: {
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI pointer_move x=%.1f y=%.1f down=%d text_target=%d\n",
                         event->x, event->y, session->pointerDown, session->pointerTextTarget);
             }
             if (!session->pointerDown) break;   // 悬停阶段本阶段不产生共同层意图
+            if (session->pointerCaptureCancelled) break;
             if (session->pointerTextAborted) break;
             if (session->pointerTextTarget) {
                 cjgui_linux_pointer_drag_text(session, event);
                 break;
             }
-            CjguiLinuxNodeSlot *slot = cjgui_linux_hit_test(session, event->x, event->y);
+            CjguiLinuxNodeSlot *slot = cjgui_linux_captured_pointer_slot(session);
+            if (!slot) slot = cjgui_linux_hit_test(session, event->x, event->y);
             CjguiInternalRendererPointerEventGeometry geometry;
             cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
-            cjgui_linux_pending_push_geometry(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE,
+            cjgui_linux_pending_push_geometry_pointer(
+                session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE,
                                               slot, (int64_t)event->x, (int64_t)event->y,
                                               (int64_t)event->modifiers, NULL, &geometry);
             break;
         }
         case CJGUI_LINUX_WINDOW_EVENT_POINTER_LEAVE:
             if (session->pointerDown) {
-                cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL, NULL,
-                                         (int64_t)event->x, (int64_t)event->y, (int64_t)event->modifiers, NULL);
+                cjgui_linux_pending_push_pointer(
+                    session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL, NULL,
+                    (int64_t)event->x, (int64_t)event->y, (int64_t)event->modifiers, NULL);
                 session->pointerDown = 0;
             }
+            session->pointerGestureOpen = 0u;
+            session->pointerCaptureCancelled = 0u;
             session->pointerTextTarget = 0;
             session->pointerTextAborted = 0;
             break;
@@ -5074,7 +6673,7 @@ static void cjgui_linux_handle_window_event(CjguiLinuxSession *session, const Cj
             break;
         }
         case CJGUI_LINUX_WINDOW_EVENT_KEY_DOWN:
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI key_down sym=0x%x utf8=%u proxy=%d\n", event->keySym,
                         event->utf8Length, session->proxy.active);
             }
@@ -5136,6 +6735,8 @@ static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession
         if (status != 0) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         // 剪贴板结果沿同一个泵结算；没结果时继续正常等待键鼠/关闭事件。
         cjgui_linux_clipboard_poll(session);
+        cjgui_linux_transfer_poll(session);
+        cjgui_linux_file_read_consume(session);
         if (count == 0u) {
             if (outIdleWaitNs) *outIdleWaitNs = idle;
             if (outEvent) memset(outEvent, 0, sizeof(*outEvent));
@@ -5146,7 +6747,7 @@ static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession
     }
     if (outEvent) {
         uint32_t index = session->pendingHead;
-        if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_PUMP kind=%u queued=%u\n",
                     session->pending[index].event.kind, session->pendingCount);
         }
@@ -5158,7 +6759,7 @@ static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession
         } else {
             memset(&session->lastGeometry, 0, sizeof(session->lastGeometry));
         }
-        if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_PUMP_GEOM kind=%u ev_node=%llu ev_proj=%llu geom_present=%u geom_node=%llu geom_proj=%llu\n",
                     session->pending[index].event.kind,
                     (unsigned long long)session->pending[index].event.nodeId,
@@ -5168,6 +6769,34 @@ static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession
                     (unsigned long long)session->lastGeometry.projectionVersion);
         }
         session->pending[index].hasGeometry = 0;
+        // Transfer metadata is per event: the getters below read exactly the
+        // identity and payload of the item just dequeued. A non-transfer event
+        // clears the event id so a stale binary can never answer a later read.
+        if (session->transferBytes != NULL) {
+            free(session->transferBytes);
+            session->transferBytes = NULL;
+        }
+        session->transferByteLength = 0u;
+        session->transferEventId = 0u;
+        if (session->pending[index].hasTransfer) {
+            session->transferDeliveryOrdinal += 1u;
+            if (session->transferDeliveryOrdinal == 0u) session->transferDeliveryOrdinal = 1u;
+            snprintf(session->transferFormat, sizeof(session->transferFormat), "%s",
+                     session->pending[index].transferFormat);
+            snprintf(session->transferSourceKind, sizeof(session->transferSourceKind), "%s",
+                     session->pending[index].transferSourceKind);
+            snprintf(session->transferSourceIdentity, sizeof(session->transferSourceIdentity),
+                     "%s", session->pending[index].transferSourceIdentity);
+            session->transferSourceId = session->pending[index].transferSourceId;
+            session->transferExpectedOwnerVersion =
+                session->pending[index].transferExpectedOwnerVersion;
+            session->transferEventId = session->pending[index].transferEventId;
+            session->transferBytes = session->pending[index].transferBinary;
+            session->transferByteLength = session->pending[index].transferBinaryLength;
+            session->pending[index].transferBinary = NULL;
+            session->pending[index].transferBinaryLength = 0u;
+            session->pending[index].hasTransfer = 0;
+        }
         if (session->pending[index].hasRangeIntent) {
             cjgui_linux_strfree(&session->rangePreBody);
             cjgui_linux_strfree(&session->rangePostBody);
@@ -5181,7 +6810,7 @@ static CjguiInternalRendererStatus cjgui_linux_pump_translated(CjguiLinuxSession
             session->pending[index].rangeReplacement = NULL;
             session->pending[index].hasRangeIntent = 0;
         }
-        if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_RETURN kind=%u node=%llu epoch=%llu proj=%llu\n", outEvent->kind,
                     (unsigned long long)outEvent->nodeId, (unsigned long long)outEvent->bindingEpoch,
                     (unsigned long long)outEvent->projectionVersion);
@@ -5225,7 +6854,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_pumped_pointer_geometry(
 uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t sessionToken) {
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return 0u;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_HAS_INPUT queued=%u\n", session->pendingCount);
     }
     return session->pendingCount > 0u ? 1u : 0u;
@@ -5241,7 +6870,7 @@ static int cjgui_linux_declared_owned_target(CjguiLinuxSession *session, uint64_
                                               uint32_t nodeKind);
 
 CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64_t sessionToken, uint64_t nodeId) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI focus_composable_node node=%llu\n",
                 (unsigned long long)nodeId);
     }
@@ -5252,7 +6881,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
     if (!slot) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
     const CjguiInternalRendererComposableNode *node = &slot->node;
     if (!node->isInteractive || node->isReadOnly) {
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_ABI focus_refused node=%llu kind=%u interactive=%u readonly=%u\n",
                     (unsigned long long)nodeId, node->nodeKind, node->isInteractive, node->isReadOnly);
         }
@@ -5260,7 +6889,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
     }
     if (!cjgui_linux_is_editable_text_kind(node->nodeKind)) {
         if (!cjgui_linux_is_keyboard_focus_kind(node->nodeKind)) {
-            if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
                 fprintf(stderr, "CJGUI_LINUX_ABI focus_refused node=%llu kind=%u not_focusable=1\n",
                         (unsigned long long)nodeId, node->nodeKind);
             }
@@ -5273,7 +6902,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
         cjgui_linux_proxy_release(session);
         cjgui_linux_focus_set(session, slot);
         if (hadComposition) cjgui_linux_repaint_composition_frame(session);
-        if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
             fprintf(stderr, "CJGUI_LINUX_ABI focus_non_text node=%llu kind=%u scope=%llu\n",
                     (unsigned long long)nodeId, node->nodeKind, (unsigned long long)node->inputScope);
         }
@@ -5307,7 +6936,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
             return CJGUI_INTERNAL_RENDERER_OK;
         }
         if (session->proxy.value && strcmp(session->proxy.value, value) == 0 &&
-            session->proxy.selectionStart16 <= session->proxy.selectionEnd16 &&
+            session->proxy.selectionStart16 <= units &&
             session->proxy.selectionEnd16 <= units) {
             session->pointerNodeId = nodeId;
             cjgui_linux_focus_set(session, slot);
@@ -5331,7 +6960,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_focus_composable_node(uint64
     session->pointerNodeId = nodeId;
     cjgui_linux_focus_set(session, slot);
     if (hadComposition) cjgui_linux_repaint_composition_frame(session);
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI focus_install node=%llu kind=%u bytes=%zu\n",
                 (unsigned long long)nodeId, node->nodeKind, strlen(value));
     }
@@ -5350,11 +6979,11 @@ static int cjgui_linux_declared_owned_target(CjguiLinuxSession *session, uint64_
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_session(
     uint64_t sessionToken, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t bindingEpoch,
     uint32_t enabled) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_owned_text_session\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_owned_text_session\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (enabled > 1u) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_DECLARE_TEXT enabled=%u node=%llu epoch=%llu\n", enabled,
                 (unsigned long long)nodeId, (unsigned long long)bindingEpoch);
     }
@@ -5401,7 +7030,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_owned_text_se
 }
 
 int32_t cjgui_internal_renderer_set_composable_range_edit_delta(uint64_t sessionToken, int32_t enabled) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_range_edit_delta\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_composable_range_edit_delta\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return (int32_t)CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     session->rangeEditDeltaEnabled = enabled ? 1 : 0;
@@ -5450,7 +7079,10 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     uint64_t sessionToken, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion,
     const char *expectedValue, uint32_t selectionStart, uint32_t selectionEnd, uint32_t *outSelectionStart,
     uint32_t *outSelectionEnd) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI restore_composable_selection\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI restore_composable_selection node=%llu start=%u end=%u\n",
+                (unsigned long long)nodeId, selectionStart, selectionEnd);
+    }
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!expectedValue) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
@@ -5483,6 +7115,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     if (selectionEnd < selectionStart) selectionEnd = selectionStart;
     session->proxy.selectionStart16 = selectionStart;
     session->proxy.selectionEnd16 = selectionEnd;
+    session->proxy.preferredColumnValid = 0;
+    session->proxy.lineAffinityPrevious = 0;
     {
         CjguiLinuxNodeSlot *restored = cjgui_linux_accepted_slot(session, nodeId);
         if (restored && (resourceId < 0 || restored->node.resourceId == resourceId) &&
@@ -5495,7 +7129,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
     // is not the target identity.
     if (cjgui_linux_composition_revalidate(session))
         cjgui_linux_repaint_composition_frame(session);
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_RESTORE_SEL node=%llu epoch=%llu sel=%u:%u kind=%u\n",
                 (unsigned long long)nodeId, (unsigned long long)session->proxy.bindingEpoch,
                 selectionStart, selectionEnd, effectiveKind);
@@ -5508,7 +7142,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_restore_composable_selection
 CjguiInternalRendererStatus cjgui_internal_renderer_read_composable_selection(
     uint64_t sessionToken, uint64_t nodeId, int64_t resourceId, uint32_t nodeKind, uint64_t sceneVersion,
     const char *expectedValue, uint32_t *outSelectionStart, uint32_t *outSelectionEnd) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI read_composable_selection\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI read_composable_selection\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!cjgui_linux_proxy_matches(session, nodeId, resourceId, nodeKind, expectedValue)) {
@@ -5517,8 +7151,12 @@ CjguiInternalRendererStatus cjgui_internal_renderer_read_composable_selection(
     if (sceneVersion != 0u && session->proxy.sceneVersion != sceneVersion) {
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     }
-    if (outSelectionStart) *outSelectionStart = session->proxy.selectionStart16;
-    if (outSelectionEnd) *outSelectionEnd = session->proxy.selectionEnd16;
+    if (outSelectionStart) *outSelectionStart = session->proxy.selectionStart16 < session->proxy.selectionEnd16
+                                                    ? session->proxy.selectionStart16
+                                                    : session->proxy.selectionEnd16;
+    if (outSelectionEnd) *outSelectionEnd = session->proxy.selectionStart16 < session->proxy.selectionEnd16
+                                                ? session->proxy.selectionEnd16
+                                                : session->proxy.selectionStart16;
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5528,7 +7166,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_recover_active_text_proxy(
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!acceptedValue) return CJGUI_INTERNAL_RENDERER_INVALID_UTF8;
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr,
                 "CJGUI_LINUX_RECOVER want node=%llu res=%lld kind=%u | have active=%d node=%llu res=%lld kind=%u\n",
                 (unsigned long long)nodeId, (long long)resourceId, nodeKind, session->proxy.active,
@@ -5551,7 +7189,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_install_owned_source_selecti
     uint64_t sessionToken, uint64_t nodeId, int64_t resourceId, uint64_t sceneVersion, uint64_t bindingEpoch,
     uint64_t requestId, uint64_t deadlineNs, const char *expectedValue, uint32_t selectionStart,
     uint32_t selectionEnd, uint32_t *outSelectionStart, uint32_t *outSelectionEnd, uint8_t *outDeferred) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI install_owned_source_selection\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI install_owned_source_selection\n");
     (void)bindingEpoch;
     (void)requestId;
     (void)deadlineNs;
@@ -5565,7 +7203,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_install_owned_source_selecti
 CjguiInternalRendererStatus cjgui_internal_renderer_set_source_install_gate(uint64_t sessionToken,
                                                                            uint64_t bindingEpoch,
                                                                            uint64_t requestId, uint8_t pending) {
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_source_install_gate\n");
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) fprintf(stderr, "CJGUI_LINUX_ABI set_source_install_gate\n");
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     session->sourceGatePending = pending ? 1 : 0;
@@ -5656,16 +7294,22 @@ CjguiInternalRendererStatus cjgui_internal_renderer_copy_data_transfer_event_bin
 
 // ---------------------------------------------------------------- 指针捕获取消
 
-// 三个取消入口都作用在同一份短命路由状态上：忘掉按下目标并产生一条 CANCEL，
-// 让后续 ButtonRelease 不可能再激活。这是真状态转换，不是具名拒绝。
+// 三个取消入口都退休的是“拖动捕获”，不是这次物理按压。捕获与按压在共同层是
+// 两条声明：取消后不再产生 UPDATE，但 ButtonRelease 仍按按下目标收口 PRESS_END
+// 并发出 ACTIVATE/BOOLEAN_CHANGED；共同层再用按下租约判定该动作是否仍有效
+// （目标移除/换绑/模态变化都会让租约不连续而被拒）。若在这里清掉 pointerDown
+// 和按下目标，抬起事件就既不带手势代也找不到原目标，非 pointer-interactive 的
+// 页签标题等声明型控件会永远收不到激活。
 static CjguiInternalRendererStatus cjgui_linux_cancel_pointer_capture(CjguiLinuxSession *session) {
     if (!session->pointerDown) return CJGUI_INTERNAL_RENDERER_OK;
-    session->pointerDown = 0;
-    session->pointerNodeId = 0u;
-    session->pointerResourceId = 0;
-    session->pointerNodeKind = 0u;
-    cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL, NULL, 0, 0, 0, NULL);
-    cjgui_linux_pending_push(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL, NULL, 0, 0, 0, NULL);
+    // 幂等：重复取消只退休一次捕获，不重复入队 CANCEL，也不改手势代或
+    // 物理按压状态。物理抬起仍由 POINTER_UP 按按下目标收口。
+    if (session->pointerCaptureCancelled) return CJGUI_INTERNAL_RENDERER_OK;
+    session->pointerCaptureCancelled = 1u;
+    cjgui_linux_pending_push_pointer(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_CANCEL,
+                                     NULL, 0, 0, 0, NULL);
+    cjgui_linux_pending_push_pointer(session, CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_PRESS_CANCEL,
+                                     NULL, 0, 0, 0, NULL);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
@@ -5677,23 +7321,37 @@ CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_ca
 
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture_epoch(uint64_t sessionToken,
                                                                                             uint64_t gestureEpoch) {
-    (void)gestureEpoch;
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    // 与 Windows 同口径：0 不是合法代次；不匹配的旧代次是幂等空操作，
+    // 绝不能退化成“取消当前捕获”。只有仍在存续的同一代次才退休捕获。
+    if (gestureEpoch == 0u) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    const int matched = session->pointerGestureOpen != 0u && gestureEpoch == session->pointerGestureEpoch;
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI pointer_cancel_epoch request=%llu current=%llu open=%d applied=%d\n",
+                (unsigned long long)gestureEpoch, (unsigned long long)session->pointerGestureEpoch,
+                session->pointerGestureOpen != 0u, matched);
+    }
+    if (!matched) return CJGUI_INTERNAL_RENDERER_OK;
     return cjgui_linux_cancel_pointer_capture(session);
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_composable_pointer_capture_gesture_key(
     uint64_t sessionToken, uint64_t appInstance, uint64_t componentInstance, uint64_t surfaceGeneration,
     int64_t pointerId, uint64_t gestureEpoch) {
-    (void)appInstance;
-    (void)componentInstance;
-    (void)surfaceGeneration;
-    (void)pointerId;
-    (void)gestureEpoch;
     CjguiLinuxSession *session = cjgui_linux_lookup(sessionToken);
     if (!session) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    return cjgui_linux_cancel_pointer_capture(session);
+    // Linux X11 后端不产生 app/component/surface/pointer 复合手势键
+    // （事件只带单调 gestureEpoch）；共同层也不会在 appInstance==0 时走这里。
+    // 因此完整键一律具名拒绝，而不是拿其中的 epoch 做无条件取消。
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_ABI pointer_cancel_key_rejected app=%llu component=%llu surface=%llu "
+                "pointer=%lld epoch=%llu\n",
+                (unsigned long long)appInstance, (unsigned long long)componentInstance,
+                (unsigned long long)surfaceGeneration, (long long)pointerId,
+                (unsigned long long)gestureEpoch);
+    }
+    return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
 }
 
 // ---------------------------------------------------------------- 诊断读取器
@@ -5794,6 +7452,12 @@ static CjguiInternalRendererStatus cjgui_linux_hit_test_text_body(CjguiLinuxSess
 
     double localX = x - (double)slot->node.x - cjgui_linux_slot_translate_x(slot);
     double localY = y - (double)slot->node.y - cjgui_linux_slot_translate_y(slot);
+    if (slot->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT &&
+        session->proxy.active && session->proxy.nodeId == slot->node.nodeId) {
+        // The painted text starts higher by the view scroll; hit-testing must
+        // move through the same coordinate or clicks land on the wrong line.
+        localY += session->proxy.scrollTop;
+    }
     double fontSize = slot->node.fontSize > 0.0 ? slot->node.fontSize : 14.0;
     double maxWidth = (double)slot->node.width - 12.0;
     if (maxWidth <= 0.0) maxWidth = 0.0;
@@ -5907,6 +7571,8 @@ static int cjgui_linux_pointer_focus_text(CjguiLinuxSession *session, CjguiLinux
     }
     session->proxy.selectionStart16 = caret;
     session->proxy.selectionEnd16 = caret;
+    session->proxy.preferredColumnValid = 0;
+    session->proxy.lineAffinityPrevious = 0;
     session->textSelectionAnchor16 = caret;
     CjguiInternalRendererPointerEventGeometry geometry;
     cjgui_linux_capture_pointer_geometry(session, slot, event->x, event->y, &geometry);
@@ -5925,7 +7591,7 @@ static int cjgui_linux_pointer_focus_text(CjguiLinuxSession *session, CjguiLinux
     session->pending[index].event.selectionStart = (int64_t)caret;
     session->pending[index].event.selectionEnd = (int64_t)caret;
     session->pending[index].event.bindingEpoch = session->proxy.bindingEpoch;
-    if (getenv("CJGUI_LINUX_ABI_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_ABI_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_ABI pointer_focus node=%llu kind=%u caret=%u proxy=%d\n",
                 (unsigned long long)node->nodeId, node->nodeKind, caret, session->proxy.active);
     }

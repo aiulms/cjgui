@@ -47,7 +47,7 @@ static CJGuiInternalSession *ButtonFixture(id<MTLDevice> device,BOOL declared,
     CHECK(CjguiConfigureComposableCommandMenuOnMain(ctx.rendererSessionToken,1,declared?1:0)==0,
         "button_context_command_table_staged");
     if (declared) {
-        CHECK(CjguiSetComposableCommandMenuItemOnMain(ctx.rendererSessionToken,0,"mode","Mode","","",0,0,1,0)==0 &&
+        CHECK(CjguiSetComposableCommandMenuItemOnMain(ctx.rendererSessionToken,0,"mode","Mode","","",0,0,1,0,0)==0 &&
             cjgui_internal_renderer_set_composable_command_identity(ctx.rendererSessionToken,0,9001,
                 403,1,CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON)==0,"button_context_mode_identity_declared");
     }

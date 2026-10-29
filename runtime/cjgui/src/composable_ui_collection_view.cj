@@ -336,6 +336,13 @@ public class CjguiComposableUiCollectionViewState {
         return modeValue
     }
 
+    /// The shared table column layout this view presents. A column menu,
+    /// resize gesture or public workspace edits the SAME layout object; the
+    /// caller reports it with `notePresentationChanged`.
+    public func tableLayout(): CjguiComposableUiTableColumnLayout {
+        return layoutState
+    }
+
     public func validModeNames(): ArrayList<String> {
         return ArrayList<String>(validModes)
     }
@@ -449,6 +456,17 @@ public class CjguiComposableUiCollectionViewState {
         }
     }
 
+    /// Decode and apply through the owner-authority gate. A rejected owner or
+    /// decode/validation failure leaves the view untouched.
+    public func restoreEncodedWithAuthority(value: String,
+        authority: (String, String, Bool) -> Bool): CjguiComposableUiCollectionViewRestoreResult {
+        let decoded = CjguiComposableUiCollectionViewCodec.decode(value)
+        match (decoded.snapshot) {
+            case Some(snapshot) => return applySnapshotWithAuthority(snapshot, authority)
+            case None => return failure(decoded.reason)
+        }
+    }
+
     /// Validate every section, then apply all of them. Column keys that the
     /// current declaration no longer has are ignored; current keys missing from
     /// the saved view are appended at their declared width and visibility.
@@ -457,6 +475,19 @@ public class CjguiComposableUiCollectionViewState {
     public func applySnapshot(
         snapshot: CjguiComposableUiCollectionViewSnapshot
     ): CjguiComposableUiCollectionViewRestoreResult {
+        return applySnapshotInternal(snapshot, None)
+    }
+
+    /// Apply after an OPTIONAL owner-authority gate. The callback runs only
+    /// after every snapshot section validated and before any view/layout
+    /// mutation; false leaves the whole view untouched.
+    public func applySnapshotWithAuthority(snapshot: CjguiComposableUiCollectionViewSnapshot,
+        authority: (String, String, Bool) -> Bool): CjguiComposableUiCollectionViewRestoreResult {
+        return applySnapshotInternal(snapshot, Some(authority))
+    }
+
+    private func applySnapshotInternal(snapshot: CjguiComposableUiCollectionViewSnapshot,
+        authority: ?((String, String, Bool) -> Bool)): CjguiComposableUiCollectionViewRestoreResult {
         if (!validModes.contains(snapshot.mode)) {
             return failure("unknown_view_mode")
         }
@@ -504,6 +535,11 @@ public class CjguiComposableUiCollectionViewState {
             sortKey = ""
             sortCleared = true
         }
+        if (let Some(gate) <- authority) {
+            if (!gate(snapshot.query, sortKey, snapshot.sortAscending)) {
+                return failure("view_authority_rejected")
+            }
+        }
         let modeBefore = modeValue
         let queryBefore = table.query()
         let sortKeyBefore = table.sortColumnKey()
@@ -531,6 +567,16 @@ public class CjguiComposableUiCollectionViewState {
 
     /// Restores the declared default: default mode, no query, no sort, every
     /// declared column at its declared width and visible.
+    public func resetToDefaultWithAuthority(
+        authority: (String, String, Bool) -> Bool): CjguiComposableUiCollectionViewRestoreResult {
+        let columns = ArrayList<CjguiComposableUiTableColumnState>()
+        for (key in layoutState.declaredKeys()) {
+            columns.add(CjguiComposableUiTableColumnState(key, layoutState.declaredWidth(key), true))
+        }
+        return applySnapshotWithAuthority(
+            CjguiComposableUiCollectionViewSnapshot(defaultModeValue, "", "", true, columns), authority)
+    }
+
     public func resetToDefault(): CjguiComposableUiCollectionViewRestoreResult {
         let columns = ArrayList<CjguiComposableUiTableColumnState>()
         for (key in layoutState.declaredKeys()) {

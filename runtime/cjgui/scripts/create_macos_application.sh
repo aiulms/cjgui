@@ -43,7 +43,7 @@ fi
 DESTINATION_PARENT="$(cd "$(dirname "$DESTINATION")" && pwd)"
 DESTINATION="$DESTINATION_PARENT/$(basename "$DESTINATION")"
 FRAMEWORK_ROOT="$(cd "$FRAMEWORK_ROOT" && pwd)"
-RELATIVE_FRAMEWORK="$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[2], sys.argv[1]))' "$DESTINATION" "$FRAMEWORK_ROOT")"
+RELATIVE_FRAMEWORK="$(python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(sys.argv[2]), os.path.realpath(sys.argv[1])))' "$DESTINATION" "$FRAMEWORK_ROOT")"
 
 python3 - "$TEMPLATE_DIR" "$DESTINATION" "$RELATIVE_FRAMEWORK" <<'PY'
 from pathlib import Path

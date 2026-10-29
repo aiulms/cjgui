@@ -1424,7 +1424,10 @@ def request_payload(args: argparse.Namespace, descriptor: dict[str, object]) -> 
         return "\n".join(header)
     if args.command == "generated-fields":
         if args.instance:
-            if not args.instance.isidentifier():
+            # Instance keys use the transport identifier rule (a hyphen is
+            # legal after the first character); Python's isidentifier is
+            # stricter and refuses a valid `rule-1` style key.
+            if not IDENTIFIER.fullmatch(args.instance):
                 fail("instance key is not a protocol identifier")
             header.append(f"GET_GENERATED_UI_FIELDS INSTANCE {args.instance}")
         elif args.owner >= 0:

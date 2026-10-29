@@ -30,6 +30,10 @@ private let GENERATED_CONSUMER_PNG_TARGET_NODE: Int64 = 9002
 private let GENERATED_CONSUMER_PNG_SOURCE_NODE: Int64 = 9003
 private let GENERATED_CONSUMER_PNG_PREVIEW_NODE: Int64 = 9004
 private let GENERATED_CONSUMER_PNG_STATUS_NODE: Int64 = 9005
+// 同窗第二个目标：纯文本。它与 PNG 目标共用同一套 DataTransfer 声明/
+// 事件/回执；文本来源既可以是 Xdnd，也可以是由声明源复制出去。
+private let GENERATED_CONSUMER_TEXT_TARGET: String = "collaboration-text-target"
+private let GENERATED_CONSUMER_TEXT_TARGET_NODE: Int64 = 9010
 
 /// A small normal-window consumer.  Its task content and submitted state are
 /// fields on one CjguiSharedOperationList resource: controller state holds
@@ -55,6 +59,9 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     private let pngOwner: CjguiSharedOperationImageOwner
     private var pngReceiverIncarnation: Int64 = 1
     private var pngOutcome: String = "等待 PNG 粘贴或拖入"
+    private var transferText: String = "文本目标：拖入纯文本"
+    private var transferTextOwnerVersion: Int64 = 1
+    private var transferTextOffer: ?CjguiSharedOperationTransferOffer = None
 
     init(domain: CjguiSharedOperationList) {
         this.domain = domain
@@ -72,7 +79,8 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
     }
 
     public func uiSceneVersion(): Int64 {
-        return revision + domain.snapshot().version + generatedRegion.revision() + pngOwner.version()
+        return revision + domain.snapshot().version + generatedRegion.revision() + pngOwner.version() +
+            transferTextOwnerVersion
     }
 
     public func imageOwner(): CjguiSharedOperationImageOwner { return pngOwner }
@@ -163,6 +171,15 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
             "PNG v${pngSnapshot.version} ${pngSnapshot.width}×${pngSnapshot.height} " +
             "${pngSnapshot.encodedBytes} B · ${pngOutcome}", theme.body))
         editorContent.add(pngPreview)
+        // Same-window text target/source: the node owns both roles through the
+        // public declaration, so a dropped text can be copied back out without
+        // a second application state machine.
+        editorContent.add(cjguiComposableButton(GENERATED_CONSUMER_TEXT_TARGET_NODE,
+            GENERATED_CONSUMER_TEXT_TARGET, transferText, "TEXT_TARGET", 0,
+            CjguiComposableUiStyle(fixedWidth: 360, fixedHeight: 34,
+                background: theme.card.background, border: theme.card.border,
+                textColor: theme.body.textColor, cornerRadius: 6),
+            interactionStyle: theme.primaryActionInteraction))
         // Keep the generated transfer actions and the first part of their
         // effect group inside the initial viewport. The older placement after
         // the handwritten form pushed the blur sample region below the clip.
@@ -314,6 +331,13 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
         declarations.add(CjguiComposableUiDataTransferDeclaration.target(GENERATED_CONSUMER_PNG_TARGET,
             CjguiSharedOperationTransferFormat.png(), receiverIncarnation: pngReceiverIncarnation,
             localPngFileAllowed: true))
+        declarations.add(CjguiComposableUiDataTransferDeclaration.target(GENERATED_CONSUMER_TEXT_TARGET,
+            CjguiSharedOperationTransferFormat.utf8Text(),
+            receiverIncarnation: transferTextOwnerVersion))
+        if (let Some(textOffer) <- transferTextOffer) {
+            declarations.add(CjguiComposableUiDataTransferDeclaration.source(
+                GENERATED_CONSUMER_TEXT_TARGET, textOffer))
+        }
         // The region freezes these identities for the scene currently being
         // prepared. Its accepted readback stays on the previous scene until
         // the same native presentation commits.
@@ -339,6 +363,7 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
 
     public func dataTransferOwnerVersion(node: CjguiComposableUiLayoutNode): Int64 {
         if (node.semanticId == GENERATED_CONSUMER_PNG_TARGET) { return pngOwner.version() }
+        if (node.semanticId == GENERATED_CONSUMER_TEXT_TARGET) { return transferTextOwnerVersion }
         for (endpoint in generatedRegion.refreshTransferEndpoints()) {
             if (endpoint.role == "TARGET" && endpoint.nodeId == node.nodeId &&
                 endpoint.semanticId == node.semanticId) {
@@ -356,9 +381,30 @@ class CollaborationStarterController <: CjguiComposableUiController & CjguiCompo
 
     public func applyDataTransfer(event: CjguiComposableUiDataTransferEvent): CjguiComposableUiDispatchResult {
         if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_DATA_TRANSFER_COPY) {
-            getStdOut().writeln("CJGUI_PNG_COPY consumer=generated-panel version=${pngOwner.version()}")
+            if (event.offer.format.kind != "BINARY") {
+                getStdOut().writeln("CJGUI_TEXT_COPY consumer=generated-panel " +
+                    "bytes=${event.offer.payloadByteCount} digest=${event.offer.contentDigest}")
+            } else {
+                getStdOut().writeln("CJGUI_PNG_COPY consumer=generated-panel version=${pngOwner.version()}")
+            }
             getStdOut().flush()
             return CjguiComposableUiDispatchResult(false)
+        }
+        // 文本目标与 PNG 目标共用同一事件入口；文本不走 PNG owner/候选持有。
+        if (event.offer.format.kind != "BINARY") {
+            if (event.offer.format.identifier != "text/utf-8") {
+                return rejectDataTransfer(event.node.nodeId, event.eventKind, "text_format_unsupported")
+            }
+            transferText = "文本：${event.offer.payload}"
+            transferTextOwnerVersion += 1
+            transferTextOffer = CjguiSharedOperationTransferOffer.create("COPY", "generated-panel",
+                "linux", 0, CjguiSharedOperationTransferFormat.utf8Text(), event.offer.payload)
+            revision += 1
+            getStdOut().writeln("CJGUI_TEXT_OWNER consumer=generated-panel kind=${event.eventKind} " +
+                "bytes=${event.offer.payloadByteCount} digest=${event.offer.contentDigest} " +
+                "epoch=${event.bindingEpoch} version=${transferTextOwnerVersion}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(true)
         }
         let ownerStarted = MonoTime.now()
         let result = pngOwner.accept(event.offer, event.expectedOwnerVersion,

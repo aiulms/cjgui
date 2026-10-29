@@ -3,6 +3,94 @@
 更新：2026-10-19。状态：[ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md)。本页说明已有 API 与使用入口，不另定义项目定位、架构或当前任务；规范归属见[文档导航](../../docs/README.md)。
 仓颉包当前名为 cjgui，版本 0.0.0，输出 static；不承诺稳定公共 API。
 
+## 从 SDK 开始（DS49 公共子集，experimental）
+
+本包提供一个源码 SDK，而不是五份历史补丁：`scripts/export_framework_preview.sh DEST
+--profile full` 导出后，包根 README 给出创建、构建、运行与公开编辑命令。普通开发者
+可以从三种入口开始，共用同一个宿主和 runner：
+
+1. **只写 UI**：`scripts/create_macos_application.sh ui-only DEST`，只使用手写组件树。
+2. **手写外壳 + 运行时开放区域**：`scripts/create_macos_application.sh mixed-form DEST`；
+   `cd DEST && ./run.sh` 启动后应用打印
+   `CJGUI_MIXED_FORM_READY DESCRIPTOR_PATH <path>`，外部客户端用这个描述符发现能力、
+   预览/提交/查询，不需要私有脚本或打印 owner 数字。空生成区可直接
+   `client.py DESCRIPTOR generate` 得到普通布局、字段、Select、图片和两个 owner 的运行时组合。
+3. **从已保存界面文档启动**：先 `ui-export` 得到 `cjgui.ui-document` v1，再
+   `./run.sh --ui-document PATH`；应用在当前 catalog 上重新校验并走原候选事务，
+   坏文件/缺声明/摘要不符会具名拒绝并保留默认界面。`ui-import` 也接受尚未有节点的
+   生成区（`STRUCTURE 0`），因此新会话可以直接载入首个界面文档。
+   规则集消费者用 `consumers/rule_set_window_app/run.sh --open FILE --ui-document UI_FILE`
+   分别重开业务文件和界面文件。
+
+mixed 与 rules 的正常窗口还各自提供同一套可见命令：保存界面、预览载入、确认载入、
+取消预览、恢复已存界面；保存只导出已接受结构，预览列出将改的定义/节点，
+确认复用该预览的基线与 CAS，恢复重读文件而不是重放旧 ticket。业务草稿和 Apply/Cancel
+始终留在原 owner，界面文档操作不会暗中应用或还原它们。两个消费者的界面文件区都提供
+路径输入、“打开界面”和“界面另存”，无需启动参数即可使用：空路径保存具名拒绝
+`ui_document_path_empty`；打开只形成一次预览，确认后才切换文件关联；另存到新文件
+使用不覆盖发布，当前文件走与保存相同的冲突检查，其他已存在目标具名拒绝
+`ui_document_save_as_target_exists`；外部改过当前文件时，“保存界面”具名报
+`ui_document_save_conflict` 并保留外部字节，可先重新预览或另存。merge 保留了磁盘上
+没有的定义时，界面仍显示未保存，需要显式保存完整结构；无变化文件预览后确认只采用
+文件关联，不提交候选。CLI 从已有文件建立启动基线时，保存观察记录的是实际读入文件的
+结构摘要，而不是重新编码后的摘要，因此原文件可直接保存而不误报冲突。
+
+启动载入也由同一个公共 session 持有：CjguiUiDocumentWorkspace.beginStartup(path,
+policy: REPLACE) 校验文件并最多提交一次；普通事件循环调用既有 finish()，关闭继续
+使用 CjguiUiDocumentCloseGuard。startupPending() 和 startupResult() 读取该操作的
+准确结果，关闭先结算也不会丢失终态。底层等价入口为 session 的
+beginStartup(surface, path, policy: ...)、startupPending(surface)、startupResult(surface)；
+既有 manual/scoped 构造器及预览/确认入口保持兼容。这组 API 仍是 experimental，正常
+窗口接入范围为 macOS Rules 和 mixed-form；其他平台不据此宣称已验。
+
+结果保留 token/path/version/fileDigest/startup；未提交的版本为 -1，文件摘要来自实际
+读入字节，不能用当前 accepted 摘要反推。UNKNOWN、错误票据及预算耗尽保持未完成；
+接受后又变更、被替换或拒绝不采用旧基线；忙时拒绝新的启动，不接管交互操作。应用
+只提供原业务 owner、region、工作区 scope/路径、默认生成条件、命令位置和业务关闭
+决定，无需另存启动票据、版本下界或在关闭回调再实现一套采用逻辑。
+
+同一窗口可挂载多个独立文档工作区：每个 scoped 工作区的命令 id、语义 id 和节点身份都由
+其 canonical scope 派生，不使用私有数字池；重建、换位或显示文本相同的两个 scope 不会串写。
+生成集合的具体行在每次区域挂载时按区域根 scope 重定位身份，因此同一 app 级行声明可在
+两个区域各自出现。公共命令投影直接读取真实 session 的可用状态；未知、别域和已退休命令
+按原路由拒绝，不把命令 id 猜成另一个工作区。
+
+两个消费者都把界面文档结算组合进既有 `requestWindowClose`：系统关闭按钮、⌘W 和⌘Q
+共用同一结果。无未保存界面、无预览/在途票据时继续原业务关闭策略；未保存时显示
+“保存界面 / 放弃本次界面改动并关闭 / 取消关闭”，保存界面不 Apply/保存业务草稿，
+放弃界面不改业务内容；在途票据拒绝退出并等待原结算，取消后可继续编辑。多个工作区
+全部检查后才进入业务策略，提示经既有刷新立即可见。Python 的 `ui-export`/
+`ui-import`/`ui-apply` 与窗口命令消费同一格式；导入计划按 JSON 类型严格解析，
+端点、accepted 版本/完整摘要、目录和 REMOVE 任一不符即具名拒绝。Cangjie API
+`CjguiGeneratedUiDocumentSession` 为 experimental，范围见
+[GENERATED_EDITING.md](shared_operation_core/GENERATED_EDITING.md#窗口内界面文档会话experimental)。
+
+可选的会话内界面历史也属于 experimental：给同一 session 传
+`historyPolicy: Some(CjguiUiDocumentHistoryPolicy())`，workspace 增加“撤销界面 / 重做界面”
+及公开同路请求。默认 32 个完整接受点/2 MiB，按数量和 UTF-8 序列化字节独立裁剪；
+版本始终单调，只有准确票据终态与当前完整 digest 相符才移动历史。业务 owner、文件保存
+基线和现有正文 Cmd-Z 各守原协议；不传策略的旧消费者保持关闭。mixed 与 Rules 共用
+`CjguiUiDocumentHistoryAccess` 接通，协议2/Surface1.0为可选扩展，旧端缺失事实保持未知。
+详见 [公共编辑工具](shared_operation_core/GENERATED_EDITING.md#optional-ui-document-undoredo-experimental)。
+
+一条最小公开链（在 `shared_operation_core/` 下，路径换成应用打印的描述符）：
+
+```sh
+python3 cjgui_generated_edit.py DESCRIPTOR show
+python3 cjgui_generated_edit.py DESCRIPTOR preview plan.json --save-plan plan.saved.json
+python3 cjgui_generated_edit.py DESCRIPTOR apply plan.saved.json --save-receipt receipt.json
+python3 cjgui_generated_edit.py DESCRIPTOR status receipt.json
+python3 cjgui_generated_edit.py DESCRIPTOR ui-export interface.json
+python3 cjgui_generated_edit.py DESCRIPTOR ui-import interface.json --save-import-plan import.json
+python3 cjgui_generated_edit.py DESCRIPTOR ui-apply import.json
+```
+
+一个候选可以同时新增/替换多个组合定义（数量与总元素/模板/字节上限由端点发布的
+`COMPOSITION_BUDGET` 决定），未提及的定义保留，`COMPOSITION_REMOVE` 显式删除；
+任一错误整批零发布。旧端点没有该事实时客户端仍按单定义处理。
+支持范围与未完成项以 [ACTIVE_DIRECTION.md](ACTIVE_DIRECTION.md) 和本包 RESULT 为准；
+完整编辑语义见 [GENERATED_EDITING.md](shared_operation_core/GENERATED_EDITING.md)。
+
 ## 当前目录
 
 - src/：runtime、窗口投影和 demo_support；部分旧模块仍是摘要模型，需读源码确认。
@@ -60,6 +148,21 @@
 默认把 Tab 用作导航，只有显式 `tabInsertsText: true` 才插入制表符。窗口可用
 `bindCommand("save"|"undo"|"redo", nodeId)` 把 Command 快捷键映射到已有语义按钮，而非向
 native 写业务规则。
+
+### macOS 系统全屏与窗口事实（experimental）
+
+`CjguiMacosApplication.requestFullScreen(identifier, enabled)`只接受本应用仍存活的窗口身份／代次；
+`true` 表示请求已受理。随后通过 `windowState(identifier)` 读取系统的实际进入／退出结果，
+不要把受理结果写成“已经全屏”。单窗 `CjguiMacosApplicationHost` 提供同名的
+`requestFullScreen(enabled)` 与 `windowState()`。
+
+`CjguiMacosApplicationWindowState` 包含 `isFullScreen`、进入／退出中的标志、`isMinimized`、
+`isVisible`、内容点尺寸、drawable 像素尺寸、`stateRevision` 和具名的 `fullScreenFailure`。
+它由实际 AppKit 生命周期及窗口事实发布，系统绿钮和应用命令共用该路径；
+读取复用既有按代次保护的 viewport 快照，不同步派发到主线程，也不暴露原生对象。
+相同目标的重复请求幂等，相反方向的在途请求、最小化中的请求及已退休窗口会拒绝。
+最小化／恢复继续使用系统窗口控件；本接口不建立另一套窗口或业务状态。
+本轮只接 macOS，其他平台未新增全屏适配，不据此声明跨平台可用。
 
 ### accepted 文字位置、选择恢复与上下文菜单（experimental）
 

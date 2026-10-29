@@ -46,6 +46,12 @@
 #include <unistd.h>
 #include <wchar.h>
 
+static int cjgui_linux_trace_flag(const char *name) {
+    const char *value = getenv(name);
+    if (value == NULL || value[0] == '\0' || strcmp(value, "0") == 0) return 0;
+    return 1;
+}
+
 // 暂存队列容量：剪贴板 round-trip 最长等 2 秒，期间的手势事件要有地方放。
 #define CJGUI_LINUX_PENDING_CAPACITY 256u
 // 剪贴板 round-trip 上限；超时返回失败，绝不无限等。
@@ -111,6 +117,18 @@ static int cjgui_linux_probe_end(Display *display) {
 // 窗口状态
 // ---------------------------------------------------------------------------
 
+// SelectionNotify only echoes the requestor's property atom. A fixed pool gives
+// each in-flight read an X11-visible identity without creating an atom per
+// request. A slot that timed out stays "stale" until its late answer arrives and
+// is discarded; if every slot is stale the next request is refused (bounded).
+#define CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS 8
+
+enum {
+    CJGUI_LINUX_CLIPBOARD_SLOT_FREE = 0,
+    CJGUI_LINUX_CLIPBOARD_SLOT_ACTIVE = 1,
+    CJGUI_LINUX_CLIPBOARD_SLOT_STALE = 2
+};
+
 struct CjguiLinuxWindow {
     Display *display;
     int screen;
@@ -127,6 +145,40 @@ struct CjguiLinuxWindow {
     Atom targets_atom;
     Atom clipboard_atom;
     Atom clipboard_property;
+    Atom image_png_atom;
+
+    // Xdnd 接收端。只做 COPY；类型面由会话按已接受声明设置。
+    Atom xdnd_aware;
+    Atom xdnd_enter;
+    Atom xdnd_position;
+    Atom xdnd_status;
+    Atom xdnd_drop;
+    Atom xdnd_leave;
+    Atom xdnd_finished;
+    Atom xdnd_selection;
+    Atom xdnd_type_list;
+    Atom xdnd_action_copy;
+    Atom text_uri_list;
+    Atom text_plain_utf8;
+    Atom text_plain_atom;
+    Atom xdnd_property;
+    Window xdnd_source;
+    uint32_t xdnd_version;
+    Time xdnd_time;
+    uint32_t drop_mask;
+    int drop_request_active;
+    uint64_t drop_deadline_ms;
+    Atom drop_target;
+    double drop_x;
+    double drop_y;
+    Atom xdnd_offered[32];
+    uint32_t xdnd_offered_count;
+    CjguiLinuxDropFormatProvider drop_format_provider;
+    void *drop_format_user;
+    // A file URI is only finally accepted after the bounded read settles. The
+    // protocol answer therefore waits for the session's explicit finish call.
+    Window drop_finish_pending_source;
+    int drop_finish_pending;
 
     uint32_t logical_width;    // 逻辑点
     uint32_t logical_height;
@@ -136,6 +188,8 @@ struct CjguiLinuxWindow {
     int close_requested;
     int resized_since_query;
     int saw_configure;         // 是否已收到过服务端的第一条 ConfigureNotify
+    int mapped;                // MapNotify/UnmapNotify 的真实映射状态
+    int ever_mapped;           // 首次映射与后续恢复要区分，避免启动多画一帧
     int window_destroyed;
     uint64_t last_server_time_ms;
 
@@ -144,14 +198,30 @@ struct CjguiLinuxWindow {
 
     char *clipboard_text;      // 自己持有的 CLIPBOARD 内容（UTF-8，NUL 结尾）
     size_t clipboard_length;
+    unsigned char *clipboard_binary;   // 自己持有的 image/png（原始字节）
+    size_t clipboard_binary_length;
+    int clipboard_format;      // CjguiLinuxClipboardFormat
     int clipboard_owner;
 
     // 异步读取：SelectionNotify 在 pump 内完成，结果在这里等会话取走。
+    // Each request owns a throwaway requestor window. Retiring the request
+    // destroys that window, so no later SelectionNotify can carry the old
+    // identity into a newer request even if the owner never answers.
+    Window clipboard_requestor;
+    uint64_t clipboard_requestor_serial;
+    Atom clipboard_request_property[CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS];
+    int clipboard_request_slot_state[CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS];
+    int clipboard_request_slot;
+    uint64_t clipboard_request_serial;
     int clipboard_request_active;
+    int clipboard_request_format;
     uint64_t clipboard_request_deadline_ms;
     int clipboard_result_status;
+    int clipboard_result_format;
     char *clipboard_result_text;
     size_t clipboard_result_length;
+    unsigned char *clipboard_result_binary;
+    size_t clipboard_result_binary_length;
 
     // XIM/XIC。预编辑缓冲区只保存纯文本；caret 是 preedit 内部的字符位置。
     XIM xim;
@@ -582,14 +652,23 @@ static void cjgui_linux_fill_key_text(CjguiLinuxWindow *window, const XKeyEvent 
 // 剪贴板（CLIPBOARD，owner + 响应 SelectionRequest）
 // ---------------------------------------------------------------------------
 
-// 把属性写成我们持有的文本；type 决定声明的属性类型。
+// 把属性写成当前持有内容；type 决定声明的属性类型。
 static void cjgui_linux_clipboard_write_property(CjguiLinuxWindow *window, Window requestor,
                                                  Atom property, Atom type) {
-    const unsigned char *data = (const unsigned char *)(window->clipboard_text != NULL
-                                                           ? window->clipboard_text
-                                                           : "");
+    const unsigned char *data = NULL;
+    size_t length = 0u;
+    if (window->clipboard_format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+        data = window->clipboard_binary;
+        length = window->clipboard_binary_length;
+    } else {
+        data = (const unsigned char *)(window->clipboard_text != NULL
+                                           ? window->clipboard_text
+                                           : "");
+        length = window->clipboard_length;
+    }
+    if (data == NULL) data = (const unsigned char *)"";
     XChangeProperty(window->display, requestor, property, type, 8, PropModeReplace, data,
-                    (int)window->clipboard_length);
+                    (int)length);
 }
 
 static void cjgui_linux_handle_selection_request(CjguiLinuxWindow *window,
@@ -607,19 +686,32 @@ static void cjgui_linux_handle_selection_request(CjguiLinuxWindow *window,
     // 过时的客户端会把 property 留成 None，约定用 target 当属性名。
     Atom property = (request->property != None) ? request->property : request->target;
 
-    if (request->selection == window->clipboard_atom && window->clipboard_text != NULL) {
-        if (request->target == window->utf8_string || request->target == window->text_atom ||
-            request->target == XA_STRING) {
+    if (request->selection == window->clipboard_atom && window->clipboard_format != 0) {
+        int text_owned = window->clipboard_format == CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT &&
+                         window->clipboard_text != NULL;
+        int png_owned = window->clipboard_format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG &&
+                        window->clipboard_binary != NULL;
+        if (text_owned && (request->target == window->utf8_string ||
+                           request->target == window->text_atom || request->target == XA_STRING)) {
             cjgui_linux_clipboard_write_property(window, request->requestor, property,
                                                  request->target);
             notify.property = property;
+        } else if (png_owned && request->target == window->image_png_atom) {
+            cjgui_linux_clipboard_write_property(window, request->requestor, property,
+                                                 window->image_png_atom);
+            notify.property = property;
         } else if (request->target == window->targets_atom) {
             Atom supported[3];
-            supported[0] = window->utf8_string;
-            supported[1] = window->text_atom;
-            supported[2] = XA_STRING;
+            uint32_t count = 0u;
+            if (text_owned) {
+                supported[count++] = window->utf8_string;
+                supported[count++] = window->text_atom;
+                supported[count++] = XA_STRING;
+            } else if (png_owned) {
+                supported[count++] = window->image_png_atom;
+            }
             XChangeProperty(window->display, request->requestor, property, XA_ATOM, 32,
-                            PropModeReplace, (const unsigned char *)supported, 3);
+                            PropModeReplace, (const unsigned char *)supported, (int)count);
             notify.property = property;
         }
         // 其它 target：property 保持 None，请求方会看到"不支持"。
@@ -634,13 +726,58 @@ static void cjgui_linux_release_clipboard(CjguiLinuxWindow *window) {
     free(window->clipboard_text);
     window->clipboard_text = NULL;
     window->clipboard_length = 0;
+    free(window->clipboard_binary);
+    window->clipboard_binary = NULL;
+    window->clipboard_binary_length = 0;
+    window->clipboard_format = CJGUI_LINUX_CLIPBOARD_FORMAT_NONE;
 }
 
+// Clears the delivered result only. The request slot is retired separately so
+// a timed-out request keeps its property identity until the late answer is
+// discarded.
 static void cjgui_linux_clipboard_clear_result(CjguiLinuxWindow *window) {
     window->clipboard_result_status = CJGUI_LINUX_CLIPBOARD_READ_IDLE;
+    window->clipboard_result_format = CJGUI_LINUX_CLIPBOARD_FORMAT_NONE;
     free(window->clipboard_result_text);
     window->clipboard_result_text = NULL;
     window->clipboard_result_length = 0u;
+    free(window->clipboard_result_binary);
+    window->clipboard_result_binary = NULL;
+    window->clipboard_result_binary_length = 0u;
+}
+
+static int cjgui_linux_clipboard_acquire_slot(CjguiLinuxWindow *window) {
+    for (int i = 0; i < CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS; i++) {
+        if (window->clipboard_request_slot_state[i] == CJGUI_LINUX_CLIPBOARD_SLOT_FREE) {
+            window->clipboard_request_slot_state[i] = CJGUI_LINUX_CLIPBOARD_SLOT_ACTIVE;
+            window->clipboard_request_slot = i;
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Retiring a request destroys its requestor window. A SelectionNotify queued
+// for the old window can never be mistaken for the newer request, so the slot
+// is reusable immediately and no stale identity accumulates. `stale` remains
+// only as a diagnostic label.
+static void cjgui_linux_clipboard_abandon_request(CjguiLinuxWindow *window, int stale,
+                                                  const char *reason) {
+    int slot = window->clipboard_request_slot;
+    if (window->clipboard_requestor != None && window->display != NULL) {
+        XDestroyWindow(window->display, window->clipboard_requestor);
+        window->clipboard_requestor = None;
+    }
+    if (slot >= 0 && slot < CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS) {
+        window->clipboard_request_slot_state[slot] = CJGUI_LINUX_CLIPBOARD_SLOT_FREE;
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+            fprintf(stderr,
+                    "[cjgui-linux-window] clipboard retire slot=%d serial=%llu stale=%d %s\n",
+                    slot, (unsigned long long)window->clipboard_request_serial, stale, reason);
+            fflush(stderr);
+        }
+    }
+    window->clipboard_request_slot = -1;
     window->clipboard_request_active = 0;
 }
 
@@ -658,14 +795,38 @@ static void cjgui_linux_clipboard_set_text(CjguiLinuxWindow *window, int status,
     copy[length] = '\0';
     window->clipboard_result_text = copy;
     window->clipboard_result_length = length;
+    window->clipboard_result_format = CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT;
+}
+
+static void cjgui_linux_clipboard_set_binary(CjguiLinuxWindow *window, int status,
+                                             const unsigned char *data, size_t length) {
+    cjgui_linux_clipboard_clear_result(window);
+    window->clipboard_result_status = status;
+    if (status != CJGUI_LINUX_CLIPBOARD_READ_READY) return;
+    unsigned char *copy = (unsigned char *)malloc(length > 0u ? length : 1u);
+    if (copy == NULL) {
+        window->clipboard_result_status = CJGUI_LINUX_CLIPBOARD_READ_ERROR;
+        return;
+    }
+    if (length > 0u && data != NULL) memcpy(copy, data, length);
+    window->clipboard_result_binary = copy;
+    window->clipboard_result_binary_length = length;
+    window->clipboard_result_format = CJGUI_LINUX_CLIPBOARD_FORMAT_PNG;
 }
 
 // SelectionNotify 到达：一次性把属性读全。bytes_after > 0 表示超过显式容量，
 // 整笔 TOO_LARGE 且不保留任何前缀；不支持的类型明确记 UNSUPPORTED。
-static void cjgui_linux_clipboard_finish(CjguiLinuxWindow *window, XSelectionEvent *notify) {
-    window->clipboard_request_active = 0;
-    if (notify->property == None) {
-        cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED, NULL, 0u);
+static void cjgui_linux_clipboard_finish(CjguiLinuxWindow *window, XSelectionEvent *notify,
+                                         Atom property) {
+    Window requestor = window->clipboard_requestor;
+    int wanted = window->clipboard_request_format;
+    if (notify->property == None || requestor == None) {
+        if (wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED, NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED, NULL, 0u);
+        }
+        cjgui_linux_clipboard_abandon_request(window, 0, "completed without payload");
         return;
     }
     Atom type = None;
@@ -673,41 +834,495 @@ static void cjgui_linux_clipboard_finish(CjguiLinuxWindow *window, XSelectionEve
     unsigned long items = 0u;
     unsigned long bytes_after = 0u;
     unsigned char *data = NULL;
-    long long_length = (long)((CJGUI_LINUX_CLIPBOARD_CAPACITY + 3u) / 4u) + 1;
-    int ok = XGetWindowProperty(window->display, window->window, window->clipboard_property, 0,
+    size_t capacity = wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG
+                          ? CJGUI_LINUX_CLIPBOARD_BINARY_CAPACITY
+                          : CJGUI_LINUX_CLIPBOARD_CAPACITY;
+    long long_length = (long)((capacity + 3u) / 4u) + 1;
+    int ok = XGetWindowProperty(window->display, requestor, property, 0,
                                 long_length, False, AnyPropertyType, &type, &format, &items,
                                 &bytes_after, &data);
     int text_type = (type == window->utf8_string || type == window->text_atom ||
                      type == XA_STRING);
+    int png_type = type == window->image_png_atom;
+    int type_matches = wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? png_type : text_type;
     int status = CJGUI_LINUX_CLIPBOARD_READ_ERROR;
-    if (ok == Success && format == 8 && text_type != 0) {
-        // 容量含终止 NUL：take 要求 length < capacity，这里同一判据，
-        // 避免运输成功后才在取走时才发现放不下。
-        if (bytes_after > 0u || items >= CJGUI_LINUX_CLIPBOARD_CAPACITY) {
+    if (ok == Success && format == 8 && type_matches != 0) {
+        // 容量含文本终止 NUL；PNG 直接按字节上限。
+        if (bytes_after > 0u || (wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG
+                                     ? items > CJGUI_LINUX_CLIPBOARD_BINARY_CAPACITY
+                                     : items >= CJGUI_LINUX_CLIPBOARD_CAPACITY)) {
             status = CJGUI_LINUX_CLIPBOARD_READ_TOO_LARGE;
         } else if (items == 0u) {
             status = CJGUI_LINUX_CLIPBOARD_READ_EMPTY;
+        } else if (wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            status = CJGUI_LINUX_CLIPBOARD_READ_READY;
+            cjgui_linux_clipboard_set_binary(window, status, data, (size_t)items);
         } else {
             status = CJGUI_LINUX_CLIPBOARD_READ_READY;
             cjgui_linux_clipboard_set_text(window, status, (const char *)data, (size_t)items);
         }
-    } else if (ok == Success && text_type != 0) {
+    } else if (ok == Success && (text_type != 0 || png_type != 0)) {
         status = CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED;
     }
     if (data != NULL) XFree(data);
     if (status != CJGUI_LINUX_CLIPBOARD_READ_READY) {
-        cjgui_linux_clipboard_set_text(window, status, NULL, 0u);
+        if (wanted == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, status, NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, status, NULL, 0u);
+        }
     }
-    XDeleteProperty(window->display, window->window, window->clipboard_property);
+    XDeleteProperty(window->display, requestor, property);
+    cjgui_linux_clipboard_abandon_request(window, 0, "completed");
 }
 
 static void cjgui_linux_clipboard_check_timeout(CjguiLinuxWindow *window) {
     if (window->clipboard_request_active == 0) return;
     if (cjgui_linux_now_ms() < window->clipboard_request_deadline_ms) return;
-    window->clipboard_request_active = 0;
-    cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_TIMEOUT, NULL, 0u);
+    // Destroying the requestor retires the identity itself, so a late or
+    // never-arriving answer can neither occupy a slot nor complete a newer
+    // request. The next paste can allocate normally.
+    cjgui_linux_clipboard_abandon_request(window, 1, "timed out; requestor destroyed");
+    if (window->clipboard_request_format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+        cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_TIMEOUT, NULL, 0u);
+    } else {
+        cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_TIMEOUT, NULL, 0u);
+    }
     fprintf(stderr, "[cjgui-linux-window] clipboard read timed out; text unchanged\n");
     fflush(stderr);
+}
+
+// ---------------------------------------------------------------------------
+// Xdnd 接收（只做 COPY）
+// ---------------------------------------------------------------------------
+
+static void cjgui_linux_xdnd_status(CjguiLinuxWindow *window, Window source, int accept,
+                                    double rootX, double rootY) {
+    if (source == None || window->xdnd_status == None) return;
+    XEvent reply;
+    memset(&reply, 0, sizeof(reply));
+    reply.xclient.type = ClientMessage;
+    reply.xclient.window = source;
+    reply.xclient.message_type = window->xdnd_status;
+    reply.xclient.format = 32;
+    reply.xclient.data.l[0] = (long)window->window;
+    // bit0 = accept, bit1 = XdndPosition was received at the same coordinates.
+    reply.xclient.data.l[1] = accept ? 3L : 0L;
+    reply.xclient.data.l[2] = ((long)(int)rootX << 16) | (unsigned short)(int)rootY;
+    // XdndStatus.l[3] is the target rectangle (width<<16 | height) in root
+    // coordinates, not the Position timestamp. l[4] must be the interned
+    // XdndActionCopy atom, not a numeric id.
+    reply.xclient.data.l[3] = (long)(((uint32_t)window->logical_width << 16) |
+                                     (uint32_t)window->logical_height);
+    reply.xclient.data.l[4] = accept ? (long)window->xdnd_action_copy : 0L;
+    XSendEvent(window->display, source, False, NoEventMask, &reply);
+    XFlush(window->display);
+}
+
+static void cjgui_linux_xdnd_finished(CjguiLinuxWindow *window, Window source, int success) {
+    if (source == None || window->xdnd_finished == None || window->xdnd_version < 5u) return;
+    XEvent reply;
+    memset(&reply, 0, sizeof(reply));
+    reply.xclient.type = ClientMessage;
+    reply.xclient.window = source;
+    reply.xclient.message_type = window->xdnd_finished;
+    reply.xclient.format = 32;
+    reply.xclient.data.l[0] = (long)window->window;
+    reply.xclient.data.l[1] = success ? 1L : 0L;
+    reply.xclient.data.l[2] = success ? (long)window->xdnd_action_copy : 0L;
+    reply.xclient.data.l[3] = 1L;
+    XSendEvent(window->display, source, False, NoEventMask, &reply);
+    XFlush(window->display);
+}
+
+// Whether the offered atom set can produce a type this window declared.
+// XdndEnter carries at most three atoms; larger sets are read from
+// XdndTypeList. We only look for our bounded set.
+static int cjgui_linux_xdnd_accepts(CjguiLinuxWindow *window, XClientMessageEvent *client) {
+    if (window->drop_mask == 0u) return 0;
+    int count = 3;
+    Atom offered[3] = {(Atom)client->data.l[2], (Atom)client->data.l[3], (Atom)client->data.l[4]};
+    Atom *list = NULL;
+    if (client->data.l[1] & 1L) {
+        Atom actual = None;
+        int format = 0;
+        unsigned long items = 0u, after = 0u;
+        unsigned char *data = NULL;
+        if (XGetWindowProperty(window->display, (Window)client->data.l[0], window->xdnd_type_list,
+                               0, 32, False, XA_ATOM, &actual, &format, &items, &after,
+                               &data) == Success && data != NULL && format == 32) {
+            list = (Atom *)data;
+            count = (int)(items > 32u ? 32u : items);
+        }
+    }
+    int accept = 0;
+    for (int i = 0; i < count; i++) {
+        Atom atom = list != NULL ? list[i] : offered[i];
+        if (atom == None) continue;
+        if ((window->drop_mask & CJGUI_LINUX_DROP_TEXT) != 0u &&
+            (atom == window->utf8_string || atom == window->text_atom ||
+             atom == window->text_plain_utf8 || atom == window->text_plain_atom)) {
+            accept = 1;
+        }
+        if ((window->drop_mask & CJGUI_LINUX_DROP_PNG_FILE) != 0u &&
+            atom == window->text_uri_list) {
+            accept = 1;
+        }
+    }
+    if (list != NULL) XFree(list);
+    return accept;
+}
+
+static int cjgui_linux_xdnd_offers(CjguiLinuxWindow *window, Atom atom) {
+    for (uint32_t index = 0u; index < window->xdnd_offered_count; index += 1u) {
+        if (window->xdnd_offered[index] == atom) return 1;
+    }
+    return 0;
+}
+
+static void cjgui_linux_xdnd_position(CjguiLinuxWindow *window, int rootX, int rootY) {
+    int localX = 0, localY = 0;
+    Window child = None;
+    Window root = RootWindow(window->display, window->screen);
+    XTranslateCoordinates(window->display, root, window->window, rootX, rootY,
+                          &localX, &localY, &child);
+    window->drop_x = cjgui_linux_to_logical(localX, window->scale);
+    window->drop_y = cjgui_linux_to_logical(localY, window->scale);
+}
+
+static int cjgui_linux_xdnd_finish_selection(CjguiLinuxWindow *window, XSelectionEvent *notify,
+                                             CjguiLinuxWindowEvent *out_events, uint32_t limit,
+                                             uint32_t *out_count) {
+    Window source = window->xdnd_source;
+    window->drop_request_active = 0;
+    Atom target = window->drop_target;
+    window->drop_target = None;
+    if (notify->property == None || window->window == None) {
+        cjgui_linux_xdnd_finished(window, source, 0);
+        return 0;
+    }
+    Atom type = None;
+    int format = 0;
+    unsigned long items = 0u, after = 0u;
+    unsigned char *data = NULL;
+    // uri-list can exceed the 4 KiB event text; read it in one bounded block.
+    long length = (long)((CJGUI_LINUX_WINDOW_EVENT_TEXT_CAPACITY + 3u) / 4u) + 1;
+    int ok = XGetWindowProperty(window->display, window->window, notify->property, 0, length,
+                                False, AnyPropertyType, &type, &format, &items, &after, &data);
+    XDeleteProperty(window->display, window->window, notify->property);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+        fprintf(stderr,
+                "CJGUI_LINUX_XDND selection uri_target=%d ok=%d type=%ld format=%d items=%lu "
+                "after=%lu\n",
+                target == window->text_uri_list, ok, (long)type, format, items, after);
+        fflush(stderr);
+    }
+    if (ok != Success || data == NULL || format != 8 || items == 0u || after > 0u) {
+        if (data != NULL) XFree(data);
+        cjgui_linux_xdnd_finished(window, source, 0);
+        return 0;
+    }
+    CjguiLinuxWindowEvent event;
+    if (target == window->text_uri_list) {
+        char uri[CJGUI_LINUX_WINDOW_EVENT_TEXT_CAPACITY];
+        size_t uriLength = 0u;
+        size_t index = 0u;
+        int lines = 0;
+        int uriInvalid = 0;
+        while (index < (size_t)items && lines < 8) {
+            size_t start = index;
+            while (index < (size_t)items && data[index] != '\r' && data[index] != '\n') index += 1u;
+            size_t end = index;
+            while (index < (size_t)items && (data[index] == '\r' || data[index] == '\n')) index += 1u;
+            if (end == start || data[start] == '#') continue;
+            lines += 1;
+            if (lines > 1) { uriInvalid = 2; break; }
+            size_t copyLength = end - start;
+            // A truncated URI is not a usable path: reject by name instead of
+            // keeping a prefix that could name a different file.
+            if (copyLength == 0u || copyLength >= sizeof(uri)) { uriInvalid = 1; break; }
+            if (memchr(data + start, 0, copyLength) != NULL) { uriInvalid = 6; break; }
+            memcpy(uri, data + start, copyLength);
+            uri[copyLength] = '\0';
+            uriLength = copyLength;
+        }
+        int isPngFile = 0;
+        if (uriInvalid == 0 && uriLength > 0u && strncmp(uri, "file://", 7u) == 0) {
+            const char *path = uri + 7u;
+            if (strncmp(path, "localhost/", 10u) == 0) path += 9u;
+            if (*path == '/') {
+                size_t pathLength = strlen(path);
+                if (pathLength > 4u && strcmp(path + pathLength - 4u, ".png") == 0) isPngFile = 1;
+                if (isPngFile) {
+                    // Percent-decode in place; file managers escape spaces and
+                    // non-ASCII bytes in uri-list entries. NUL and malformed
+                    // escapes are refused so the decoded path stays exact.
+                    size_t write = 0u;
+                    for (size_t read = 0u; read < pathLength; read++) {
+                        if (path[read] == '%') {
+                            if (read + 2u >= pathLength) { uriInvalid = 3; break; }
+                            int high = path[read + 1u], low = path[read + 2u];
+                            int h = (high >= '0' && high <= '9') ? high - '0'
+                                    : (high >= 'a' && high <= 'f') ? high - 'a' + 10
+                                    : (high >= 'A' && high <= 'F') ? high - 'A' + 10 : -1;
+                            int l = (low >= '0' && low <= '9') ? low - '0'
+                                    : (low >= 'a' && low <= 'f') ? low - 'a' + 10
+                                    : (low >= 'A' && low <= 'F') ? low - 'A' + 10 : -1;
+                            if (h < 0 || l < 0) { uriInvalid = 4; break; }
+                            int decoded = (h << 4) | l;
+                            if (decoded == 0) { uriInvalid = 5; break; }
+                            uri[7u + write++] = (char)decoded;
+                            read += 2u;
+                            continue;
+                        }
+                        uri[7u + write++] = path[read];
+                    }
+                    if (uriInvalid == 0) uri[7u + write] = '\0';
+                }
+            }
+        }
+        if (uriInvalid != 0) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_XDND uri_rejected reason=%d items=%lu\n", uriInvalid,
+                        items);
+                fflush(stderr);
+            }
+            if (data != NULL) XFree(data);
+            cjgui_linux_xdnd_finished(window, source, 0);
+            return 0;
+        }
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+            fprintf(stderr, "CJGUI_LINUX_XDND uri_list png_file=%d path=%s\n", isPngFile,
+                    isPngFile ? uri + 7u : "");
+            fflush(stderr);
+        }
+        if (data != NULL) XFree(data);
+        if (!isPngFile) {
+            cjgui_linux_xdnd_finished(window, source, 0);
+            return 0;
+        }
+        cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE,
+                               cjgui_linux_event_time(window, 0));
+        size_t pathLength = strlen(uri + 7u);
+        if (pathLength >= sizeof(event.utf8)) pathLength = sizeof(event.utf8) - 1u;
+        memcpy(event.utf8, uri + 7u, pathLength);
+        event.utf8[pathLength] = '\0';
+        event.utf8Length = (uint32_t)pathLength;
+    } else {
+        // The event text field is the acceptance boundary. A longer payload is
+        // refused by name; clipping it would silently deliver a different text.
+        if ((size_t)items >= sizeof(event.utf8)) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_XDND deliver_rejected reason=text_too_large items=%lu "
+                                "capacity=%zu\n", items, sizeof(event.utf8));
+                fflush(stderr);
+            }
+            if (data != NULL) XFree(data);
+            cjgui_linux_xdnd_finished(window, source, 0);
+            return 0;
+        }
+        for (unsigned long at = 0u; at < items; at += 1u) {
+            if (data[at] == 0u) {
+                if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+                    fprintf(stderr, "CJGUI_LINUX_XDND deliver_rejected reason=text_nul items=%lu\n",
+                            items);
+                    fflush(stderr);
+                }
+                XFree(data);
+                cjgui_linux_xdnd_finished(window, source, 0);
+                return 0;
+            }
+        }
+        cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_DROP_TEXT,
+                               cjgui_linux_event_time(window, 0));
+        memcpy(event.utf8, data, (size_t)items);
+        event.utf8[items] = '\0';
+        event.utf8Length = (uint32_t)items;
+    }
+    if (data != NULL && target != window->text_uri_list) XFree(data);
+    event.x = window->drop_x;
+    event.y = window->drop_y;
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_XDND deliver kind=%s x=%.1f y=%.1f bytes=%u\n",
+                event.kind == CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE ? "png_file" : "text", event.x,
+                event.y, event.utf8Length);
+        fflush(stderr);
+    }
+    cjgui_linux_deliver(window, &event, out_events, limit, out_count);
+    if (event.kind == CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE) {
+        // File bytes still have to pass the bounded read. The session answers
+        // XdndFinished only after the real outcome is known.
+        window->drop_finish_pending_source = source;
+        window->drop_finish_pending = 1;
+    } else {
+        cjgui_linux_xdnd_finished(window, source, 1);
+    }
+    return 1;
+}
+
+static void cjgui_linux_xdnd_client_message(CjguiLinuxWindow *window, XClientMessageEvent *client,
+                                            CjguiLinuxWindowEvent *out_events, uint32_t limit,
+                                            uint32_t *out_count) {
+    if (client->message_type == window->xdnd_enter) {
+        window->xdnd_source = (Window)client->data.l[0];
+        window->xdnd_version = (uint32_t)client->data.l[1] >> 24;
+        window->xdnd_time = 0;
+        window->xdnd_offered_count = 0u;
+        // A new drag supersedes any file-read answer still waiting; the old
+        // source has abandoned that drop.
+        window->drop_finish_pending = 0;
+        window->drop_finish_pending_source = None;
+        if ((client->data.l[1] & 1L) != 0) {
+            Atom actual = None;
+            int format = 0;
+            unsigned long items = 0u, after = 0u;
+            unsigned char *data = NULL;
+            if (XGetWindowProperty(window->display, window->xdnd_source, window->xdnd_type_list,
+                                   0, 32, False, XA_ATOM, &actual, &format, &items, &after,
+                                   &data) == Success && data != NULL && format == 32) {
+                Atom *list = (Atom *)data;
+                for (unsigned long index = 0u; index < items && index < 32u; index += 1u) {
+                    window->xdnd_offered[window->xdnd_offered_count++] = list[index];
+                }
+            }
+            if (data != NULL) XFree(data);
+        } else {
+            for (int index = 2; index <= 4; index += 1) {
+                if (client->data.l[index] != None) {
+                    window->xdnd_offered[window->xdnd_offered_count++] =
+                        (Atom)client->data.l[index];
+                }
+            }
+        }
+        cjgui_linux_xdnd_position(window, 0, 0);
+        int accept = cjgui_linux_xdnd_accepts(window, client);
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_XDND enter src=0x%lx version=%u more=%ld atoms=%ld,%ld,%ld "
+                    "mask=0x%x accept=%d\n",
+                    (unsigned long)window->xdnd_source, window->xdnd_version,
+                    (long)client->data.l[1], (long)client->data.l[2], (long)client->data.l[3],
+                    (long)client->data.l[4], window->drop_mask, accept);
+            fflush(stderr);
+        }
+        cjgui_linux_xdnd_status(window, window->xdnd_source, accept, 0, 0);
+        return;
+    }
+    if (client->message_type == window->xdnd_position) {
+        if ((Window)client->data.l[0] != window->xdnd_source) return;
+        int rootX = (int)(client->data.l[2] >> 16);
+        int rootY = (int)(client->data.l[2] & 0xFFFFu);
+        if (rootX >= 32768) rootX -= 65536;
+        if (rootY >= 32768) rootY -= 65536;
+        cjgui_linux_xdnd_position(window, rootX, rootY);
+        // Position must answer for the node under the pointer, not for the
+        // whole window: a mixed text/PNG window otherwise reports accept for a
+        // format this point will refuse at Drop.
+        int allowed = window->drop_format_provider != NULL
+                          ? window->drop_format_provider(window->drop_format_user,
+                                                        window->drop_x, window->drop_y)
+                          : (int)(window->drop_mask & 3u);
+        int offersUri = cjgui_linux_xdnd_offers(window, window->text_uri_list);
+        int offersText = cjgui_linux_xdnd_offers(window, window->utf8_string) ||
+                         cjgui_linux_xdnd_offers(window, window->text_atom) ||
+                         cjgui_linux_xdnd_offers(window, window->text_plain_utf8) ||
+                         cjgui_linux_xdnd_offers(window, window->text_plain_atom);
+        int accept = 0;
+        if ((allowed & CJGUI_LINUX_DROP_PNG_FILE) != 0 && offersUri) accept = 1;
+        else if ((allowed & CJGUI_LINUX_DROP_TEXT) != 0 && offersText && !offersUri) accept = 1;
+        else if (window->xdnd_offered_count == 0u && allowed != 0) accept = 1;
+        window->xdnd_time = (Time)client->data.l[3];
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_XDND position x=%d y=%d mask=0x%x allowed=0x%x accept=%d\n", rootX,
+                    rootY, window->drop_mask, allowed, accept);
+            fflush(stderr);
+        }
+        cjgui_linux_xdnd_status(window, window->xdnd_source, accept, rootX, rootY);
+        return;
+    }
+    if (client->message_type == window->xdnd_drop) {
+        if ((Window)client->data.l[0] != window->xdnd_source) return;
+        // XdndDrop carries only a timestamp in l[2]; the drop point is the
+        // last XdndPosition. Parsing l[2] as x/y used to move the drop far
+        // outside the window and every real drop was reported as no_target.
+        if (window->drop_mask == 0u) {
+            cjgui_linux_xdnd_finished(window, window->xdnd_source, 0);
+            return;
+        }
+        // The node under the pointer owns the accepted formats; intersect them
+        // with what the source actually offered. File URIs are never turned
+        // into text merely because another node in this window accepts text.
+        int allowed = window->drop_format_provider != NULL
+                          ? window->drop_format_provider(window->drop_format_user,
+                                                        window->drop_x, window->drop_y)
+                          : (int)(window->drop_mask & 3u);
+        int offersUri = cjgui_linux_xdnd_offers(window, window->text_uri_list);
+        int offersText = cjgui_linux_xdnd_offers(window, window->utf8_string) ||
+                         cjgui_linux_xdnd_offers(window, window->text_atom) ||
+                         cjgui_linux_xdnd_offers(window, window->text_plain_utf8) ||
+                         cjgui_linux_xdnd_offers(window, window->text_plain_atom);
+        Atom target = None;
+        if ((allowed & CJGUI_LINUX_DROP_PNG_FILE) != 0 && offersUri) {
+            target = window->text_uri_list;
+        } else if ((allowed & CJGUI_LINUX_DROP_TEXT) != 0 && offersText && !offersUri) {
+            target = window->utf8_string;
+        } else if (window->xdnd_offered_count == 0u) {
+            // Very old sources omit the type list; keep the previous
+            // window-level behavior for them only.
+            target = (window->drop_mask & CJGUI_LINUX_DROP_PNG_FILE) != 0u
+                         ? window->text_uri_list : window->utf8_string;
+        }
+        if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+            fprintf(stderr,
+                    "CJGUI_LINUX_XDND drop mask=0x%x allowed=0x%x offers_uri=%d offers_text=%d "
+                    "uri_list_target=%d\n",
+                    window->drop_mask, allowed, offersUri, offersText,
+                    target == window->text_uri_list);
+            fflush(stderr);
+        }
+        if (target == None) {
+            cjgui_linux_xdnd_finished(window, window->xdnd_source, 0);
+            return;
+        }
+        window->drop_target = target;
+        window->drop_request_active = 1;
+        window->drop_deadline_ms = cjgui_linux_now_ms() + CJGUI_LINUX_CLIPBOARD_TIMEOUT_MS;
+        XDeleteProperty(window->display, window->window, window->xdnd_property);
+        XConvertSelection(window->display, window->xdnd_selection, target,
+                          window->xdnd_property, window->window, (Time)client->data.l[2]);
+        XFlush(window->display);
+        return;
+    }
+    if (client->message_type == window->xdnd_leave) {
+        if ((Window)client->data.l[0] == window->xdnd_source) {
+            if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+                fprintf(stderr, "CJGUI_LINUX_XDND leave src=0x%lx\n", (unsigned long)window->xdnd_source);
+                fflush(stderr);
+            }
+            CjguiLinuxWindowEvent event;
+            cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_DROP_LEAVE,
+                                   cjgui_linux_event_time(window, 0));
+            cjgui_linux_deliver(window, &event, out_events, limit, out_count);
+            window->xdnd_source = None;
+            window->drop_request_active = 0;
+            window->drop_target = None;
+        }
+        return;
+    }
+}
+
+static void cjgui_linux_xdnd_check_timeout(CjguiLinuxWindow *window) {
+    if (window->drop_request_active == 0) return;
+    if (cjgui_linux_now_ms() < window->drop_deadline_ms) return;
+    window->drop_request_active = 0;
+    Window source = window->xdnd_source;
+    window->drop_target = None;
+    cjgui_linux_xdnd_finished(window, source, 0);
+    CjguiLinuxWindowEvent event;
+    cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_DROP_LEAVE,
+                           cjgui_linux_event_time(window, 0));
+    cjgui_linux_pending_push(window, &event);
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +1347,52 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
     }
 
     switch (xevent->type) {
+        case MapNotify: {
+            // A WM minimize/unmap is not a destroy: keep the session, swapchain
+            // and accepted content. A later Map is the restore point; the
+            // RESIZE forces a fresh swapchain and the EXPOSE repaints the
+            // latest accepted scene without inventing a present while hidden.
+            int resumed = (window->ever_mapped != 0 && window->mapped == 0);
+            window->mapped = 1;
+            window->ever_mapped = 1;
+            if (resumed != 0) {
+                fprintf(stderr, "CJGUI_LINUX_WINDOW_STATE map=restored %ux%u\n",
+                        window->logical_width, window->logical_height);
+                fflush(stderr);
+                cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_RESIZE,
+                                       cjgui_linux_event_time(window, 0));
+                event.x = (double)window->logical_width;
+                event.y = (double)window->logical_height;
+                cjgui_linux_deliver(window, &event, out_events, limit, out_count);
+                cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_EXPOSE,
+                                       cjgui_linux_event_time(window, 0));
+                event.x = 0.0;
+                event.y = 0.0;
+                cjgui_linux_deliver(window, &event, out_events, limit, out_count);
+            }
+            break;
+        }
+
+        case UnmapNotify: {
+            if (window->mapped != 0) {
+                window->mapped = 0;
+                fprintf(stderr, "CJGUI_LINUX_WINDOW_STATE map=unmapped\n");
+                fflush(stderr);
+            }
+            break;
+        }
+
+        case VisibilityNotify: {
+            const char *state = "unknown";
+            if (xevent->xvisibility.state == VisibilityUnobscured) state = "unobscured";
+            else if (xevent->xvisibility.state == VisibilityPartiallyObscured) state = "partial";
+            else if (xevent->xvisibility.state == VisibilityFullyObscured) state = "obscured";
+            // Obscured is not undrawable: only Map/Unmap decide presentability.
+            fprintf(stderr, "CJGUI_LINUX_WINDOW_STATE visibility=%s\n", state);
+            fflush(stderr);
+            break;
+        }
+
         case ConfigureNotify: {
             // 真实与合成（客户端自己请求导致的）ConfigureNotify 都处理：两者都描述
             // 服务端认可的几何，后到的会覆盖先到的。
@@ -781,6 +1442,12 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
                 cjgui_linux_event_init(&event, CJGUI_LINUX_WINDOW_EVENT_CLOSE,
                                        cjgui_linux_event_time(window, xevent->xclient.data.l[1]));
                 cjgui_linux_deliver(window, &event, out_events, limit, out_count);
+            } else if (xevent->xclient.message_type == window->xdnd_enter ||
+                       xevent->xclient.message_type == window->xdnd_position ||
+                       xevent->xclient.message_type == window->xdnd_drop ||
+                       xevent->xclient.message_type == window->xdnd_leave) {
+                cjgui_linux_xdnd_client_message(window, &xevent->xclient, out_events, limit,
+                                                out_count);
             }
             break;
         }
@@ -951,7 +1618,6 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
             break;
         }
         case KeyRelease: {
-            uint64_t time_ms = cjgui_linux_event_time(window, xevent->xkey.time);
             if (window->xic != NULL && XFilterEvent(xevent, None)) {
                 break;
             }
@@ -992,10 +1658,27 @@ static void cjgui_linux_handle_event(CjguiLinuxWindow *window, XEvent *xevent,
         }
 
         case SelectionNotify:
-            if (xevent->xselection.selection == window->clipboard_atom &&
-                window->clipboard_request_active != 0) {
-                cjgui_linux_clipboard_finish(window, &xevent->xselection);
+            if (xevent->xselection.selection == window->xdnd_selection) {
+                if (window->drop_request_active != 0) {
+                    (void)cjgui_linux_xdnd_finish_selection(window, &xevent->xselection,
+                                                            out_events, limit, out_count);
+                }
+                break;
             }
+            if (xevent->xselection.selection != window->clipboard_atom) break;
+            if (window->clipboard_requestor == None ||
+                xevent->xselection.requestor != window->clipboard_requestor) {
+                // The requestor was retired (timeout, supersede, close); this
+                // answer belongs to a dead identity and cannot write anything.
+                if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+                    fprintf(stderr,
+                            "[cjgui-linux-window] CJGUI_LINUX_CLIPBOARD_STALE_RETIRED requestor=0x%lx\n",
+                            (unsigned long)xevent->xselection.requestor);
+                    fflush(stderr);
+                }
+                break;
+            }
+            cjgui_linux_clipboard_finish(window, &xevent->xselection, xevent->xselection.property);
             break;
 
         case SelectionRequest:
@@ -1217,6 +1900,29 @@ CjguiLinuxWindow *cjgui_linux_window_create(uint32_t width, uint32_t height, con
     window->targets_atom = XInternAtom(display, "TARGETS", False);
     window->clipboard_atom = XInternAtom(display, "CLIPBOARD", False);
     window->clipboard_property = XInternAtom(display, "CJGUI_CLIPBOARD", False);
+    window->image_png_atom = XInternAtom(display, "image/png", False);
+    window->xdnd_aware = XInternAtom(display, "XdndAware", False);
+    window->xdnd_enter = XInternAtom(display, "XdndEnter", False);
+    window->xdnd_position = XInternAtom(display, "XdndPosition", False);
+    window->xdnd_status = XInternAtom(display, "XdndStatus", False);
+    window->xdnd_drop = XInternAtom(display, "XdndDrop", False);
+    window->xdnd_leave = XInternAtom(display, "XdndLeave", False);
+    window->xdnd_finished = XInternAtom(display, "XdndFinished", False);
+    window->xdnd_selection = XInternAtom(display, "XdndSelection", False);
+    window->xdnd_action_copy = XInternAtom(display, "XdndActionCopy", False);
+    window->xdnd_type_list = XInternAtom(display, "XdndTypeList", False);
+    window->text_uri_list = XInternAtom(display, "text/uri-list", False);
+    window->text_plain_utf8 = XInternAtom(display, "text/plain;charset=utf-8", False);
+    window->text_plain_atom = XInternAtom(display, "text/plain", False);
+    window->xdnd_property = XInternAtom(display, "CJGUI_XDND", False);
+    window->clipboard_requestor = None;
+    window->clipboard_request_slot = -1;
+    for (int i = 0; i < CJGUI_LINUX_CLIPBOARD_REQUEST_SLOTS; i++) {
+        char name[32];
+        snprintf(name, sizeof(name), "CJGUI_CLIPBOARD_REQ%d", i);
+        window->clipboard_request_property[i] = XInternAtom(display, name, False);
+        window->clipboard_request_slot_state[i] = CJGUI_LINUX_CLIPBOARD_SLOT_FREE;
+    }
 
     Visual *visual = DefaultVisual(display, window->screen);
     int depth = DefaultDepth(display, window->screen);
@@ -1235,7 +1941,8 @@ CjguiLinuxWindow *cjgui_linux_window_create(uint32_t width, uint32_t height, con
     attributes.colormap = window->colormap;
     attributes.event_mask = StructureNotifyMask | ExposureMask | KeyPressMask | KeyReleaseMask |
                             ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
-                            EnterWindowMask | LeaveWindowMask | FocusChangeMask;
+                            EnterWindowMask | LeaveWindowMask | FocusChangeMask |
+                            VisibilityChangeMask;
 
     // XCreateWindow 的错误是异步的：必须 XSync 之后才能判定成败（失败也必须
     // 整体清理返回 NULL，不能带着坏窗口继续跑）。
@@ -1262,6 +1969,11 @@ CjguiLinuxWindow *cjgui_linux_window_create(uint32_t width, uint32_t height, con
     window->window = xwindow;
     window->logical_width = width > 0u ? width : 1u;
     window->logical_height = height > 0u ? height : 1u;
+    {
+        long xdnd_version = 5;
+        XChangeProperty(display, xwindow, window->xdnd_aware, XA_ATOM, 32, PropModeReplace,
+                        (const unsigned char *)&xdnd_version, 1);
+    }
 
     Atom protocols[1];
     protocols[0] = window->wm_delete_window;
@@ -1392,6 +2104,12 @@ void cjgui_linux_window_destroy(CjguiLinuxWindow *window) {
         window->ime_available = 0;
         window->ime_focused = 0;
         XSync(window->display, False);
+        if (window->clipboard_requestor != None) {
+            // The requestor is a separate InputOnly window; destroy it with
+            // the owning client so a pending answer cannot outlive the app.
+            XDestroyWindow(window->display, window->clipboard_requestor);
+            window->clipboard_requestor = None;
+        }
         if (window->window != None && window->window_destroyed == 0) {
             XDestroyWindow(window->display, window->window);
             window->window = None;
@@ -1406,8 +2124,12 @@ void cjgui_linux_window_destroy(CjguiLinuxWindow *window) {
     }
     free(window->clipboard_text);
     window->clipboard_text = NULL;
+    free(window->clipboard_binary);
+    window->clipboard_binary = NULL;
     free(window->clipboard_result_text);
     window->clipboard_result_text = NULL;
+    free(window->clipboard_result_binary);
+    window->clipboard_result_binary = NULL;
     if (window->wake_read_fd >= 0) {
         close(window->wake_read_fd);
         window->wake_read_fd = -1;
@@ -1448,7 +2170,7 @@ int cjgui_linux_window_pump(CjguiLinuxWindow *window, CjguiLinuxWindowEvent *out
         }
         return CJGUI_LINUX_WINDOW_INVALID;
     }
-    if (getenv("CJGUI_LINUX_PUMP_TRACE")) {
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_PUMP_TRACE")) {
         fprintf(stderr, "CJGUI_LINUX_PUMP window=%p pending=%u timeout=%u\n", (void *)window,
                 window->pending_count, timeout_ms);
         fflush(stderr);
@@ -1463,6 +2185,8 @@ int cjgui_linux_window_pump(CjguiLinuxWindow *window, CjguiLinuxWindowEvent *out
     for (;;) {
         // 异步剪贴板请求不能让界面无限等：到点把结果置 TIMEOUT，会话照常泵键鼠/关闭。
         cjgui_linux_clipboard_check_timeout(window);
+        // Xdnd 的 SelectionNotify 同样可能永不返回；到点按放弃收口。
+        cjgui_linux_xdnd_check_timeout(window);
         // 1) 暂存队列优先：里面的事件比 X11 队列里的更早。
         while (count < limit) {
             CjguiLinuxWindowEvent stashed;
@@ -1590,6 +2314,10 @@ int cjgui_linux_window_size(CjguiLinuxWindow *window, uint32_t *out_width, uint3
         window->resized_since_query = 0;
     }
     return CJGUI_LINUX_WINDOW_OK;
+}
+
+int cjgui_linux_window_is_mapped(CjguiLinuxWindow *window) {
+    return (window != NULL) ? window->mapped : 0;
 }
 
 int cjgui_linux_window_close_requested(CjguiLinuxWindow *window) {
@@ -1769,6 +2497,31 @@ double cjgui_linux_window_scale(CjguiLinuxWindow *window) {
     return window->scale;
 }
 
+void cjgui_linux_window_set_drop_format_provider(CjguiLinuxWindow *window,
+                                                 CjguiLinuxDropFormatProvider provider,
+                                                 void *user) {
+    if (window == NULL) return;
+    window->drop_format_provider = provider;
+    window->drop_format_user = user;
+}
+
+void cjgui_linux_window_finish_drop(CjguiLinuxWindow *window, int success) {
+    if (window == NULL || !window->drop_finish_pending) return;
+    Window source = window->drop_finish_pending_source;
+    window->drop_finish_pending = 0;
+    window->drop_finish_pending_source = None;
+    cjgui_linux_xdnd_finished(window, source, success);
+}
+
+void cjgui_linux_window_set_drop_mask(CjguiLinuxWindow *window, uint32_t mask) {
+    if (window == NULL) return;
+    window->drop_mask = mask & (CJGUI_LINUX_DROP_TEXT | CJGUI_LINUX_DROP_PNG_FILE);
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_XDND mask=0x%x\n", window->drop_mask);
+        fflush(stderr);
+    }
+}
+
 void cjgui_linux_window_sync(CjguiLinuxWindow *window) {
     if (window == NULL || window->display == NULL) {
         return;
@@ -1801,35 +2554,109 @@ void cjgui_linux_window_set_ime_spot(CjguiLinuxWindow *window, double x, double 
     }
 }
 
-int cjgui_linux_window_request_clipboard(CjguiLinuxWindow *window) {
+int cjgui_linux_window_request_clipboard_format(CjguiLinuxWindow *window, int format) {
     if (window == NULL || window->display == NULL || window->window == None) {
+        return CJGUI_LINUX_WINDOW_INVALID;
+    }
+    if (format != CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT &&
+        format != CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
         return CJGUI_LINUX_WINDOW_INVALID;
     }
     // 新请求丢弃上一次未取走的结果：它属于上一笔粘贴，不能当本次输入。
     cjgui_linux_clipboard_clear_result(window);
-    if (window->clipboard_owner != 0 && window->clipboard_text != NULL) {
-        cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_READY,
-                                       window->clipboard_text, window->clipboard_length);
+    if (window->clipboard_owner != 0 && window->clipboard_format == format) {
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG && window->clipboard_binary != NULL) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_READY,
+                                             window->clipboard_binary,
+                                             window->clipboard_binary_length);
+        } else if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT && window->clipboard_text != NULL) {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_READY,
+                                           window->clipboard_text, window->clipboard_length);
+        } else {
+            if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+                cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED,
+                                                 NULL, 0u);
+            } else {
+                cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED,
+                                               NULL, 0u);
+            }
+        }
+        return CJGUI_LINUX_WINDOW_OK;
+    }
+    if (window->clipboard_owner != 0) {
+        // 自己持有另一种类型，不能把 TEXT 当作 PNG 或反向冒充。
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED,
+                                             NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED,
+                                           NULL, 0u);
+        }
         return CJGUI_LINUX_WINDOW_OK;
     }
     if (XGetSelectionOwner(window->display, window->clipboard_atom) == None) {
-        cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_EMPTY, NULL, 0u);
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_EMPTY, NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_EMPTY, NULL, 0u);
+        }
         return CJGUI_LINUX_WINDOW_OK;
     }
-    XDeleteProperty(window->display, window->window, window->clipboard_property);
-    XConvertSelection(window->display, window->clipboard_atom, window->utf8_string,
-                      window->clipboard_property, window->window, CurrentTime);
+    // A previous request owns a throwaway requestor window; retiring it
+    // destroys that identity so its answer can never complete this one.
+    if (window->clipboard_request_active != 0) {
+        cjgui_linux_clipboard_abandon_request(window, 1, "superseded; requestor destroyed");
+    }
+    int slot = cjgui_linux_clipboard_acquire_slot(window);
+    if (slot < 0) {
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_ERROR, NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_ERROR, NULL, 0u);
+        }
+        fprintf(stderr, "[cjgui-linux-window] clipboard request refused: slot unavailable\n");
+        fflush(stderr);
+        return CJGUI_LINUX_WINDOW_CREATE_FAILED;
+    }
+    Window root = RootWindow(window->display, window->screen);
+    Window requestor = XCreateWindow(window->display, root, -1, -1, 1u, 1u, 0u, 0u, InputOnly,
+                                     CopyFromParent, 0u, NULL);
+    if (requestor == None) {
+        window->clipboard_request_slot_state[slot] = CJGUI_LINUX_CLIPBOARD_SLOT_FREE;
+        window->clipboard_request_slot = -1;
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_ERROR, NULL, 0u);
+        } else {
+            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_ERROR, NULL, 0u);
+        }
+        return CJGUI_LINUX_WINDOW_CREATE_FAILED;
+    }
+    window->clipboard_requestor = requestor;
+    window->clipboard_requestor_serial += 1u;
+    Atom property = window->clipboard_request_property[slot];
+    window->clipboard_request_serial += 1u;
+    window->clipboard_request_format = format;
+    XDeleteProperty(window->display, requestor, property);
+    XConvertSelection(window->display, window->clipboard_atom,
+                      format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG ? window->image_png_atom
+                                                                 : window->utf8_string,
+                      property, requestor, CurrentTime);
     XFlush(window->display);
     window->clipboard_request_active = 1;
     // take_clipboard 只认结果状态；请求在途必须是 PENDING，否则第一次轮询
     // 会把 IDLE 当成"已完成但没有数据"，SelectionNotify 到达后就无人取走。
     window->clipboard_result_status = CJGUI_LINUX_CLIPBOARD_READ_PENDING;
     window->clipboard_request_deadline_ms = cjgui_linux_now_ms() + CJGUI_LINUX_CLIPBOARD_TIMEOUT_MS;
+    if (cjgui_linux_trace_flag("CJGUI_LINUX_CLIPBOARD_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_CLIPBOARD_REQUEST slot=%d serial=%llu\n", slot,
+                (unsigned long long)window->clipboard_request_serial);
+        fflush(stderr);
+    }
     return CJGUI_LINUX_WINDOW_OK;
 }
 
-int cjgui_linux_window_take_clipboard(CjguiLinuxWindow *window, char *outUtf8, size_t capacity,
-                                      size_t *outLength) {
+int cjgui_linux_window_take_clipboard_format(CjguiLinuxWindow *window, int format,
+                                             void *outBytes, size_t capacity, size_t *outLength) {
     if (window == NULL) return CJGUI_LINUX_CLIPBOARD_READ_ERROR;
     if (outLength != NULL) *outLength = 0u;
     cjgui_linux_clipboard_check_timeout(window);
@@ -1838,28 +2665,76 @@ int cjgui_linux_window_take_clipboard(CjguiLinuxWindow *window, char *outUtf8, s
         status == CJGUI_LINUX_CLIPBOARD_READ_IDLE) {
         return status;
     }
+    if (status == CJGUI_LINUX_CLIPBOARD_READ_READY &&
+        window->clipboard_result_format != format) {
+        status = CJGUI_LINUX_CLIPBOARD_READ_UNSUPPORTED;
+    }
     if (status == CJGUI_LINUX_CLIPBOARD_READ_READY) {
-        if (outUtf8 == NULL || capacity == 0u ||
-            window->clipboard_result_length >= capacity) {
-            cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_TOO_LARGE, NULL, 0u);
-            return window->clipboard_result_status;
+        if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+            size_t length = window->clipboard_result_binary_length;
+            if (outBytes == NULL || capacity < length) {
+                cjgui_linux_clipboard_set_binary(window, CJGUI_LINUX_CLIPBOARD_READ_TOO_LARGE,
+                                                 NULL, 0u);
+                return window->clipboard_result_status;
+            }
+            if (length > 0u) memcpy(outBytes, window->clipboard_result_binary, length);
+            if (outLength != NULL) *outLength = length;
+        } else {
+            if (outBytes == NULL || capacity == 0u ||
+                window->clipboard_result_length >= capacity) {
+                cjgui_linux_clipboard_set_text(window, CJGUI_LINUX_CLIPBOARD_READ_TOO_LARGE,
+                                               NULL, 0u);
+                return window->clipboard_result_status;
+            }
+            if (window->clipboard_result_length > 0u) {
+                memcpy(outBytes, window->clipboard_result_text, window->clipboard_result_length);
+            }
+            ((char *)outBytes)[window->clipboard_result_length] = '\0';
+            if (outLength != NULL) *outLength = window->clipboard_result_length;
         }
-        if (window->clipboard_result_length > 0u) {
-            memcpy(outUtf8, window->clipboard_result_text, window->clipboard_result_length);
-        }
-        outUtf8[window->clipboard_result_length] = '\0';
-        if (outLength != NULL) *outLength = window->clipboard_result_length;
     }
     cjgui_linux_clipboard_clear_result(window);
     return status;
 }
 
-int cjgui_linux_window_set_clipboard(CjguiLinuxWindow *window, const char *utf8, size_t length) {
+int cjgui_linux_window_take_clipboard(CjguiLinuxWindow *window, char *outUtf8, size_t capacity,
+                                      size_t *outLength) {
+    return cjgui_linux_window_take_clipboard_format(window, CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT,
+                                                    outUtf8, capacity, outLength);
+}
+
+int cjgui_linux_window_request_clipboard(CjguiLinuxWindow *window) {
+    return cjgui_linux_window_request_clipboard_format(window, CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT);
+}
+
+int cjgui_linux_window_set_clipboard_format(CjguiLinuxWindow *window, int format,
+                                            const void *bytes, size_t length) {
     if (window == NULL || window->display == NULL || window->window == None) {
         return CJGUI_LINUX_WINDOW_INVALID;
     }
+    if (format != CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT &&
+        format != CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+        return CJGUI_LINUX_WINDOW_INVALID;
+    }
+    if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+        if (bytes == NULL || length == 0u || length > CJGUI_LINUX_CLIPBOARD_BINARY_CAPACITY) {
+            return CJGUI_LINUX_WINDOW_INVALID;
+        }
+    } else if (length > CJGUI_LINUX_CLIPBOARD_CAPACITY) {
+        return CJGUI_LINUX_WINDOW_INVALID;
+    }
     char *copy = NULL;
-    if (utf8 != NULL && length > 0u) {
+    unsigned char *binary = NULL;
+    if (format == CJGUI_LINUX_CLIPBOARD_FORMAT_PNG) {
+        binary = (unsigned char *)malloc(length);
+        if (binary == NULL) {
+            fprintf(stderr, "[cjgui-linux-window] set_clipboard: out of memory (%zu bytes)\n",
+                    length);
+            fflush(stderr);
+            return CJGUI_LINUX_WINDOW_CREATE_FAILED;
+        }
+        memcpy(binary, bytes, length);
+    } else if (bytes != NULL && length > 0u) {
         copy = (char *)malloc(length + 1u);
         if (copy == NULL) {
             // 状态枚举里没有 OOM：用 CREATE_FAILED 表达"本层资源不足"，并在
@@ -1869,12 +2744,15 @@ int cjgui_linux_window_set_clipboard(CjguiLinuxWindow *window, const char *utf8,
             fflush(stderr);
             return CJGUI_LINUX_WINDOW_CREATE_FAILED;
         }
-        memcpy(copy, utf8, length);
+        memcpy(copy, bytes, length);
         copy[length] = '\0';
     }
     cjgui_linux_release_clipboard(window);
+    window->clipboard_format = format;
     window->clipboard_text = copy;
     window->clipboard_length = (copy != NULL) ? length : 0u;
+    window->clipboard_binary = binary;
+    window->clipboard_binary_length = (binary != NULL) ? length : 0u;
 
     XSetSelectionOwner(window->display, window->clipboard_atom, window->window, CurrentTime);
     XFlush(window->display);
@@ -1887,6 +2765,11 @@ int cjgui_linux_window_set_clipboard(CjguiLinuxWindow *window, const char *utf8,
         return CJGUI_LINUX_WINDOW_SELECTION_EXTENSION_UNAVAILABLE;
     }
     return CJGUI_LINUX_WINDOW_OK;
+}
+
+int cjgui_linux_window_set_clipboard(CjguiLinuxWindow *window, const char *utf8, size_t length) {
+    return cjgui_linux_window_set_clipboard_format(window, CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT,
+                                                   utf8, length);
 }
 
 int cjgui_linux_window_get_clipboard(CjguiLinuxWindow *window, char *out_utf8, size_t capacity) {
@@ -1926,7 +2809,8 @@ int cjgui_linux_window_get_clipboard(CjguiLinuxWindow *window, char *out_utf8, s
             XEvent xevent;
             XNextEvent(window->display, &xevent);
             if (xevent.type == SelectionNotify &&
-                xevent.xselection.selection == window->clipboard_atom) {
+                xevent.xselection.selection == window->clipboard_atom &&
+                xevent.xselection.property == window->clipboard_property) {
                 if (xevent.xselection.property == None) {
                     return 0;   // owner 不提供这个 target
                 }

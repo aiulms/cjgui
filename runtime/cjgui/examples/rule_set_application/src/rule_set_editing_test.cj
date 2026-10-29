@@ -554,3 +554,41 @@ func ownerSnapshotReadsAnotherRecordWithoutChangingTheSelection(): Unit {
     // refusal instead of borrowing another record).
     @Assert(domain.formSnapshotForRecord(999999).isNone(), true)
 }
+
+@Test
+func notesFieldDraftApplyPersistAndDeclaredLengthBoundary(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("备注规则", true, 7, "cache", "notes-create").applied, true)
+    let id = domain.selectedRecordId()
+    var declared: Int64 = -1
+    for (field in domain.formBinding().allFields()) {
+        if (field.fieldId == "notes") { declared = field.maximumLength }
+    }
+    @Assert(declared > 0, true)
+    let builder = StringBuilder()
+    var length: Int64 = 0
+    while (length < declared) { builder.append("注"); length += 1 }
+    let atLimit = builder.toString()
+    @Assert(domain.editTextForCollectionItemFromHuman(id,
+        CjguiRuleSetEditingDomain.formNotesResourceId, atLimit, 0, 0).applied, true)
+    let firstApply = domain.applyDraftForCollectionItemFromHuman(id, domain.selectedDraftVersion(), 0)
+    println("NOTES_APPLY reason=${firstApply.reason} applied=${firstApply.applied} declared=${declared}")
+    @Assert(firstApply.applied, true)
+    @Assert(domain.snapshot().recordById(id).notes.toRuneArray().size, declared)
+
+    // One character over the SAME declared maximum is refused by the draft
+    // rule; the applied note stays and the bad input can be cancelled.
+    let overLimit = "${atLimit}注"
+    @Assert(domain.editTextForCollectionItemFromHuman(id,
+        CjguiRuleSetEditingDomain.formNotesResourceId, overLimit, 0, 0).applied, true)
+    @Assert(domain.applyDraftForCollectionItemFromHuman(id, domain.selectedDraftVersion(), 0).applied, false)
+    @Assert(domain.snapshot().recordById(id).notes.toRuneArray().size, declared)
+    @Assert(domain.cancelDraftForCollectionItemFromHuman(id, domain.selectedDraftVersion(), 0).applied, true)
+
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("notes.rules").toString()
+    @Assert(domain.saveAsFromHuman(path).applied, true)
+    let reopened = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(reopened.openFromHuman(path).applied, true)
+    @Assert(reopened.snapshot().recordById(id).notes.toRuneArray().size, declared)
+}

@@ -59,18 +59,16 @@ scripts/create_linux_application.sh edit-preview /abs/path/to/new-application \
   状态机。模板在 `templates/application/edit_preview/`，复制 `src/`（含
   `notification_generated.cj`、`preview_window.cj`）、`resources/fonts/`、Linux
   `cjpm.toml`、`run.sh` 和 README，并忽略 macOS `._*`/`.DS_Store`（共 8 个文件）；
-  默认 ui-only 不增重。来宾已据此建项并编译 `4eaaa71d560f4058a6c879098facc2bc`，
-  冒烟“启动→关预览→关主窗”取得 `EXIT=0`、descriptor removed，两窗
-  `RENDERER_DESTROY` 与 `PREVIEW_FONT_EXIT` 均出现。
-  **当前限制（out-r17）：** 关闭一次预览后主窗仍可点击和续写；但重开预览后再关闭它会在
-  第二个预览会话销毁时 `free(): invalid pointer`（`EXIT=134`、descriptor present）。
-  独立 C 复现排除了“共享实例＋主设备常驻＋两预览设备/字体 face＋重开”的最简外部
-  形状（10/10、ASan 3/3、真实 `:0` 均 0）；仓颉最小双窗消费者也 3/3 绿，排除框架
-  host/window/text 生命周期本身。剩余指向应用特有的共享 owner/生成区域/session
-  或其解绑时序。
-  根因未定位前不要把 edit-preview 的“关→重开→关”当作可用流程；默认 ui-only 不受影响。
-  证据见 `evidence/font-styled-multiwindow-20261022/final-chain-20261022/` 与
-  `evidence/font-styled-multiwindow-20261022/reopen-20261022/text-lifecycle-harness-20261022/`。
+  默认 ui-only 不增重。
+  2026-10-22 起模板与通知示例都只提供控制器工厂和业务决定：打开、关闭、重开、整体退出
+  由 Linux 宿主在派发外回合边界执行，应用不再维护 `openPending`/`closePending`/
+  `finishTurn` 私有生命周期。本机含空格目录建项构建 `13bac4e8…`，打包后 `env -i`
+  解包运行“启动→关预览→关主窗” exit 0、`FONT_EXIT active=0 live=0 bytes=0`；同一
+  源码的通知链、ui-only 双薄窗链和宿主反例均通过。
+  **边界：** 派发内打开相关、延迟到回合末有效已被差分证明；首个损坏点和旧 134/139
+  是否同因仍未证实。共享运行时是否在 `internalRendererPumpEvent` 层排队会话生命周期
+  仍属共同核心（交 Sol/DS），本轮只在应用/宿主边界延迟。
+  证据见 `evidence/font-styled-multiwindow-20261022/public-host-r24-20261022/`。
 
 - 默认 `ui-only` 保持轻量：两个文本字段、按钮、轻量弹层、公共图片节点和状态反馈。
   `mixed-form` 为显式 opt-in：手写区域与运行时生成区域共用一个通知领域 owner、字段与动作

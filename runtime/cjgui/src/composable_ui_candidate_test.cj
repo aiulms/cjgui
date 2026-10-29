@@ -312,3 +312,91 @@ func generatedCandidateRejectionStaysWithItsOwnAttempt(): Unit {
     @Assert(holder.pendingCandidateToken(), 0)
     @Assert(holder.hasPendingCandidate(), false)
 }
+
+// A finished scene may not settle a later admitted declaration.
+@Test
+func ordinaryRegionCompletedRollbackDoesNotRejectLaterSubmission(): Unit {
+    let region = TailRollbackWindowController().region
+    let scene = "GENERATED_UI_STRUCTURE 1\nNODE 0 panel vertical\nEND"
+    let first = region.submitStructure(scene, 0)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildNode()
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.candidateTicketPayload(first.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildNode()
+    let busy = region.submitStructure(scene, 1)
+    @Assert(busy.candidateAccepted, false)
+    @Assert(busy.reason, "scene_transaction_busy")
+    region.rollbackSceneRefresh("request_changed")
+    let next = region.submitStructure(scene, 1)
+    @Assert(next.candidateAccepted, true)
+    // A second rollback from the completed carrier cannot own this request.
+    region.rollbackSceneRefresh("late_previous_scene")
+    @Assert(region.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE PENDING"), true)
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildNode()
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+    @Assert(region.acceptedStructureVersion(), 2)
+}
+
+@Test
+func ordinaryRegionCompletedCommitCannotSettleLaterSubmission(): Unit {
+    let region = TailRollbackWindowController().region
+    let scene = "GENERATED_UI_STRUCTURE 1\nNODE 0 panel vertical\nEND"
+    let older = region.submitStructure(scene, 0)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildNode()
+    region.rollbackSceneRefresh("original_cancellation")
+    @Assert(region.candidateTicketPayload(older.candidateToken).contains("REASON original_cancellation"), true)
+    let next = region.submitStructure(scene, 0)
+    @Assert(next.candidateAccepted, true)
+    region.commitSceneRefresh()
+    @Assert(region.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE PENDING"), true)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildNode()
+    @Assert(region.prepareSceneRefresh(), true)
+    region.rollbackSceneRefresh("real_current_cancellation")
+    @Assert(region.candidateTicketPayload(next.candidateToken).contains("REASON real_current_cancellation"), true)
+}
+
+@Test
+func ordinaryHolderStyleCarrierRollbackCannotRejectNewTicket(): Unit {
+    let holder = CjguiGeneratedUiStructureHolder(generatedTextCatalog())
+    let provider = GeneratedTestProvider()
+    let spec = CjguiGeneratedUiNodeSpec("panel", "vertical")
+    let first = holder.submit(spec, provider)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(holder.beginCandidateRefresh(), true)
+    let _ = holder.buildRefreshNode(provider)
+    @Assert(holder.prepareCandidateRefresh(), true)
+    let next = holder.submit(spec, provider)
+    @Assert(next.candidateAccepted, true)
+    holder.rollbackCandidateRefresh("request_changed")
+    @Assert(holder.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE PENDING"), true)
+    @Assert(holder.structureVersion(), 1)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(holder.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+    @Assert(holder.candidateTicketPayload(first.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+}
+
+@Test
+func ordinaryHolderSupersededCarrierCannotSettleReplacement(): Unit {
+    let holder = CjguiGeneratedUiStructureHolder(generatedTextCatalog())
+    let provider = GeneratedTestProvider()
+    let spec = CjguiGeneratedUiNodeSpec("panel", "vertical")
+    let older = holder.submit(spec, provider)
+    @Assert(holder.beginCandidateRefresh(), true)
+    let _ = holder.buildRefreshNode(provider)
+    let next = holder.submit(spec, provider)
+    @Assert(holder.prepareCandidateRefresh(), false)
+    holder.rollbackCandidateRefresh("old_carrier")
+    @Assert(holder.candidateTicketPayload(older.candidateToken).contains("TERMINAL_STATE SUPERSEDED"), true)
+    @Assert(holder.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE PENDING"), true)
+    @Assert(generatedCommit(holder, provider), true)
+    @Assert(holder.candidateTicketPayload(next.candidateToken).contains("TERMINAL_STATE ACCEPTED"), true)
+}

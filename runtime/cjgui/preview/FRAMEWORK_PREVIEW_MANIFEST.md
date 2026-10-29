@@ -99,4 +99,6 @@ Source-document links are relocated to shipped files. Historical evidence and un
 source references remain labelled text rather than links to the author's checkout.
 The source manifest records these documentation rewrites; it is not runtime acceptance.
 
+DS52 新增 `framework/cjgui/src/composable_ui_collection_workspace.cj`（生产源，随 source set 自动入包）。holder 视图状态事务、集合挂载的发布/回滚/释放责任、公共集合工作区的最小用法与视图偏好范围见 README.md 的 DS52 段；它只描述当前包能力，不是运行时验收。
+
 公共字体资源文档 `framework/cjgui/FONT_RESOURCES.md`、Lilex Regular / OFL.txt 和 mixed-form 的可选 `--fonts` 随同一 macos-dev 出口交付；生成方只引用公开 key/version，不包含作者字体路径或预注册系统字体依赖。

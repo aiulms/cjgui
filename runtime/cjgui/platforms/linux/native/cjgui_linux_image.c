@@ -43,6 +43,18 @@
 #define CJGUI_LINUX_IMAGE_INFLIGHT_BYTES (64u * 1024u * 1024u)
 #define CJGUI_LINUX_IMAGE_REQUEST_BYTES CJGUI_LINUX_IMAGE_MAX_DECODED_BYTES
 #define CJGUI_LINUX_IMAGE_KEY_CAPACITY 8192u
+#define CJGUI_LINUX_IMAGE_TRANSFER_PREFIX "cjgui-transfer:"
+#define CJGUI_LINUX_IMAGE_TRANSFER_MAX_ENCODED_BYTES (512u * 1024u)
+#define CJGUI_LINUX_IMAGE_MAX_ADMISSIONS 8u
+
+// 传输受理前的准入记录：identity 在 content digest 上，场景节点随后用同一
+// 身份接管；只计入解码后的 RGBA 字节，避免受理后才因缓存预算失败。
+typedef struct CjguiLinuxImageAdmission {
+    int present;
+    char identity[CJGUI_LINUX_IMAGE_KEY_CAPACITY];
+    uint64_t decodedBytes;
+    uint64_t lastAccess;
+} CjguiLinuxImageAdmission;
 
 typedef struct CjguiLinuxImageResource {
     char *key;
@@ -53,6 +65,9 @@ typedef struct CjguiLinuxImageResource {
     uint32_t height;
     uint8_t *rgba;
     size_t bytes;
+    // 场景内联 PNG 的编码字节：容量失败重试时仍从这份有界副本解码。
+    uint8_t *encoded;
+    size_t encodedBytes;
     int gpuSlot;
     int referenced;
     int retryable;   // 仅容量失败置位；预算释放后可由 pump 重试
@@ -67,6 +82,8 @@ typedef struct CjguiLinuxImageResource {
 typedef struct CjguiLinuxImageRequest {
     char *key;
     char *path;
+    uint8_t *encoded;   // 非 NULL 时从内存解码；worker 或丢弃路径释放
+    size_t encodedBytes;
     uint64_t generation;
     uint32_t reserved;   // 在途字节预留，结算或丢弃时归还
 } CjguiLinuxImageRequest;
@@ -109,6 +126,9 @@ struct CjguiLinuxImageDomain {
     uint64_t capacityFailureCount;
     uint64_t accessClock;
     uint64_t nextGeneration;
+    CjguiLinuxImageAdmission admissions[CJGUI_LINUX_IMAGE_MAX_ADMISSIONS];
+    uint32_t admissionCount;
+    uint64_t admissionBytes;
 #ifdef CJGUI_LINUX_IMAGE_TEST_HOOKS
     // 仅 harness 编译：worker 解码完成、尚未把 request/pixels 移交完成队列时调用。
     void (*testAfterDecode)(struct CjguiLinuxImageDomain *domain);
@@ -193,6 +213,15 @@ int cjgui_linux_image_cache_key(const char *resourcePath, const char *resourceId
                                 uint64_t resourceVersion, char *out, size_t capacity)
 {
     if (out == NULL || capacity == 0u) return 0;
+    if (resourcePath != NULL &&
+        strncmp(resourcePath, CJGUI_LINUX_IMAGE_TRANSFER_PREFIX,
+                strlen(CJGUI_LINUX_IMAGE_TRANSFER_PREFIX)) == 0) {
+        // 内联 transfer 没有文件路径：身份本身即稳定资源键，不参与 realpath。
+        const char *logical = (resourceId != NULL && resourceId[0] != '\0') ? resourceId : resourcePath;
+        int written = snprintf(out, capacity, "%s\n%llu\n%s", logical,
+                               (unsigned long long)resourceVersion, resourcePath);
+        return written > 0 && (size_t)written < capacity;
+    }
     char resolved[PATH_MAX];
     if (!cjgui_linux_image_resolve_path(resourcePath, resolved, sizeof(resolved))) return 0;
     const char *logical = (resourceId != NULL && resourceId[0] != '\0') ? resourceId : resolved;
@@ -248,6 +277,52 @@ static int cjgui_linux_image_decode_png(const char *path, uint8_t **outPixels,
     return 1;
 }
 
+static int cjgui_linux_image_decode_png_memory(const uint8_t *encoded, size_t encodedBytes,
+                                               uint8_t **outPixels, uint32_t *outWidth,
+                                               uint32_t *outHeight, uint64_t *outMicros)
+{
+    *outPixels = NULL;
+    *outWidth = 0u;
+    *outHeight = 0u;
+    *outMicros = 0u;
+    if (encoded == NULL || encodedBytes == 0u ||
+        encodedBytes > CJGUI_LINUX_IMAGE_TRANSFER_MAX_ENCODED_BYTES) return 0;
+
+    uint64_t started = cjgui_linux_image_now_micros();
+    png_image image;
+    memset(&image, 0, sizeof(image));
+    image.version = PNG_IMAGE_VERSION;
+    if (!png_image_begin_read_from_memory(&image, encoded, encodedBytes)) return 0;
+    if (image.width == 0u || image.height == 0u ||
+        image.width > CJGUI_LINUX_IMAGE_MAX_DIMENSION || image.height > CJGUI_LINUX_IMAGE_MAX_DIMENSION ||
+        (uint64_t)image.width * (uint64_t)image.height > CJGUI_LINUX_IMAGE_MAX_PIXELS) {
+        png_image_free(&image);
+        return 0;
+    }
+    image.format = PNG_FORMAT_RGBA;
+    size_t bytes = PNG_IMAGE_SIZE(image);
+    if (bytes == 0u || bytes > CJGUI_LINUX_IMAGE_MAX_DECODED_BYTES) {
+        png_image_free(&image);
+        return 0;
+    }
+    uint8_t *pixels = (uint8_t *)malloc(bytes);
+    if (pixels == NULL) {
+        png_image_free(&image);
+        return 0;
+    }
+    if (!png_image_finish_read(&image, NULL, pixels, 0, NULL)) {
+        free(pixels);
+        png_image_free(&image);
+        return 0;
+    }
+    *outPixels = pixels;
+    *outWidth = image.width;
+    *outHeight = image.height;
+    *outMicros = cjgui_linux_image_now_micros() - started;
+    png_image_free(&image);
+    return 1;
+}
+
 static CjguiLinuxImageResource *cjgui_linux_image_find(CjguiLinuxImageDomain *domain, const char *key)
 {
     for (uint32_t i = 0u; i < domain->resourceCount; i += 1u) {
@@ -272,6 +347,7 @@ static void cjgui_linux_image_remove_at(CjguiLinuxImageDomain *domain, uint32_t 
     free(resource->key);
     free(resource->resolvedPath);
     free(resource->rgba);
+    free(resource->encoded);
     if (index + 1u < domain->resourceCount) {
         memmove(&domain->resources[index], &domain->resources[index + 1u],
                 sizeof(CjguiLinuxImageResource) * (domain->resourceCount - index - 1u));
@@ -391,7 +467,10 @@ static void *cjgui_linux_image_worker(void *argument)
         uint8_t *pixels = NULL;
         uint32_t width = 0u, height = 0u;
         uint64_t micros = 0u;
-        int decoded = cjgui_linux_image_decode_png(request.path, &pixels, &width, &height, &micros);
+        int decoded = request.encoded != NULL
+                          ? cjgui_linux_image_decode_png_memory(request.encoded, request.encodedBytes,
+                                                                &pixels, &width, &height, &micros)
+                          : cjgui_linux_image_decode_png(request.path, &pixels, &width, &height, &micros);
 #ifdef CJGUI_LINUX_IMAGE_TEST_HOOKS
         if (domain->testAfterDecode != NULL) domain->testAfterDecode(domain);
 #endif
@@ -424,6 +503,7 @@ static void *cjgui_linux_image_worker(void *argument)
         pthread_mutex_unlock(&domain->mutex);
         free(request.key);
         free(request.path);
+        free(request.encoded);
         free(pixels);
         if (wake && domain->window != NULL) cjgui_linux_window_wake(domain->window);
     }
@@ -459,9 +539,19 @@ static int cjgui_linux_image_enqueue_locked(CjguiLinuxImageDomain *domain,
     domain->pending[index].key = strdup(resource->key);
     domain->pending[index].path = strdup(resource->resolvedPath);
     domain->pending[index].generation = resource->generation;
-    if (domain->pending[index].key == NULL || domain->pending[index].path == NULL) {
+    if (resource->encoded != NULL && resource->encodedBytes > 0u) {
+        domain->pending[index].encoded = (uint8_t *)malloc(resource->encodedBytes);
+        if (domain->pending[index].encoded != NULL) {
+            memcpy(domain->pending[index].encoded, resource->encoded, resource->encodedBytes);
+            domain->pending[index].encodedBytes = resource->encodedBytes;
+        }
+    }
+    int encodedReady = resource->encoded == NULL || resource->encodedBytes == 0u ||
+                       domain->pending[index].encoded != NULL;
+    if (domain->pending[index].key == NULL || domain->pending[index].path == NULL || !encodedReady) {
         free(domain->pending[index].key);
         free(domain->pending[index].path);
+        free(domain->pending[index].encoded);
         memset(&domain->pending[index], 0, sizeof(CjguiLinuxImageRequest));
         return 0;
     }
@@ -550,6 +640,7 @@ void cjgui_linux_image_domain_destroy(CjguiLinuxImageDomain *domain)
         cjgui_linux_image_release_reservation(domain, domain->pending[i].reserved);
         if (domain->pending[i].key != NULL) free(domain->pending[i].key);
         if (domain->pending[i].path != NULL) free(domain->pending[i].path);
+        if (domain->pending[i].encoded != NULL) free(domain->pending[i].encoded);
         memset(&domain->pending[i], 0, sizeof(CjguiLinuxImageRequest));
         cjgui_linux_image_release_reservation(domain, domain->completions[i].reserved);
         if (domain->completions[i].key != NULL) free(domain->completions[i].key);
@@ -620,6 +711,216 @@ uint32_t cjgui_linux_image_prepare(CjguiLinuxImageDomain *domain, const char *re
     }
     pthread_mutex_unlock(&domain->mutex);
     return state;
+}
+
+uint32_t cjgui_linux_image_prepare_bytes(CjguiLinuxImageDomain *domain, const char *resourcePath,
+                                         const char *resourceId, uint64_t resourceVersion,
+                                         const uint8_t *bytes, uint32_t length)
+{
+    static const uint8_t signature[8] = {0x89u, 'P', 'N', 'G', 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+    if (domain == NULL || resourcePath == NULL || bytes == NULL || length == 0u ||
+        length > CJGUI_LINUX_IMAGE_TRANSFER_MAX_ENCODED_BYTES ||
+        strncmp(resourcePath, CJGUI_LINUX_IMAGE_TRANSFER_PREFIX,
+                strlen(CJGUI_LINUX_IMAGE_TRANSFER_PREFIX)) != 0 ||
+        (resourceId != NULL && resourceId[0] != '\0' && strcmp(resourceId, resourcePath) != 0) ||
+        length < sizeof(signature) || memcmp(bytes, signature, sizeof(signature)) != 0) {
+        return CJGUI_LINUX_IMAGE_FAILED;
+    }
+    char key[CJGUI_LINUX_IMAGE_KEY_CAPACITY];
+    if (!cjgui_linux_image_cache_key(resourcePath, resourceId, resourceVersion, key, sizeof(key))) {
+        return CJGUI_LINUX_IMAGE_FAILED;
+    }
+    uint8_t *encoded = (uint8_t *)malloc(length);
+    if (encoded == NULL) return CJGUI_LINUX_IMAGE_FAILED;
+    memcpy(encoded, bytes, length);
+
+    pthread_mutex_lock(&domain->mutex);
+    // 场景节点接管同一身份的受理准入：从这里起由资源记录自己持有预算。
+    for (uint32_t admissionIndex = 0u; admissionIndex < CJGUI_LINUX_IMAGE_MAX_ADMISSIONS;
+         admissionIndex += 1u) {
+        CjguiLinuxImageAdmission *admission = &domain->admissions[admissionIndex];
+        if (!admission->present || strcmp(admission->identity, resourcePath) != 0) continue;
+        domain->admissionBytes -= admission->decodedBytes;
+        if (domain->admissionCount > 0u) domain->admissionCount -= 1u;
+        memset(admission, 0, sizeof(*admission));
+        break;
+    }
+    CjguiLinuxImageResource *resource = cjgui_linux_image_find(domain, key);
+    if (resource == NULL) {
+        if (domain->resourceCount >= CJGUI_LINUX_IMAGE_MAX_RESOURCES) {
+            if (!cjgui_linux_image_evict_one(domain, key)) {
+                pthread_mutex_unlock(&domain->mutex);
+                free(encoded);
+                return CJGUI_LINUX_IMAGE_BUSY;
+            }
+        }
+        resource = &domain->resources[domain->resourceCount];
+        memset(resource, 0, sizeof(*resource));
+        resource->gpuSlot = -1;
+        resource->key = strdup(key);
+        resource->resolvedPath = strdup(resourcePath);
+        resource->version = resourceVersion;
+        resource->encoded = encoded;
+        resource->encodedBytes = length;
+        resource->state = CJGUI_LINUX_IMAGE_UNREQUESTED;
+        if (resource->key == NULL || resource->resolvedPath == NULL) {
+            free(resource->key);
+            free(resource->resolvedPath);
+            free(resource->encoded);
+            memset(resource, 0, sizeof(*resource));
+            resource->gpuSlot = -1;
+            pthread_mutex_unlock(&domain->mutex);
+            return CJGUI_LINUX_IMAGE_FAILED;
+        }
+        domain->resourceCount += 1u;
+        encoded = NULL;
+        if (cjgui_linux_image_trace_enabled()) {
+            fprintf(stderr, "CJGUI_LINUX_IMAGE create_transfer key=%s bytes=%u\n", key, length);
+        }
+    }
+    domain->accessClock += 1u;
+    resource->lastAccess = domain->accessClock;
+
+    uint32_t state = resource->state;
+    if (state == CJGUI_LINUX_IMAGE_UNREQUESTED) {
+        resource->generation = domain->nextGeneration + 1u;
+        domain->nextGeneration = resource->generation;
+        if (!cjgui_linux_image_enqueue_locked(domain, resource)) {
+            resource->state = CJGUI_LINUX_IMAGE_BUSY;
+        }
+        state = resource->state;
+    }
+    pthread_mutex_unlock(&domain->mutex);
+    free(encoded);
+    return state;
+}
+
+int cjgui_linux_image_admit_transfer_png(CjguiLinuxImageDomain *domain, const char *identity,
+                                         const uint8_t *bytes, uint32_t length,
+                                         uint32_t *outWidth, uint32_t *outHeight,
+                                         uint64_t *outDecodeMicros)
+{
+    if (outWidth) *outWidth = 0u;
+    if (outHeight) *outHeight = 0u;
+    if (outDecodeMicros) *outDecodeMicros = 0u;
+    if (domain == NULL || identity == NULL || bytes == NULL || outWidth == NULL ||
+        outHeight == NULL || outDecodeMicros == NULL || length == 0u ||
+        length > CJGUI_LINUX_IMAGE_TRANSFER_MAX_ENCODED_BYTES ||
+        strncmp(identity, CJGUI_LINUX_IMAGE_TRANSFER_PREFIX,
+                strlen(CJGUI_LINUX_IMAGE_TRANSFER_PREFIX)) != 0) {
+        return CJGUI_LINUX_IMAGE_ADMIT_INVALID;
+    }
+    uint8_t *pixels = NULL;
+    uint32_t width = 0u, height = 0u;
+    uint64_t micros = 0u;
+    if (!cjgui_linux_image_decode_png_memory(bytes, length, &pixels, &width, &height, &micros)) {
+        // 尺寸问题已在头检查里具名拒绝；这里剩下的是真实解码失败。
+        return CJGUI_LINUX_IMAGE_ADMIT_DECODE;
+    }
+    uint64_t decodedBytes = (uint64_t)width * (uint64_t)height * 4u;
+    free(pixels);
+
+    pthread_mutex_lock(&domain->mutex);
+    uint64_t readyBytes = 0u;
+    uint32_t readyCount = 0u, referencedReady = 0u;
+    for (uint32_t index = 0u; index < domain->resourceCount; index += 1u) {
+        CjguiLinuxImageResource *resource = &domain->resources[index];
+        if (resource->state != CJGUI_LINUX_IMAGE_READY) continue;
+        readyCount += 1u;
+        readyBytes += (uint64_t)resource->bytes;
+        if (resource->referenced) referencedReady += 1u;
+    }
+    int existing = -1;
+    uint64_t previous = 0u;
+    for (uint32_t index = 0u; index < CJGUI_LINUX_IMAGE_MAX_ADMISSIONS; index += 1u) {
+        CjguiLinuxImageAdmission *admission = &domain->admissions[index];
+        if (admission->present && strcmp(admission->identity, identity) == 0) {
+            existing = (int)index;
+            previous = admission->decodedBytes;
+            break;
+        }
+    }
+    uint64_t projectedBytes = readyBytes + domain->inflightBytes +
+                              domain->admissionBytes - previous + decodedBytes;
+    int budgetOk = decodedBytes != 0u && decodedBytes <= CJGUI_LINUX_IMAGE_MAX_DECODED_BYTES &&
+                   projectedBytes <= CJGUI_LINUX_IMAGE_CACHE_BYTES;
+    // 8 个 ready 槽全被场景引用时，新图没有可淘汰空间；受理阶段就具名失败，
+    // 而不是先接受 owner 再在 pump 里失败。
+    if (budgetOk && readyCount >= CJGUI_LINUX_IMAGE_READY_CAPACITY &&
+        referencedReady >= readyCount) {
+        budgetOk = 0;
+    }
+    if (!budgetOk) {
+        pthread_mutex_unlock(&domain->mutex);
+        return CJGUI_LINUX_IMAGE_ADMIT_BUDGET;
+    }
+    int slot = existing;
+    if (slot < 0) {
+        for (uint32_t index = 0u; index < CJGUI_LINUX_IMAGE_MAX_ADMISSIONS; index += 1u) {
+            if (!domain->admissions[index].present) { slot = (int)index; break; }
+        }
+        if (slot < 0) {
+            uint32_t oldest = 0u;
+            for (uint32_t index = 1u; index < CJGUI_LINUX_IMAGE_MAX_ADMISSIONS; index += 1u) {
+                if (domain->admissions[index].lastAccess < domain->admissions[oldest].lastAccess) {
+                    oldest = index;
+                }
+            }
+            domain->admissionBytes -= domain->admissions[oldest].decodedBytes;
+            if (domain->admissionCount > 0u) domain->admissionCount -= 1u;
+            memset(&domain->admissions[oldest], 0, sizeof(domain->admissions[oldest]));
+            slot = (int)oldest;
+        }
+        memset(&domain->admissions[slot], 0, sizeof(domain->admissions[slot]));
+        domain->admissions[slot].present = 1;
+        snprintf(domain->admissions[slot].identity, sizeof(domain->admissions[slot].identity), "%s",
+                 identity);
+        domain->admissionCount += 1u;
+    } else {
+        domain->admissionBytes -= previous;
+    }
+    domain->accessClock += 1u;
+    domain->admissions[slot].decodedBytes = decodedBytes;
+    domain->admissions[slot].lastAccess = domain->accessClock;
+    domain->admissionBytes += decodedBytes;
+    pthread_mutex_unlock(&domain->mutex);
+    *outWidth = width;
+    *outHeight = height;
+    *outDecodeMicros = micros;
+    return CJGUI_LINUX_IMAGE_ADMIT_OK;
+}
+
+void cjgui_linux_image_release_transfer_admission(CjguiLinuxImageDomain *domain, const char *identity)
+{
+    if (domain == NULL || identity == NULL) return;
+    pthread_mutex_lock(&domain->mutex);
+    for (uint32_t index = 0u; index < CJGUI_LINUX_IMAGE_MAX_ADMISSIONS; index += 1u) {
+        CjguiLinuxImageAdmission *admission = &domain->admissions[index];
+        if (!admission->present || strcmp(admission->identity, identity) != 0) continue;
+        domain->admissionBytes -= admission->decodedBytes;
+        if (domain->admissionCount > 0u) domain->admissionCount -= 1u;
+        memset(admission, 0, sizeof(*admission));
+        break;
+    }
+    pthread_mutex_unlock(&domain->mutex);
+}
+
+uint32_t cjgui_linux_image_transfer_admission_count(CjguiLinuxImageDomain *domain)
+{
+    if (domain == NULL) return 0u;
+    pthread_mutex_lock(&domain->mutex);
+    uint32_t count = domain->admissionCount;
+    pthread_mutex_unlock(&domain->mutex);
+    return count;
+}
+
+uint64_t cjgui_linux_image_transfer_admission_bytes(CjguiLinuxImageDomain *domain)
+{
+    if (domain == NULL) return 0u;
+    pthread_mutex_lock(&domain->mutex);
+    uint64_t bytes = domain->admissionBytes;
+    pthread_mutex_unlock(&domain->mutex);
+    return bytes;
 }
 
 uint32_t cjgui_linux_image_state(CjguiLinuxImageDomain *domain, const char *resourcePath,

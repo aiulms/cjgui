@@ -14,6 +14,11 @@
 
 #include "cjgui_internal_renderer.h"
 
+typedef struct CjguiLinuxImageDomain CjguiLinuxImageDomain;
+
+// 会话所属图片域；PNG 传输受理前的真实解码/预算准入借用它。
+CjguiLinuxImageDomain *cjgui_linux_session_image_domain(uint64_t token);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -43,6 +48,28 @@ CjguiInternalRendererStatus cjgui_internal_renderer_commit_composable_command_me
 // 当前已接受上下文菜单请求的 id；无守卫时为 0。native 把它拼进
 // `escape:<requestId>`，共同层据此只结束这个请求。
 uint64_t cjgui_linux_aux_context_menu_request(uint64_t token);
+
+// 数据交换声明读取。共同层在每次投影前重写 staging；这里只把与
+// acceptedVersion 相同的整代条目交给会话，不保存第二份应用状态。
+// wantFormat: 1 = text/plain, 2 = image/png。
+// 命中返回 1，outPayload 是声明的文本载荷（image/png 的 SOURCE 为空串），
+// outBytes/outByteLength 只对 SOURCE image/png 有效。返回的指针在下次
+// configure/set 之前有效，会话必须在下一次投影前用完。
+int cjgui_linux_aux_transfer_find(uint64_t token, uint64_t acceptedVersion,
+                                  uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+                                  uint32_t role, uint32_t wantFormat,
+                                  CjguiInternalRendererComposableDataTransferItem *outItem,
+                                  const char **outPayload,
+                                  const uint8_t **outBytes, uint32_t *outByteLength);
+// 已接受代中，某一 role 是否声明了该类型；用于 Xdnd 的 Enter/Position 答复。
+int cjgui_linux_aux_transfer_declared(uint64_t token, uint64_t acceptedVersion,
+                                      uint32_t role, uint32_t wantFormat,
+                                      int *outLocalPngFileAllowed);
+
+// 场景事务：候选提交时把同代 staging 提升为已接受声明；候选取消/丢弃只撤
+// staging，已接受声明保持不变。由 session.c 的场景提交/取消路径调用。
+void cjgui_linux_aux_commit_transfer(uint64_t token, uint64_t acceptedVersion);
+void cjgui_linux_aux_discard_transfer(uint64_t token);
 
 #ifdef __cplusplus
 }

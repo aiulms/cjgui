@@ -36,6 +36,30 @@ uint32_t cjgui_linux_image_prepare(CjguiLinuxImageDomain *domain, const char *re
 uint32_t cjgui_linux_image_state(CjguiLinuxImageDomain *domain, const char *resourcePath,
                                  const char *resourceId, uint64_t resourceVersion);
 
+// 共同层的场景内联 PNG（cjguiComposableImageFromTransfer）以
+// `cjgui-transfer:<offerIdentity>` 作为资源身份，字节在应用内存里而不是文件。
+// 这里复制有界编码字节进同一解码/缓存/纹理域；身份前缀不匹配返回 FAILED。
+uint32_t cjgui_linux_image_prepare_bytes(CjguiLinuxImageDomain *domain, const char *resourcePath,
+                                         const char *resourceId, uint64_t resourceVersion,
+                                         const uint8_t *bytes, uint32_t length);
+
+// 传输受理前的有界准入：真实解码整张 PNG 并按解码字节计入图片域预算，
+// 成功后保留一条 identity 准入记录，场景节点随后复用同一身份时接管。
+// 返回 0 成功；1 参数/签名无效；2 尺寸超限；3 真实解码失败；4 预算不足。
+#define CJGUI_LINUX_IMAGE_ADMIT_OK 0
+#define CJGUI_LINUX_IMAGE_ADMIT_INVALID 1
+#define CJGUI_LINUX_IMAGE_ADMIT_DIMENSION 2
+#define CJGUI_LINUX_IMAGE_ADMIT_DECODE 3
+#define CJGUI_LINUX_IMAGE_ADMIT_BUDGET 4
+int cjgui_linux_image_admit_transfer_png(CjguiLinuxImageDomain *domain, const char *identity,
+                                         const uint8_t *bytes, uint32_t length,
+                                         uint32_t *outWidth, uint32_t *outHeight,
+                                         uint64_t *outDecodeMicros);
+// 拒绝/关闭时撤回尚未被场景接管的准入。
+void cjgui_linux_image_release_transfer_admission(CjguiLinuxImageDomain *domain, const char *identity);
+uint32_t cjgui_linux_image_transfer_admission_count(CjguiLinuxImageDomain *domain);
+uint64_t cjgui_linux_image_transfer_admission_bytes(CjguiLinuxImageDomain *domain);
+
 // 主线程结算：取出 worker 结果、上传纹理并推进 completionVersion。
 void cjgui_linux_image_pump(CjguiLinuxImageDomain *domain);
 

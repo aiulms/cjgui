@@ -11,6 +11,16 @@
 // destination and is not evidence about the application's input route.
 @interface ModalReturnWindow : NSWindow
 @end
+@interface ExitGapWindow : CJGuiInternalWindow
+@end
+@implementation ExitGapWindow
+- (instancetype)initWithContentRect:(NSRect)rect styleMask:(NSWindowStyleMask)style
+    backing:(NSBackingStoreType)backing defer:(BOOL)defer {
+    return [super initWithContentRect:rect styleMask:style backing:backing defer:NO];
+}
+- (BOOL)canBecomeKeyWindow { return YES; }
+@end
+static Class ModalOriginalWindowClass;
 @implementation ModalReturnWindow
 - (instancetype)initWithContentRect:(NSRect)rect styleMask:(NSWindowStyleMask)style
     backing:(NSBackingStoreType)backing defer:(BOOL)defer {
@@ -28,8 +38,9 @@ static CJGuiInternalComposableSceneNode *Field(CJGuiInternalSession *ctx,NSUInte
     n.node=raw;n.value=body;return n;
 }
 static CJGuiInternalSession *ModalFixture(id<MTLDevice> device) {
-    ProductionFixtureWindowClass=ModalReturnWindow.class;
+    ProductionFixtureWindowClass=ModalOriginalWindowClass ?: ModalReturnWindow.class;
     CJGuiInternalSession *ctx=ProductionFixture(device);if(!ctx)return nil;
+    if([ctx.window isKindOfClass:CJGuiInternalWindow.class])((CJGuiInternalWindow *)ctx.window).cjguiSession=ctx;
     [ctx.window makeKeyWindow];
     ctx.windowContentHost=ctx.window.contentView;
     ctx.windowOpaqueFallbackView=[[NSView alloc] initWithFrame:ctx.windowContentHost.bounds];
@@ -182,15 +193,373 @@ static void OrdinaryFieldCaret(id<MTLDevice> device) {
     [ctx.window sendEvent:key];
     NSUInteger deletes=0;CJGuiInternalQueuedInteraction *deletion=nil;
     for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
-        if(q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE &&
-            [q.formText isEqualToString:@"deleteBackward"]){deletes++;deletion=q;}
+        if(q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED){deletes++;deletion=q;}
     CHECK(deletes==1 && deletion.nodeId==401 && deletion.resourceId==1 &&
         deletion.projectionVersion==2 && deletion.inputSequence==0 && !deletion.caretInputBranch &&
-        [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"邮件"],
-        "ordinary_owned_field_delete_uses_existing_plain_intent_without_installed_source_claim");
+        deletion.selectionStart==0 && deletion.selectionEnd==2 && !deletion.formText.length &&
+        !ctx.composableSceneOverlay.inputProxy.string.length,
+        "ordinary_single_line_delete_uses_exact_TextKit_range_without_installed_source_claim");
     CjguiReleaseSession(ctx.rendererSessionToken);
+}
+static NSEvent *ExitKey(CJGuiInternalSession *ctx,unsigned short code,NSString *text) {
+    return [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+        modifierFlags:0 timestamp:1 windowNumber:ctx.window.windowNumber context:nil
+        characters:text charactersIgnoringModifiers:text isARepeat:NO keyCode:code];
+}
+static CJGuiInternalSession *ExitFixtureMode(id<MTLDevice> device,BOOL buttonSource) {
+    ModalOriginalWindowClass=ExitGapWindow.class;
+    CJGuiInternalSession *ctx=ModalFixture(device);CHECK(ctx!=nil,"exit_gap_fixture");if(!ctx)return nil;
+    ModalOriginalWindowClass=Nil;
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];[NSApp activateIgnoringOtherApps:YES];
+    [ctx.window makeKeyAndOrderFront:nil];[ctx.window makeKeyWindow];
+    NSDate *keyDeadline=[NSDate dateWithTimeIntervalSinceNow:3];
+    while(NSApp.keyWindow!=ctx.window && keyDeadline.timeIntervalSinceNow>0) {
+        NSEvent *startup=[NSApp nextEventMatchingMask:NSEventMaskAny
+            untilDate:[NSDate dateWithTimeIntervalSinceNow:0.01] inMode:NSDefaultRunLoopMode dequeue:YES];
+        if(startup)[NSApp sendEvent:startup];
+    }
+    CHECK(NSApp.keyWindow==ctx.window,"actual_modal_exit_key_window");
+    CJGuiInternalComposableSceneNode *query=ctx.composableNodes[1];
+    CjguiInternalRendererComposableNode raw=query.node;raw.inputScope=42;
+    if(buttonSource)raw.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON;
+    query.node=raw;
+    [ctx.composableSceneOverlay setNodesFromProjection:ctx.composableNodes];
+    CHECK([ctx.composableSceneOverlay focusCommittedNodeId:402],"exit_query_focused");
+    [ctx.composableSceneOverlay.inputProxy setString:@"11"];
+    [ctx.composableSceneOverlay.inputProxy setSelectedRange:NSMakeRange(2,0)];
+    [ctx.pendingInteractions removeAllObjects];
+    CJGuiInternalComposableCommandMenuItem *command=[CJGuiInternalComposableCommandMenuItem new];
+    command.commandId=@"exit-fixture";command.shortcut=@"shortcut:escape";command.enabled=YES;
+    command.focusScope=42;command.declarationToken=91;command.targetNodeId=402;
+    command.targetResourceId=1;command.targetNodeKind=query.node.nodeKind;
+    ctx.composableCommandMenuItems=[NSMutableArray arrayWithObject:command];ctx.composableCommandMenuVersion=2;
+    return ctx;
+}
+static CJGuiInternalSession *ExitFixture(id<MTLDevice> device) {return ExitFixtureMode(device,NO);}
+static uint64_t DequeueExit(CJGuiInternalSession *ctx) {
+    CjguiInternalRendererEvent event={0};
+    CHECK(cjgui_internal_renderer_pump_event(ctx.rendererSessionToken,0,&event)==0 && event.kind==34,
+        "original_escape_dequeued_once");
+    uint64_t identity=0;
+    CHECK(cjgui_internal_renderer_modal_exit_interaction(ctx.rendererSessionToken,&identity)==0 && identity,
+        "exit_identity_comes_from_actual_dequeue");return identity;
+}
+static void ExitInputGaps(id<MTLDevice> device,BOOL afterStage,BOOL buttonSource) {
+    CJGuiInternalSession *ctx=ExitFixtureMode(device,buttonSource);if(!ctx)return;
+    CHECK(CjguiInputProxyIsFirstResponder(ctx.composableSceneOverlay)!=buttonSource,
+        "fixture_actual_modal_responder_matches_query_or_return_button");
+    [ctx.window sendEvent:ExitKey(ctx,53,@"\033")];
+    CHECK(ctx.pendingInteractions.firstObject.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND,
+        "original_escape_enqueued_as_declared_kind34");
+    uint64_t identity=0;
+    CjguiInternalRendererFrameObservation frame={0};
+    if(afterStage){
+        identity=DequeueExit(ctx);
+        CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,29,"accepted")==0,"exit_accepted_before_key");
+        CloseCandidate(ctx,3,NO);CHECK(Stage(ctx,29)==0,"exit_gap_stage");
+        CHECK(cjgui_internal_renderer_test_hold_next_composable_present(ctx.rendererSessionToken)==0 &&
+            CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame)==CJGUI_INTERNAL_RENDERER_PRESENT_PENDING,
+            "actual_install_pending_before_original_key");
+    }
+    NSEvent *original=ExitKey(ctx,7,@"x");[ctx.window sendEvent:original];
+    CHECK(ctx.pendingInteractions.lastObject.originalCommandKey.event==original,
+        "original_key_is_really_retained_before_old_query_or_return_button_interprets_it");
+    CHECK([ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],afterStage ?
+        "accepted_exit_pending_install_keeps_query_11" : "enqueued_exit_before_owner_keeps_query_11");
+    if(!afterStage){identity=DequeueExit(ctx);
+        CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,29,"accepted")==0,"exit_accepted_after_queued_key");
+        CloseCandidate(ctx,3,NO);CHECK(Stage(ctx,29)==0,"exit_gap_stage");}
+    CjguiInternalRendererStatus st=afterStage ? cjgui_internal_renderer_test_resolve_pending_composable_present(ctx.rendererSessionToken)
+        : CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame);
+    CHECK((st==0||st==CJGUI_INTERNAL_RENDERER_READBACK_FAILED) && ctx.composableSceneVersion==3,
+        "this_exit_successors_do_not_block_own_installation");
+    CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,29,"installed")==0,
+        "common_confirmation_names_actual_return_install");
+    CHECK(CjguiMaterializeOriginalCommandKeyAtHead(ctx),"original_key_first_system_interpretation");
+    NSUInteger edits=0;
+    for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+        if(q.kind==51 && q.nodeId==401 && [q.formText isEqualToString:@"x"])edits++;
+    CHECK(edits==1 && [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"x"] &&
+        ctx.retainedAfterCaretInputBytes==0 && !ctx.modalExitInput,"one_original_x_to_returned_owner_and_no_custody_leak");
+    CjguiReleaseSession(ctx.rendererSessionToken);
+    [ctx.window orderOut:nil];[ctx.window close];
+}
+static void ExitTextBeforeFollowingSave(id<MTLDevice> device) {
+    CJGuiInternalSession *ctx=ExitFixture(device);if(!ctx)return;
+    [ctx.window sendEvent:ExitKey(ctx,53,@"\033")];
+    [ctx.window sendEvent:ExitKey(ctx,25,@"9")];
+    NSEvent *save=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+        modifierFlags:NSEventModifierFlagCommand timestamp:3 windowNumber:ctx.window.windowNumber context:nil
+        characters:@"s" charactersIgnoringModifiers:@"s" isARepeat:NO keyCode:1];
+    [ctx.window sendEvent:save];
+    uint64_t identity=DequeueExit(ctx);
+    CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,79,"accepted")==0,
+        "batch_exit_accepted_with_original_text_and_save_waiting");
+    CloseCandidate(ctx,3,NO);CHECK(Stage(ctx,79)==0,"batch_exit_return_stage");
+    CjguiInternalRendererFrameObservation frame={0};
+    CjguiInternalRendererStatus st=CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame);
+    CHECK(st==0||st==CJGUI_INTERNAL_RENDERER_READBACK_FAILED,"batch_exit_return_installed");
+    CJGuiInternalComposableCommandMenuItem *command=[CJGuiInternalComposableCommandMenuItem new];
+    command.commandId=@"save-fixture";command.shortcut=@"shortcut:command+s";command.enabled=YES;
+    command.focusScope=0;command.declarationToken=92;command.targetNodeId=401;
+    command.targetResourceId=1;command.targetNodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT;
+    ctx.composableCommandMenuItems=[NSMutableArray arrayWithObject:command];ctx.composableCommandMenuVersion=3;
+    CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,79,"installed")==0,
+        "batch_exit_actual_return_confirmed");
+    NSString *owner=@"邮件",*applied=nil;NSUInteger edits=0,saves=0;
+    for(unsigned i=0;ctx.pendingInteractions.count && i<16;i++) {
+        CJGuiInternalQueuedInteraction *q=ctx.pendingInteractions.firstObject;
+        if(q.originalCommandKey) {
+            BOOL advanced=CjguiMaterializeOriginalCommandKeyAtHead(ctx);
+            CHECK(advanced,"batch_next_original_materializes_once");if(!advanced)break;
+        } else {
+            if(q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED) {
+                NSRange range=NSMakeRange(q.selectionStart,q.selectionEnd-q.selectionStart);
+                CHECK(NSMaxRange(range)<=owner.length,"batch_delta_addresses_original_owner");
+                if(NSMaxRange(range)<=owner.length)owner=[owner stringByReplacingCharactersInRange:range withString:q.formText];
+                edits++;
+            } else if(q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND &&
+                [q.formText isEqualToString:@"shortcut:command+s"]) {applied=[owner copy];saves++;}
+            [ctx.pendingInteractions removeObjectAtIndex:0];
+        }
+    }
+    CHECK(edits==1 && saves==1 && [owner isEqualToString:@"9"] && [applied isEqualToString:@"9"],
+        "original_text_owner_edit_precedes_following_save_without_replay_or_wait");
+    CjguiReleaseSession(ctx.rendererSessionToken);[ctx.window orderOut:nil];[ctx.window close];
+}
+static void CoalescingKeepsProducerIdentity(id<MTLDevice> device) {
+    CJGuiInternalSession *ctx=ExitFixture(device);if(!ctx)return;
+    CjguiOriginalCommandKey *producer=[CjguiOriginalCommandKey new];
+    producer.dependency=CjguiOriginalKeyModalExit;producer.phase=1;
+    id invocation=[NSObject new];ctx.interpretingOriginalCommandKey=producer;
+    ctx.materializationInvocation=invocation;ctx.callbackProductionInvocation=invocation;
+    CHECK(CjguiEnqueueComposableInteraction(ctx,33,0,@"邮件",NSMakeRange(0,0)),"producer_selection_admitted");
+    CJGuiInternalQueuedInteraction *first=ctx.pendingInteractions.lastObject;
+    ctx.callbackProductionInvocation=nil;
+    CHECK(CjguiEnqueueComposableInteraction(ctx,33,0,@"邮件",NSMakeRange(1,0)),"independent_selection_admitted");
+    CHECK(ctx.pendingInteractions.count==2 && first.inputProductionInvocation==invocation &&
+        first.selectionStart==0 && !ctx.pendingInteractions.lastObject.inputProductionInvocation,
+        "independent_notification_cannot_coalesce_into_an_original_key_product");
+    ctx.interpretingOriginalCommandKey=nil;ctx.materializationInvocation=nil;
+    CHECK(CjguiEnqueueComposableInteraction(ctx,33,0,@"邮件",NSMakeRange(2,0)) &&
+        ctx.pendingInteractions.count==2 && ctx.pendingInteractions.lastObject.selectionStart==2,
+        "ordinary_same_producer_notifications_keep_existing_coalescing");
+    CjguiReleaseSession(ctx.rendererSessionToken);[ctx.window orderOut:nil];[ctx.window close];
+}
+static void OpeningInputGap(id<MTLDevice> device,BOOL menuRoute,BOOL equivalentInput) {
+    CJGuiInternalSession *ctx=ExitFixture(device);if(!ctx)return;
+    CJGuiInternalComposableCommandMenuItem *command=ctx.composableCommandMenuItems.firstObject;
+    command.commandId=@"open-fixture";command.shortcut=@"shortcut:command+k";
+    NSEvent *open=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+        modifierFlags:NSEventModifierFlagCommand timestamp:2 windowNumber:ctx.window.windowNumber context:nil
+        characters:@"k" charactersIgnoringModifiers:@"k" isARepeat:NO keyCode:40];
+    if(menuRoute) {
+        command.menuGroup=@"File";command.title=@"Open fixture";
+        objc_setAssociatedObject(ctx.window,&CJGuiSessionWindowAssociationKey,ctx,OBJC_ASSOCIATION_ASSIGN);
+        NSMenu *menu=[[NSMenu alloc] initWithTitle:@"File"];
+        NSMenuItem *item=[[NSMenuItem alloc] initWithTitle:@"Open" action:@selector(invokeComposableCommand:) keyEquivalent:@"k"];
+        item.target=[CJGuiInternalComposableCommandMenuDispatcher sharedDispatcher];item.representedObject=@"open-fixture";
+        [menu addItem:item];CjguiCaptureComposableMenuCommandSources(menu,open);
+        [[CJGuiInternalComposableCommandMenuDispatcher sharedDispatcher] invokeComposableCommand:item];
+    } else [ctx.window sendEvent:open];
+    if(equivalentInput) {
+        NSEvent *first=ExitKey(ctx,18,@"1"),*second=ExitKey(ctx,18,@"1");
+        CHECK([ctx.composableSceneOverlay performKeyEquivalent:first] &&
+            ctx.pendingInteractions.lastObject.originalCommandKey.event==first,
+            "AppKit_key_equivalent_entry_retains_first_original_before_default_responder");
+        CHECK([ctx.composableSceneOverlay performKeyEquivalent:second] &&
+            ctx.pendingInteractions.lastObject.originalCommandKey.event==second,
+            "AppKit_key_equivalent_entry_retains_second_original_in_same_FIFO");
+    } else { [ctx.window sendEvent:ExitKey(ctx,18,@"1")];[ctx.window sendEvent:ExitKey(ctx,18,@"1")]; }
+    CHECK(ctx.modalExitInput && [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],
+        menuRoute?"accepted_native_menu_open_keeps_successors_out_of_old_field":"accepted_open_keeps_successor_keys_out_of_old_field");
+    if(ctx.modalExitInput) {
+        uint64_t identity=0;
+        if(menuRoute) {
+            CjguiInternalRendererEvent e={0};
+            CHECK(cjgui_internal_renderer_pump_event(ctx.rendererSessionToken,0,&e)==0 &&
+                e.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND &&
+                cjgui_internal_renderer_modal_exit_interaction(ctx.rendererSessionToken,&identity)==0 && identity,
+                "native_menu_layer_identity_comes_from_actual_dequeue");
+        } else identity=DequeueExit(ctx);
+        CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,69,"opening")==0,
+            "opening_owner_decides_actual_scope_switch");
+        CloseCandidate(ctx,3,YES);
+        CJGuiInternalComposableSceneNode *query=ctx.stagedComposableNodes[1];
+        CjguiInternalRendererComposableNode raw=query.node;raw.nodeId=403;raw.inputScope=43;
+        query.node=raw;query.value=@"";
+        uint64_t w[16]={69,3,2,81,403,1,CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT,
+            UINT64_MAX,UINT64_MAX,3,0,0,0,0,0,73};
+        CHECK(cjgui_internal_renderer_stage_modal_return(ctx.rendererSessionToken,w,"")==0,
+            "opening_has_initial_text_focus_fact_without_invented_selection");
+        CjguiInternalRendererFrameObservation frame={0};CjguiInternalRendererStatus st=CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame);
+        CHECK((st==0||st==CJGUI_INTERNAL_RENDERER_READBACK_FAILED) &&
+            cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,69,"installed")==0,
+            "opening_initial_focus_really_installed_before_successors");
+        unsigned edits=0;
+        for(unsigned i=0;i<6 && edits<2;i++) {
+            CjguiInternalRendererEvent e={0};
+            if(cjgui_internal_renderer_pump_event(ctx.rendererSessionToken,0,&e)==0 && e.kind==51 && e.nodeId==403)edits++;
+            fprintf(stderr,"opening_original_event kind=%u node=%llu edits=%u\n",e.kind,(unsigned long long)e.nodeId,edits);
+        }
+        CHECK(edits==2 && [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"] &&
+            ctx.composableSceneOverlay.activeNodeId==403 && !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes,
+            "both_original_ones_reach_new_query_once_and_release_custody");
+    }
+    CjguiReleaseSession(ctx.rendererSessionToken);[ctx.window orderOut:nil];[ctx.window close];
+}
+static void FocusOnlyReturn(id<MTLDevice> device,BOOL tab) {
+    CJGuiInternalSession *ctx=ExitFixture(device);if(!ctx)return;
+    [ctx.window sendEvent:ExitKey(ctx,53,@"\033")];
+    uint64_t identity=DequeueExit(ctx);
+    NSEvent *original=ExitKey(ctx,tab?48:36,tab?@"\t":@"\r");[ctx.window sendEvent:original];
+    CHECK(ctx.pendingInteractions.lastObject.originalCommandKey.event==original,"focus_only_holds_original_first_action");
+    NSEvent *followingTab=nil;
+    if(!tab) {followingTab=ExitKey(ctx,48,@"\t");[ctx.window sendEvent:followingTab];}
+    CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,59,"accepted")==0,
+        "focus_only_exit_decided");
+    CloseCandidate(ctx,3,NO);
+    CJGuiInternalComposableSceneNode *button=ctx.stagedComposableNodes[0];
+    CjguiInternalRendererComposableNode raw=button.node;raw.nodeKind=CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON;
+    button.node=raw;
+    // mode 2 is a focus-only completion. There is no selection range or
+    // owner text ticket; UINT64_MAX must never be interpreted as 0:0.
+    uint64_t w[16]={59,3,2,81,401,1,CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+        UINT64_MAX,UINT64_MAX,2,0,0,0,0,0,73};
+    CjguiInternalRendererStatus stage=cjgui_internal_renderer_stage_modal_return(ctx.rendererSessionToken,w,"");
+    CHECK(stage==0,"nontext_candidate_accepts_focus_only_without_fake_text_range");
+    if(stage==0) {
+        CjguiInternalRendererFrameObservation frame={0};CjguiInternalRendererStatus st=CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame);
+        CHECK(st==0||st==CJGUI_INTERNAL_RENDERER_READBACK_FAILED,"focus_only_present_accepted");
+        CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,59,"installed")==0,
+            "focus_only_confirmation_requires_actual_nontext_install");
+        CHECK(CjguiMaterializeOriginalCommandKeyAtHead(ctx),"focus_only_original_action_interpreted_once");
+        NSUInteger count=0;
+        for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+            if(tab ? q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS :
+                (q.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE && q.nodeId==401))count++;
+        if(!tab && count==1 && ctx.modalExitInput) {
+            // Enter itself is a new actual activation. Its independent layer
+            // decision must be settled by the owner before judging leakage.
+            CjguiInternalRendererEvent e={0};uint64_t next=0;
+            for(unsigned i=0;i<4;i++) {
+                CHECK(cjgui_internal_renderer_pump_event(ctx.rendererSessionToken,0,&e)==0,"returned_button_ordered_native_event");
+                if(e.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE)break;
+            }
+            CHECK(e.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE && e.nodeId==401 &&
+                cjgui_internal_renderer_modal_exit_interaction(ctx.rendererSessionToken,&next)==0 && next &&
+                cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,next,0,0,"activation_keeps_scope")==0,
+                "returned_button_Enter_has_its_own_real_owner_decision");
+            CHECK(ctx.pendingInteractions.firstObject.originalCommandKey.event==followingTab &&
+                CjguiMaterializeOriginalCommandKeyAtHead(ctx),
+                "Enter_boundary_preserves_following_original_Tab_until_next_owner_decision");
+        }
+        CHECK(count==1 && !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes,
+            tab?"returned_button_first_Tab_is_not_retired":"returned_button_first_Enter_activates_once");
+    }
+    CjguiReleaseSession(ctx.rendererSessionToken);[ctx.window orderOut:nil];[ctx.window close];
+}
+static void ExitBoundaries(id<MTLDevice> device) {
+    for(unsigned boundary=0;boundary<9;boundary++) {
+        // The existing refusal injection is once per numeric native token.
+        // Keep token 1 occupied so this case gets a genuinely unused token.
+        CJGuiInternalSession *guard=boundary==3 ? ModalFixture(device) : nil;
+        CJGuiInternalSession *ctx=ExitFixture(device);if(!ctx)continue;
+        if(boundary==0) {
+            [ctx.composableSceneOverlay.inputProxy setMarkedText:@"ni" selectedRange:NSMakeRange(2,0)
+                replacementRange:NSMakeRange(NSNotFound,0)];
+            [ctx.window sendEvent:ExitKey(ctx,53,@"\033")];
+            CHECK(!ctx.modalExitInput,"marked_escape_stays_with_system_composition_and_does_not_arm_exit");
+        } else {
+            [ctx.window sendEvent:ExitKey(ctx,53,@"\033")];uint64_t identity=DequeueExit(ctx);
+            NSEvent *x=ExitKey(ctx,7,@"x");[ctx.window sendEvent:x];
+            CjguiModalExitInput *exit=ctx.modalExitInput;
+            if(boundary==1) {
+                CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,0,0,"declined")==0 &&
+                    CjguiMaterializeOriginalCommandKeyAtHead(ctx) &&
+                    [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11x"] &&
+                    !ctx.modalExitInput && ctx.retainedAfterCaretInputBytes==0,
+                    "declined_exit_first_interprets_original_key_once_in_same_query");
+            } else if(boundary==2 || boundary==3) {
+                CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,39,"accepted")==0,"boundary_exit_accepted");
+                CloseCandidate(ctx,3,NO);CHECK(Stage(ctx,39)==0,"boundary_first_carrier");
+                if(boundary==2) {
+                    CHECK(cjgui_internal_renderer_discard_composable_scene_candidate(ctx.rendererSessionToken)==0 &&
+                        ctx.modalExitInput==exit && exit.request==39,"carrier_cancel_preserves_same_logical_exit_and_original_key");
+                    CloseCandidate(ctx,4,NO);CHECK(StageAt(ctx,39,4,74)==0,"boundary_rebuilt_carrier");
+                } else setenv("CJGUI_SELECTION_RESTORE_REFUSE_ONCE","1",1);
+                CjguiInternalRendererFrameObservation frame={0};CjguiInternalRendererStatus st=CjguiPresentComposableSceneOnMain(ctx.rendererSessionToken,&frame);
+                unsetenv("CJGUI_SELECTION_RESTORE_REFUSE_ONCE");
+                CHECK(st==0||st==CJGUI_INTERNAL_RENDERER_READBACK_FAILED,"boundary_candidate_accepted");
+                if(boundary==2) {
+                    (void)cjgui_internal_renderer_cancel_composable_preparation(ctx.rendererSessionToken,73);
+                    CHECK(ctx.modalExitInput==exit && cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,39,"installed")==0 &&
+                        CjguiMaterializeOriginalCommandKeyAtHead(ctx) && [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"x"] &&
+                        ctx.retainedAfterCaretInputBytes==0,"same_request_rebuild_and_late_old_cancel_keep_one_original_key");
+                } else {
+                    CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,3,39,"installed")!=0 &&
+                        !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes &&
+                        ![ctx.composableSceneOverlay.inputProxy.string containsString:@"x"],
+                        "failed_install_has_named_zero_write_terminal_and_releases_original");
+                }
+            } else if(boundary==4) {
+                ctx.ownedTextSessionBindingEpoch++;
+                CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,1,39,"accepted")!=0 &&
+                    !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes &&
+                    [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],
+                    "rebound_target_cannot_receive_retained_original");
+            } else if(boundary==5) {
+                for(NSUInteger i=0;i<kCjguiPendingInteractionCapacity && !ctx.pendingInputQueueFullNotice;i++)
+                    [ctx.window sendEvent:ExitKey(ctx,7,@"x")];
+                CHECK(ctx.pendingInputQueueFullNotice && !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes &&
+                    [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],
+                    "existing_FIFO_capacity_retires_uninterpreted_originals_without_leak_or_query_edit");
+            } else if(boundary==6) {
+                CjguiReleaseSession(ctx.rendererSessionToken);
+                CHECK(!exit.chargedBytes && !ctx.retainedAfterCaretInputBytes &&
+                    [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],
+                    "session_close_retires_original_dependency_without_wrong_owner_write");
+            } else if(boundary==7) {
+                [ctx.window sendEvent:x]; // Reentry of the same object is not another physical event.
+                NSEvent *up=[NSEvent keyEventWithType:NSEventTypeKeyUp location:NSZeroPoint modifierFlags:0
+                    timestamp:2 windowNumber:ctx.window.windowNumber context:nil characters:@"x"
+                    charactersIgnoringModifiers:@"x" isARepeat:NO keyCode:7];
+                NSEvent *repeat=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0
+                    timestamp:3 windowNumber:ctx.window.windowNumber context:nil characters:@"x"
+                    charactersIgnoringModifiers:@"x" isARepeat:YES keyCode:7];
+                [ctx.window sendEvent:up];[ctx.window sendEvent:repeat];
+                CHECK(ctx.pendingInteractions.count==3,"same_object_reentry_keyUp_and_repeat_keep_original_FIFO_identity");
+                CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,0,0,"declined")==0,"repeat_scope_continues");
+                NSUInteger edits=0;
+                while(ctx.pendingInteractions.count) {
+                    CJGuiInternalQueuedInteraction *q=ctx.pendingInteractions.firstObject;
+                    if(q.originalCommandKey) {CHECK(CjguiMaterializeOriginalCommandKeyAtHead(ctx),"next_original_materializes_once");}
+                    else {if(q.kind==51)edits++;[ctx.pendingInteractions removeObjectAtIndex:0];}
+                }
+                CHECK(edits==2 && [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11xx"] &&
+                    !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes,"keyUp_has_no_edit_and_each_distinct_repeat_writes_once");
+            } else {
+                CHECK([ctx.composableSceneOverlay focusCommittedNodeId:401] &&
+                    [ctx.composableSceneOverlay focusCommittedNodeId:402],"independent_focus_leaves_and_reselects_same_query");
+                [ctx.composableSceneOverlay.inputProxy setString:@"11"];
+                [ctx.composableSceneOverlay.inputProxy setSelectedRange:NSMakeRange(2,0)];
+                CHECK(cjgui_internal_renderer_settle_modal_exit(ctx.rendererSessionToken,identity,0,0,"declined")!=0 &&
+                    !ctx.modalExitInput && !ctx.retainedAfterCaretInputBytes &&
+                    [ctx.composableSceneOverlay.inputProxy.string isEqualToString:@"11"],
+                    "same_value_and_identity_after_independent_focus_cannot_inherit_original_key");
+            }
+        }
+        CjguiReleaseSession(ctx.rendererSessionToken);[ctx.window orderOut:nil];[ctx.window close];
+        if(guard)CjguiReleaseSession(guard.rendererSessionToken);
+    }
 }
 int main(void){@autoreleasepool{[NSApplication sharedApplication];id<MTLDevice> device=MTLCreateSystemDefaultDevice();
     if(!device)return 2;Success(device,NO);Success(device,YES);RebuildSameRequest(device);RefuseAndCancel(device);InstallFailure(device);
     OrdinaryFieldCaret(device);
+    ExitInputGaps(device,NO,NO);ExitInputGaps(device,YES,NO);
+    ExitInputGaps(device,NO,YES);ExitInputGaps(device,YES,YES);
+    ExitTextBeforeFollowingSave(device);CoalescingKeepsProducerIdentity(device);
+    FocusOnlyReturn(device,NO);FocusOnlyReturn(device,YES);
+    OpeningInputGap(device,NO,NO);OpeningInputGap(device,YES,NO);OpeningInputGap(device,NO,YES);
+    ExitBoundaries(device);
     fprintf(stderr,"modal_return failures=%d\n",failures);return failures?1:0;}}

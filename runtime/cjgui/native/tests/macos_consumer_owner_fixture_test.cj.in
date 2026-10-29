@@ -1,0 +1,56 @@
+package cjgui_mixed_form_starter
+
+import cjgui.*
+import std.time.*
+import std.unittest.*
+import std.unittest.testmacro.*
+
+private func ordinaryConsumerHasNode(window: CjguiComposableUiWindow, id: Int64): Bool {
+    for (node in window.acceptedSceneNodes()) { if (node.nodeId == id) { return true } }
+    return false
+}
+
+// An independent normal Mixed consumer. The shared test driver supplies the
+// completion-scoped fixture; no application-only runtime launcher is linked.
+@Test
+func ordinaryConsumerHelpAndExceptionUseStandardTestLifetime(): Unit {
+    var originalException = false
+    try {
+        cjguiMacosOwnerTest({ =>
+            let domain = PrintPresetDomain()
+            let controller = MixedFormController(domain,commandSurfaces:true)
+            let host = CjguiMacosApplicationHost(controller,configuration:
+                CjguiMacosApplicationWindowConfiguration("normal consumer owner fixture",1000u32,680u32,
+                    rangeTextEditDeltaDelivery:true))
+            let window = host.window()
+            controller.attachWindow(window)
+            try {
+                @Assert(host.start(),true)
+                var began=MonoTime.now()
+                while (!ordinaryConsumerHasNode(window,73) && (MonoTime.now()-began).toNanoseconds()<2000000000) {
+                    let _=host.pumpUntilWork(timeoutMs:16u32)
+                }
+                @Assert(ordinaryConsumerHasNode(window,73),true)
+                for (node in window.acceptedSceneNodes()) {
+                    if (node.nodeId==73) {
+                        @Assert(controller.applyUiEvent(CjguiComposableUiEvent(node,CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE,
+                            "",0,0,window.windowProgress().acceptedSceneVersion)).didApply,true)
+                    }
+                }
+                window.requestRefresh()
+                began=MonoTime.now()
+                while (!ordinaryConsumerHasNode(window,84) && (MonoTime.now()-began).toNanoseconds()<2000000000) {
+                    let _=host.pumpUntilWork(timeoutMs:16u32)
+                }
+                @Assert(ordinaryConsumerHasNode(window,84),true)
+                println("ORDINARY_CONSUMER_HELP accepted=true standard_unittest_entry=true")
+                // Deliberately cross the same exceptional Host.close/finally
+                // boundary as DS's original failure. The exact exception must
+                // survive cleanup and reach the still-live standard test runner.
+                throw IllegalStateException("ordinary_owner_fixture_expected_exception")
+            } finally { host.close() }
+        })
+    } catch (e: Exception) { originalException=e.message=="ordinary_owner_fixture_expected_exception" }
+    @Assert(originalException,true)
+    println("ORDINARY_CONSUMER_LIFETIME original_exception=propagated managed_cleanup=completed native_early_exit=false")
+}

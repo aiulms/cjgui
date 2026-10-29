@@ -27,9 +27,14 @@ public class CjguiRuleSetRecord {
     public let enabled: Bool
     public let retentionCount: Int64
     public let excludedType: String
-    public init(id: Int64, label: String, enabled: Bool, retentionCount: Int64, excludedType: String) {
+    /// A real free-text note with its own declared length rule. Old saved files
+    /// have no note and load with the empty default.
+    public let notes: String
+    public init(id: Int64, label: String, enabled: Bool, retentionCount: Int64, excludedType: String,
+        notes!: String = "") {
         this.id = id; this.label = label; this.enabled = enabled
         this.retentionCount = retentionCount; this.excludedType = excludedType
+        this.notes = notes
     }
 }
 
@@ -73,13 +78,16 @@ private class CjguiMutableRuleSetRecord {
     var enabled: Bool
     var retentionCount: Int64
     var excludedType: String
+    var notes: String
     var draftLabel: String
     var draftEnabled: Bool
     var draftRetentionCount: String
     var draftExcludedType: String
+    var draftNotes: String
     var labelError: String
     var retentionError: String
     var excludedError: String
+    var notesError: String
     var appliedRevision: Int64
     var draftVersion: Int64
     var baseAppliedRevision: Int64
@@ -87,23 +95,27 @@ private class CjguiMutableRuleSetRecord {
     var enabledFieldVersion: Int64
     var retentionFieldVersion: Int64
     var excludedFieldVersion: Int64
+    var notesFieldVersion: Int64
     var selectionStart: Int64
     var selectionEnd: Int64
     var activeFieldId: String
 
-    init(id: Int64, label: String, enabled: Bool, retentionCount: Int64, excludedType: String) {
+    init(id: Int64, label: String, enabled: Bool, retentionCount: Int64, excludedType: String,
+        notes!: String = "") {
         this.id = id; this.label = label; this.enabled = enabled
         this.retentionCount = retentionCount; this.excludedType = excludedType
+        this.notes = notes
         this.draftLabel = label; this.draftEnabled = enabled
         this.draftRetentionCount = retentionCount.toString(); this.draftExcludedType = excludedType
-        this.labelError = ""; this.retentionError = ""; this.excludedError = ""
+        this.draftNotes = notes
+        this.labelError = ""; this.retentionError = ""; this.excludedError = ""; this.notesError = ""
         this.appliedRevision = 0; this.draftVersion = 0; this.baseAppliedRevision = 0
         this.labelFieldVersion = 0; this.enabledFieldVersion = 0
-        this.retentionFieldVersion = 0; this.excludedFieldVersion = 0
+        this.retentionFieldVersion = 0; this.excludedFieldVersion = 0; this.notesFieldVersion = 0
         this.selectionStart = 0; this.selectionEnd = 0; this.activeFieldId = ""
     }
     func appliedProjection(): CjguiRuleSetRecord {
-        return CjguiRuleSetRecord(id, label, enabled, retentionCount, excludedType)
+        return CjguiRuleSetRecord(id, label, enabled, retentionCount, excludedType, notes: notes)
     }
 }
 
@@ -183,6 +195,10 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     public static let defaultRetentionMinimum: Int64 = 1
     public static let defaultRetentionMaximum: Int64 = 90
     public static let formExcludedTypeResourceId: Int64 = 81004
+    /// The note's own declared length rule. The descriptor, the draft validator,
+    /// the generated catalog and the saved format all read this ONE constant.
+    public static let formNotesResourceId: Int64 = 81005
+    public static let defaultNotesMaximumLength: Int64 = 160
     public static let transferFormatIdentifier: String = "cjgui.rule.record"
     public static let transferFormatVersion: Int64 = 1
     private static let maximumChanges: Int64 = 64
@@ -241,7 +257,9 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
             CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", "启用规则", "BOOLEAN"),
             CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", "保留天数", "INTEGER",
                 minimum: retentionMinimum, maximum: retentionMaximum),
-            CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", "排除类型", "TEXT")
+            CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", "排除类型", "TEXT"),
+            CjguiSharedFormFieldDescriptor(CjguiRuleSetEditingDomain.formNotesResourceId, "notes", "备注说明", "TEXT",
+                maximumLength: CjguiRuleSetEditingDomain.defaultNotesMaximumLength)
         ]))
         this.records = ArrayList<CjguiMutableRuleSetRecord>()
         this.recordsById = HashMap<Int64, CjguiMutableRuleSetRecord>()
@@ -723,7 +741,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
                 formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label", CjguiSharedOperationValue.string(record.label), record.draftLabel, record.labelError, record.draftVersion, isSelected && record.activeFieldId == "label", record.selectionStart, record.selectionEnd),
                 formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", CjguiSharedOperationValue.boolean(record.enabled), if (record.draftEnabled) { "true" } else { "false" }, "", record.draftVersion, isSelected && record.activeFieldId == "enabled", 0, 0),
                 formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", CjguiSharedOperationValue.integer(record.retentionCount), record.draftRetentionCount, record.retentionError, record.draftVersion, isSelected && record.activeFieldId == "retentionCount", record.selectionStart, record.selectionEnd),
-                formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType, record.excludedError, record.draftVersion, isSelected && record.activeFieldId == "excludedType", record.selectionStart, record.selectionEnd)
+                formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType, record.excludedError, record.draftVersion, isSelected && record.activeFieldId == "excludedType", record.selectionStart, record.selectionEnd),
+                formProjection(CjguiRuleSetEditingDomain.formNotesResourceId, "notes", CjguiSharedOperationValue.string(record.notes), record.draftNotes, record.notesError, record.draftVersion, isSelected && record.activeFieldId == "notes", record.selectionStart, record.selectionEnd)
             ]), record.baseAppliedRevision == record.appliedRevision, status
         )
     }
@@ -750,7 +769,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
                 formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label", CjguiSharedOperationValue.string(""), "", "select_or_create_rule", 0, false, 0, 0),
                 formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", CjguiSharedOperationValue.boolean(false), "false", "", 0, false, 0, 0),
                 formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", CjguiSharedOperationValue.integer(0), "", "", 0, false, 0, 0),
-                formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(""), "", "", 0, false, 0, 0)
+                formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(""), "", "", 0, false, 0, 0),
+                formProjection(CjguiRuleSetEditingDomain.formNotesResourceId, "notes", CjguiSharedOperationValue.string(""), "", "", 0, false, 0, 0)
             ]), false, status
         )
     }
@@ -869,6 +889,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         if (resourceId == CjguiRuleSetEditingDomain.formEnabledResourceId) { return "enabled" }
         if (resourceId == CjguiRuleSetEditingDomain.formRetentionResourceId) { return "retentionCount" }
         if (resourceId == CjguiRuleSetEditingDomain.formExcludedTypeResourceId) { return "excludedType" }
+        if (resourceId == CjguiRuleSetEditingDomain.formNotesResourceId) { return "notes" }
         return ""
     }
 
@@ -1121,6 +1142,9 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
             } else if (fieldId == "excludedType") {
                 if (record.draftExcludedType == text) { record.selectionStart = selectionStart; record.selectionEnd = selectionEnd; return accepted("already_at_target") }
                 record.draftExcludedType = text; record.excludedFieldVersion += 1
+            } else if (fieldId == "notes") {
+                if (record.draftNotes == text) { record.selectionStart = selectionStart; record.selectionEnd = selectionEnd; return accepted("already_at_target") }
+                record.draftNotes = text; record.notesFieldVersion += 1
             } else { return rejected(false, "field_requires_boolean") }
             record.selectionStart = selectionStart; record.selectionEnd = selectionEnd
             record.draftVersion += 1; versionValue += 1; status = "草稿已修改，尚未应用"
@@ -1143,7 +1167,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         if (let Some(record) <- recordForIdUnlocked(recordId)) {
             if (expectedDraftVersion != record.draftVersion || record.baseAppliedRevision != record.appliedRevision) { return rejected(true, "stale_draft") }
             if (!validateDraftUnlocked(record)) { record.draftVersion += 1; versionValue += 1; status = "草稿校验失败，已保留原输入"; return rejected(false, "invalid_draft") }
-            if (record.draftLabel == record.label && record.draftEnabled == record.enabled && record.draftRetentionCount == record.retentionCount.toString() && record.draftExcludedType == record.excludedType) { return accepted("already_applied") }
+            if (record.draftLabel == record.label && record.draftEnabled == record.enabled && record.draftRetentionCount == record.retentionCount.toString() && record.draftExcludedType == record.excludedType && record.draftNotes == record.notes) { return accepted("already_applied") }
             if (let Some(retention) <- Int64.tryParse(record.draftRetentionCount)) {
                 // A label-only apply cannot move the row between groups or change
                 // its order, so the tree projection may patch it by key. Any
@@ -1151,9 +1175,11 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
                 let labelOnly = record.draftLabel != record.label &&
                     record.draftEnabled == record.enabled &&
                     record.draftRetentionCount == record.retentionCount.toString() &&
-                    record.draftExcludedType == record.excludedType
+                    record.draftExcludedType == record.excludedType &&
+                    record.draftNotes == record.notes
                 recordUndoUnlocked()
                 record.label = record.draftLabel; record.enabled = record.draftEnabled; record.retentionCount = retention; record.excludedType = record.draftExcludedType
+                record.notes = record.draftNotes
                 record.appliedRevision += 1; record.baseAppliedRevision = record.appliedRevision; record.activeFieldId = ""
                 clearValidationUnlocked(record); record.draftVersion += 1
                 commitContentUnlocked(ArrayList<Int64>([record.id]),
@@ -1193,7 +1219,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         if (let Some(source) <- recordForIdUnlocked(invocation.targetResourceIds[0])) {
             if (let Some(label) <- stringArgument(invocation, "label")) {
                 if (label.size == 0 || label.size > 128) { return rejected(false, "invalid_rule_label") }
-                recordUndoUnlocked(); let copy = CjguiMutableRuleSetRecord(nextId, label, source.enabled, source.retentionCount, source.excludedType)
+                recordUndoUnlocked(); let copy = CjguiMutableRuleSetRecord(nextId, label, source.enabled, source.retentionCount, source.excludedType, notes: source.notes)
                 nextId += 1; records.add(copy); let _ = recordsById.add(copy.id, copy); selectedId = copy.id; commitContentUnlocked(ArrayList<Int64>([copy.id]), "record_copied"); return accepted("copied")
             }
             return rejected(false, "invalid_parameters")
@@ -1375,22 +1401,28 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         else { record.retentionError = "retention_count_invalid" }
         if (record.draftExcludedType.size == 0) { record.excludedError = "excluded_type_required" }
         else if (record.draftExcludedType.size > 128) { record.excludedError = "excluded_type_too_long" }
-        return record.labelError.size == 0 && record.retentionError.size == 0 && record.excludedError.size == 0
+        if (record.draftNotes.toRuneArray().size > CjguiRuleSetEditingDomain.defaultNotesMaximumLength) {
+            record.notesError = "rule_notes_too_long"
+        }
+        return record.labelError.size == 0 && record.retentionError.size == 0 && record.excludedError.size == 0 && record.notesError.size == 0
     }
-    private func clearValidationUnlocked(record: CjguiMutableRuleSetRecord) { record.labelError = ""; record.retentionError = ""; record.excludedError = "" }
+    private func clearValidationUnlocked(record: CjguiMutableRuleSetRecord) { record.labelError = ""; record.retentionError = ""; record.excludedError = ""; record.notesError = "" }
     private func hasUnappliedDraftUnlocked(record: CjguiMutableRuleSetRecord): Bool {
         return record.draftLabel != record.label || record.draftEnabled != record.enabled ||
-            record.draftRetentionCount != record.retentionCount.toString() || record.draftExcludedType != record.excludedType
+            record.draftRetentionCount != record.retentionCount.toString() || record.draftExcludedType != record.excludedType ||
+            record.draftNotes != record.notes
     }
     private func resetDraftUnlocked(record: CjguiMutableRuleSetRecord) {
         record.draftLabel = record.label; record.draftEnabled = record.enabled; record.draftRetentionCount = record.retentionCount.toString(); record.draftExcludedType = record.excludedType
+        record.draftNotes = record.notes
         record.baseAppliedRevision = record.appliedRevision; record.activeFieldId = ""; clearValidationUnlocked(record)
         record.labelFieldVersion += 1; record.enabledFieldVersion += 1; record.retentionFieldVersion += 1; record.excludedFieldVersion += 1
+        record.notesFieldVersion += 1
     }
     /// The same declared retention boundary the binding publishes and the draft
     /// validator enforces. It used to be restated here as literal 1/90, which is
     /// exactly how a "declared rule" can drift away from what is enforced.
-    private func validRule(label: String, retention: Int64, excluded: String): Bool { return label.size > 0 && label.size <= 128 && retention >= retentionMinimumValue && retention <= retentionMaximumValue && excluded.size > 0 && excluded.size <= 128 }
+    private func validRule(label: String, retention: Int64, excluded: String, notes!: String = ""): Bool { return label.size > 0 && label.size <= 128 && retention >= retentionMinimumValue && retention <= retentionMaximumValue && excluded.size > 0 && excluded.size <= 128 && notes.toRuneArray().size <= CjguiRuleSetEditingDomain.defaultNotesMaximumLength }
     /// Shared target rule for both business and presentation actions.
     public static func isRuleSetActionTarget(targets: ArrayList<Int64>): Bool {
         return targets.size == 1 && targets[0] == CjguiRuleSetEditingDomain.ruleSetResourceId
@@ -1519,9 +1551,14 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
 
     private func serializeUnlocked(): String {
         let payload = StringBuilder()
-        payload.append("CJGUI_RULE_SET 1\nNEXT_ID ${nextId}\nSELECTED ${selectedId}\n")
+        // Version 2 adds the note as a seventh RECORD token. Version 1 files
+        // remain readable and load a note as the empty default.
+        payload.append("CJGUI_RULE_SET 2\nNEXT_ID ${nextId}\nSELECTED ${selectedId}\n")
         for (record in records) {
-            payload.append("RECORD ${record.id} ${if (record.enabled) { 1 } else { 0 }} ${record.retentionCount} ${encodeHex(record.label)} ${encodeHex(record.excludedType)}\n")
+            // The empty note keeps one non-empty token: a trailing space would
+            // split away and make a v2 line indistinguishable from v1.
+            let notesToken = if (record.notes.size == 0) { "-" } else { encodeHex(record.notes) }
+            payload.append("RECORD ${record.id} ${if (record.enabled) { 1 } else { 0 }} ${record.retentionCount} ${encodeHex(record.label)} ${encodeHex(record.excludedType)} ${notesToken}\n")
         }
         payload.append("END\n")
         return payload.toString()
@@ -1549,7 +1586,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         for (record in records) { let _ = recordsById.remove(record.id) }
         while (records.size > 0) { let _ = records.remove(at: records.size - 1) }
         for (record in loaded.records) {
-            let restored = CjguiMutableRuleSetRecord(record.id, record.label, record.enabled, record.retentionCount, record.excludedType)
+            let restored = CjguiMutableRuleSetRecord(record.id, record.label, record.enabled, record.retentionCount, record.excludedType, notes: record.notes)
             records.add(restored); let _ = recordsById.add(restored.id, restored)
         }
         selectedId = loaded.selectedRecordId
@@ -1561,7 +1598,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     }
     private func parseRuleSet(payload: String): ?CjguiRuleSetLoadedFile {
         let lines = payload.split("\n")
-        if (lines.size < 4 || lines[0] != "CJGUI_RULE_SET 1") { return None }
+        if (lines.size < 4 || (lines[0] != "CJGUI_RULE_SET 1" && lines[0] != "CJGUI_RULE_SET 2")) { return None }
+        let formatVersion = if (lines[0] == "CJGUI_RULE_SET 1") { 1 } else { 2 }
         let nextParts = lines[1].split(" "); let selectedParts = lines[2].split(" ")
         if (nextParts.size != 2 || nextParts[0] != "NEXT_ID" || selectedParts.size != 2 || selectedParts[0] != "SELECTED") { return None }
         if (let Some(next) <- Int64.tryParse(nextParts[1])) {
@@ -1573,14 +1611,28 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
                     if (line == "END") { sawEnd = true; index += 1; break }
                     if (line.size == 0) { index += 1; continue }
                     let parts = line.split(" ")
-                    if (parts.size != 6 || parts[0] != "RECORD") { return None }
+                    if (parts[0] != "RECORD") { return None }
+                    let expectedTokens = if (formatVersion == 1) { 6 } else { 7 }
+                    if (parts.size != expectedTokens) { return None }
                     if (let Some(id) <- Int64.tryParse(parts[1])) {
                         if (let Some(retention) <- Int64.tryParse(parts[3])) {
                             if (parts[2] != "0" && parts[2] != "1") { return None }
                             if (let Some(label) <- decodeHex(parts[4])) {
                                 if (let Some(excluded) <- decodeHex(parts[5])) {
-                                    if (id < 1 || !validRule(label, retention, excluded) || containsParsedId(parsed, id)) { return None }
-                                    parsed.add(CjguiRuleSetRecord(id, label, parts[2] == "1", retention, excluded))
+                                    let notes = if (formatVersion == 2) {
+                                        if (parts[6] == "-") {
+                                            ""
+                                        } else {
+                                            match (decodeHex(parts[6])) {
+                                                case Some(value) => value
+                                                case None => return None
+                                            }
+                                        }
+                                    } else {
+                                        ""
+                                    }
+                                    if (id < 1 || !validRule(label, retention, excluded, notes: notes) || containsParsedId(parsed, id)) { return None }
+                                    parsed.add(CjguiRuleSetRecord(id, label, parts[2] == "1", retention, excluded, notes: notes))
                                     if (id > highest) { highest = id }
                                     index += 1
                                     continue
@@ -1604,7 +1656,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     }
     private func sameAppliedRecord(current: CjguiMutableRuleSetRecord, target: CjguiRuleSetRecord): Bool {
         return current.id == target.id && current.label == target.label && current.enabled == target.enabled &&
-            current.retentionCount == target.retentionCount && current.excludedType == target.excludedType
+            current.retentionCount == target.retentionCount && current.excludedType == target.excludedType &&
+            current.notes == target.notes
     }
     private func requestFingerprint(invocation: CjguiSharedOperationActionInvocation): String {
         var fingerprint = "ACTION:${encodeHex(invocation.actionName)}|TARGETS:${invocation.targetResourceIds.size}|"

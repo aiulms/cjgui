@@ -1,6 +1,6 @@
 # 仓颉问题判定、上游倒推与贡献账本
 
-最后更新：2026-04-30
+最后更新：2026-10-28
 
 性质：toolchain issue ledger / upstream feedback loop / contribution evidence / recheck list
 状态：生效中  
@@ -496,6 +496,15 @@ Hello, clang
 - 当前归因：已定位时间主要在 LLVM opt，尚未定位具体 pass/函数；不猜为语法、AX或GPU问题。普通输入机制及安全门不因此放宽。
 - 新样本：应用入口 O2 的 build4 触及900秒编译上限，未启动验收窗口；O1入口仍呈同类高成本，画像后主动停止，未算通过。见 `artifacts/e-astra-mechanisms-20261005/caret-regression/compiler-cost.json`；选项顺序小工程证实顶层 override 后于主包选项，不能借包级设置只排除入口。
 - 临时处理与移除条件：正常入口恢复原默认编译；O2限定到document_core、markdown_engine和macOS原生代码，不更改CJGUI共享清单、系统工具链或运行契约。正常包的cold build与运行收益均待实测；以后有单函数/单 pass 反例或工具链升级时复查，再判断入口优化或上游反馈。编译等待与运行验收分别记录，不以增量 build 时间冒充 cold build。
+
+### CJ-20261028-001：OHOS 核心组合图 DFS 的 tuple 弹栈取值异常
+
+- 状态：`SUSPECTED_CODEGEN / LOCAL_COMPATIBILITY_WORKAROUND`；未定位具体编译 pass，未对外提交。
+- 原件：[指导核验的 H 完整函数对照](../../runtime/cjgui/platforms/ohos/evidence/harmonyos-common-integration-20261027/README.md#h-guidance-graph-copy-review-20261028)。当前 OHOS SDK 26.0.0.105；诊断 HAP b9fafa8e、旧核心 fba8d254，图函数0x66d960/4172B/SHA725c7614；同进程同definitions合法fieldGroup单叶子，无引用边，返回空名cycle。App仅改名的完整函数0x3ad6c/5568B/ce0c47cd返回空串；核心复用、App本轮编译，不是同一次cjc调用控制实验。
+- 共同前像：root整文件795baf35与H冻结eebe2582的 `cjguiCompositionReferenceGraphIssue` 文本逐字一致；函数使用 `frame = stack.remove(at: last)` 后读tuple的name/phase。已核该旧目标取值路径先清tuple槽再读字段；证据限于此产物，不归因所有ArrayList或平台。
+- 本地兼容处理：同一DFS先从末槽明确读取String name与Int64 phase，再删槽且不消费remove返回的tuple；未知引用、真环、finished/visiting集合及整批拒绝保旧契约保持。[独立函数前后文本、局部补丁与输入身份](../../runtime/cjgui/artifacts/ds51-normal-workspace-delivery-20261024/section-18-20261028/shared-graph/)保留。Mac原先可通过，不制造Mac RED；H真实失败按原身份复用，Mac定向检查不冒充OHOS修复。
+- 复现/验证入口：`verify_cjpm_mac_testing_link.py --runtime <DS私有9e输入> --source-lock <shared-graph/source-lock.json> --output <shared-graph/mac-check> --filter '*compositionGraphFrame*'`，同时复用既有嵌套图合法/拒绝检查。H只重放函数hunk，随后须证明目标core真实重编、故障机器码取值路径改变及原单叶子/正常组合消费；本项未由DS运行OHOS。
+- 移除条件：新工具链/目标核心在不依赖该绕行的原最小图函数上恢复name/phase取值，并经同目标机器码与标准入口反例确认；未取得此前保留等价绕行。第一新目标若失败保原件交指导，不扩大优化级矩阵、跳过环或永久App副本。
 
 ## 8. 不进入本账本的问题
 

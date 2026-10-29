@@ -363,6 +363,14 @@ public interface CjguiSharedOperationWindowProjectionTargetProvider {
 /// forwards it, and never interprets structure or business state itself.
 /// Fields, drafts and actions stay with the application's own owner.
 public interface CjguiSharedOperationGeneratedUiProvider {
+    /// Optional document-history facet on the same generated-UI connection.
+    /// Empty payload is UNKNOWN/unsupported on an older provider, not enabled.
+    func uiDocumentHistoryPayload(): String { return "" }
+    func submitUiDocumentHistory(action: String, expectedVersion: Int64, expectedDigest: String,
+        surfaceIdentity: Int64, historyEpoch: Int64): CjguiSharedOperationGeneratedUiSubmit {
+        let current = acceptedStructureVersion()
+        return CjguiSharedOperationGeneratedUiSubmit(false, "ui_document_history_unavailable", "", current, current)
+    }
     /// Typed capability description (components, properties, actions, fields
     /// and the size bounds) that an external client can query.
     func capabilitiesPayload(): String

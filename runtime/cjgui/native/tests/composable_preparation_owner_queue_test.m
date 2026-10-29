@@ -36,6 +36,7 @@ static BOOL ownerAdvance(uint64_t session, uint64_t preparation, uint64_t deadli
     return YES;
 }
 
+#ifndef CJGUI_PREPARATION_OWNER_QUEUE_HELPERS_ONLY
 int main(void) { @autoreleasepool {
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
@@ -170,3 +171,5 @@ int main(void) { @autoreleasepool {
         "final_close_leaves_no_live_result_or_queued_service");
     return failures ? 1 : 0;
 } }
+
+#endif

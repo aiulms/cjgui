@@ -6,6 +6,8 @@ import std.overflow.*
 import std.random.*
 import std.sync.*
 import std.time.*
+import std.env.*
+import std.io.*
 
 /// Experimental macOS window declaration owned by the framework. It contains
 /// copied scalar values only; no AppKit object or native handle crosses this
@@ -37,6 +39,32 @@ public class CjguiMacosApplicationWindowConfiguration {
     /// native renderer with a zero or implausibly large drawable request.
     public func isValid(): Bool {
         return title.size > 0 && width > 0u32 && height > 0u32 && width <= 8192u32 && height <= 8192u32
+    }
+}
+
+/// Experimental macOS system-window facts, copied from the actual native lifecycle.
+public class CjguiMacosApplicationWindowState {
+    public let isFullScreen: Bool
+    public let isEnteringFullScreen: Bool
+    public let isExitingFullScreen: Bool
+    public let stateRevision: UInt64
+    public let isMinimized: Bool
+    public let isVisible: Bool
+    public let contentWidth: Int64
+    public let contentHeight: Int64
+    public let drawableWidth: UInt64
+    public let drawableHeight: UInt64
+    public let fullScreenFailure: String
+    // Experimental macOS observation. Only native lifecycle facts produce
+    // this snapshot; no native object or session generation is public.
+    init(words: Array<UInt64>) {
+        isFullScreen = words[0] != 0u64
+        isEnteringFullScreen = words[1] == 1u64; isExitingFullScreen = words[1] == 2u64
+        stateRevision = words[2]; isMinimized = words[3] != 0u64; isVisible = words[4] != 0u64
+        contentWidth = Int64(words[5]); contentHeight = Int64(words[6])
+        fullScreenFailure = if (words[7] == 1u64) { "enter_failed" }
+            else if (words[7] == 2u64) { "exit_failed" } else { "none" }
+        drawableWidth = words[9]; drawableHeight = words[10]
     }
 }
 
@@ -186,6 +214,19 @@ public class CjguiMacosApplicationTurnResult {
     }
 }
 
+// Reuse the renderer's generation-checked lifecycle snapshot. Ordinary owner
+// turns must not rediscover NSWindow or read AppKit objects through the legacy
+// window-number bridge. A temporarily unavailable snapshot retains the last
+// accepted visibility policy, with the existing conservative startup defaults.
+private func cjguiMacosPublishedVisibility(window: CjguiComposableUiWindow,
+    previous: ?CjguiComposableUiPlatformStateSnapshot): (Bool, Bool) {
+    if (let Some(state) <- window.macosSystemWindowState()) {
+        return (state.isVisible, state.isMinimized)
+    }
+    if (let Some(state) <- previous) { return (state.windowVisible, state.windowMinimized) }
+    return (true, false)
+}
+
 private class CjguiMacosApplicationWindowEntry {
     let identifier: CjguiMacosApplicationWindowIdentifier
     let composableWindow: CjguiComposableUiWindow
@@ -233,6 +274,12 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private var nextWaitIndex: Int64
     private var nextPreparationIndex: Int64
     private var ordinaryDeferredRounds: Int64
+    private var sharedOwnerTurnBudget = CjguiOwnerTurnBudget()
+    private let traceScheduling = getVariable("CJGUI_HOST_SCHEDULING_TRACE") == Some("1")
+    private var schedulingWaitBudget: UInt32 = 0u32
+    private var schedulingRepeats: Int64 = 0
+    private var schedulingTraceLines: Int64 = 0
+
     // Test-only: the FIRST window retirement and the application close reason, so
     // a bounded probe can name the actual first state change instead of only
     // printing that everything is closed at the end.
@@ -339,6 +386,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             return CjguiMacosApplicationWindowOpenResult(false, None, "window_generation_exhausted")
         }
         let window = CjguiComposableUiWindow(controller, configuration: configuration)
+        window.installDefaultOwnerTurnBudget(sharedOwnerTurnBudget)
         let _ = window.selectAccentPreference(selectedAccentPreferenceToken)
         let _ = window.offerPlatformColorScheme(CjguiComposableUiPlatformStateResolution.resolveColorScheme(
             selectedThemePreference, CjguiComposableUiPlatformFacts.systemColorScheme()))
@@ -426,6 +474,23 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             }
         }
         return None
+    }
+
+    /// Experimental/macOS. A live identity is checked on every request.
+    /// true means the system request was admitted; observe windowState for
+    /// the actual enter/exit result. Repeated identical requests are idempotent.
+    public func requestFullScreen(identifier: CjguiMacosApplicationWindowIdentifier, enabled: Bool): Bool {
+        return match (window(identifier)) {
+            case Some(value) => value.requestMacosFullScreen(enabled)
+            case None => false
+        }
+    }
+
+    public func windowState(identifier: CjguiMacosApplicationWindowIdentifier): ?CjguiMacosApplicationWindowState {
+        return match (window(identifier)) {
+            case Some(value) => value.macosSystemWindowState()
+            case None => None
+        }
     }
 
     /// Enumerate only currently live opaque target identities. A caller must
@@ -543,6 +608,22 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         return pumpTurn(turnBudgetMs, timeoutMs)
     }
 
+    private func ownerBudgetForTurn(): CjguiOwnerTurnBudget {
+        var declared: ?CjguiOwnerTurnBudget = None
+        for (entry in windows) {
+            if (entry.composableWindow.hasExplicitOwnerTurnBudget()) {
+                if (let Some(value) <- entry.composableWindow.attachedOwnerTurnBudget()) {
+                    if (let Some(previous) <- declared) {
+                        if (!refEq(previous,value)) { throw Exception("application_owner_budget_conflict") }
+                    } else { declared = Some(value) }
+                }
+            }
+        }
+        if (let Some(value) <- declared) { sharedOwnerTurnBudget = value }
+        for (entry in windows) { entry.composableWindow.installDefaultOwnerTurnBudget(sharedOwnerTurnBudget) }
+        return sharedOwnerTurnBudget
+    }
+
     private func pumpTurn(turnBudgetMs: UInt32, maximumIdleWaitMs: UInt32): CjguiMacosApplicationTurnResult {
         // A controller may synchronously re-enter the application while an
         // event is being delivered. It gets no second event drain or wait;
@@ -555,17 +636,16 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             closeIfEmpty()
             return CjguiMacosApplicationTurnResult(false, 0, 0, 0u32, 0, None)
         }
-        isPumpingTurn = true
-        var observingOrdinaryTurn = false
-        if (cjguiOrdinaryOwnerCostObservation.enabled) {
-            var activeAllowance = false
-            for (entry in windows) {
-                activeAllowance = activeAllowance || entry.composableWindow.hasActiveOwnerSchedulingRound()
-            }
-            if (!activeAllowance) { observingOrdinaryTurn = cjguiOrdinaryOwnerCostObservation.begin() }
+        let budget = ownerBudgetForTurn()
+        let ownsTurn = !budget.isActive()
+        if (ownsTurn && !budget.begin(budgetMicroseconds: max(1, Int64(turnBudgetMs) * 1000))) {
+            throw Exception("owner_turn_unavailable")
         }
+        isPumpingTurn = true
+        schedulingWaitBudget = 0u32
+        if (ownsTurn) { cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),144u32,0u32,0u32,0u64,UInt64.Max) }
         try {
-            let result = pumpOneTurnWhileGuarded(turnBudgetMs, maximumIdleWaitMs)
+            let result = pumpOneTurnWhileGuarded(turnBudgetMs, maximumIdleWaitMs, ownsTurn)
             isPumpingTurn = false
             return result
         } catch (error: Exception) {
@@ -576,14 +656,18 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             isPumpingTurn = false
             throw error
         } finally {
-            if (observingOrdinaryTurn) { cjguiOrdinaryOwnerCostObservation.finish() }
+            if (ownsTurn) {
+                observeSchedulingDecision(schedulingWaitBudget, budget.observedIdleNanoseconds() / 1000)
+                budget.end()
+                cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),145u32,0u32,0u32,0u64,UInt64.Max)
+            }
         }
     }
 
     /// All normal exits flow through `pumpOneTurn` so the reentry guard is
     /// released both after a result and after a propagated callback failure.
     private func pumpOneTurnWhileGuarded(turnBudgetMs: UInt32,
-        maximumIdleWaitMs: UInt32): CjguiMacosApplicationTurnResult {
+        maximumIdleWaitMs: UInt32, frameworkOwnsTurn: Bool): CjguiMacosApplicationTurnResult {
         let started = MonoTime.now()
         if (let Some(connection) <- externalConnection) {
             connection.ensureOwnerWorkNotifier(cjguiNotifySchedulingWork)
@@ -593,7 +677,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         var handledInput = false
         if (let Some(connection) <- externalConnection) {
             while (externalActionCount < 16) {
-                if (externalActionCount > 0 && elapsedMs(started) >= Int64(turnBudgetMs)) {
+                if (externalActionCount > 0 && (elapsedMs(started) >= Int64(turnBudgetMs) || !sharedOwnerTurnBudget.admitsAnotherExternalAction())) {
                     break
                 }
                 if (!connection.pump(0u32)) {
@@ -642,6 +726,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             // preparation. Drain each accepted FIFO before any window starts
             // such work, then publish event-bearing windows first.
             let eventWindows = ArrayList<CjguiMacosApplicationWindowIdentifier>()
+            let continuationWindows = ArrayList<CjguiMacosApplicationWindowIdentifier>()
             let otherWindows = ArrayList<CjguiMacosApplicationWindowIdentifier>()
             for (identifier in nonBlockingIdentifiers) {
                 if (closed) {
@@ -658,6 +743,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                     } else if (result.didApplyHumanAction) {
                         handledInput = true
                         eventWindows.add(identifier)
+                    } else if (composableWindow.hasRetainedSceneContinuation()) {
+                        continuationWindows.add(identifier)
                     } else {
                         otherWindows.add(identifier)
                     }
@@ -667,6 +754,21 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 if (closed) {
                     break
                 }
+                if (let Some(composableWindow) <- window(identifier)) {
+                    let _ = composableWindow.refreshAfterDeferredPump()
+                    if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                        return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                            0u32, elapsedMs(started), None)
+                    }
+                }
+            }
+            // All accepted FIFOs were drained above. Continue existing work
+            // before building a fresh sibling scene; each window retains its
+            // own budget, source, FIFO and publish checks. A resource that is
+            // still waiting yields through that existing path, without polling
+            // or a second event drain. Each window is serviced once per turn.
+            for (identifier in continuationWindows) {
+                if (closed) { break }
                 if (let Some(composableWindow) <- window(identifier)) {
                     let _ = composableWindow.refreshAfterDeferredPump()
                     if (composableWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
@@ -739,7 +841,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         for (identifier in waitIdentifiers) {
             if (let Some(liveWindow) <- window(identifier)) {
-                waitBudget = min(waitBudget, liveWindow.ownerIdleWaitAllowance(waitBudget))
+                waitBudget = min(waitBudget, liveWindow.ownerIdleWaitAllowance(waitBudget, frameworkOwnsTurn: frameworkOwnsTurn))
             }
         }
         // P2：有活动动效时申请下一帧而不是长睡。无活动动效时保留原休眠预算，
@@ -751,26 +853,45 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         // once for any host or worker, using the original outer wall deadline;
         // a sibling becoming ready cannot be stranded behind the chosen host.
         if (cjguiCommonSchedulingEnabled() && waitBudget > 0u32) {
-            let _ = cjguiWaitIdleSchedulingWork(observedWork, cjguiIdleSchedulingDeadline(waitBudget))
+            if (frameworkOwnsTurn) { let _ = sharedOwnerTurnBudget.finishFrameworkScheduling(waitBudget) }
+            else { let _ = cjguiWaitIdleSchedulingWork(observedWork, cjguiIdleSchedulingDeadline(waitBudget)) }
         }
+        schedulingWaitBudget = waitBudget
         let pumpWait = if (cjguiCommonSchedulingEnabled()) { 0u32 } else { min(waitBudget, 16u32) }
-        if (let Some(waitedWindow) <- window(waitedIdentifier)) {
-            let waited = if (hasPostRefreshObserver) {
-                waitedWindow.pump(pumpWait)
-            } else {
-                waitedWindow.pumpEventsWithoutRefresh(pumpWait)
+        if (!hasPostRefreshObserver && waitBudget > 0u32) {
+            // A shared resource wake belongs to any live window. Drain all
+            // accepted FIFOs first; then consume those windows' retained visual
+            // work before returning to an unrelated caller/peer preparation.
+            // This is the existing single wait tail, never another wait/turn.
+            let tailWork = ArrayList<CjguiMacosApplicationWindowIdentifier>()
+            for (identifier in windowIdentifiers()) {
+                if (closed) { break }
+                if (let Some(liveWindow) <- window(identifier)) {
+                    let drained = liveWindow.pumpEventsWithoutRefresh(
+                        if (identifier.value == waitedIdentifier.value) { pumpWait } else { 0u32 })
+                    if (liveWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
+                        return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
+                            0u32, elapsedMs(started), None)
+                    }
+                    if (!drained.isOpen) { retire(identifier) }
+                    else if (drained.didApplyHumanAction || liveWindow.hasDeferredEventWork()) { tailWork.add(identifier) }
+                }
             }
+            for (identifier in tailWork) {
+                if (closed) { break }
+                if (let Some(liveWindow) <- window(identifier)) {
+                    let _ = liveWindow.refreshAfterDeferredPump(afterSharedWait: true)
+                }
+            }
+        } else if (let Some(waitedWindow) <- window(waitedIdentifier)) {
+            let waited = if (hasPostRefreshObserver) { waitedWindow.pump(pumpWait) }
+                else { waitedWindow.pumpEventsWithoutRefresh(pumpWait) }
             if (waitedWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                 return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
                     0u32, elapsedMs(started), None)
             }
-            if (!waited.isOpen) {
-                retire(waitedIdentifier)
-            } else if (waited.didApplyHumanAction || waitedWindow.hasDeferredEventWork()) {
-                // Resource readiness can wake this SAME wait without a human
-                // event. Finish the existing deferred visual work before the
-                // caller starts unrelated work (for example a cold peer).
-                // Reuse this tail and flags; do not add another event pump.
+            if (!waited.isOpen) { retire(waitedIdentifier) }
+            else if (waited.didApplyHumanAction || waitedWindow.hasDeferredEventWork()) {
                 let _ = waitedWindow.refreshAfterDeferredPump()
             }
         }
@@ -786,6 +907,22 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             Some(waitedIdentifier)
         )
         return result
+    }
+
+    private func observeSchedulingDecision(waitMs: UInt32, idleUs: Int64): Unit {
+        if (!traceScheduling || schedulingTraceLines >= 128) { return }
+        if (idleUs > 0) { schedulingRepeats = 0; return }
+        schedulingRepeats += 1
+        if (schedulingRepeats >= 64 && (schedulingRepeats & (schedulingRepeats - 1)) == 0) {
+            var signature = "wait_ms=${waitMs} idle_us=${idleUs} " + sharedOwnerTurnBudget.schedulingObservation()
+            for (entry in windows) {
+                signature += " [${entry.composableWindow.schedulingObservation()}]"
+            }
+            getStdErr().writeln("CJGUI_HOST_NO_IDLE turn=${sharedOwnerTurnBudget.turnIdentity()} " +
+                "repeats=${schedulingRepeats} ${signature}")
+            getStdErr().flush()
+            schedulingTraceLines += 1
+        }
     }
 
     /// AppKit's delegate only queues a coalesced, process-level Quit intent
@@ -990,7 +1127,6 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private func servicePlatformStateFor(entry: CjguiMacosApplicationWindowEntry): Bool {
         let platformSpan = entry.composableWindow.beginOwnerTracePhase(65u32)
         try {
-        let windowNumber = entry.composableWindow.windowNumber()
         let accentSpan = entry.composableWindow.beginOwnerTracePhase(74u32)
         let accentChanged = entry.composableWindow.observeSystemAccent()
         entry.composableWindow.endOwnerTracePhase(74u32, accentSpan)
@@ -1001,8 +1137,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         let colorScheme = CjguiComposableUiPlatformFacts.systemColorScheme()
         entry.composableWindow.endOwnerTracePhase(72u32, appearanceSpan)
         let visibilitySpan = entry.composableWindow.beginOwnerTracePhase(73u32)
-        let visible = CjguiComposableUiPlatformFacts.windowVisible(windowNumber)
-        let minimized = CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        let visibility = cjguiMacosPublishedVisibility(entry.composableWindow, entry.platformStateTracker.accepted())
+        let visible = visibility[0]
+        let minimized = visibility[1]
         entry.composableWindow.endOwnerTracePhase(73u32, visibilitySpan)
         let changed = entry.platformStateTracker.observe(
             reduceMotion: reduceMotion,
@@ -1043,6 +1180,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
 public class CjguiMacosApplicationHost {
     private let configuration: CjguiMacosApplicationWindowConfiguration
     private let composableWindow: CjguiComposableUiWindow
+    private let defaultOwnerTurnBudget = CjguiOwnerTurnBudget()
     private var externalConnection: ?CjguiSharedOperationExternalConnection
     // Additional endpoints keep their own pump and authorization. The Host
     // owns their final close before the AppKit loop is stopped.
@@ -1058,6 +1196,7 @@ public class CjguiMacosApplicationHost {
         configuration!: CjguiMacosApplicationWindowConfiguration = CjguiMacosApplicationWindowConfiguration.standard()) {
         this.configuration = configuration
         this.composableWindow = CjguiComposableUiWindow(controller, configuration: configuration)
+        this.composableWindow.installDefaultOwnerTurnBudget(defaultOwnerTurnBudget)
         this.externalConnection = None
         this.adoptedExternalConnections = ArrayList<CjguiSharedOperationExternalConnection>()
         this.started = false
@@ -1071,6 +1210,15 @@ public class CjguiMacosApplicationHost {
     /// external connection without exposing a native session token.
     public func window(): CjguiComposableUiWindow {
         return composableWindow
+    }
+
+    /// Experimental/macOS, same native lifecycle as Application and green button.
+    public func requestFullScreen(enabled: Bool): Bool {
+        return started && !closed && composableWindow.requestMacosFullScreen(enabled)
+    }
+
+    public func windowState(): ?CjguiMacosApplicationWindowState {
+        return if (started && !closed) { composableWindow.macosSystemWindowState() } else { None }
     }
 
     /// C：应用选择的主题策略（token 形式）。固定浅色/深色优先于系统跟随；
@@ -1184,7 +1332,6 @@ public class CjguiMacosApplicationHost {
     private func servicePlatformState(): Bool {
         let platformSpan = composableWindow.beginOwnerTracePhase(65u32)
         try {
-        let windowNumber = composableWindow.windowNumber()
         let accentSpan = composableWindow.beginOwnerTracePhase(74u32)
         let accentChanged = composableWindow.observeSystemAccent()
         composableWindow.endOwnerTracePhase(74u32, accentSpan)
@@ -1195,8 +1342,9 @@ public class CjguiMacosApplicationHost {
         let colorScheme = CjguiComposableUiPlatformFacts.systemColorScheme()
         composableWindow.endOwnerTracePhase(72u32, appearanceSpan)
         let visibilitySpan = composableWindow.beginOwnerTracePhase(73u32)
-        let visible = CjguiComposableUiPlatformFacts.windowVisible(windowNumber)
-        let minimized = CjguiComposableUiPlatformFacts.windowMinimized(windowNumber)
+        let visibility = cjguiMacosPublishedVisibility(composableWindow, platformStateTracker.accepted())
+        let visible = visibility[0]
+        let minimized = visibility[1]
         composableWindow.endOwnerTracePhase(73u32, visibilitySpan)
         let changed = platformStateTracker.observe(
             reduceMotion: reduceMotion,
@@ -1230,9 +1378,10 @@ public class CjguiMacosApplicationHost {
             close()
             return false
         }
-        let observingOrdinaryTurn = if (!composableWindow.hasActiveOwnerSchedulingRound()) {
-            cjguiOrdinaryOwnerCostObservation.begin()
-        } else { false }
+        let budget = composableWindow.attachedOwnerTurnBudget().getOrThrow()
+        let ownsTurn = !budget.isActive()
+        if (ownsTurn && !budget.begin()) { throw Exception("owner_turn_unavailable") }
+        if (ownsTurn) { cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),144u32,0u32,0u32,0u64,UInt64.Max) }
         try {
         // C：先采集本窗最小平台状态，只有事实变化时才重发动效策略；随后推进
         // 本窗动效。无活动动画时保持原有休眠。
@@ -1242,11 +1391,11 @@ public class CjguiMacosApplicationHost {
         let _ = composableWindow.advanceAnimations(atTime: MonoTime.now())
         cjguiOwnerTraceBoundary(0u64, 0u64, 313u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (let Some(connection) <- externalConnection) {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternal(composableWindow, connection,
-                maximumIdleWaitMs: maximumIdleWaitMs)
+            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternalInRound(composableWindow, connection,
+                16u32, 16u32, maximumIdleWaitMs, ownsTurn)
         } else {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(composableWindow,
-                maximumIdleWaitMs: maximumIdleWaitMs)
+            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternalInRound(composableWindow,
+                16u32, maximumIdleWaitMs, ownsTurn)
         }
         cjguiOwnerTraceBoundary(0u64, 0u64, 314u32, 0u32, 0u32, 0u64, UInt64.Max)
         cjguiOwnerTraceBoundary(0u64, 0u64, 315u32, 0u32, 0u32, 0u64, UInt64.Max)
@@ -1257,7 +1406,10 @@ public class CjguiMacosApplicationHost {
         cjguiOwnerTraceBoundary(0u64, 0u64, 316u32, 0u32, 0u32, 0u64, UInt64.Max)
         return true
         } finally {
-            if (observingOrdinaryTurn) { cjguiOrdinaryOwnerCostObservation.finish() }
+            if (ownsTurn) {
+                budget.end()
+                cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),145u32,0u32,0u32,0u64,UInt64.Max)
+            }
         }
     }
 

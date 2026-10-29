@@ -439,7 +439,7 @@ public func cjguiComposableCommandToolbar(nodeId: Int64, semanticId: String,
                 CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX
             } else {
                 CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON
-            }, semanticHelp: if (item.enabled) { "" } else { item.disabledReason }))
+            }, semanticHelp: item.disabledReason))
     }
     if (placement.searchNodeBase >= 0) {
         bar.add(cjguiComposableButton(placement.searchNodeBase, "${semanticId}-search", searchLabel,
@@ -497,7 +497,7 @@ public func cjguiComposableCommandToolbar(scope: CjguiComposableUiIdentityScope,
                 CJGUI_COMPOSABLE_UI_SEMANTIC_CHECKBOX
             } else {
                 CJGUI_COMPOSABLE_UI_SEMANTIC_BUTTON
-            }, semanticHelp: if (item.enabled) { "" } else { item.disabledReason },
+            }, semanticHelp: item.disabledReason,
             identity: Some(scope.local(localKey))))
     }
     if (placement.searchCommandId.size > 0) {

@@ -24,6 +24,8 @@ bridge) would import.
 
 from __future__ import annotations
 
+from dataclasses import asdict
+import json
 import sys
 
 from cjgui_generated_client import (
@@ -97,13 +99,17 @@ def main(argv: list[str]) -> int:
     print(f"instance key={instance.key} kind={instance.kind} node={instance.node_id} "
           f"field={instance.field_id} visible={instance.visible} bounds={instance.bounds}")
 
-    values = {value.field_id: value for value in session.fields()}
-    value = values.get(instance.field_id or "")
-    if value is None:
-        print("the accepted field projection is missing")
+    # Field ids are unique within an owner, not across all owners.
+    state = session.form_state(instance_key=instance.key)
+    values = [value for value in state.fields
+              if value.field_id == instance.field_id
+              and (instance.owner_resource_id < 0
+                   or value.owner_resource_id == instance.owner_resource_id)]
+    if len(values) != 1:
+        print("the accepted field projection is missing or ambiguous")
         return 1
-    print(f"field {value.field_id} draft={value.draft!r} applied={value.applied!r} "
-          f"version={value.draft_version}")
+    print(json.dumps({"form_state": asdict(state), "field": asdict(values[0])},
+                     ensure_ascii=False))
     print("PASSED example consumption")
     return 0
 

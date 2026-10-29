@@ -5549,7 +5549,17 @@ int64_t cjgui_macos_control_accent_srgb8(void) {
 // 2026-09-27(C):按窗口号查询可见性。NSApp windowWithWindowNumber: 只解析已存在
 // 的窗口；窗口号无效、窗口不存在、NSApp 尚未创建或非 Apple 平台返回确定的
 // 默认值 0。只读、不创建/不改变窗口、不返回 pointer。
+#ifdef CJGUI_INTERNAL_TESTING
+#include <stdatomic.h>
+static _Atomic(uint64_t) gCjguiTestLegacyWindowQueries;
+uint64_t cjgui_macos_test_legacy_window_queries(uint32_t reset) {
+    return reset ? atomic_exchange(&gCjguiTestLegacyWindowQueries,0) : atomic_load(&gCjguiTestLegacyWindowQueries);
+}
+#endif
 int32_t cjgui_macos_window_visible(int64_t window_number) {
+#ifdef CJGUI_INTERNAL_TESTING
+    atomic_fetch_add(&gCjguiTestLegacyWindowQueries,1);
+#endif
 #if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
     if (window_number <= 0 || NSApp == nil) {
         return 0;
@@ -5567,6 +5577,9 @@ int32_t cjgui_macos_window_visible(int64_t window_number) {
 // 2026-09-27(C):按窗口号查询最小化状态。语义与 cjgui_macos_window_visible 相同：
 // 不可用返回确定的 0，且不创建/不改变窗口。
 int32_t cjgui_macos_window_minimized(int64_t window_number) {
+#ifdef CJGUI_INTERNAL_TESTING
+    atomic_fetch_add(&gCjguiTestLegacyWindowQueries,1);
+#endif
 #if defined(__APPLE__) && CJGUI_NATIVE_BRIDGE_HAS_APPKIT_IMPORT
     if (window_number <= 0 || NSApp == nil) {
         return 0;

@@ -60,7 +60,7 @@ class TypographyConsumerController <: CjguiComposableUiController & CjguiComposa
         let scroll = cjguiComposableScrollArea(702, "typography-scroll", viewport,
             CjguiComposableUiStyle(growX: if (narrow) { 0 } else { 1 }, growY: 1,
                 fixedWidth: if (narrow) { 320 } else { 0 }, maxWidth: if (narrow) { 320 } else { 0 },
-                alignX: CJGUI_COMPOSABLE_UI_ALIGN_START, clipsContent: true))
+                alignX: if (narrow) { CJGUI_COMPOSABLE_UI_ALIGN_START } else { CJGUI_COMPOSABLE_UI_ALIGN_STRETCH }, clipsContent: true))
         let body = cjguiComposableVertical(703, "typography-body",
             CjguiComposableUiStyle(growX: 1, padding: 16, gap: 8))
         let header = cjguiComposableHorizontal(704, "typography-header", CjguiComposableUiStyle(gap: 12))

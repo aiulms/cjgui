@@ -27,9 +27,6 @@ func composableQueuedEdgeWheelPointsKeepMagnitudeAndStationaryFraction(): Unit {
 }
 
 foreign {
-    func cjgui_internal_renderer_test_enqueue_composable_wheel(
-        session: UInt64, nodeId: UInt64, deltaY: Float64, phase: UInt32, momentum: UInt32
-    ): Int32
     func cjgui_internal_renderer_test_enqueue_composable_wheel_override(
         session: UInt64, nodeId: UInt64, projectionVersion: UInt64, resourceId: Int64,
         nodeKind: UInt32, payload: CString

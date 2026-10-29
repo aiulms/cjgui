@@ -35,6 +35,10 @@ private class ReadyContinuationController <: CjguiComposableUiController {
 @When[os == "macOS"]
 @Test
 func macosReadyPaintIsConsumedAtExistingWaitTailBeforeReturningToCaller(): Unit {
+    cjguiMacosOwnerTest({ => macosReadyPaintIsConsumedAtExistingWaitTailBeforeReturningToCallerBody() })
+}
+
+private func macosReadyPaintIsConsumedAtExistingWaitTailBeforeReturningToCallerBody(): Unit {
     let app = CjguiMacosApplication()
     try {
         let opened = app.openWindow(ReadyContinuationController(), configuration:

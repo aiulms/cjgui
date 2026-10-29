@@ -148,6 +148,8 @@ enum {
     CJGUI_OWNER_PHASE_SELECTION_FRAME_INDEX = 220,
     CJGUI_OWNER_PHASE_SELECTION_DRAW_OWNER_TURN = 221,
     CJGUI_OWNER_PHASE_INSTALLED_RANGE_MAIN = 222,
+    CJGUI_OWNER_PHASE_DESTROY_CALLEE = 223,
+    CJGUI_OWNER_PHASE_RANGE_CALLER = 224,
     CJGUI_OWNER_PHASE_OWNER_WAIT_ABSOLUTE_DEADLINE = 400,
     CJGUI_OWNER_PHASE_OWNER_WAIT_EFFECTIVE_DEADLINE = 401,
     CJGUI_OWNER_PHASE_OWNER_WAIT_OBSERVED_REVISION = 402,
@@ -621,12 +623,26 @@ static void CjguiOwnerTurnCostObserve(uint32_t stage,uint64_t session,uint64_t t
     }
     pthread_mutex_unlock(&gCjguiOwnerTurnCostLock);
 }
+// stdout and stderr can share one destination while their stdio buffers are
+// independent. Publish each complete metric line with one write, so another
+// cleanup logger cannot split a row at stdout's internal buffer boundary.
+static bool CjguiOwnerTurnCostWriteLine(const char *format,...) {
+    char line[1024];
+    va_list arguments;
+    va_start(arguments,format);
+    int length=vsnprintf(line,sizeof(line),format,arguments);
+    va_end(arguments);
+    if(length<=0 || (size_t)length>=sizeof(line))return false;
+    ssize_t written=write(STDOUT_FILENO,line,(size_t)length);
+    return written==length;
+}
 static void CjguiOwnerTurnCostExport(void) {
     if (!CjguiOwnerTurnCostEnabled()) return;
     pthread_mutex_lock(&gCjguiOwnerTurnCostLock);
     if (gCjguiOwnerTurnCostExported) {pthread_mutex_unlock(&gCjguiOwnerTurnCostLock);return;}
     gCjguiOwnerTurnCostExported=true;
-    fprintf(stdout,"CJGUI_OWNER_TURN_COST_SUMMARY v=1 capacity=%u begins=%llu ends=%llu complete=%llu rows=%llu "
+    bool complete=fflush(stdout)==0 && !ferror(stdout);
+    complete=CjguiOwnerTurnCostWriteLine("CJGUI_OWNER_TURN_COST_SUMMARY v=1 capacity=%u begins=%llu ends=%llu complete=%llu rows=%llu "
         "lost=%llu unpaired=%llu abandoned=%llu open=%u unknown_idle=%llu over16=%llu max_work_ns=%llu "
         "wall_sum_ns=%llu credited_idle_sum_ns=%llu known_work_sum_ns=%llu "
         "scope=original_outer_boundary_including_end_observer_tail cpu_subtracted=0 terminal_required=1\n",
@@ -637,10 +653,10 @@ static void CjguiOwnerTurnCostExport(void) {
         gCjguiOwnerTurnCostIsOpen?1:0,(unsigned long long)gCjguiOwnerTurnCostUnknownIdle,
         (unsigned long long)gCjguiOwnerTurnCostOver16,(unsigned long long)gCjguiOwnerTurnCostMaxWork,
         (unsigned long long)gCjguiOwnerTurnCostWallSum,(unsigned long long)gCjguiOwnerTurnCostIdleSum,
-        (unsigned long long)gCjguiOwnerTurnCostWorkSum);
-    for (uint64_t i=0;i<gCjguiOwnerTurnCostRows;i++) {
+        (unsigned long long)gCjguiOwnerTurnCostWorkSum) && complete;
+    for (uint64_t i=0;complete && i<gCjguiOwnerTurnCostRows;i++) {
         CjguiOwnerTurnCostRow row=gCjguiOwnerTurnCosts[i];
-        fprintf(stdout,"CJGUI_OWNER_TURN_COST v=1 ordinal=%llu turn=%llu session=%llu begin_ns=%llu end_ns=%llu "
+        complete=CjguiOwnerTurnCostWriteLine("CJGUI_OWNER_TURN_COST v=1 ordinal=%llu turn=%llu session=%llu begin_ns=%llu end_ns=%llu "
             "credited_idle_ns=%llu idle_known=%u begin_tid=%llu end_tid=%llu\n",
             (unsigned long long)i,(unsigned long long)row.turn,(unsigned long long)row.session,
             (unsigned long long)row.beginNs,(unsigned long long)row.endNs,(unsigned long long)row.idleNs,
@@ -648,10 +664,10 @@ static void CjguiOwnerTurnCostExport(void) {
     }
     // A complete table is a cleanup result, not an inference from a summary
     // printed before its rows. Keep the fixed row quota and all slow samples.
-    fprintf(stdout,"CJGUI_OWNER_TURN_COST_EXPORT_END v=1 rows=%llu\n",
+    if(complete)complete=CjguiOwnerTurnCostWriteLine("CJGUI_OWNER_TURN_COST_EXPORT_END v=1 rows=%llu\n",
         (unsigned long long)gCjguiOwnerTurnCostRows);
     int flushed=fflush(stdout);
-    gCjguiOwnerTurnCostExportSucceeded=flushed==0 && !ferror(stdout);
+    gCjguiOwnerTurnCostExportSucceeded=complete && flushed==0 && !ferror(stdout);
     if (!gCjguiOwnerTurnCostExportSucceeded) {
         const char failure[]="CJGUI_OWNER_TURN_COST_EXPORT_FAILED reason=write_or_flush\n";
         (void)write(STDERR_FILENO,failure,sizeof(failure)-1);
@@ -666,7 +682,8 @@ static void CjguiOwnerTraceExitExport(void) {
 static void CjguiOwnerTraceEnsureExitExport(void) {
     if (atomic_load_explicit(&gCjguiOwnerTraceExitHandlerRegistrationAttempted,
             memory_order_relaxed)) return;
-    if (!CjguiOwnerPhaseTraceEnabled()) return;
+    const char *waitTrace = getenv("CJGUI_OWNER_WAIT_TRACE");
+    if (!CjguiOwnerPhaseTraceEnabled() && !(waitTrace && strcmp(waitTrace, "1") == 0)) return;
     atomic_store_explicit(&gCjguiOwnerTraceEnabledObserved, true, memory_order_release);
     bool expected = false;
     if (atomic_compare_exchange_strong_explicit(&gCjguiOwnerTraceExitHandlerRegistrationAttempted,
@@ -1151,6 +1168,8 @@ static const char *CjguiOwnerTracePhaseName(uint32_t phase) {
         case CJGUI_OWNER_PHASE_SELECTION_FRAME_INDEX: return "selection_frame_index";
         case CJGUI_OWNER_PHASE_SELECTION_DRAW_OWNER_TURN: return "selection_draw_owner_turn";
         case CJGUI_OWNER_PHASE_INSTALLED_RANGE_MAIN: return "installed_range_main";
+        case CJGUI_OWNER_PHASE_DESTROY_CALLEE: return "destroy_callee";
+        case CJGUI_OWNER_PHASE_RANGE_CALLER: return "installed_range_caller";
         default: return "unknown";
     }
 }
@@ -1880,7 +1899,10 @@ static uint64_t CjguiOwnerTraceAppendAtWithOwnerIdentity(uint32_t kind, uint64_t
         uint64_t turnIdle=sharedIdle ? atomic_load(&gCjguiOwnerTraceSharedIdleNs) :
             atomic_load_explicit(&gCjguiOwnerTraceCurrentTurnIdleNs,memory_order_acquire);
         uint64_t completedAt = CjguiOwnerTraceNanoseconds();
-        BOOL sameLiveIdentity = session > 0 && session <= 4 && generation != 0 && generation != UINT64_MAX &&
+        BOOL legacyLive = session > 0 && session <= 4 && generation != 0 && generation != UINT64_MAX;
+        BOOL sharedOuter = completeOuter && session == 0 && generation == UINT64_MAX &&
+            atomic_load_explicit(&gCjguiOwnerTraceTurnHasOuterBegin,memory_order_acquire);
+        BOOL sameLiveIdentity = (legacyLive || sharedOuter) &&
             session == atomic_load_explicit(&gCjguiOwnerTraceTurnStartSession, memory_order_acquire) &&
             generation == atomic_load_explicit(&gCjguiOwnerTraceTurnStartGeneration, memory_order_acquire) &&
             threadId != UINT64_MAX && threadId != 0 &&
@@ -1903,8 +1925,9 @@ static uint64_t CjguiOwnerTraceAppendAtWithOwnerIdentity(uint32_t kind, uint64_t
             completedAt - turnStarted - turnIdle >
                 atomic_load_explicit(&gCjguiOwnerTraceSlowWorkNs, memory_order_acquire) &&
             atomic_load_explicit(&gCjguiOwnerTraceSlowTurn, memory_order_acquire) != turn) {
-            // Retain the largest complete same-session/OS-thread sample.
-            // A partial/closing session-0 turn cannot erase natural evidence.
+            // Retain the largest complete owner sample, including the shared
+            // session0 outer scope with its matching OS thread and end. A
+            // partial scope still cannot replace a complete retained sample.
             atomic_store_explicit(&gCjguiOwnerTraceSlowWorkNs,
                 completedAt - turnStarted - turnIdle, memory_order_release);
             CjguiOwnerTraceCaptureSlowWindow(sequence, turn);
@@ -1941,6 +1964,16 @@ static uint64_t CjguiOwnerTraceAppendAt(uint32_t kind, uint64_t session, uint64_
 static uint64_t CjguiOwnerTraceAppend(uint32_t kind, uint64_t session, uint64_t turn,
     uint64_t request, uint64_t dispatch, uint64_t generation, uint32_t phase, uint64_t span) {
     return CjguiOwnerTraceAppendAt(kind, session, turn, request, dispatch, generation, phase, span, 0, 0);
+}
+
+// Bounded teardown/caller facts use the existing opt-in trace ring.
+// request = fixed callee boundary, span = thread CPU ns (or unknown).
+static void CjguiTraceDestroyCallee(uint64_t token,uint64_t generation,uint64_t step) {
+    if (!CjguiOwnerPhaseTraceEnabled()) return;
+    BOOL valid=NO;
+    uint64_t cpu=CjguiOwnerTraceThreadCpu(NULL,&valid);
+    CjguiOwnerTraceAppend(CJGUI_OWNER_TRACE_OBSERVATION_SCALAR,token,UINT64_MAX,
+        step,0,generation,CJGUI_OWNER_PHASE_DESTROY_CALLEE,valid?cpu:UINT64_MAX);
 }
 
 static uint64_t CjguiOwnerTraceAppendManaged(uint32_t kind, uint64_t session, uint64_t turn,
@@ -2853,6 +2886,12 @@ static BOOL CjguiColorByteMatches(uint8_t actual, uint8_t expected) {
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> commandQueue;
 @property(nonatomic, strong) CAMetalLayer *metalLayer;
+// Main owns layer geometry. Stable preparation retries must not reenter its
+// setters while the acquisition worker may be inside nextDrawable.
+@property(nonatomic, weak) CAMetalLayer *drawableGeometryLayer;
+@property(nonatomic, assign) CGRect drawableGeometryBounds;
+@property(nonatomic, assign) CGFloat drawableGeometryScale;
+@property(nonatomic, assign) CGSize drawableGeometrySize;
 @property(nonatomic, assign) BOOL invalidated;
 @property(nonatomic, assign) BOOL readbackProbeCompleted;
 @property(nonatomic, strong) id readbackProbeTask;
@@ -3157,14 +3196,24 @@ __attribute__((unused)) static void CjguiDropTextCpuScratch(CJGuiInternalMetalVi
     if (!self.metalLayer || self.invalidated) {
         return;
     }
+    CAMetalLayer *layer = self.metalLayer;
     CGFloat scale = [self currentBackingScale];
-    CGSize pointSize = self.bounds.size;
-    self.metalLayer.frame = self.bounds;
-    self.metalLayer.contentsScale = scale;
+    CGRect bounds = self.bounds;
+    CGSize pointSize = bounds.size;
+    BOOL replacement = self.drawableGeometryLayer != layer;
+    if (replacement || !CGRectEqualToRect(self.drawableGeometryBounds, bounds))
+        layer.frame = bounds;
+    if (replacement || self.drawableGeometryScale != scale)
+        layer.contentsScale = scale;
     // Request integral texels covering the full logical content. Child
     // layout and text coordinates remain subpoint-precise.
-    self.metalLayer.drawableSize = CGSizeMake(ceil(pointSize.width * scale),
-                                              ceil(pointSize.height * scale));
+    CGSize size = CGSizeMake(ceil(pointSize.width * scale), ceil(pointSize.height * scale));
+    if (replacement || !CGSizeEqualToSize(self.drawableGeometrySize, size))
+        layer.drawableSize = size;
+    self.drawableGeometryLayer = layer;
+    self.drawableGeometryBounds = bounds;
+    self.drawableGeometryScale = scale;
+    self.drawableGeometrySize = size;
 }
 
 - (void)invalidateBridgeResources {
@@ -3175,8 +3224,11 @@ __attribute__((unused)) static void CjguiDropTextCpuScratch(CJGuiInternalMetalVi
     // An externally retained retired view must not own its accepted scene.
     self.composableNodes = @[];
     CjguiInvalidateCoordinateLifetimeForIdentity(self.sessionToken,self.coordinateSessionGeneration);
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,31);
     self.layer = nil;
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,32);
     self.metalLayer = nil;
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,33);
     self.commandQueue = nil;
     self.device = nil;
     self.composableImagePipeline = nil;
@@ -3187,9 +3239,12 @@ __attribute__((unused)) static void CjguiDropTextCpuScratch(CJGuiInternalMetalVi
     self.composableMultisampleVectorPipeline = nil;
     self.composableMultisampleTexture = nil;
     self.composableUsesMultisampling = NO;
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,34);
     [self.effectGroupCache removeAllObjects];
     [self.backdropCache removeAllObjects];
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,35);
     self.effectPipelines = nil;
+    CjguiTraceDestroyCallee(self.sessionToken,self.coordinateSessionGeneration,36);
 }
 
 - (BOOL)encodeComposableNodes:(id<MTLRenderCommandEncoder>)encoder drawableSize:(CGSize)drawableSize {
@@ -4123,8 +4178,26 @@ typedef NS_ENUM(uint8_t,CjguiCommandProducerDomain) {
 @end
 
 typedef NS_ENUM(uint8_t,CjguiOriginalKeyDependency) {
-    CjguiOriginalKeyCommand=1,CjguiOriginalKeyPointerEnd=2
+    CjguiOriginalKeyCommand=1,CjguiOriginalKeyPointerEnd=2,CjguiOriginalKeyModalExit=3
 };
+// An original, successfully queued Escape owns only an input dependency.
+// Cangjie decides whether the layer exits; the existing modal return owns
+// target/selection installation. No business value or alternate queue lives here.
+@interface CjguiModalExitInput : NSObject
+@property(nonatomic) uint64_t identity,generation,binding,scope,request,chargedBytes,dequeueSerial;
+@property(nonatomic) uint64_t bodyGeneration,proxyGeneration,selectionRevision;
+@property(nonatomic, weak) NSWindow *window;
+@property(nonatomic, strong) CJGuiInternalQueuedInteraction *interaction;
+@property(nonatomic, strong) CJGuiInternalComposableSceneNode *target;
+@property(nonatomic, strong) NSTextView *proxy;
+@property(nonatomic, copy) NSString *body;
+@property(nonatomic) NSRange selection;
+@property(nonatomic) BOOL dequeued,decided,exits,ready,expectsTextClient;
+@property(nonatomic, weak) NSResponder *responder;
+@property(nonatomic, copy) NSString *refusalReason;
+@end
+@implementation CjguiModalExitInput
+@end
 @interface CjguiPointerSelectionDispatchProof : NSObject
 @property(nonatomic) uint64_t identity;
 @property(nonatomic, strong) CJGuiInternalQueuedInteraction *original;
@@ -4182,8 +4255,10 @@ typedef NS_ENUM(uint8_t,CjguiOriginalKeyDependency) {
 @property(nonatomic, strong) CjguiOwnerSelectionHandoff *waitingHandoff;
 @property(nonatomic, strong) CjguiInstalledRangeIntentState *waitingRange;
 @property(nonatomic) BOOL originalDefaultDispatched;
+@property(nonatomic) BOOL capturedKeyEquivalent;
 @property(nonatomic) CjguiOriginalKeyDependency dependency;
 @property(nonatomic, strong) CjguiPointerTerminalCustody *pointerTerminal;
+@property(nonatomic, strong) CjguiModalExitInput *modalExit;
 @end
 @implementation CjguiOriginalCommandKey
 @end
@@ -4208,6 +4283,7 @@ typedef NS_ENUM(uint8_t,CjguiOriginalKeyDependency) {
 
 @interface CjguiComposableMenuCommandOrigin : NSObject
 @property(nonatomic, strong) CJGuiInternalQueuedInteraction *interaction;
+@property(nonatomic, strong) NSEvent *triggerEvent;
 @property(nonatomic, weak) NSWindow *window;
 @property(nonatomic, assign) BOOL valid;
 @end
@@ -4426,6 +4502,13 @@ typedef NS_ENUM(uint8_t,CjguiOriginalKeyDependency) {
 @property(nonatomic, strong) CjguiCandidateCaretProjection *stagedCaretProjection;
 @property(nonatomic, strong) CjguiCandidateModalReturn *stagedModalReturn;
 @property(nonatomic, strong) CjguiCandidateModalReturn *acceptedModalReturn;
+@property(nonatomic, strong) CjguiModalExitInput *modalExitInput;
+@property(nonatomic) uint64_t nextModalExitIdentity;
+@property(nonatomic) uint64_t windowStateRevision;
+@property(nonatomic) uint32_t fullScreenTransition,fullScreenLastFailure;
+@property(nonatomic) BOOL fullScreenRequestPending,desiredFullScreen;
+@property(nonatomic) uint32_t preparationFallbackTraceCount;
+@property(nonatomic) uint32_t layerInputArmTraceCount;
 // Retained only until this candidate commits or is superseded.
 @property(nonatomic, strong) id stagedNativeTextSourcePreparation;
 @property(nonatomic, strong) CjguiCandidateCaretProjection *acceptedCaretProjection;
@@ -4855,6 +4938,50 @@ static void CjguiCancelOriginalCommandKeys(CJGuiInternalSession *ctx,
     return NO;
 }
 
+- (void)noteWindowSystemStateChange {
+    if(self.windowStateRevision<UINT64_MAX)self.windowStateRevision++;
+    CjguiPublishViewportSnapshot(self);
+    if(self.composableSceneOverlay)
+        (void)CjguiEnqueueComposableInteraction(self,CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_RESIZED,
+            0,@"window_state",NSMakeRange(0,0));
+    CjguiOwnerPumpTicketNoteWork(self);
+}
+- (void)windowWillEnterFullScreen:(NSNotification *)notification {
+    if(notification.object!=self.window || self.destroyed)return;
+    self.fullScreenTransition=1;self.fullScreenLastFailure=0;[self noteWindowSystemStateChange];
+}
+- (void)windowWillExitFullScreen:(NSNotification *)notification {
+    if(notification.object!=self.window || self.destroyed)return;
+    self.fullScreenTransition=2;self.fullScreenLastFailure=0;[self noteWindowSystemStateChange];
+}
+- (void)windowDidEnterFullScreen:(NSNotification *)notification {
+    if(notification.object!=self.window || self.destroyed)return;
+    self.fullScreenTransition=0;self.fullScreenRequestPending=NO;
+    [self windowGeometryDidChange];[self noteWindowSystemStateChange];
+}
+- (void)windowDidExitFullScreen:(NSNotification *)notification {
+    if(notification.object!=self.window || self.destroyed)return;
+    self.fullScreenTransition=0;self.fullScreenRequestPending=NO;
+    [self windowGeometryDidChange];[self noteWindowSystemStateChange];
+}
+- (void)windowDidFailToEnterFullScreen:(NSWindow *)window {
+    if(window!=self.window || self.destroyed)return;
+    self.fullScreenTransition=0;self.fullScreenRequestPending=NO;self.fullScreenLastFailure=1;
+    [self noteWindowSystemStateChange];
+}
+- (void)windowDidFailToExitFullScreen:(NSWindow *)window {
+    if(window!=self.window || self.destroyed)return;
+    self.fullScreenTransition=0;self.fullScreenRequestPending=NO;self.fullScreenLastFailure=2;
+    [self noteWindowSystemStateChange];
+}
+- (void)windowDidMiniaturize:(NSNotification *)notification {
+    if(notification.object==self.window && !self.destroyed)[self noteWindowSystemStateChange];
+}
+- (void)windowDidDeminiaturize:(NSNotification *)notification {
+    if(notification.object==self.window && !self.destroyed) {
+        [self windowGeometryDidChange];[self noteWindowSystemStateChange];
+    }
+}
 - (void)windowWillClose:(NSNotification *)notification {
     (void)notification;
     id overlay = self.composableSceneOverlay;
@@ -4866,6 +4993,7 @@ static void CjguiCancelOriginalCommandKeys(CJGuiInternalSession *ctx,
     }
     if (!self.closeRequested) {
         self.closeRequested = YES;
+        CjguiOwnerPumpTicketNoteWork(self);
         NSLog(@"cjgui: close requested: window");
     }
     if (self.rendererSessionToken > 0 && self.rendererSessionToken <= kCjguiSessionCapacity) {
@@ -5084,6 +5212,8 @@ typedef struct CjguiViewportSnapshotEntry {
     uint64_t sessionGeneration;
     BOOL valid;
     CjguiInternalRendererViewport value;
+    BOOL systemWindowValid;
+    uint64_t systemWindowWords[11];
 } CjguiViewportSnapshotEntry;
 static CjguiViewportSnapshotEntry gCjguiViewportSnapshots[4];
 static pthread_mutex_t gCjguiViewportSnapshotLock = PTHREAD_MUTEX_INITIALIZER;
@@ -5790,15 +5920,23 @@ static void CjguiPublishViewportSnapshot(CJGuiInternalSession *session) {
     NSUInteger index = (NSUInteger)(session.rendererSessionToken - 1);
     CjguiInternalRendererViewport value = {0};
     CjguiFillViewportSnapshot(session, &value);
+    CjguiViewportSnapshotEntry published={.sessionGeneration=session.sessionGeneration,
+        .valid=YES,.value=value,.systemWindowValid=session.window!=nil};
+    if(session.window) {
+        uint64_t *w=published.systemWindowWords;
+        NSSize points=session.window.contentView.bounds.size;CGSize pixels=session.view.metalLayer.drawableSize;
+        w[0]=(session.window.styleMask&NSWindowStyleMaskFullScreen)!=0;
+        w[1]=session.fullScreenTransition;w[2]=session.windowStateRevision;
+        w[3]=session.window.isMiniaturized;w[4]=session.window.isVisible;
+        w[5]=(uint64_t)fmax(0,round(points.width));w[6]=(uint64_t)fmax(0,round(points.height));
+        w[7]=session.fullScreenLastFailure;w[8]=session.sessionGeneration;
+        w[9]=(uint64_t)fmax(0,round(pixels.width));w[10]=(uint64_t)fmax(0,round(pixels.height));
+    }
     pthread_mutex_lock(&gCjguiViewportSnapshotLock);
     uint64_t liveGeneration = atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],
         memory_order_acquire);
     if (liveGeneration == session.sessionGeneration) {
-        gCjguiViewportSnapshots[index] = (CjguiViewportSnapshotEntry){
-            .sessionGeneration = session.sessionGeneration,
-            .valid = YES,
-            .value = value,
-        };
+        gCjguiViewportSnapshots[index] = published;
     }
     pthread_mutex_unlock(&gCjguiViewportSnapshotLock);
     CjguiPublishDiagnosticScalarSnapshot(session);
@@ -6406,6 +6544,9 @@ static BOOL CjguiPointerOriginalKeyWaitsForB(CJGuiInternalSession *ctx,CjguiOrig
 
 static void CjguiEnrolOriginalKeysAfterProducts(CJGuiInternalSession *ctx,NSArray<CJGuiInternalQueuedInteraction *> *produced);
 static BOOL CjguiDispatchRetainedOriginalKeyUp(CJGuiInternalSession *ctx,CjguiOriginalCommandKey *input);
+static void CjguiTerminateModalExitInput(CJGuiInternalSession *ctx,const char *reason);
+static int CjguiRetainOriginalModalKey(CJGuiInternalSession *ctx,NSEvent *event);
+static BOOL CjguiDispatchRetainedOriginalModalEvent(CJGuiInternalSession *ctx,NSEvent *event);
 
 static BOOL CjguiCommandContextMatchesCandidate(CJGuiInternalSession *ctx,CjguiSelectionTransferCapsule *capsule);
 static void CjguiRetireCommandTextContext(CJGuiInternalSession *ctx,const char *reason);
@@ -6734,8 +6875,14 @@ static uint64_t CjguiInstalledRangeStateBytes(CjguiInstalledRangeState *state) {
     return state.sourceUtf8.length;
 }
 
-static CjguiInternalRendererStatus CjguiInstalledRangeRunOnMain(uint64_t token,
+static CjguiInternalRendererStatus CjguiInstalledRangeRunOnMainNamed(uint64_t token,const char *caller,
     CjguiInternalRendererStatus (^operation)(CJGuiInternalSession *)) {
+    if (CjguiOwnerPhaseTraceEnabled()) {
+        uint64_t hash=UINT64_C(14695981039346656037);
+        for (const unsigned char *c=(const unsigned char *)caller;*c;c++) hash=(hash^*c)*UINT64_C(1099511628211);
+        CjguiOwnerTraceAppend(CJGUI_OWNER_TRACE_OBSERVATION_SCALAR,token,
+            atomic_load(&gCjguiOwnerTraceCurrentTurn),hash,0,0,CJGUI_OWNER_PHASE_RANGE_CALLER,0);
+    }
     if (!operation || token == 0 || token > kCjguiSessionCapacity)
         return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (CjguiIsMainThread()) {
@@ -6780,7 +6927,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_arm(
     if (!sourceBytes || !sourceText) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     CjguiInternalInstalledRangeCandidate frozen = *candidate;
     frozen.sourceTextUtf8 = NULL;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (!ctx.ownedTextSessionEnabled ||
             ctx.ownedTextSessionNodeId != frozen.nodeId ||
             ctx.ownedTextSessionResourceId != frozen.resourceId ||
@@ -6827,7 +6974,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_receipt(
     uint64_t session, uint64_t nonce, CjguiInternalInstalledRangeReceipt *outReceipt) {
     if (!nonce || !outReceipt) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     memset(outReceipt, 0, sizeof(*outReceipt));
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *state = ctx.installedRangeProvisional;
         if (!state || state.candidate.nonce != nonce) state = ctx.sourceHandoffProvisional;
         if (!state || state.candidate.nonce != nonce || !state.hasReceipt || !state.proxy)
@@ -6859,7 +7006,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_receipt(
 CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_activate(
     uint64_t session, uint64_t nonce, uint64_t proxyGeneration, uint64_t selectionRevision) {
     if (!nonce || !proxyGeneration) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *state = ctx.installedRangeProvisional;
         if (!state || state.candidate.nonce != nonce || !state.hasReceipt ||
             state.proxyGeneration != proxyGeneration || state.selectionRevision != selectionRevision ||
@@ -6894,7 +7041,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_activate(
 CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_cancel(
     uint64_t session, uint64_t nonce) {
     if (!nonce) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *candidate = ctx.installedRangeCandidate;
         CjguiInstalledRangeState *provisional = ctx.installedRangeProvisional;
         if (candidate && candidate.candidate.nonce == nonce) {
@@ -6931,7 +7078,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_claim_last_pumped_range(
     uint64_t sceneVersion, CjguiInternalInstalledRangeIntent *outIntent) {
     if (!outIntent) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     memset(outIntent, 0, sizeof(*outIntent));
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalQueuedInteraction *queued = ctx.pumpedInstalledRangeInteraction;
         ctx.pumpedInstalledRangeInteraction = nil;
         if (!queued || queued.kind != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED)
@@ -6989,7 +7136,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_copy_claimed_range_bytes(
     uint64_t session, uint64_t seq, uint8_t *preBody, uint32_t preBodyCapacity,
     uint8_t *replacement, uint32_t replacementCapacity, uint8_t *postBody, uint32_t postBodyCapacity) {
     if (!seq) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeIntentState *state = ctx.claimedInstalledRangeIntent;
         if (!state || !state.claimed || state.settled || state.value.seq != seq)
             return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
@@ -7018,7 +7165,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_ack_installed_range(
     uint32_t accepted, int64_t receiptVersionAfter) {
     if (!intent || !intent->nonce || !intent->seq || accepted > 1 || (accepted && receiptVersionAfter < 0))
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeIntentState *state = ctx.claimedInstalledRangeIntent;
         CjguiInstalledRangeState *basis = ctx.installedRangeBasis;
         CjguiInternalInstalledRangeIntent v = state ? state.value : (CjguiInternalInstalledRangeIntent){0};
@@ -7123,7 +7270,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_ack_installed_range(
 CjguiInternalRendererStatus cjgui_internal_renderer_release_installed_range(
     uint64_t session, uint64_t windowInstanceToken, uint64_t bindingEpoch) {
     if (!windowInstanceToken || !bindingEpoch) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *states[] = {ctx.installedRangeCandidate, ctx.installedRangeProvisional,
             ctx.installedRangeBasis, ctx.installedRangeRecoveryBlock, ctx.sourceHandoffCandidate,
             ctx.sourceHandoffProvisional, ctx.sourceHandoffRollbackBasis};
@@ -7482,13 +7629,27 @@ static BOOL CjguiEnqueueComposableInteraction(CJGuiInternalSession *session,
         // and public restore request are still consumed by their owners.
         CjguiCancelSourceProxyPreparation(session);
     }
+    id productionInvocation=nil;
+    if(kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE ||
+        (session.interpretingOriginalCommandKey.dependency==CjguiOriginalKeyModalExit &&
+         session.interpretingOriginalCommandKey.phase==1 && session.callbackProductionInvocation &&
+         session.callbackProductionInvocation==session.materializationInvocation &&
+         (kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_CHANGED ||
+          kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_RANGE_CHANGED)))
+        productionInvocation=session.callbackProductionInvocation;
     CJGuiInternalQueuedInteraction *last = session.pendingInteractions.lastObject;
     if ((kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_CHANGED ||
          kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED) &&
         last && last.kind == kind && last.recordIndex == nodeIndex &&
         last.nodeId == nodeId &&
         last.projectionVersion == session.composableSceneVersion &&
-        last.resourceId == resourceId && last.nodeKind == nodeKind) {
+        last.resourceId == resourceId && last.nodeKind == nodeKind &&
+        last.inputProductionInvocation == productionInvocation) {
         last.selectionStart = (uint32_t)MIN(selection.location, UINT32_MAX);
         last.selectionEnd = (uint32_t)MIN(NSMaxRange(selection), UINT32_MAX);
         last.formText = [text copy] ?: @"";
@@ -7524,8 +7685,10 @@ static BOOL CjguiEnqueueComposableInteraction(CJGuiInternalSession *session,
     // Pointer-originated intents are stamped by their own handler.
     interaction.modifierFlags = 0;
     interaction.physicalProducerNonce=session.physicalProducerDepth ? session.physicalProducerNonce : 0;
-    if(kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE)
-        interaction.inputProductionInvocation=session.callbackProductionInvocation;
+    // A retained ordinary insert can emit selection, whole-text and range
+    // notifications. They all belong before the next original key/command;
+    // none may be overtaken merely because it uses the legacy range seam.
+    interaction.inputProductionInvocation=productionInvocation;
     [session.pendingInteractions addObject:interaction];
     CjguiOwnerPumpTicketNoteWork(session);
 #ifdef CJGUI_INTERNAL_TESTING
@@ -8679,8 +8842,13 @@ static NSString *CjguiComposableImageCacheKey(NSString *resourcePath, NSString *
 // A committed/staged node owns its texture independently of the reusable
 // cache. This is the only internal path that may reuse that strong reference;
 // callers still receive only scalar resource states across the ABI.
+static NSArray<CJGuiInternalComposableSceneNode *> *CjguiPreparationImageNodes(CJGuiInternalSession *session);
+void cjgui_internal_renderer_owner_notify_work(void);
 static id<MTLTexture> CjguiComposableImageBoundTexture(CJGuiInternalSession *session, NSString *cacheKey) {
     if (!session || cacheKey.length == 0) return nil;
+    for (CJGuiInternalComposableSceneNode *node in CjguiPreparationImageNodes(session)) {
+        if ([node.imageTextureContentKey isEqualToString:cacheKey] && node.imageTexture) return node.imageTexture;
+    }
     for (CJGuiInternalComposableSceneNode *node in session.stagedComposableNodes) {
         if ([node.imageTextureContentKey isEqualToString:cacheKey] && node.imageTexture) return node.imageTexture;
     }
@@ -8884,6 +9052,14 @@ static NSMutableSet<NSString *> *CjguiComposableImageProtectedKeys(
             }
         }
     }
+    // Private preparations are strong resource owners, with the same domain
+    // and generation as accepted/staged scenes; cache eviction cannot revoke them.
+    if (preserveSceneReferences) for (NSUInteger i=0;i<kCjguiSessionCapacity;i++) {
+        CJGuiInternalSession *session=gCjguiSessions[i];
+        if (!session || session.destroyed || session.composableImageDomain!=domain) continue;
+        for (CJGuiInternalComposableSceneNode *node in CjguiPreparationImageNodes(session))
+            if (node.imageTextureCacheKey.length) [keys addObject:node.imageTextureCacheKey];
+    }
     [keys addObjectsFromArray:domain.loaders.allKeys];
     [keys addObjectsFromArray:domain.pendingKeys];
     for (CJGuiInternalComposableImageResource *resource in domain.resources.allValues) {
@@ -8974,7 +9150,8 @@ static void CjguiPromoteReferencedBusyImageResources(CJGuiInternalComposableImag
         CJGuiInternalSession *session = gCjguiSessions[index];
         if (!session || session.destroyed || session.composableImageDomain != domain) continue;
         NSArray<NSArray<CJGuiInternalComposableSceneNode *> *> *nodeSets = @[
-            session.stagedComposableNodes ?: @[], session.composableNodes ?: @[]
+            session.stagedComposableNodes ?: @[], session.composableNodes ?: @[],
+            CjguiPreparationImageNodes(session) ?: @[]
         ];
         for (NSArray<CJGuiInternalComposableSceneNode *> *nodes in nodeSets) {
             for (CJGuiInternalComposableSceneNode *node in nodes) {
@@ -9083,6 +9260,7 @@ static void CjguiReconcileCommittedComposableImageSubscribers(CJGuiInternalSessi
 static void CjguiNotifyComposableImageSubscribers(CJGuiInternalComposableImageResourceDomain *domain,
                                                   CJGuiInternalComposableImageResource *resource) {
     if (!domain || !resource) return;
+    BOOL pendingPreparation=NO;
     for (NSInteger index = (NSInteger)resource.subscribers.count - 1; index >= 0; index--) {
         CJGuiInternalComposableImageSubscription *subscriber = resource.subscribers[(NSUInteger)index];
         CJGuiInternalSession *session = CjguiLookupSession(subscriber.sessionToken);
@@ -9096,7 +9274,12 @@ static void CjguiNotifyComposableImageSubscribers(CJGuiInternalComposableImageRe
             session.composableImageResourceCompletionVersion += 1;
             CjguiPublishViewportSnapshot(session);
         }
+        for (CJGuiInternalComposableSceneNode *node in CjguiPreparationImageNodes(session))
+            if ([node.imageTextureCacheKey isEqualToString:resource.cacheKey]) pendingPreparation=YES;
     }
+    // A private-only demand has no accepted viewport epoch to change. Resume
+    // its original bounded mailbox on real completion, not a polling timer.
+    if (pendingPreparation) cjgui_internal_renderer_owner_notify_work();
 }
 
 static CJGuiInternalSession *CjguiComposableImageLiveLaunchSession(
@@ -11677,7 +11860,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_frame_resources(uint
     uint64_t request, uint64_t deadlineNs, uint32_t *outReady) {
     if (!outReady) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     *outReady = 0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
 #ifdef CJGUI_INTERNAL_TESTING
         if (ctx.testLegacyFrameResourceCheckCount < UINT64_MAX) ctx.testLegacyFrameResourceCheckCount++;
 #endif
@@ -11698,7 +11881,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_frame_resources(uint
 CjguiInternalRendererStatus cjgui_internal_renderer_test_frame_resource_check_count(uint64_t session, uint64_t *outCount) {
     if (!outCount) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outCount = 0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         *outCount = ctx.testLegacyFrameResourceCheckCount;
         return CJGUI_INTERNAL_RENDERER_OK;
     });
@@ -12435,6 +12618,7 @@ static CjguiInternalRendererStatus CjguiCandidateCaretRect(
 @property(nonatomic, assign) NSSize viewport;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableSceneNode *> *nodes;
 @property(nonatomic, strong) NSMutableIndexSet *filled;
+@property(nonatomic, strong) NSMutableIndexSet *declaredImages;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSString *> *runs;
 @property(nonatomic, assign) NSUInteger ownedPacketBytes;
 @property(nonatomic, assign) uint64_t declarationCopiedCount;
@@ -12471,6 +12655,10 @@ static CjguiInternalRendererStatus CjguiCandidateCaretRect(
 @end
 @implementation CjguiComposablePreparation
 @end
+static NSArray<CJGuiInternalComposableSceneNode *> *CjguiPreparationImageNodes(CJGuiInternalSession *session) {
+    CjguiComposablePreparation *p=session.composablePreparation;
+    return p && !p.retiring && p.sessionGeneration==session.sessionGeneration ? p.nodes : nil;
+}
 
 enum {
     CjguiTextPreparationWorkerSlotCount = 2,
@@ -13137,6 +13325,13 @@ static dispatch_queue_t CjguiTextPreparationWorkerQueue(void) {
     return gCjguiTextPreparationQueue;
 }
 
+void cjgui_internal_renderer_owner_notify_work(void);
+// Capacity is published under the existing text-worker lock. Notify only
+// after releasing it, without capturing any job/preparation/native object.
+static void CjguiTextPreparationNotifyCapacityAfterUnlock(void) {
+    dispatch_async(dispatch_get_main_queue(), ^{ cjgui_internal_renderer_owner_notify_work(); });
+}
+
 static void CjguiTextPreparationRemoveWaiterLocked(CjguiComposablePreparation *preparation) {
     if (!preparation || !preparation.textLayoutWaitTicket) return;
     for (NSUInteger index = 0; index < gCjguiTextPreparationWaiterCount; index++) {
@@ -13155,6 +13350,7 @@ static void CjguiTextPreparationRemoveWaiterLocked(CjguiComposablePreparation *p
             gCjguiTextPreparationReservedBytes -= charge;
         else
             gCjguiTextPreparationReservedBytes = 0;
+        CjguiTextPreparationNotifyCapacityAfterUnlock();
         break;
     }
     preparation.textLayoutWaitTicket = 0;
@@ -13175,6 +13371,7 @@ static void CjguiTextPreparationReleaseSlotLocked(CjguiTextPreparationWorkerJob 
     job.painter = nil;
     job.sourceCredential = nil;
     job.tiles = nil;
+    CjguiTextPreparationNotifyCapacityAfterUnlock();
 }
 
 // Transfers the conservative two-graph reservation from a completed worker
@@ -13192,6 +13389,7 @@ static uint64_t CjguiTextPreparationReleaseSlotKeepingChargeLocked(CjguiTextPrep
     job.painter = nil;
     job.sourceCredential = nil;
     job.tiles = nil;
+    CjguiTextPreparationNotifyCapacityAfterUnlock();
     return charge;
 }
 
@@ -13532,6 +13730,9 @@ static void CjguiRunTextPreparationWorker(CjguiTextPreparationWorkerJob *job) {
     pthread_mutex_unlock(&gCjguiTextPreparationWorkerLock);
     CjguiSelectionBWorkerTrace(job, traceInput, CJGUI_OWNER_TRACE_OBSERVATION_SCALAR, 324,
         (uint64_t)terminalState);
+    // Actual completion/failure, after graph publication and workerLive=false,
+    // wakes the retained mailbox instead of requiring owner-side polling.
+    cjgui_internal_renderer_owner_notify_work();
 }
 
 #ifdef CJGUI_INTERNAL_TESTING
@@ -14406,13 +14607,24 @@ static CjguiPreparedTextNodeLayout *CjguiPaintLayout(CjguiPreparedTextNodeLayout
     }
     return p;
 }
-static CjguiPreparedTextNodeLayout *CjguiReusableReadonlyLayout(CJGuiInternalComposableSceneNode *node,NSString *text,CGFloat scale){
+static CjguiPreparedTextNodeLayout *CjguiReusableReadonlyGeometry(
+    CJGuiInternalComposableSceneNode *node,NSString *text,CGFloat scale){
     CjguiPreparedTextNodeLayout *old=node.preparedTextLayout;
     NSString *key=CjguiReadonlyMetricSignature(node,text,scale);
     if(!old || !key || ![key isEqualToString:old.metricSignature])return nil;
+    return old;
+}
+static CjguiPreparedTextNodeLayout *CjguiReadonlyPaintLayout(
+    CJGuiInternalComposableSceneNode *node,CjguiPreparedTextNodeLayout *geometry,NSString *text){
+    if(!geometry)return nil;
     NSFont *font=nil;
     NSAttributedString *paint=CjguiFreezeTextAttributes(node,text,CjguiComposableDecodeStyleRuns(node.styleRunsSignature),&font);
-    return paint ? CjguiPaintLayout(old,paint) : nil;
+    return paint ? CjguiPaintLayout(geometry,paint) : nil;
+}
+static CjguiPreparedTextNodeLayout *CjguiReusableReadonlyLayout(
+    CJGuiInternalComposableSceneNode *node,NSString *text,CGFloat scale){
+    CjguiPreparedTextNodeLayout *geometry=CjguiReusableReadonlyGeometry(node,text,scale);
+    return CjguiReadonlyPaintLayout(node,geometry,text);
 }
 static CjguiTextRasterSourceCredential *CjguiReadonlyRasterCredential(CJGuiInternalComposableSceneNode *node,
     CjguiPreparedTextNodeLayout *layout,NSString *text,CGFloat scale,NSRect coverage,NSArray *tiles){
@@ -14949,23 +15161,28 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
         CjguiDropTextCpuScratch(metalView, byteCount);
         return nil;
     }
-    NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
-    paragraph.lineBreakMode = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
-        ? NSLineBreakByWordWrapping : (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
-            ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail);
-    paragraph.lineBreakStrategy = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
-        ? NSLineBreakStrategyNone : NSLineBreakStrategyPushOut;
-    // Glyph textures are rasterized with an OPAQUE colour and the node's text
-    // alpha is re-applied as a per-draw multiplier (CjguiEncodeMetalTexture).
-    // This keeps the cached texture and the prepared layout valid across an
-    // opacity animation instead of rebuilding TextKit and re-rasterizing every
-    // frame; a static colour change still invalidates through the texture key.
-    NSColor *textColor = [NSColor colorWithSRGBRed:node.node.textRed green:node.node.textGreen
-                                               blue:node.node.textBlue alpha:1.0];
-    NSFont *baseFont = CjguiComposableFont(node);
-    NSDictionary *attributes = CjguiComposableTypographyAttributesForNode(@{ NSFontAttributeName: baseFont,
-                                  NSForegroundColorAttributeName: textColor,
-                                  NSParagraphStyleAttributeName: paragraph }, node);
+    // A prepared painter already owns its immutable font and paint attributes.
+    // Resolve the live-node fallback only when that path will actually draw.
+    NSDictionary *attributes = nil;
+    if (!prepared) {
+        NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+        paragraph.lineBreakMode = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
+            ? NSLineBreakByWordWrapping : (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
+                ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail);
+        paragraph.lineBreakStrategy = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
+            ? NSLineBreakStrategyNone : NSLineBreakStrategyPushOut;
+        // Glyph textures are rasterized with an OPAQUE colour and the node's text
+        // alpha is re-applied as a per-draw multiplier (CjguiEncodeMetalTexture).
+        // This keeps the cached texture and the prepared layout valid across an
+        // opacity animation instead of rebuilding TextKit and re-rasterizing every
+        // frame; a static colour change still invalidates through the texture key.
+        NSColor *textColor = [NSColor colorWithSRGBRed:node.node.textRed green:node.node.textGreen
+                                                   blue:node.node.textBlue alpha:1.0];
+        NSFont *baseFont = CjguiComposableFont(node);
+        attributes = CjguiComposableTypographyAttributesForNode(@{ NSFontAttributeName: baseFont,
+                                      NSForegroundColorAttributeName: textColor,
+                                      NSParagraphStyleAttributeName: paragraph }, node);
+    }
     NSGraphicsContext *previousContext = NSGraphicsContext.currentContext;
     [NSGraphicsContext setCurrentContext:context];
     [NSGraphicsContext saveGraphicsState];
@@ -15449,8 +15666,22 @@ static uint64_t CjguiComposableRetainedTextTextureBytes(CJGuiInternalSession *ct
 // proofs; unlike focused staging helpers they never configure a live proxy.
 static BOOL CjguiPreparationNativeSourceMatches(CJGuiInternalSession *ctx,
     CjguiComposablePreparation *preparation);
-static BOOL CjguiPreparationActiveNodeCanReuse(CJGuiInternalSession *ctx,
+static const char *CjguiPreparationActiveNodeReuseRefusal(CJGuiInternalSession *ctx,
     CJGuiInternalComposableSceneNode *node, NSString *desiredRuns, CGFloat scale);
+
+static CjguiInternalRendererStatus CjguiPreparationUnsupported(CJGuiInternalSession *ctx,
+    CjguiComposablePreparation *p,CJGuiInternalComposableSceneNode *node,const char *reason) {
+    // Optional, bounded attribution at the actual refusing branch. No body or
+    // business value is logged, and the default path adds no sample storage.
+    if(getenv("CJGUI_PREPARATION_UNSUPPORTED_TRACE") && ctx.preparationFallbackTraceCount<32) {
+        fprintf(stderr,"CJGUI_PREPARATION_UNSUPPORTED sample=%u mono_ns=%llu session=%llu generation=%llu preparation=%llu scene=%llu node=%llu kind=%u phase=%u reason=%s\n",
+            ++ctx.preparationFallbackTraceCount,(unsigned long long)cjgui_internal_renderer_owner_clock_ns(),
+            (unsigned long long)ctx.rendererSessionToken,(unsigned long long)ctx.sessionGeneration,
+            (unsigned long long)p.preparationId,(unsigned long long)p.projectionVersion,
+            (unsigned long long)node.node.nodeId,node.node.nodeKind,(unsigned)p.phase,reason);
+    }
+    return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+}
 
 static void CjguiResetPreparationNodeCursor(CjguiComposablePreparation *p) {
     p.phase = 0; p.tileCursor = 0; p.text = nil; p.key = nil; p.tiles = nil;
@@ -15500,10 +15731,23 @@ static CjguiInternalRendererStatus CjguiAdvanceComposablePreparationUnit(
     if (p.nodeCursor >= p.nodes.count) { p.ready = YES; return CJGUI_INTERNAL_RENDERER_OK; }
     CJGuiInternalComposableSceneNode *node = p.nodes[p.nodeCursor];
     if (p.phase == 0) {
+        if (node.node.nodeKind==CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) {
+            if (![p.declaredImages containsIndex:p.nodeCursor]) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            NSString *key=nil;uint32_t state=0;
+            id<MTLTexture> texture=CjguiComposableImageTexture(ctx,p.sessionToken,node.imageResourcePath,
+                node.imageResourceId,node.imageResourceVersion,nil,&key,&state);
+            if (state==CjguiComposableImageResourceLoading || state==CjguiComposableImageResourceBusy)
+                return CJGUI_INTERNAL_RENDERER_OK;
+            if (texture) {node.imageTexture=texture;node.imageTextureContentKey=key ?: @"";}
+            // Failed/empty ordinary assets preserve the established placeholder
+            // contract. They cannot leave an action permanently pending.
+            CjguiReleaseComposableTextResource(node);node.preparedTextLayout=nil;
+            p.nodeCursor++;return CJGUI_INTERNAL_RENDERER_OK;
+        }
         NSString *desiredRuns = p.runs[@(node.node.nodeId)] ?: @"";
         if (CjguiStagedNodeIsFocusedInput(ctx, node)) {
-            if (!CjguiPreparationActiveNodeCanReuse(ctx, node, desiredRuns, p.scale))
-                return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+            const char *refusal=CjguiPreparationActiveNodeReuseRefusal(ctx,node,desiredRuns,p.scale);
+            if(refusal)return CjguiPreparationUnsupported(ctx,p,node,refusal);
             // This is the SAME actual live source and coverage, never a
             // texture transferred from another view/container/layout graph.
             p.nodeCursor++; return CJGUI_INTERNAL_RENDERER_OK;
@@ -15515,8 +15759,8 @@ static CjguiInternalRendererStatus CjguiAdvanceComposablePreparationUnit(
             p.nodeCursor++; return CJGUI_INTERNAL_RENDERER_OK;
         }
         NSString *text = CjguiComposableGpuTextValue(node);
-        CjguiPreparedTextNodeLayout *paintReuse=CjguiReusableReadonlyLayout(node,text,p.scale);
-        BOOL longColdText = !paintReuse && node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT &&
+        CjguiPreparedTextNodeLayout *geometryReuse=CjguiReusableReadonlyGeometry(node,text,p.scale);
+        BOOL longColdText = !geometryReuse && node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT &&
             text.length >= 1024;
         if (longColdText && !CjguiTextPreparationExtentMemoMatches(node, text)) {
             BOOL handled = NO;
@@ -15536,7 +15780,7 @@ static CjguiInternalRendererStatus CjguiAdvanceComposablePreparationUnit(
         // only this known geometry is unsupported by the private TextKit
         // preparation. A nil layout with drawable geometry remains an error.
         if (!CjguiComposableEmptyTextLayoutRect(node, NULL))
-            return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+            return CjguiPreparationUnsupported(ctx,p,node,"empty_layout_geometry");
         p.text = text; p.coverage = coverage;
         p.key = CjguiComposableTextTextureKey(node, p.scale, p.scale, text, coverage);
         uint64_t plannedBytes = 0;
@@ -15560,7 +15804,8 @@ static CjguiInternalRendererStatus CjguiAdvanceComposablePreparationUnit(
         }
         // A changed source gets its OWN TextKit stack. Never mutate the
         // accepted COW layout or rely on the session's mutable run table.
-        p.sourceLayout = paintReuse ?: CjguiPrepareTextNodeLayout(node, text, p.scale,
+        p.sourceLayout = geometryReuse ? CjguiReadonlyPaintLayout(node,geometryReuse,text) : nil;
+        if (!p.sourceLayout) p.sourceLayout = CjguiPrepareTextNodeLayout(node, text, p.scale,
             CjguiComposableDecodeStyleRuns(desiredRuns), ctx);
         if (!p.sourceLayout) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         p.phase = 1;
@@ -15569,9 +15814,9 @@ static CjguiInternalRendererStatus CjguiAdvanceComposablePreparationUnit(
     if (p.phase == 1) {
         NSRect coverage = p.coverage;
         p.sourceCredential = CjguiReadonlyRasterCredential(node,p.sourceLayout,p.text,p.scale,coverage,p.tiles);
-        if (!p.sourceCredential) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        if (!p.sourceCredential) return CjguiPreparationUnsupported(ctx,p,node,"raster_source_unavailable");
         p.painter = CjguiCreateSealedRasterLayout(p.sourceCredential);
-        if (!p.painter) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        if (!p.painter) return CjguiPreparationUnsupported(ctx,p,node,"sealed_painter_unavailable");
         p.textures = [NSMutableArray arrayWithCapacity:p.tiles.count];
         p.phase = 2; return CJGUI_INTERNAL_RENDERER_OK;
     }
@@ -17834,7 +18079,14 @@ static NSFont *CjguiComposableFontForStyle(double requested, uint32_t fontWeight
     return CjguiComposableFontSnapshotForStyle(requested, fontWeight, fontFamily);
 }
 
+#ifdef CJGUI_INTERNAL_TESTING
+// Counts real node-font resolution, independent of which raster path called it.
+static uint64_t gCjguiComposableFontResolutionTestCount;
+#endif
 static NSFont *CjguiComposableFont(CJGuiInternalComposableSceneNode *node) {
+#ifdef CJGUI_INTERNAL_TESTING
+    gCjguiComposableFontResolutionTestCount++;
+#endif
     return CjguiComposableFontForStyle(
         node ? node.node.fontSize : 13.0,
         node ? node.node.fontWeight : 0,
@@ -18797,7 +19049,6 @@ static id<CAMetalDrawable> CjguiNextDrawable(CAMetalLayer *layer) {
 #endif
     return [layer nextDrawable];
 }
-static BOOL CjguiWakePreparationAdvance(uint64_t session,uint64_t generation,uint64_t preparationId);
 static dispatch_queue_t CjguiDrawableAcquireQueue(CJGuiInternalMetalView *view) {
     // Called only by main-thread slot admission. Queue lifetime follows the
     // view, while an enqueued worker owns only its layer/slot and frozen ids.
@@ -18898,6 +19149,11 @@ static CjguiDrawableLease *CjguiRequestDrawableLease(CJGuiInternalSession *ctx,
             if (observeAcquisition)
                 CjguiFrameCadenceStore(workerRecord,"acquire_worker_end",0,NO);
             dispatch_async(dispatch_get_main_queue(),^{
+                // These two events describe publication HERE on main. The
+                // acquisition worker's thread is already in worker_begin/end.
+                uint64_t publicationThread=0;
+                if (observeAcquisition) (void)pthread_threadid_np(NULL,&publicationThread);
+                const BOOL publicationMain=CjguiIsMainThread();
                 CJGuiInternalMetalView *liveView=weakView;
                 CJGuiInternalSession *live=CjguiLookupSession(session);
                 BOOL same=slot.state==1 && slot.requestSequence==request &&
@@ -18913,7 +19169,7 @@ static CjguiDrawableLease *CjguiRequestDrawableLease(CJGuiInternalSession *ctx,
                     drawable.texture.height==(NSUInteger)size.height;
                 if (!exact || slot.cancelled) {
                     if (same) {
-                        if (live) CjguiFrameCadenceDrawableEvent(live,"acquire_drop",slot,workerThread,NO);
+                        if (live) CjguiFrameCadenceDrawableEvent(live,"acquire_drop",slot,publicationThread,publicationMain);
                         CjguiClearDrawableSlot(slot);
                     }
                     if (live && live.sessionGeneration==generation && !live.destroyed && !live.closeRequested)
@@ -18921,7 +19177,7 @@ static CjguiDrawableLease *CjguiRequestDrawableLease(CJGuiInternalSession *ctx,
                     return;
                 }
                 slot.drawable=drawable;slot.state=2;
-                CjguiFrameCadenceDrawableEvent(live,"acquire_ready",slot,workerThread,NO);
+                CjguiFrameCadenceDrawableEvent(live,"acquire_ready",slot,publicationThread,publicationMain);
                 // Ordinary interaction paint shares the unbound A resource
                 // slot and the existing deferred-paint flag in Cangjie.
                 // Readiness must wake that owner as well as display-only A.
@@ -19233,7 +19489,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_arm(
     if (!sourceBytes || !sourceText) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     CjguiInternalInstalledRangeCandidate frozen = *candidate;
     frozen.sourceTextUtf8 = NULL;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         if (!ctx.ownedTextSessionEnabled || !ctx.rangeTextEditDeltaDeliveryEnabled || !overlay ||
             ctx.sessionGeneration == 0 ||
@@ -19289,7 +19545,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_arm(
 CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_activate(
     uint64_t session, uint64_t nonce, uint64_t proxyGeneration, uint64_t selectionRevision) {
     if (!nonce || !proxyGeneration) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         CjguiInstalledRangeState *state = ctx.sourceHandoffProvisional;
         if (!overlay || !state || state.candidate.nonce != nonce || !state.hasReceipt || !state.proxy ||
@@ -19350,7 +19606,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_confirm_selec
     uint64_t session, uint64_t nonce, uint32_t selectionStart16, uint32_t selectionEnd16) {
     if (!nonce || selectionEnd16 < selectionStart16)
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         CjguiInstalledRangeState *state = ctx.sourceHandoffProvisional;
         if (!overlay || !state || state.candidate.nonce != nonce || !state.hasReceipt || !state.proxy ||
@@ -19384,7 +19640,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_confirm_selec
 CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_finish(
     uint64_t session, uint64_t nonce) {
     if (!nonce) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *state = ctx.sourceHandoffCommitted;
         if (!state || state.candidate.nonce != nonce || ctx.installedRangeBasis != state ||
             ctx.ownedTextSessionNodeId != state.candidate.nodeId ||
@@ -19406,7 +19662,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_finish(
 CjguiInternalRendererStatus cjgui_internal_renderer_source_handoff_cancel(
     uint64_t session, uint64_t nonce) {
     if (!nonce) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *candidate = ctx.sourceHandoffCandidate;
         CjguiInstalledRangeState *provisional = ctx.sourceHandoffProvisional;
         CjguiInstalledRangeState *committed = ctx.sourceHandoffCommitted;
@@ -19931,7 +20187,10 @@ static BOOL CjguiCompletedOriginalCommandKeySourceIsCurrent(CJGuiInternalSession
 
 static void CjguiCancelOriginalCommandKeys(CJGuiInternalSession *ctx,
     CjguiCommandTextContext *command,const char *reason) {
-    if(!command)CjguiCancelPointerTerminalCustody(ctx,reason);
+    if(!command) {
+        CjguiTerminateModalExitInput(ctx,reason);
+        CjguiCancelPointerTerminalCustody(ctx,reason);
+    }
     BOOL changed=NO;
     for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions) {
         CjguiOriginalCommandKey *input=q.originalCommandKey;
@@ -20125,6 +20384,7 @@ static int CjguiRetainOriginalCommandKey(CJGuiInternalSession *ctx,NSEvent *even
         if(input.event==event)return 1; // same original dispatch reentry, never equal-content deduplication
         if(input && !first)first=input;
     }
+    if(ctx.modalExitInput)return CjguiRetainOriginalModalKey(ctx,event);
     if(first.dependency==CjguiOriginalKeyPointerEnd || (!first && ctx.pointerTerminalCustody.originalEnd &&
         !ctx.pointerTerminalCustody.completed))
         return CjguiRetainOriginalPointerKey(ctx,event,first);
@@ -20200,6 +20460,176 @@ static void CjguiFinishOriginalCommandKey(CJGuiInternalSession *ctx,CjguiOrigina
         input.event.keyCode,input.event.timestamp,(unsigned long long)input.completedB.candidate.nonce,(unsigned long)produced);
 }
 
+static BOOL CjguiModalExitSourceMatches(CJGuiInternalSession *ctx,CjguiModalExitInput *exit) {
+    CJGuiInternalComposableSceneOverlay *o=ctx.composableSceneOverlay;
+    CJGuiInternalComposableSceneNode *n=[o activeFocusableNode],*old=exit.target;
+    return ctx && exit && !exit.refusalReason && !ctx.destroyed && exit.window==ctx.window &&
+        exit.generation==ctx.sessionGeneration && exit.binding==ctx.ownedTextSessionBindingEpoch &&
+        NSApp.keyWindow==ctx.window && ctx.window.firstResponder==exit.responder &&
+        (exit.expectsTextClient ? (CjguiInputProxyIsFirstResponder(o) && o.inputProxy==exit.proxy) : !CjguiInputProxyIsFirstResponder(o)) &&
+        n && old && n.node.nodeId==old.node.nodeId && n.node.resourceId==old.node.resourceId &&
+        n.node.nodeKind==old.node.nodeKind && n.node.semanticIncarnation==old.node.semanticIncarnation &&
+        n.node.inputScope==exit.scope && n.node.isInteractive && !n.node.isReadOnly &&
+        o.activeTextBodyGeneration==exit.bodyGeneration && ctx.installedRangeProxyGeneration==exit.proxyGeneration &&
+        o.installedRangeSelectionRevision==exit.selectionRevision &&
+        (!exit.expectsTextClient || ([o.inputProxy.string isEqualToString:exit.body] && NSEqualRanges(o.inputProxy.selectedRange,exit.selection)));
+}
+
+// Only the exact retained event may continue through AppKit's original
+// key-equivalent entry with its current production credentials. Independent
+// Window events still suspend those credentials in sendEvent: below.
+static BOOL CjguiInterpretingOriginalLayerEvent(CJGuiInternalSession *ctx,NSEvent *event) {
+    CjguiOriginalCommandKey *input=ctx.interpretingOriginalCommandKey;
+    return input.dependency==CjguiOriginalKeyModalExit && input.phase==1 && input.event==event &&
+        ctx.materializationInvocation && ctx.callbackProductionInvocation==ctx.materializationInvocation &&
+        CjguiModalExitSourceMatches(ctx,input.modalExit);
+}
+static void CjguiRetireModalExitMetadata(CJGuiInternalSession *ctx,CjguiModalExitInput *exit) {
+    if(!exit)return;
+    NSCAssert(ctx.retainedAfterCaretInputBytes>=exit.chargedBytes,@"modal exit source charge ownership");
+    ctx.retainedAfterCaretInputBytes-=exit.chargedBytes;exit.chargedBytes=0;
+    if(ctx.modalExitInput==exit)ctx.modalExitInput=nil;
+}
+static void CjguiFinishUnusedModalExit(CJGuiInternalSession *ctx,CjguiModalExitInput *exit) {
+    if(!exit.ready)return;
+    for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+        if(q.originalCommandKey.modalExit==exit)return;
+    CjguiRetireModalExitMetadata(ctx,exit);
+}
+static void CjguiTerminateModalExitInput(CJGuiInternalSession *ctx,const char *reason) {
+    CjguiModalExitInput *exit=ctx.modalExitInput;if(!exit)return;
+    exit.refusalReason=@(reason ?: "modal_exit_retired");
+    for(CJGuiInternalQueuedInteraction *q in [ctx.pendingInteractions copy]) {
+        CjguiOriginalCommandKey *input=q.originalCommandKey;
+        if(input.modalExit!=exit)continue;
+        CjguiFinishOriginalCommandKey(ctx,input,exit.refusalReason.UTF8String,0);
+        [ctx.pendingInteractions removeObjectIdenticalTo:q];
+    }
+    CjguiRetireModalExitMetadata(ctx,exit);CjguiOwnerPumpTicketNoteWork(ctx);
+}
+static void CjguiArmModalExitInput(CJGuiInternalSession *ctx,NSEvent *event,
+    CJGuiInternalQueuedInteraction *interaction) {
+    BOOL menu=interaction.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND;
+    BOOL trace=getenv("CJGUI_EARLY_KEY_TRACE") && ctx.layerInputArmTraceCount<32;
+    if(trace) {
+        CJGuiInternalComposableSceneOverlay *overlay=ctx.composableSceneOverlay;
+        CJGuiInternalComposableSceneNode *source=[overlay activeFocusableNode];
+        fprintf(stderr,"CJGUI_LAYER_INPUT_ARM sample=%u phase=attempt ns=%llu kind=%u event=%lu key=%u window=%ld target_window=%ld source=%llu scope=%llu command_valid=%u command_scope=%llu policy=%u marked=%d terminal=%d queued=%d dequeue=%llu binding=%llu bytes=%llu\n",
+            ++ctx.layerInputArmTraceCount,(unsigned long long)cjgui_internal_renderer_owner_clock_ns(),interaction.kind,
+            (unsigned long)event.type,event.keyCode,(long)event.windowNumber,(long)ctx.window.windowNumber,
+            (unsigned long long)source.node.nodeId,(unsigned long long)source.node.inputScope,
+            interaction.commandSource.isValid,(unsigned long long)interaction.commandFocusScope,
+            interaction.commandSource.completionPolicy,overlay.inputProxy.hasMarkedText,overlay.compositionTerminalInFlight,
+            [ctx.pendingInteractions indexOfObjectIdenticalTo:interaction]!=NSNotFound,
+            (unsigned long long)ctx.inputDequeueSerial,(unsigned long long)ctx.ownedTextSessionBindingEpoch,
+            (unsigned long long)ctx.retainedAfterCaretInputBytes);
+    }
+    if((menu || interaction.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND) &&
+        interaction.commandSource.completionPolicy==1)return;
+    CJGuiInternalComposableSceneOverlay *o=ctx.composableSceneOverlay;
+    CJGuiInternalComposableSceneNode *target=[o activeFocusableNode];
+    if(!ctx || !event || (event.type!=NSEventTypeKeyDown &&
+            !(menu && (event.type==NSEventTypeLeftMouseDown || event.type==NSEventTypeRightMouseDown))) ||
+        (event.window!=ctx.window && !(menu && !event.windowNumber &&
+            interaction.commandSourceWasKeyWindow && NSApp.keyWindow==ctx.window)) ||
+        !interaction || ctx.destroyed || !target ||
+        o.inputProxy.hasMarkedText || o.compositionTerminalInFlight ||
+        (interaction.kind!=CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE &&
+         interaction.kind!=CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND &&
+         interaction.kind!=CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_MENU_COMMAND &&
+         interaction.kind!=CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER) ||
+        ((menu || interaction.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_WINDOW_COMMAND) &&
+         (!interaction.commandSource.isValid || interaction.commandFocusScope!=target.node.inputScope)) ||
+        ctx.nextModalExitIdentity==UINT64_MAX)return;
+    CjguiModalExitInput *exit=ctx.modalExitInput;
+    BOOL continuing=exit.ready && ctx.interpretingOriginalCommandKey.modalExit==exit;
+    if(!continuing) {CjguiTerminateModalExitInput(ctx,"new_exit_interaction");exit=nil;}
+    uint64_t charge=256+(CjguiInputProxyIsFirstResponder(o) ? 2*(uint64_t)o.inputProxy.string.length : 0);
+    uint64_t other=ctx.retainedAfterCaretInputBytes-exit.chargedBytes;
+    if(charge>kCjguiAfterCaretByteCapacity || other>kCjguiAfterCaretByteCapacity-charge) {
+        CjguiTerminateModalExitInput(ctx,"new_layer_source_capacity");
+        ctx.pendingInputQueueFullNotice=YES;CjguiOwnerPumpTicketNoteWork(ctx);return;
+    }
+    if(!exit)exit=[CjguiModalExitInput new];
+    // A retained Enter/shortcut can itself enqueue the next real operation.
+    // Reuse custody of its original successors, reset only the transport
+    // dependency, and let the next owner decision choose their live scope.
+    exit.request=0;exit.dequeueSerial=0;exit.dequeued=NO;exit.decided=NO;exit.exits=NO;exit.ready=NO;
+    exit.identity=++ctx.nextModalExitIdentity;exit.generation=ctx.sessionGeneration;
+    exit.window=ctx.window;exit.binding=ctx.ownedTextSessionBindingEpoch;
+    exit.scope=target.node.inputScope;exit.interaction=interaction;exit.target=target;
+    exit.proxy=o.inputProxy;exit.body=CjguiInputProxyIsFirstResponder(o) ? o.inputProxy.string : nil;
+    exit.selection=o.inputProxy.selectedRange;
+    exit.expectsTextClient=CjguiInputProxyIsFirstResponder(o);exit.responder=ctx.window.firstResponder;
+    exit.bodyGeneration=o.activeTextBodyGeneration;exit.proxyGeneration=ctx.installedRangeProxyGeneration;
+    exit.selectionRevision=o.installedRangeSelectionRevision;
+    exit.chargedBytes=charge;ctx.retainedAfterCaretInputBytes=other+charge;ctx.modalExitInput=exit;
+    if(trace)fprintf(stderr,"CJGUI_LAYER_INPUT_ARM phase=armed ns=%llu identity=%llu dequeue=%llu\n",
+        (unsigned long long)cjgui_internal_renderer_owner_clock_ns(),(unsigned long long)exit.identity,
+        (unsigned long long)ctx.inputDequeueSerial);
+}
+static int CjguiRetainOriginalModalKey(CJGuiInternalSession *ctx,NSEvent *event) {
+    CjguiModalExitInput *exit=ctx.modalExitInput;
+    if(!exit)return 0;
+    if(exit.refusalReason || exit.generation!=ctx.sessionGeneration || exit.window!=ctx.window ||
+        NSApp.keyWindow!=ctx.window) {CjguiTerminateModalExitInput(ctx,"modal_exit_window_changed");return -1;}
+    uint64_t charge=256+[event.characters lengthOfBytesUsingEncoding:NSUTF8StringEncoding];
+    if(charge>kCjguiAfterCaretByteCapacity || ctx.retainedAfterCaretInputBytes>kCjguiAfterCaretByteCapacity-charge ||
+        CjguiPendingInteractionOccupancy(ctx)+CJGUI_INSTALLED_RANGE_RESERVED_FIFO_SLOTS>=kCjguiPendingInteractionCapacity) {
+        CjguiTerminateModalExitInput(ctx,"modal_exit_key_capacity");ctx.pendingInputQueueFullNotice=YES;
+        CjguiOwnerPumpTicketNoteWork(ctx);return -1;
+    }
+    CjguiOriginalCommandKey *input=[CjguiOriginalCommandKey new];input.dependency=CjguiOriginalKeyModalExit;
+    input.modalExit=exit;input.event=event;input.window=ctx.window;input.chargedBytes=charge;
+    input.origin=(CjguiInternalCommandSource){.sessionGeneration=ctx.sessionGeneration};
+    CJGuiInternalQueuedInteraction *q=[[CJGuiInternalQueuedInteraction alloc]
+        initWithKind:CJGUI_INTERNAL_RENDERER_EVENT_NONE recordIndex:0 selectionStart:0 selectionEnd:0
+        formText:@"" nodeId:exit.target.node.nodeId projectionVersion:ctx.composableSceneVersion
+        resourceId:exit.target.node.resourceId nodeKind:exit.target.node.nodeKind];
+    q.originalCommandKey=input;[ctx.pendingInteractions addObject:q];ctx.retainedAfterCaretInputBytes+=charge;
+    CjguiOwnerPumpTicketNoteWork(ctx);return 1;
+}
+static BOOL CjguiMaterializeOriginalModalKey(CJGuiInternalSession *ctx,CjguiOriginalCommandKey *input) {
+    CjguiModalExitInput *exit=input.modalExit;
+    if(exit.refusalReason || ctx.modalExitInput!=exit) {
+        CjguiFinishOriginalCommandKey(ctx,input,exit.refusalReason.UTF8String ?: "modal_exit_retired",0);
+        [ctx.pendingInteractions removeObjectAtIndex:0];return YES;
+    }
+    if(!exit.ready)return NO;
+    if(!CjguiModalExitSourceMatches(ctx,exit)) {CjguiTerminateModalExitInput(ctx,"modal_exit_target_changed");return YES;}
+    [ctx.pendingInteractions removeObjectAtIndex:0];
+    id invocation=[NSObject new];ctx.materializationInvocation=invocation;
+    input.phase=1;ctx.interpretingOriginalCommandKey=input;
+    @try {
+        CjguiWithInputProduction(ctx,^{(void)CjguiDispatchRetainedOriginalModalEvent(ctx,input.event);});
+        // Only this invocation can advance the expected live source. A later
+        // external edit/focus cannot authorize a queued key for another object.
+        if(ctx.modalExitInput==exit && exit.ready) {
+            CJGuiInternalComposableSceneOverlay *overlay=ctx.composableSceneOverlay;
+            CJGuiInternalComposableSceneNode *actual=[overlay activeFocusableNode];
+            BOOL textClient=CjguiInputProxyIsFirstResponder(overlay);
+            uint64_t charge=256+(textClient ? 2*(uint64_t)overlay.inputProxy.string.length : 0);
+            uint64_t other=ctx.retainedAfterCaretInputBytes-exit.chargedBytes;
+            if(!actual || charge>kCjguiAfterCaretByteCapacity || other>kCjguiAfterCaretByteCapacity-charge)
+                CjguiTerminateModalExitInput(ctx,"layer_interpretation_source_unavailable");
+            else {
+                // Tab may actually move native focus within this invocation.
+                // Follow that fact; an independent focus change still fails
+                // the source check before any later original is interpreted.
+                ctx.retainedAfterCaretInputBytes=other+charge;exit.chargedBytes=charge;
+                exit.target=actual;exit.scope=actual.node.inputScope;exit.proxy=overlay.inputProxy;
+                exit.expectsTextClient=textClient;exit.responder=ctx.window.firstResponder;
+                exit.body=textClient ? overlay.inputProxy.string : nil;exit.selection=overlay.inputProxy.selectedRange;
+                exit.bodyGeneration=overlay.activeTextBodyGeneration;
+                exit.proxyGeneration=ctx.installedRangeProxyGeneration;
+                exit.selectionRevision=overlay.installedRangeSelectionRevision;
+            }
+        }
+    } @finally {ctx.materializationInvocation=nil;ctx.interpretingOriginalCommandKey=nil;}
+    NSUInteger produced=CjguiMoveInputProductionToHead(ctx,invocation);
+    CjguiFinishOriginalCommandKey(ctx,input,NULL,produced);CjguiFinishUnusedModalExit(ctx,exit);return YES;
+}
+
 static void CjguiCompleteOriginalCommandKeys(CJGuiInternalSession *ctx,CjguiOwnerSelectionHandoff *h,
     CjguiCaretInputSnapshot *actual) {
     for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions) {
@@ -20255,6 +20685,7 @@ static BOOL CjguiMaterializeOriginalCommandKeyAtHead(CJGuiInternalSession *ctx) 
     CjguiOriginalCommandKey *input=head.originalCommandKey;
     if(!input)return YES;
     if(input.phase==1)return NO;
+    if(input.dependency==CjguiOriginalKeyModalExit)return CjguiMaterializeOriginalModalKey(ctx,input);
     const char *refusal=input.refusalReason.UTF8String;
     if(!refusal && (ctx.destroyed || input.origin.sessionGeneration!=ctx.sessionGeneration ||
         input.window!=ctx.window || NSApp.keyWindow!=ctx.window))refusal="original_key_window_or_generation";
@@ -20329,7 +20760,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_admit_command_text_context(
     uint64_t session,uint64_t serial,uint64_t token,uint64_t sequence,uint64_t node,int64_t resource,
     uint32_t kind,uint64_t binding,int64_t owner,uint64_t handoffId) {
     if (!serial || !token || !sequence) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCommandTextContext *command=ctx.commandTextContext;
         CJGuiInternalQueuedInteraction *actual=ctx.pumpedCommandInteraction;
         uint64_t originalSequence=CjguiOriginalCommandActionSequence(ctx,actual,command);
@@ -20376,7 +20807,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_admit_command_text_context(
 
 CjguiInternalRendererStatus cjgui_internal_renderer_finish_command_text_context_admission(
     uint64_t session,uint64_t sequence,uint64_t node,int64_t resource,uint32_t kind,uint64_t admittedSerial) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCommandTextContext *command=ctx.commandTextContext;
         if(!command.valid || !sequence || CjguiOriginalCommandActionSequence(ctx,ctx.pumpedCommandInteraction,command)!=sequence ||
             command.origin.targetNodeId!=node || command.origin.targetResourceId!=resource ||
@@ -20552,7 +20983,7 @@ static CjguiCaretInputSnapshot *CjguiPendingOwnerCaretSource(CJGuiInternalSessio
 
 CjguiInternalRendererStatus cjgui_internal_renderer_parked_text_input_focus(uint64_t session,
     uint64_t window,uint64_t context,uint64_t node,int64_t resource,uint32_t kind) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCaretInputSnapshot *a=CjguiPendingOwnerCaretSource(ctx);
         BOOL resident=NO;
         if (!a && ctx.composableSceneOverlay.sourceInputParked &&
@@ -20676,7 +21107,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_resident_caret_source(uint64
     uint8_t *bytes,uint64_t capacity) {
     if (!meta || !bytes) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     memset(meta,0,21*sizeof(int64_t));
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalQueuedInteraction *head=ctx.activeCaretNavigation;
         CjguiCaretInputBranch *branch=head.caretInputBranch;
         CjguiCaretInputSnapshot *a=head.residentCaretSource,*actual=branch.result;
@@ -20911,7 +21342,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_begin_with_pur
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     NSString *doc=[[NSString alloc] initWithUTF8String:document];
     if(!doc.length)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         CjguiInstalledRangeIntentState *claim=ctx.claimedInstalledRangeIntent;
         // A pure navigation cannot retire or overtake an already admitted A
@@ -21053,7 +21484,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_begin(uint64_t
 
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_seal(uint64_t session,uint64_t id,
     int64_t afterVersion,int64_t revision,int64_t anchor,int64_t focus,int64_t editTicket) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         if(!h.valid || h.identity!=id || h.generation!=ctx.sessionGeneration ||
             afterVersion<h.beforeVersion ||
@@ -21081,7 +21512,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_seal(uint64_t 
 CjguiInternalRendererStatus cjgui_internal_renderer_accept_owner_command_receipt(uint64_t session,uint64_t id,
     uint64_t generation,uint64_t sequence,uint64_t previous,int64_t beforeVersion,int64_t afterVersion,
     int64_t revision,int64_t anchor,int64_t focus,uint32_t applied) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         if(!h.valid || !h.sealed || h.completed || h.identity!=id || h.generation!=generation ||
             generation!=ctx.sessionGeneration || h.completionPolicy!=1 || h.caretInputSequence!=sequence ||
@@ -21109,7 +21540,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_accept_owner_command_receipt
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_retire_owner_command_presentation(uint64_t session,uint64_t id) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         if(!h.valid || !h.sealed || h.completed || h.identity!=id || h.completionPolicy!=1 || !h.ownerReceiptAccepted)
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -21122,7 +21553,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_retire_owner_command_present
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_abort(uint64_t session,uint64_t id) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         if(!h || h.identity!=id)return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         CjguiRetireOwnerHandoff(ctx,h,"owner_authority_superseded");return CJGUI_INTERNAL_RENDERER_OK;
@@ -21130,7 +21561,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_abort(uint64_t
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_state(uint64_t session,uint64_t id) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         return h.valid && !h.completed && h.identity==id && h.generation==ctx.sessionGeneration
             ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -21138,7 +21569,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_state(uint64_t
 }
 
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_bind(uint64_t session,uint64_t id,uint64_t transfer) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         CjguiSelectionTransferCapsule *c=ctx.selectionTransferCapsule;
         if(!h.valid || !h.sealed || h.completed || h.identity!=id || !h.branch.valid ||
@@ -21165,7 +21596,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_bind(uint64_t 
 
 CjguiInternalRendererStatus cjgui_internal_renderer_owner_handoff_complete(uint64_t session,uint64_t id,
     uint64_t transfer,int64_t version,int64_t revision,int64_t anchor,int64_t focus) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiOwnerSelectionHandoff *h=ctx.ownerSelectionHandoff;
         CjguiInstalledRangeState *b=ctx.installedRangeBasis;
         // A genuinely unchanged callback can settle against its still-real A.
@@ -21357,7 +21788,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_peek_caret_recovery(uint64_t
     uint64_t *metadata,uint32_t count) {
     if(!metadata || count!=21)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     memset(metadata,0,21*sizeof(uint64_t));
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
         CjguiAfterCaretTextInput *input=ctx.rejectedAfterCaretInputs.firstObject;
         if(!input)return CJGUI_INTERNAL_RENDERER_OK;
         CjguiCaretInputSnapshot *origin=input.origin;
@@ -21379,7 +21810,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_peek_caret_recovery(uint64_t
 CjguiInternalRendererStatus cjgui_internal_renderer_copy_caret_recovery(uint64_t session,
     uint64_t generation,uint64_t recoveryId,uint8_t *payload,uint32_t payloadLength,
     uint8_t *reason,uint32_t reasonLength) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
         CjguiAfterCaretTextInput *input=ctx.rejectedAfterCaretInputs.firstObject;
         if(ctx.sessionGeneration!=generation || !input || input.recoveryId!=recoveryId)
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -21394,7 +21825,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_copy_caret_recovery(uint64_t
 }
 CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_recovery(uint64_t session,
     uint64_t generation,uint64_t recoveryId,uint32_t disposition) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
         if(ctx.sessionGeneration!=generation || !recoveryId)return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         NSNumber *key=@(recoveryId);
         if(disposition==1) {
@@ -21422,7 +21853,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_recovery(uint64
 }
 CjguiInternalRendererStatus cjgui_internal_renderer_cancel_caret_prefix(uint64_t session,
     uint64_t windowToken,uint64_t bindingEpoch) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx){
         CjguiCaretInputBranch *branch=ctx.caretInputBranch ?: ctx.activeCaretNavigation.caretInputBranch;
         if(!branch)return CJGUI_INTERNAL_RENDERER_OK;
         if(branch.origin.candidate.windowInstanceToken!=windowToken ||
@@ -21437,7 +21868,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_cancel_caret_prefix(uint64_t
 CjguiInternalRendererStatus cjgui_internal_renderer_mark_caret_edit_applied(
     uint64_t session, uint64_t generation, uint64_t sequence, uint64_t previous,
     int64_t beforeVersion, int64_t afterVersion, uint64_t contextEpoch, uint64_t windowToken) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalQueuedInteraction *active = ctx.activeCaretNavigation;
         CjguiCaretInputBranch *branch = active.caretInputBranch;
         if (ctx.sessionGeneration != generation || !active || !branch.valid ||
@@ -21466,7 +21897,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_caret_input_terminal(uint64_
     uint64_t generation,uint64_t sequence,uint64_t previous,uint8_t *outRetired) {
     if(!outRetired || !generation || !sequence)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     *outRetired=0;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if(ctx.sessionGeneration!=generation)return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         if(ctx.retiredCaretGeneration==generation && ctx.retiredCaretSequence==sequence &&
             ctx.retiredCaretPrevious==previous) {
@@ -21484,7 +21915,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_caret_input(uint64_t 
     int64_t ownerVersion,uint64_t contextEpoch,uint64_t windowToken) {
     if(!generation || !sequence || previous==UINT64_MAX || previous+1!=sequence ||
         outcome<1 || outcome>3) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalQueuedInteraction *active=ctx.activeCaretNavigation;
         CjguiCaretInputBranch *branch=active.caretInputBranch;
         if(ctx.sessionGeneration!=generation || !active || !branch.valid ||
@@ -22661,7 +23092,7 @@ static BOOL CjguiSelectionTransferCellState(uint64_t session, uint64_t transferI
 
 static CjguiInternalRendererStatus CjguiSelectionTransferBeginFinalizingWithPrecheck(
     uint64_t session, uint64_t transferId) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *capsule = ctx.selectionTransferCapsule;
         if (capsule) {
             CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
@@ -22733,7 +23164,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_capture_a
     CjguiInternalSelectionTransferCandidate frozen = *candidate;
     frozen.sourceBodyUtf8 = NULL;
     frozen.targetBodyUtf8 = NULL;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         CJGuiInternalComposableInputProxy *proxy = overlay.inputProxy;
         uint32_t state = CJGUI_SELECTION_TRANSFER_EMPTY;
@@ -22870,7 +23301,7 @@ static CjguiInternalRendererStatus CjguiCaptureSelectionTransferCurrent(
     NSString *targetText=[[NSString alloc] initWithData:targetBytes encoding:NSUTF8StringEncoding];
     if (!targetText || candidate->targetAnchor16>targetText.length || candidate->targetFocus16>targetText.length)
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *overlay=ctx.composableSceneOverlay;
         CJGuiInternalComposableInputProxy *proxy=overlay.inputProxy;
         uint32_t state=0; uint8_t cancelled=0;
@@ -23267,7 +23698,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_verify_b(
     uint64_t session, uint64_t transferId, CjguiInternalSelectionTransferReceipt *outReceipt) {
     if (outReceipt) *outReceipt = (CjguiInternalSelectionTransferReceipt){0};
     if (!outReceipt || !transferId) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *capsule = ctx.selectionTransferCapsule;
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         CJGuiInternalComposableInputProxy *proxy = overlay.inputProxy;
@@ -24152,7 +24583,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_prepare_b
     __block uint64_t startedMono = 0, mainSpanNs = 0, cumulativeMainNs = 0;
     __block uint64_t workerStartedNs = 0, workerCompletedNs = 0;
     __block BOOL traceCandidate = NO;
-    CjguiInternalRendererStatus status = CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    CjguiInternalRendererStatus status = CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         uint64_t serviceStart = cjgui_internal_renderer_owner_clock_ns();
         CjguiSelectionTransferCapsule *capsule = ctx.selectionTransferCapsule;
         uint32_t state = CJGUI_SELECTION_TRANSFER_EMPTY; uint8_t cancelled = 0;
@@ -24416,7 +24847,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_candidate_selection(
     uint64_t transferId, uint64_t deadlineNs, uint8_t *outReady) {
     if (!outReady) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     *outReady=0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *c=ctx.selectionTransferCapsule;
         if (!c || c.transferId!=transferId || !c.candidateSceneTransfer)
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -24543,7 +24974,7 @@ static CjguiInternalRendererStatus CjguiInstallSelectionTransferB(
     __block uint64_t decisionBeforeNs=0, decisionAfterNs=0;
     __block BOOL traceDecision=NO;
     __block uint64_t decisionScene=0, decisionGeneration=0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *c=ctx.selectionTransferCapsule;
         uint64_t installGeneration = ctx.sessionGeneration;
         uint64_t installPhase = CjguiSelectionMainPhase(ctx, c, CJGUI_OWNER_TRACE_PHASE_BEGIN, 337, 0);
@@ -24755,7 +25186,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_retire_reversed_drag_edge_re
         generation != pointerGeneration || fifoBinding != gesture || last != pointerSequence ||
         phase != CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE)
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (ctx.sessionGeneration != pointerGeneration || !CjguiDragEdgeOriginalRequestMatches(ctx,
                 gesture, node, resource, binding, identity, requestGeneration, requested, accepted, scene))
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -24784,7 +25215,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_ack_drag_edge_viewport(
     uint64_t session, uint64_t gesture, uint64_t node, int64_t resource,
     uint64_t binding, uint64_t identity, int64_t requestGeneration,
     int64_t requested, int64_t accepted, uint64_t scene, uint32_t phase) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *o = ctx.composableSceneOverlay;
         if (phase == 5) {
             // A terminal candidate only retires the exact phase-2 viewport
@@ -24877,7 +25308,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_offer_pointer_capture_contin
     uint64_t session, const CjguiInternalPointerCaptureContinuationOffer *offer) {
     if (!offer) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     CjguiInternalPointerCaptureContinuationOffer frozen = *offer;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (!ctx.composableSceneOverlay) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
         return [ctx.composableSceneOverlay offerPointerCaptureContinuation:&frozen];
     });
@@ -24888,7 +25319,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_capture_con
     uint64_t selectionTransferId, int64_t ownerVersion, int64_t ownerRevision) {
     if (!gestureEpoch || !candidateSceneVersion || !selectionTransferId || ownerVersion < 0 || ownerRevision < 0)
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (!ctx.composableSceneOverlay) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
         return [ctx.composableSceneOverlay completePointerCaptureContinuation:gestureEpoch
             scene:candidateSceneVersion transfer:selectionTransferId ownerVersion:ownerVersion
@@ -24898,7 +25329,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_capture_con
 
 CjguiInternalRendererStatus cjgui_internal_renderer_discard_pointer_capture_continuation(
     uint64_t session, uint64_t gestureEpoch, uint64_t candidateSceneVersion) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (!ctx.composableSceneOverlay) return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
         return [ctx.composableSceneOverlay discardPointerCaptureContinuation:gestureEpoch
             scene:candidateSceneVersion];
@@ -24941,7 +25372,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_publish_installed_selection_
     const CjguiInternalSelectionTransferReceipt *receipt,int64_t version,int64_t revision) {
     if(!receipt)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     CjguiInternalSelectionTransferReceipt frozen=*receipt;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         return CjguiPublishInstalledSelectionOwnerOnMain(ctx,generation,window,context,&frozen,version,revision);
     });
 }
@@ -24978,7 +25409,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_freeze_pointer_selection_dis
     int64_t anchor,int64_t focus,uint64_t *outIdentity) {
     if(!origin || !outIdentity)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     *outIdentity=0;CjguiInternalPointerSelectionOrigin v=*origin;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalQueuedInteraction *q=ctx.pumpedPointerInteraction;
         if(!q || q.kind!=v.phase || q.pointerStreamPhase!=v.phase || q.nodeKind!=CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
             v.generation!=ctx.sessionGeneration || q.pointerStreamSessionGeneration!=v.generation ||
@@ -25006,7 +25437,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_freeze_pointer_selection_dis
     });
 }
 CjguiInternalRendererStatus cjgui_internal_renderer_bind_pointer_selection_dispatch(uint64_t session,uint64_t identity,uint64_t transfer) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiPointerSelectionDispatchProof *p=ctx.pointerSelectionDispatch;
         CjguiSelectionTransferCapsule *c=ctx.selectionTransferCapsule;CjguiCaretInputSnapshot *a=p.source;
         if(!identity || p.identity!=identity || !a || c.transferId!=transfer || c.window!=p.window ||
@@ -25025,7 +25456,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_selection_d
     int64_t version,int64_t revision,int64_t anchor,int64_t focus,uint8_t coversEnd) {
     if(!receipt || coversEnd>2)return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     CjguiInternalSelectionTransferReceipt frozen=*receipt;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiPointerSelectionDispatchProof *p=ctx.pointerSelectionDispatch;
         if(!identity || p.identity!=identity || p.generation!=generation || p.window!=ctx.window ||
             (p.original.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END ? !coversEnd : coversEnd!=0))
@@ -25064,7 +25495,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_complete_pointer_selection_d
     });
 }
 CjguiInternalRendererStatus cjgui_internal_renderer_refuse_pointer_selection_dispatch(uint64_t session,uint64_t identity) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiPointerSelectionDispatchProof *p=ctx.pointerSelectionDispatch;
         CjguiPointerTerminalCustody *terminal=ctx.pointerTerminalCustody;
         if(!identity && terminal && !terminal.completed &&
@@ -25092,7 +25523,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_selection_paint_publi
     int64_t ownerRevision, uint8_t proxyOnly, uint8_t *outNeedsProjection) {
     if (!outNeedsProjection) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     *outNeedsProjection = 0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *basis = ctx.installedRangeBasis;
         if (!transferId || ctx.selectionPaintTransferId != transferId ||
             generation != ctx.sessionGeneration || generation != ctx.selectionPaintSessionGeneration ||
@@ -25141,7 +25572,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_finish_selection_paint_publi
 CjguiInternalRendererStatus cjgui_internal_renderer_stage_selection_paint_publication(
     uint64_t session, uint64_t transferId, uint64_t generation, uint64_t binding,
     int64_t ownerVersion, int64_t ownerRevision, uint64_t sceneVersion) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         // A proxy-only publication has already retired this paint obligation.
         if (!ctx.selectionPaintTransferId) return CJGUI_INTERNAL_RENDERER_OK;
         if (ctx.selectionPaintTransferId != transferId || generation != ctx.sessionGeneration ||
@@ -25158,7 +25589,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_selection_paint_public
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_restore_a(
     uint64_t session, uint64_t transferId) {
     if (!transferId) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *capsule = ctx.selectionTransferCapsule;
         CjguiCancelSelectionTransferBPreparation(capsule);
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
@@ -25285,6 +25716,13 @@ static void CjguiEarlyKeyTrace(CJGuiInternalSession *ctx, NSEvent *event,
     if (!getenv("CJGUI_EARLY_KEY_TRACE") || !ctx || ![event isKindOfClass:[NSEvent class]] ||
         (event.type != NSEventTypeKeyDown && event.type != NSEventTypeKeyUp) ||
         gCjguiEarlyKeyRecordCount >= 512) return;
+    const char *filter=getenv("CJGUI_EARLY_KEY_FILTER");
+    if (filter && *filter) {
+        char list[160], key[16];
+        snprintf(list,sizeof(list),",%.150s,",filter);
+        snprintf(key,sizeof(key),",%u,",(unsigned)event.keyCode);
+        if (!strstr(list,key)) return;
+    }
     NSNumber *identity = objc_getAssociatedObject(event, &gCjguiEarlyKeyIdentityKey);
     if (!identity) {
         identity = @(gCjguiEarlyKeyNextIdentity++);
@@ -25346,9 +25784,11 @@ static void CjguiOwnedPointerTrace(CJGuiInternalSession *ctx,NSEvent *event,cons
 @interface CJGuiInternalWindow : NSWindow
 @property(nonatomic, weak) CJGuiInternalSession *cjguiSession;
 - (void)dispatchRetainedOriginalKeyUp:(NSEvent *)event;
+- (void)dispatchRetainedOriginalModalEvent:(NSEvent *)event;
 @end
 @implementation CJGuiInternalWindow
 - (void)dispatchRetainedOriginalKeyUp:(NSEvent *)event { [super sendEvent:event]; }
+- (void)dispatchRetainedOriginalModalEvent:(NSEvent *)event { [super sendEvent:event]; }
 - (void)keyDown:(NSEvent *)event {
     CJGuiInternalSession *ctx = self.cjguiSession;
     CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
@@ -25371,6 +25811,7 @@ static void CjguiOwnedPointerTrace(CJGuiInternalSession *ctx,NSEvent *event,cons
 }
 - (void)sendEvent:(NSEvent *)event {
     CJGuiInternalSession *ctx=self.cjguiSession;
+    if(CjguiInterpretingOriginalLayerEvent(ctx,event)) {[super sendEvent:event];return;}
     id invocation=ctx.materializationInvocation,callback=ctx.callbackProductionInvocation;
     CjguiCaretInputBranch *branch=ctx.materializingAfterCaretBranch;
     CJGuiInternalComposableInputProxy *proxy=(id)ctx.composableSceneOverlay.inputProxy;
@@ -25434,6 +25875,18 @@ static void CjguiOwnedPointerTrace(CJGuiInternalSession *ctx,NSEvent *event,cons
     }
 }
 @end
+static BOOL CjguiDispatchRetainedOriginalModalEvent(CJGuiInternalSession *ctx,NSEvent *event) {
+    CjguiOriginalCommandKey *input=ctx.interpretingOriginalCommandKey;
+    if(!input || input.dependency!=CjguiOriginalKeyModalExit || input.phase!=1 ||
+        input.event!=event || input.originalDefaultDispatched || !CjguiModalExitSourceMatches(ctx,input.modalExit))return NO;
+    input.originalDefaultDispatched=YES;
+    // Command-key equivalents enter through NSApplication before Window.
+    // Resume that same synchronous system route for the held NSEvent; do not
+    // post/recreate an event or directly manufacture paste/text callbacks.
+    if(input.capturedKeyEquivalent)[NSApp sendEvent:event];
+    else [(CJGuiInternalWindow *)ctx.window dispatchRetainedOriginalModalEvent:event];
+    return YES;
+}
 static BOOL CjguiDispatchRetainedOriginalKeyUp(CJGuiInternalSession *ctx,CjguiOriginalCommandKey *input) {
     if(!ctx || ctx.interpretingOriginalCommandKey!=input || input.phase!=1 || input.originalDefaultDispatched ||
         input.event.type!=NSEventTypeKeyUp || input.window!=ctx.window || input.event.window!=ctx.window ||
@@ -25484,7 +25937,7 @@ static BOOL CjguiSelectionTransferRetainInput(CJGuiInternalSession *ctx, uint32_
 CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_selection_transfer(
     uint64_t session,uint64_t transferId,uint64_t generation,
     uint64_t sequence,uint64_t previousSequence) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *capsule=ctx.selectionTransferCapsule;
         CJGuiInternalQueuedInteraction *active=ctx.activeCaretNavigation;
         CjguiCaretInputBranch *branch=active.caretInputBranch;
@@ -25556,7 +26009,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_selection_transfe
 
 CjguiInternalRendererStatus cjgui_internal_renderer_bind_caret_projection_transfer(
     uint64_t session,uint64_t transferId,uint64_t generation,uint64_t sequence,uint64_t previousSequence) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInternalRendererStatus status=cjgui_internal_renderer_bind_caret_selection_transfer(
             session,transferId,generation,sequence,previousSequence);
         if(status!=CJGUI_INTERNAL_RENDERER_OK)return status;
@@ -25741,7 +26194,7 @@ static BOOL CjguiSelectionTransferDeferNativeInput(CJGuiInternalSession *ctx, ui
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_replay_input(
     uint64_t session, uint64_t transferId) {
     if (!transferId) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiSelectionTransferCapsule *capsule = ctx.selectionTransferCapsule;
         CJGuiInternalComposableSceneOverlay *overlay = ctx.composableSceneOverlay;
         if (!capsule || capsule.transferId != transferId || ctx.selectionTransferId != transferId ||
@@ -25851,7 +26304,7 @@ static CjguiInternalRendererStatus CjguiDiscardSelectionTransferCapsuleOnMain(
 CjguiInternalRendererStatus cjgui_internal_renderer_selection_transfer_discard_capsule(
     uint64_t session, uint64_t transferId) {
     if (!transferId) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         return CjguiDiscardSelectionTransferCapsuleOnMain(ctx, ctx.selectionTransferCapsule,
             transferId, ctx.sessionGeneration);
     });
@@ -25913,7 +26366,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_installed_range_active_recei
     uint64_t session, uint64_t nonce, CjguiInternalInstalledRangeReceipt *outReceipt) {
     if (!nonce || !outReceipt) return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     memset(outReceipt, 0, sizeof(*outReceipt));
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         return CjguiReadActiveInstalledRangeReceiptOnMain(ctx, nonce, outReceipt);
     });
 }
@@ -25928,7 +26381,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_unchanged_capture_receipt(
     if (!nonce || !acceptedScene || !gesture || !nodeId || !captureBinding || !outReceipt)
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     memset(outReceipt, 0, sizeof(*outReceipt));
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CJGuiInternalComposableSceneOverlay *o = ctx.composableSceneOverlay;
         if (ctx.closeRequested || ctx.composableSceneVersion != acceptedScene ||
             !o.pointerCaptureActive || o.pointerCaptureGestureEpoch != gesture ||
@@ -28050,6 +28503,13 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
     for (CJGuiInternalComposableSceneNode *node in [self.nodes reverseObjectEnumerator]) {
         if (node.node.isInteractive && CjguiComposableNodeContainsPoint(node, point, self) &&
             CjguiPointInComposableNodeClip(point, node, self)) {
+            // The accepted backdrop is a barrier even when a higher modal
+            // child already matched. Otherwise a smaller background control
+            // contained by that child's rect can steal the hit below it.
+            if (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_LAYER_BACKDROP) {
+                if (!best) best = node;
+                break;
+            }
             NSRect nodeRect = CjguiComposableRect(node, self);
             // Topmost wins; a later (lower) node may take over ONLY when it lies strictly inside the current
             // best. Comparing AREA alone let a small sibling in a LOWER layer beat a large upper layer that
@@ -28057,10 +28517,6 @@ CjguiInstallCompositionReanchor(CJGuiInternalComposableSceneOverlay *overlay,
             // node inside the scroll area still wins over the container.
             BOOL insideBest = NO;
             if (best != nil) {
-                // A modal backdrop is an input shield for all lower layers.
-                // The inner-node preference must not let a smaller base
-                // control underneath it win a later iteration.
-                if (best.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_LAYER_BACKDROP) continue;
                 NSRect bestRect = CjguiComposableRect(best, self);
                 insideBest = nodeRect.origin.x >= bestRect.origin.x && nodeRect.origin.y >= bestRect.origin.y &&
                     NSMaxX(nodeRect) <= NSMaxX(bestRect) && NSMaxY(nodeRect) <= NSMaxY(bestRect);
@@ -30776,12 +31232,23 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     // the authoritative identity/enabled check after FIFO delivery.  An
     // undeclared Cmd-C/V must fall through to the generic transfer route.
     if (!CjguiComposableActiveScopeDeclaresShortcut(self.session, shortcut)) return NO;
-    return CjguiEnqueueComposableShortcut(self.session, shortcut);
+    BOOL queued=CjguiEnqueueComposableShortcut(self.session, shortcut);
+    if(queued)CjguiArmModalExitInput(self.session,event,self.session.pendingInteractions.lastObject);
+    return queued;
 }
 // Command 修饰键**先于**菜单系统到达这里（keyDown 在菜单匹配之后——Cmd+Z
 // 曾被菜单的 Undo 项发给空 undoManager，keyDown 从未被调）。自绘编辑器的
 // undo/redo/剪贴板快捷键在此入队 NAVIGATE 意图给 Cangjie。
 - (BOOL)performKeyEquivalent:(NSEvent *)event {
+    CJGuiInternalSession *ctx=self.session;
+    if(ctx.modalExitInput && !CjguiInterpretingOriginalLayerEvent(ctx,event)) {
+        int held=CjguiRetainOriginalCommandKey(ctx,event);
+        if(held) {
+            if(held>0)for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+                if(q.originalCommandKey.event==event) {q.originalCommandKey.capturedKeyEquivalent=YES;break;}
+            return YES;
+        }
+    }
     CjguiEarlyKeyTrace(self.session, event, "pkeq_before_defer", 0);
     BOOL deferred = CjguiSelectionTransferDeferNativeInput(self.session, 1, event,
         self.inputProxy.selectedRange, NSMakeRange(NSNotFound, 0));
@@ -31044,9 +31511,10 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
                     layer.node.inputScope == self.session.composableContextMenuGuardLayerScope) {
                     NSString *reason = [NSString stringWithFormat:@"escape:%llu",
                         (unsigned long long)self.session.composableContextMenuGuardRequestId];
-                    (void)CjguiEnqueueComposableInteraction(self.session,
+                    BOOL queued=CjguiEnqueueComposableInteraction(self.session,
                         CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
                         layer.index, reason, NSMakeRange(0, 0));
+                    if(queued)CjguiArmModalExitInput(self.session,event,self.session.pendingInteractions.lastObject);
                     break;
                 }
             }
@@ -31055,9 +31523,10 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
     }
     if (event.keyCode == 53 && active && active.node.inputScope != 0) {
         NSString *dismissReason = @"escape";
-        (void)CjguiEnqueueComposableInteraction(self.session,
+        BOOL queued=CjguiEnqueueComposableInteraction(self.session,
                                                 CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
                                                 active.index, dismissReason, NSMakeRange(0, 0));
+        if(queued)CjguiArmModalExitInput(self.session,event,self.session.pendingInteractions.lastObject);
         return;
     }
     if (!activeIsText && active) {
@@ -31178,7 +31647,10 @@ static BOOL CjguiEnqueueComposableShortcut(CJGuiInternalSession *session, NSStri
             [super keyDown:event];
             return;
         }
+        NSUInteger before=self.session.pendingInteractions.count;
         [self activateFocusedNode:[self activeFocusableNode]];
+        if(self.session.pendingInteractions.count>before)
+            CjguiArmModalExitInput(self.session,event,self.session.pendingInteractions.lastObject);
         return;
     }
     [super keyDown:event];
@@ -34742,6 +35214,56 @@ void cjgui_internal_renderer_enable_main_thread_dispatch(void) {
 }
 
 #ifdef CJGUI_INTERNAL_TESTING
+// Standard unittest main stays alive until the managed owner body has actually
+// completed, including its exceptional cleanup. No app-only runtime interposer
+// is linked and no Cangjie callback/object crosses this scalar-only seam.
+static _Atomic(uint64_t) gCjguiTestOwnerFixtureSerial = 0;
+static _Atomic(uint64_t) gCjguiTestOwnerFixtureActive = 0;
+static _Atomic(bool) gCjguiTestOwnerFixtureDone = false;
+static _Atomic(bool) gCjguiTestOwnerFixtureLoopReady = false;
+static bool gCjguiTestOwnerFixturePreviousDispatch = false;
+static bool gCjguiTestOwnerFixturePreviousLoop = false;
+uint64_t cjgui_internal_renderer_test_owner_fixture_begin(void) {
+    if (!CjguiIsMainThread() || atomic_load(&gCjguiTestOwnerFixtureActive)) return 0;
+    uint64_t serial = atomic_fetch_add(&gCjguiTestOwnerFixtureSerial, 1) + 1;
+    if (!serial) return 0;
+    gCjguiTestOwnerFixturePreviousDispatch = atomic_load(&gCjguiMainThreadDispatchEnabled);
+    gCjguiTestOwnerFixturePreviousLoop = atomic_load(&gCjguiLauncherOwnsEventLoop);
+    atomic_store(&gCjguiTestOwnerFixtureDone, false);
+    atomic_store(&gCjguiTestOwnerFixtureLoopReady, false);
+    atomic_store(&gCjguiTestOwnerFixtureActive, serial);
+    cjgui_internal_renderer_enable_main_thread_dispatch();
+    return serial;
+}
+uint32_t cjgui_internal_renderer_test_owner_fixture_loop_ready(uint64_t serial) {
+    return serial && atomic_load(&gCjguiTestOwnerFixtureActive) == serial &&
+        atomic_load(&gCjguiTestOwnerFixtureLoopReady) && !CjguiIsMainThread();
+}
+void cjgui_internal_renderer_test_owner_fixture_complete(uint64_t serial) {
+    if (serial && atomic_load(&gCjguiTestOwnerFixtureActive) == serial) {
+        atomic_store(&gCjguiTestOwnerFixtureDone, true);
+        CFRunLoopWakeUp(CFRunLoopGetMain());
+    }
+}
+void cjgui_internal_renderer_test_owner_fixture_run(uint64_t serial) {
+    if (!CjguiIsMainThread() || !serial || atomic_load(&gCjguiTestOwnerFixtureActive) != serial) abort();
+    atomic_store(&gCjguiTestOwnerFixtureLoopReady, true);
+    CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + 10.0;
+    while (!atomic_load(&gCjguiTestOwnerFixtureDone)) {
+        if (CFAbsoluteTimeGetCurrent() >= deadline) {
+            fprintf(stderr, "CJGUI_TEST_OWNER_FIXTURE timeout serial=%llu\n", (unsigned long long)serial);
+            abort(); // retain a real failing process; never abandon a live owner
+        }
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
+    }
+    atomic_store(&gCjguiMainThreadDispatchEnabled, gCjguiTestOwnerFixturePreviousDispatch);
+    atomic_store(&gCjguiLauncherOwnsEventLoop, gCjguiTestOwnerFixturePreviousLoop);
+    atomic_store(&gCjguiTestOwnerFixtureLoopReady, false);
+    atomic_store(&gCjguiTestOwnerFixtureActive, 0);
+}
+#endif
+
+#ifdef CJGUI_INTERNAL_TESTING
 CjguiInternalRendererStatus cjgui_internal_renderer_test_set_main_thread_dispatch_enabled(int enabled) {
     // Only a launcher-owned, already-running AppKit loop may be gated. A bare
     // cjc process has no main-queue consumer and must not dispatch_sync here.
@@ -35223,7 +35745,7 @@ static void CjguiCaptureComposableMenuCommandSources(NSMenu *menu,NSEvent *event
         CjguiFreezeQueuedCommandSourceWithSnapshot(session,frozen,declaration.commandId,source);
         if (!frozen.commandSource.isValid) continue;
         CjguiComposableMenuCommandOrigin *origin=[CjguiComposableMenuCommandOrigin new];
-        origin.interaction=frozen;origin.window=session.window;origin.valid=YES;
+        origin.interaction=frozen;origin.window=session.window;origin.valid=YES;origin.triggerEvent=event;
         origins[declaration.commandId]=origin;
     }
     dispatcher.menuOriginGeneration+=1;
@@ -35257,7 +35779,7 @@ static void CjguiCaptureComposableMenuCommandSources(NSMenu *menu,NSEvent *event
     // recover its authority by resolving a new key window.
     dispatch_async(dispatch_get_main_queue(),^{
         for (CjguiComposableMenuCommandOrigin *origin in origins.allValues) {
-            origin.valid=NO;origin.interaction=nil;
+            origin.valid=NO;origin.interaction=nil;origin.triggerEvent=nil;
         }
         if (self.menuOriginGeneration==generation) self.menuOrigins=nil;
     });
@@ -35282,7 +35804,8 @@ static void CjguiCaptureComposableMenuCommandSources(NSMenu *menu,NSEvent *event
         queued.commandSourceWasKeyWindow=frozen.commandSourceWasKeyWindow;
         queued.commandCaretSource=frozen.commandCaretSource;
         queued.projectionVersion=frozen.commandSource.capturedScene;
-        origin.valid=NO;origin.interaction=nil;
+        CjguiArmModalExitInput(session,origin.triggerEvent,queued);
+        origin.valid=NO;origin.interaction=nil;origin.triggerEvent=nil;
     }
 }
 
@@ -35362,6 +35885,34 @@ static void CjguiAddStandardApplicationMenus(NSMenu *mainMenu,
     editItem.submenu = editMenu;
     [mainMenu addItem:editItem];
     [menus setObject:editMenu forKey:@"Edit"];
+
+    // Keep normal AppKit window selection available when every custom-drawn
+    // window is minimized. AppKit owns the window entries and their restore
+    // actions; no private restore callback or extra window ownership is used.
+    NSMenu *windowMenu=[[NSMenu alloc] initWithTitle:@"Window"];
+    windowMenu.autoenablesItems=NO;
+    CjguiAddStandardMenuItem(windowMenu,@"Minimize",@selector(performMiniaturize:),@"m",
+        NSEventModifierFlagCommand);
+    windowMenu.itemArray.lastObject.enabled=NSApp.keyWindow!=nil;
+    CjguiAddStandardMenuItem(windowMenu,@"Zoom",@selector(performZoom:),@"",0);
+    windowMenu.itemArray.lastObject.enabled=NSApp.keyWindow!=nil;
+    [windowMenu addItem:[NSMenuItem separatorItem]];
+    CjguiAddStandardMenuItem(windowMenu,@"Bring All to Front",@selector(arrangeInFront:),@"",0);
+    NSMenuItem *windowItem=[[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+    windowItem.submenu=windowMenu;
+    [mainMenu addItem:windowItem];
+    [menus setObject:windowMenu forKey:@"Window"];
+    NSApp.windowsMenu=windowMenu;
+    // These windows are created by the narrow bridge, without NSDocument or
+    // NSWindowController registering them. Rebind entries to this rebuilt
+    // standard menu through AppKit's public window-menu lifecycle.
+    for(NSUInteger i=0;i<kCjguiSessionCapacity;i++) {
+        CJGuiInternalSession *ctx=gCjguiSessions[i];
+        if(!gCjguiSessionOccupied[i] || !ctx || ctx.destroyed || !ctx.window ||
+            ctx.window.excludedFromWindowsMenu) continue;
+        [NSApp removeWindowsItem:ctx.window];
+        [NSApp addWindowsItem:ctx.window title:ctx.window.title filename:NO];
+    }
 }
 
 static BOOL CjguiComposableMenuDeclaresShortcut(CJGuiInternalSession *session, NSString *shortcut) {
@@ -37231,7 +37782,7 @@ cjgui_internal_renderer_set_composable_command_menu_item(
 CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_command_completion_policy(
     uint64_t session,uint32_t itemIndex,uint32_t policy) {
     if(policy>1)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if(!ctx.stagedComposableCommandMenuVersion || itemIndex>=ctx.stagedComposableCommandMenuItems.count)
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         ctx.stagedComposableCommandMenuItems[itemIndex].completionPolicy=policy;
@@ -37247,7 +37798,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_set_composable_command_ident
     // are invalid.
     if (!declarationToken || !targetNodeId || targetResourceId<-1 || !targetNodeKind)
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (!ctx.stagedComposableCommandMenuVersion || itemIndex>=ctx.stagedComposableCommandMenuItems.count)
             return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         CJGuiInternalComposableCommandMenuItem *item=ctx.stagedComposableCommandMenuItems[itemIndex];
@@ -37312,7 +37863,7 @@ static CjguiInternalRendererStatus CjguiCommitComposableCommandMenuOnMain(uint64
 
 CjguiInternalRendererStatus cjgui_internal_renderer_commit_installed_selection_command_menu(uint64_t session,
     uint64_t transfer,uint64_t generation,uint64_t binding,int64_t version,int64_t revision) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCaretInputSnapshot *actual=CjguiCaptureCaretInputSnapshot(ctx);
         BOOL actualCurrent=actual && CjguiCaretSnapshotMatchesActual(ctx,actual);
         if(!transfer || !actual || ctx.sessionGeneration!=generation || actual.candidate.nonce!=transfer ||
@@ -37433,18 +37984,19 @@ static BOOL CjguiPreparationNativeSourceMatches(CJGuiInternalSession *ctx, Cjgui
     return active==nil ? YES : CjguiPreparationSourceRefused(ctx,p,"source_became_active");
 }
 
-static BOOL CjguiPreparationActiveNodeCanReuse(CJGuiInternalSession *ctx,
+static const char *CjguiPreparationActiveNodeReuseRefusal(CJGuiInternalSession *ctx,
     CJGuiInternalComposableSceneNode *node, NSString *desiredRuns, CGFloat scale) {
     CJGuiInternalComposableSceneOverlay *o = ctx.composableSceneOverlay;
-    if (![(ctx.composableTextStyleRunsRaw[@(node.node.nodeId)] ?: @"") isEqualToString:desiredRuns]) return NO;
+    if (![(ctx.composableTextStyleRunsRaw[@(node.node.nodeId)] ?: @"") isEqualToString:desiredRuns]) return "active_runs_changed";
     if (!(node.node.preservesActiveLocalText && node.value.length == 0) &&
-        ![node.value isEqualToString:o.inputProxy.string ?: @""]) return NO;
+        ![node.value isEqualToString:o.inputProxy.string ?: @""]) return "active_body_changed";
     CjguiTextRasterSourceCredential *source = CjguiPreparationCurrentActiveSource(ctx, node, scale);
-    if (!CjguiTextRasterSourceCredentialsEqual(node.textTextureSourceCredential, source)) return NO;
+    if (!CjguiTextRasterSourceCredentialsEqual(node.textTextureSourceCredential, source))
+        return source ? "active_raster_source_changed" : "active_source_unavailable";
     NSString *key = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
         ? [o activeMultilineTileKeyForNode:node scale:scale] : CjguiComposableTextTextureKey(node, scale, scale,
             CjguiComposableGpuTextValueWithActiveValue(node, o.inputProxy.string ?: @""), source.coverage);
-    return CjguiComposableTextTilesAlreadyCovered(node, key, source.tiles, scale);
+    return CjguiComposableTextTilesAlreadyCovered(node, key, source.tiles, scale) ? NULL : "active_coverage_missing";
 }
 
 static CjguiInternalRendererStatus CjguiBeginComposablePreparationOnMain(uint64_t session,
@@ -37491,7 +38043,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_drain_composable_retirement(
     uint64_t session, uint64_t ownerDeadline, uint8_t *outMayBegin) {
     if (!outMayBegin) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outMayBegin = 0;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         *outMayBegin = CjguiDrainComposableRetirement(ctx, ownerDeadline) ? 1 : 0;
         return CJGUI_INTERNAL_RENDERER_OK;
     });
@@ -37629,8 +38181,7 @@ static CjguiInternalRendererStatus CjguiPrepareComposableNodeOnMain(uint64_t ses
         raw->projectionVersion != p.projectionVersion ||
         !CjguiPreparationGeometryValid(raw, geometry))
         return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    if (raw->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE)
-        return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+
     if (CjguiComposableNodeHasGpuText(raw->nodeKind) && !CjguiComposableTextWithinLayoutBudget(value))
         return CjguiTextPreparationBudgetRefusal(__func__, __LINE__);
     const char *strings[] = { label, value, semanticId, bindingKey, rowKey, parentRowKey, semanticLabel, encodedRuns };
@@ -37661,7 +38212,10 @@ static CjguiInternalRendererStatus CjguiPrepareComposableNodeOnMain(uint64_t ses
     if(runStatus!=CJGUI_INTERNAL_RENDERER_OK)return runStatus;
     node.semanticBindingKey = copied[3]; node.semanticRowKey = copied[4]; node.semanticParentRowKey = copied[5];
     node.semanticLabel = copied[6]; node.semanticHelp = @""; node.styleRunsSignature = copied[7];
-    node.imageResourcePath = @""; node.imageResourceId = @""; node.imageTexture = nil;
+    if (raw->nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE) {
+        node.imageResourcePath=@""; node.imageResourceId=@""; node.imageTexture=nil;
+        node.imageTextureCacheKey=@""; node.imageTextureContentKey=@"";
+    }
     if (raw->nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_VECTOR_GRAPHIC) {
         CjguiInternalComposableVectorGeometry vector = {0};
         if (!CjguiParseComposableVectorGeometry(node.value, &vector)) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
@@ -37800,50 +38354,108 @@ static CjguiInternalRendererStatus CjguiPrepareCandidateFrameResourcesOnMain(CJG
 // remains the only owner of the private graph; no caller pointer escapes.
 // One service wake per session slot survives cancellation without accumulating
 // one dispatch block for every retired candidate.
+// Owned declaration bytes share the existing preparation slot and main wake.
+// A valid private graph already caps declaration bytes at 2MiB and semantic
+// help at 8KiB/node. 4MiB admits that full payload plus eight PODs/metadata;
+// 16MiB globally bounds simultaneous transport without changing node limits.
+static const uint64_t kCjguiPreparationOwnedSlotBytes = 4u*1024u*1024u;
+static const uint64_t kCjguiPreparationOwnedGlobalBytes = 16u*1024u*1024u;
+static _Atomic(uint64_t) gCjguiPreparationOwnedBytes;
+static _Atomic(uint64_t) gCjguiPreparationOwnedSlotBytes[kCjguiSessionCapacity];
+static _Atomic(uint64_t) gCjguiPreparationOwnedCapacityNeed[kCjguiSessionCapacity];
+void cjgui_internal_renderer_owner_notify_work(void);
+@interface CjguiOwnedPreparationOperation : NSObject {
+@public
+    CjguiInternalRendererPreparationOperation operation;
+    uint64_t words[32]; int64_t signedWords[32];
+    uint64_t reservedBytes; NSUInteger slotIndex;
+}
+@end
+@implementation CjguiOwnedPreparationOperation
+- (void)dealloc {
+    if(operation.strings) {
+        for(uint32_t i=0;i<operation.stringCount;i++) free((void *)operation.strings[i]);
+        free((void *)operation.strings);
+    }
+    free((void *)operation.nodes); free((void *)operation.geometry);
+    if(reservedBytes) {
+        atomic_fetch_sub_explicit(&gCjguiPreparationOwnedSlotBytes[slotIndex],reservedBytes,memory_order_acq_rel);
+        atomic_fetch_sub_explicit(&gCjguiPreparationOwnedBytes,reservedBytes,memory_order_acq_rel);
+        // A capacity waiter is an actual wake subscriber, not a polling loop.
+        cjgui_internal_renderer_owner_notify_work();
+    }
+}
+@end
+static CjguiOwnedPreparationOperation *gCjguiPreparationOwnedOperations[kCjguiSessionCapacity];
+#ifdef CJGUI_INTERNAL_TESTING
+static void (*gCjguiOwnedPreparationNodeCompletedTestHook)(uint64_t,uint64_t,uint32_t,uint64_t);
+static BOOL gCjguiOwnedPreparationAllocationFailureTest;
+#endif
+
+static CjguiInternalRendererStatus CjguiSetComposableSemanticHelpOnMain(uint64_t session,
+    uint64_t preparationId,uint32_t index,const char *help);
 typedef struct CjguiPreparationAdvanceTicket {
     uint32_t state; // 0 empty, 1 pending, 2 completed
     uint64_t session, generation, preparationId, nonce, deadlineNs;
     uint64_t traceTurn, traceDispatch;
     CjguiInternalRendererStatus status;
     uint32_t ready, advanced;
+    uint32_t operationKind, prefix, stop; // kind0 is the existing scalar advance
 } CjguiPreparationAdvanceTicket;
 typedef struct CjguiPreparationAdvanceSlot {
     BOOL serviceScheduled;
+    uint64_t wakeRevision;
+    uint64_t retirePreparationId, retireGeneration, retireExecutingId;
     CjguiPreparationAdvanceTicket ticket;
 } CjguiPreparationAdvanceSlot;
 static void CjguiServicePreparationAdvance(NSUInteger index);
+static void CjguiServiceOwnedPreparation(NSUInteger index,CjguiPreparationAdvanceTicket captured,
+    CjguiOwnedPreparationOperation *owned,uint64_t wakeRevision);
+static void CjguiServiceOwnedPreparationRetirement(NSUInteger index);
+static CjguiInternalRendererStatus CjguiReserveComposableDrawableOnMain(uint64_t session,
+    uint64_t preparationId,uint64_t projectionVersion,uint32_t *outReady);
+
 static pthread_mutex_t gCjguiPreparationAdvanceLock = PTHREAD_MUTEX_INITIALIZER;
 static CjguiPreparationAdvanceSlot gCjguiPreparationAdvanceSlots[
     sizeof(gCjguiCoordinateSessionGeneration) / sizeof(gCjguiCoordinateSessionGeneration[0])];
 static uint64_t gCjguiPreparationAdvanceNextNonce = 1;
 void cjgui_internal_renderer_owner_notify_work(void);
-static BOOL CjguiWakePreparationAdvance(uint64_t session,uint64_t generation,uint64_t preparationId) {
-    if (!session || session>kCjguiSessionCapacity || !generation || !preparationId) return NO;
-    NSUInteger index=(NSUInteger)(session-1);BOOL schedule=NO;
+// Resource completions reuse the existing bounded mailbox/main service.
+// A pending resource is not itself a completed owner step. A revision also
+// preserves a completion that races an already scheduled/running main service.
+static void CjguiWakePendingPreparationAdvances(void) {
+    NSUInteger scheduled[kCjguiSessionCapacity]; NSUInteger count=0;
     pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
-    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
-    if (slot->ticket.state==1 && slot->ticket.session==session &&
-        slot->ticket.generation==generation && slot->ticket.preparationId==preparationId &&
-        !slot->serviceScheduled) {
-        slot->serviceScheduled=YES;schedule=YES;
+    for (NSUInteger index=0;index<kCjguiSessionCapacity;index++) {
+        CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+        if (slot->ticket.state!=1 || slot->ticket.generation==0 ||
+            slot->ticket.generation!=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire)) continue;
+        slot->wakeRevision++;
+        if (!slot->serviceScheduled) { slot->serviceScheduled=YES;scheduled[count++]=index; }
     }
     pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
-    if (schedule) dispatch_async(dispatch_get_main_queue(),^{CjguiServicePreparationAdvance(index);});
-    return schedule;
+    for (NSUInteger i=0;i<count;i++) {
+        NSUInteger index=scheduled[i];
+        dispatch_async(dispatch_get_main_queue(),^{ CjguiServicePreparationAdvance(index); });
+    }
 }
 
 static void CjguiRetirePreparationAdvance(uint64_t session, uint64_t preparationId) {
     if (!session || session > kCjguiSessionCapacity) return;
     CjguiPreparationAdvanceTicket retired = {0};
+    __attribute__((objc_precise_lifetime)) CjguiOwnedPreparationOperation *retiredOwned=nil;
     pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
     CjguiPreparationAdvanceSlot *slot = &gCjguiPreparationAdvanceSlots[session - 1];
     if (!preparationId || slot->ticket.preparationId == preparationId) {
         retired = slot->ticket;
+        retiredOwned=gCjguiPreparationOwnedOperations[session-1];
+        gCjguiPreparationOwnedOperations[session-1]=nil;
         memset(&slot->ticket, 0, sizeof(slot->ticket));
     }
     // A queued/running service still owns its single wake. It will either
     // observe empty or service a newly admitted, independently frozen ticket.
     pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    retiredOwned=nil;
     if (retired.nonce) cjgui_internal_renderer_owner_trace_dispatch_event(CJGUI_OWNER_TRACE_OWNER_RETURN,
         retired.session, retired.traceTurn, retired.preparationId, retired.traceDispatch,
         retired.generation, CJGUI_OWNER_PHASE_NATIVE_PREPARATION_CANCEL, 0);
@@ -37930,9 +38542,11 @@ static CjguiInternalRendererStatus CjguiCancelComposablePreparationOnMain(uint64
     p.frameResourceProof = nil; p.frameResourcePipelines = nil;
     CjguiPreparationTraceReuseCounters(ctx, p);
     p.retiring = YES; ctx.composablePreparation = nil;
+    CjguiRestoreAcceptedComposableImageDemand(ctx);
     CjguiCancelTextPreparationWorker(p);
     if (!ctx.retiringComposablePreparations) ctx.retiringComposablePreparations = [NSMutableArray array];
     [ctx.retiringComposablePreparations addObject:p];
+    CjguiOwnerPumpTicketNoteWork(ctx);
     CjguiRetireComposablePreparationUnit(ctx);
     return CJGUI_INTERNAL_RENDERER_OK;
 }
@@ -38035,7 +38649,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_resident_text_source(
     uint64_t window, uint64_t context, uint64_t binding, uint64_t nativeRevision,
     int64_t ownerVersion, uint32_t selectionStart, uint32_t selectionEnd,
     uint64_t viewportNode, int64_t viewportResource, uint32_t viewportKind) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiComposablePreparation *p=ctx.composablePreparation;
         CJGuiInternalComposableSceneOverlay *o=ctx.composableSceneOverlay;
         if (!p || p.preparationId!=preparationId || p.baseSceneVersion!=ctx.composableSceneVersion ||
@@ -38103,6 +38717,48 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node(uint
     return CjguiPrepareComposableNodeOnMain(session, preparationId, index, node, geometry,
         label, value, semanticId, bindingKey, rowKey, parentRowKey, semanticLabel, encodedRuns);
 }
+// The frozen path/id/version use the existing bounded image domain. Borrowed
+// UTF-8 is consumed on the synchronous main hop; no business value is stored here.
+CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_image_node_resource(
+    uint64_t session,uint64_t preparationId,uint32_t index,const char *path,const char *identity,uint64_t version) {
+    if (!path || !identity || strnlen(path,1048577)>1048576 || strnlen(identity,1048577)>1048576)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if (!CjguiIsMainThread()) {
+        if (!gCjguiMainThreadDispatchEnabled) return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+        __block CjguiInternalRendererStatus status=CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+        CjguiOwnerTraceDispatchSync(session,index,CJGUI_OWNER_PHASE_NATIVE_SCENE_NODE,^{
+            status=cjgui_internal_renderer_prepare_composable_image_node_resource(session,preparationId,index,path,identity,version);
+        }); return status;
+    }
+    CJGuiInternalSession *ctx=CjguiLookupSession(session);
+    if (!ctx || ctx.destroyed) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    CjguiComposablePreparation *p=ctx.composablePreparation;
+    if (!p || p.preparationId!=preparationId || p.phase || p.nodeCursor || p.ready ||
+        index>=p.nodes.count || ![p.filled containsIndex:index] || [p.declaredImages containsIndex:index])
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    CJGuiInternalComposableSceneNode *node=p.nodes[index];
+    if (node.node.nodeKind!=CJGUI_INTERNAL_RENDERER_COMPOSABLE_IMAGE)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    NSString *resourcePath=[NSString stringWithUTF8String:path], *resourceId=[NSString stringWithUTF8String:identity];
+    if (!resourcePath || !resourceId) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    // Transfer payloads retain their original admission/lease path; they are
+    // deliberately not admitted through the ordinary async asset loader.
+    if ([resourcePath hasPrefix:@"cjgui-transfer:"]) return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    NSUInteger bytes=strlen(path)+strlen(identity);
+    if (bytes>2u*1024u*1024u-p.ownedPacketBytes) return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+    node.imageResourcePath=resourcePath;node.imageResourceId=resourceId;node.imageResourceVersion=version;
+    node.imageEncodedData=nil;
+    NSString *key=nil;uint32_t state=0;
+    id<MTLTexture> texture=CjguiComposableImageTexture(ctx,session,resourcePath,resourceId,version,nil,&key,&state);
+    node.imageTextureCacheKey=key ?: @"";
+    if (key.length) CjguiSubscribeComposableImageResource(ctx, CjguiComposableImageDomainForSession(ctx).resources[key]);
+    if (texture) {node.imageTexture=texture;node.imageTextureContentKey=key ?: @"";}
+    else if (!node.imageTexture) node.imageTextureContentKey=@"";
+    if (!p.declaredImages) p.declaredImages=[NSMutableIndexSet indexSet];
+    [p.declaredImages addIndex:index];p.ownedPacketBytes+=bytes;
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+
 static CjguiInternalRendererStatus CjguiPrepareComposableNodeBatchOnMain(uint64_t session,
     uint64_t preparationId, uint32_t firstIndex, uint32_t count,
     const CjguiInternalRendererComposableNode *nodes, const CjguiInternalRendererComposableGeometry *geometry,
@@ -38133,12 +38789,13 @@ static CjguiInternalRendererStatus CjguiPrepareComposableNodeBatchOnMain(uint64_
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-static CjguiInternalRendererStatus CjguiReuseComposableNodeBatchOnMain(uint64_t session,
+static CjguiInternalRendererStatus CjguiReuseComposableNodeBatchWithStopOnMain(uint64_t session,
     uint64_t preparationId, uint32_t firstIndex, uint32_t count,
     const CjguiInternalRendererComposableNode *nodes,
-    const CjguiInternalRendererComposableGeometry *geometry, uint64_t deadlineNs, uint32_t *outReused) {
+    const CjguiInternalRendererComposableGeometry *geometry, uint64_t deadlineNs, uint32_t *outReused, uint32_t *outStop) {
     if (!outReused) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     *outReused = 0;
+    if(outStop)*outStop=CJGUI_PREPARATION_STOP_COMPLETE;
     if (!count || count > CJGUI_PRIVATE_PREPARATION_BATCH_CAPACITY || !nodes || !geometry ||
         firstIndex > UINT32_MAX - count) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     CJGuiInternalSession *ctx = CjguiLookupSession(session);
@@ -38161,9 +38818,11 @@ static CjguiInternalRendererStatus CjguiReuseComposableNodeBatchOnMain(uint64_t 
             !CjguiPreparationGeometryValid(raw, sidecar) || [p.filled containsIndex:index])
             return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
         CJGuiInternalComposableSceneNode *clone = p.nodes[index];
-        if (!clone) break;
+        if (!clone) { if(outStop)*outStop=CJGUI_PREPARATION_STOP_CACHE_MISS; break; }
         CjguiInternalRendererComposableNode cloneDeclaration = clone.node;
-        if (!CjguiPreparationDeclarationEquals(&cloneDeclaration, raw, p.projectionVersion)) break;
+        if (!CjguiPreparationDeclarationEquals(&cloneDeclaration, raw, p.projectionVersion)) {
+            if(outStop)*outStop=CJGUI_PREPARATION_STOP_CACHE_MISS;break;
+        }
         // The clone is private to this preparation. Only its scene version and
         // current geometry are refreshed; accepted strings/semantics/paint
         // resources remain shared.
@@ -38188,6 +38847,13 @@ static CjguiInternalRendererStatus CjguiReuseComposableNodeBatchOnMain(uint64_t 
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
+static CjguiInternalRendererStatus CjguiReuseComposableNodeBatchOnMain(uint64_t session,
+    uint64_t preparationId,uint32_t firstIndex,uint32_t count,
+    const CjguiInternalRendererComposableNode *nodes,const CjguiInternalRendererComposableGeometry *geometry,
+    uint64_t deadlineNs,uint32_t *outReused) {
+    return CjguiReuseComposableNodeBatchWithStopOnMain(session,preparationId,firstIndex,count,
+        nodes,geometry,deadlineNs,outReused,NULL);
+}
 CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node_batch(uint64_t session,
     uint64_t preparationId, uint32_t firstIndex, uint32_t count,
     const CjguiInternalRendererComposableNode *nodes, const CjguiInternalRendererComposableGeometry *geometry,
@@ -38224,14 +38890,365 @@ CjguiInternalRendererStatus cjgui_internal_renderer_reuse_composable_node_batch(
     return CjguiReuseComposableNodeBatchOnMain(session, preparationId, firstIndex, count,
         nodes, geometry, deadlineNs, outReused);
 }
+static uint32_t CjguiOwnedPreparationPhase(uint32_t kind) {
+    if(kind==CJGUI_PREPARATION_OPERATION_BEGIN)return CJGUI_OWNER_PHASE_NATIVE_PREPARATION_BEGIN;
+    if(kind==CJGUI_PREPARATION_OPERATION_COMMAND_BEGIN)return CJGUI_OWNER_PHASE_NATIVE_COMMAND_MENU_CONFIGURE;
+    if(kind==CJGUI_PREPARATION_OPERATION_COMMAND_ITEM)return CJGUI_OWNER_PHASE_NATIVE_COMMAND_MENU_ITEM;
+    if(kind==CJGUI_PREPARATION_OPERATION_DRAWABLE)return CJGUI_OWNER_PHASE_NATIVE_FRAME_PRESENT;
+    return CJGUI_OWNER_PHASE_NATIVE_PREPARATION_NODE;
+}
+static BOOL CjguiOwnedPreparationCapacity(NSUInteger index,uint64_t bytes) {
+    uint64_t local=atomic_load_explicit(&gCjguiPreparationOwnedSlotBytes[index],memory_order_acquire);
+    uint64_t global=atomic_load_explicit(&gCjguiPreparationOwnedBytes,memory_order_acquire);
+    return bytes<=kCjguiPreparationOwnedSlotBytes && local<=kCjguiPreparationOwnedSlotBytes-bytes &&
+        bytes<=kCjguiPreparationOwnedGlobalBytes && global<=kCjguiPreparationOwnedGlobalBytes-bytes;
+}
+static BOOL CjguiOwnedPreparationReserve(NSUInteger index,uint64_t bytes) {
+    uint64_t value=atomic_load_explicit(&gCjguiPreparationOwnedSlotBytes[index],memory_order_acquire);
+    do {
+        if(bytes>kCjguiPreparationOwnedSlotBytes || value>kCjguiPreparationOwnedSlotBytes-bytes)return NO;
+    }while(!atomic_compare_exchange_weak(&gCjguiPreparationOwnedSlotBytes[index],&value,value+bytes));
+    value=atomic_load_explicit(&gCjguiPreparationOwnedBytes,memory_order_acquire);
+    do {
+        if(bytes>kCjguiPreparationOwnedGlobalBytes || value>kCjguiPreparationOwnedGlobalBytes-bytes) {
+            atomic_fetch_sub(&gCjguiPreparationOwnedSlotBytes[index],bytes);return NO;
+        }
+    }while(!atomic_compare_exchange_weak(&gCjguiPreparationOwnedBytes,&value,value+bytes));
+    return YES;
+}
+static CjguiInternalRendererStatus CjguiOwnedPreparationSize(
+    const CjguiInternalRendererPreparationOperation *r,uint64_t *bytes,size_t lengths[72]) {
+    if(!r || r->kind<1 || r->kind>10 || !bytes)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    BOOL node=r->kind==CJGUI_PREPARATION_OPERATION_DECLARE || r->kind==CJGUI_PREPARATION_OPERATION_REUSE ||
+        r->kind==CJGUI_PREPARATION_OPERATION_MIXED_NODES;
+    if(node && (!r->count || r->count>8 || !r->nodes || !r->geometry ||
+        r->firstIndex>UINT32_MAX-r->count || r->stringCount!=r->count*9u))
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if(r->kind==CJGUI_PREPARATION_OPERATION_MIXED_NODES && r->values32 &&
+        (r->values32[0] >> r->count))return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint32_t expectedStrings=r->kind==CJGUI_PREPARATION_OPERATION_IMAGE?2u:
+        (r->kind==CJGUI_PREPARATION_OPERATION_COMMAND_ITEM?4u:0u);
+    if(!node && (r->count || r->stringCount!=expectedStrings))
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if(r->stringCount && !r->strings)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    uint64_t total=class_getInstanceSize([CjguiOwnedPreparationOperation class])+
+        (uint64_t)r->count*(sizeof(CjguiInternalRendererComposableNode)+sizeof(CjguiInternalRendererComposableGeometry))+
+        (uint64_t)r->stringCount*sizeof(char *);
+    for(uint32_t i=0;i<r->stringCount;i++) {
+        size_t limit=node && i%9u==8u ? 8192u : 2u*1024u*1024u;
+        lengths[i]=r->strings[i]?strnlen(r->strings[i],limit+1u):0;
+        if(lengths[i]>limit || total>kCjguiPreparationOwnedSlotBytes-lengths[i]-1u)
+            return CJGUI_INTERNAL_RENDERER_TEXT_RESOURCE_BUDGET_EXCEEDED;
+        total+=lengths[i]+1u;
+    }
+    *bytes=total;return CJGUI_INTERNAL_RENDERER_OK;
+}
+static CjguiOwnedPreparationOperation *CjguiCopyOwnedPreparation(NSUInteger index,
+    const CjguiInternalRendererPreparationOperation *r,uint64_t bytes,const size_t lengths[72]) {
+    CjguiOwnedPreparationOperation *p;
+#ifdef CJGUI_INTERNAL_TESTING
+    p=gCjguiOwnedPreparationAllocationFailureTest?nil:[CjguiOwnedPreparationOperation new];
+#else
+    p=[CjguiOwnedPreparationOperation new];
+#endif
+    if(!p) {
+        atomic_fetch_sub_explicit(&gCjguiPreparationOwnedSlotBytes[index],bytes,memory_order_acq_rel);
+        atomic_fetch_sub_explicit(&gCjguiPreparationOwnedBytes,bytes,memory_order_acq_rel);
+        cjgui_internal_renderer_owner_notify_work();
+        return nil;
+    }
+    p->reservedBytes=bytes;p->slotIndex=index;
+    p->operation.kind=r->kind;p->operation.firstIndex=r->firstIndex;p->operation.count=r->count;
+    p->operation.stringCount=r->stringCount;
+    if(r->values32)memcpy(p->words,r->values32,sizeof(p->words));
+    if(r->signedValues32)memcpy(p->signedWords,r->signedValues32,sizeof(p->signedWords));
+    p->operation.values32=p->words;p->operation.signedValues32=p->signedWords;
+    if(r->count) {
+        void *nodes=malloc((size_t)r->count*sizeof(*r->nodes));p->operation.nodes=nodes;
+        void *geometry=malloc((size_t)r->count*sizeof(*r->geometry));p->operation.geometry=geometry;
+        if(!nodes || !geometry)return nil;
+        memcpy(nodes,r->nodes,(size_t)r->count*sizeof(*r->nodes));
+        memcpy(geometry,r->geometry,(size_t)r->count*sizeof(*r->geometry));
+    }
+    if(r->stringCount) {
+        char **strings=calloc(r->stringCount,sizeof(char *));p->operation.strings=(const char *const *)strings;
+        if(!strings)return nil;
+        for(uint32_t i=0;i<r->stringCount;i++) {
+            strings[i]=malloc(lengths[i]+1u);if(!strings[i])return nil;
+            if(lengths[i])memcpy(strings[i],r->strings[i],lengths[i]);strings[i][lengths[i]]=0;
+        }
+    }
+    return p;
+}
+CjguiInternalRendererStatus cjgui_internal_renderer_preparation_operation_admit(
+    uint64_t session,uint64_t preparationId,uint64_t deadlineNs,
+    const CjguiInternalRendererPreparationOperation *operation,
+    CjguiInternalRendererPreparationOperationResult *out) {
+    if(!out)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *out=(CjguiInternalRendererPreparationOperationResult){0};
+    if(!session || session>kCjguiSessionCapacity || !preparationId || !deadlineNs || !operation)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    if(!gCjguiMainThreadDispatchEnabled)return CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD;
+    NSUInteger index=session-1;
+    uint64_t generation=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire);
+    if(!generation)return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    out->generation=generation;
+    // No copied bytes, changed deadline or additional wake for an occupied slot.
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *initial=&gCjguiPreparationAdvanceSlots[index];
+    BOOL busy=initial->ticket.state!=0 || initial->retirePreparationId==preparationId ||
+        initial->retireExecutingId==preparationId;
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(busy) {out->state=CJGUI_PREPARATION_OPERATION_CAPACITY;return CJGUI_INTERNAL_RENDERER_OK;}
+    if(cjgui_internal_renderer_owner_clock_ns()>=deadlineNs) {
+        out->state=CJGUI_PREPARATION_OPERATION_COMPLETED;out->stop=CJGUI_PREPARATION_STOP_DEADLINE;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    size_t lengths[72]={0};uint64_t bytes=0;
+    CjguiInternalRendererStatus valid=CjguiOwnedPreparationSize(operation,&bytes,lengths);
+    if(valid!=CJGUI_INTERNAL_RENDERER_OK)return valid;
+    if(!CjguiOwnedPreparationReserve(index,bytes)) {
+        atomic_store_explicit(&gCjguiPreparationOwnedCapacityNeed[index],bytes,memory_order_release);
+        out->state=CJGUI_PREPARATION_OPERATION_CAPACITY;out->requiredBytes=bytes;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    __attribute__((objc_precise_lifetime)) CjguiOwnedPreparationOperation *owned=CjguiCopyOwnedPreparation(index,operation,bytes,lengths);
+    if(!owned)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    BOOL submit=NO;
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+    if(generation!=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire)) {
+        pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+        out->state=CJGUI_PREPARATION_OPERATION_STALE;return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if(slot->ticket.state || slot->retirePreparationId==preparationId || slot->retireExecutingId==preparationId) {
+        pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+        out->state=CJGUI_PREPARATION_OPERATION_CAPACITY;return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if(gCjguiPreparationAdvanceNextNonce==UINT64_MAX) {
+        pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
+    slot->ticket=(CjguiPreparationAdvanceTicket){.state=1,.session=session,.generation=generation,
+        .preparationId=preparationId,.nonce=gCjguiPreparationAdvanceNextNonce++,
+        .deadlineNs=deadlineNs,.operationKind=operation->kind,
+        .traceTurn=atomic_load_explicit(&gCjguiOwnerTraceCurrentTurn,memory_order_acquire)};
+    uint32_t phase=CjguiOwnedPreparationPhase(operation->kind);
+    slot->ticket.traceDispatch=cjgui_internal_renderer_owner_trace_dispatch_begin(session,
+        slot->ticket.traceTurn,preparationId,generation,phase,0);
+    gCjguiPreparationOwnedOperations[index]=owned;
+    atomic_store_explicit(&gCjguiPreparationOwnedCapacityNeed[index],0,memory_order_release);
+    out->state=CJGUI_PREPARATION_OPERATION_PENDING;out->nonce=slot->ticket.nonce;
+    if(!slot->serviceScheduled){slot->serviceScheduled=YES;submit=YES;}
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(submit)dispatch_async(dispatch_get_main_queue(),^{CjguiServicePreparationAdvance(index);});
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+CjguiInternalRendererStatus cjgui_internal_renderer_preparation_operation_poll(
+    uint64_t session,uint64_t preparationId,uint64_t nonce,uint8_t consume,
+    CjguiInternalRendererPreparationOperationResult *out) {
+    if(!out || !session || session>kCjguiSessionCapacity || !nonce || consume>1)
+        return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    *out=(CjguiInternalRendererPreparationOperationResult){.state=CJGUI_PREPARATION_OPERATION_STALE};
+    NSUInteger index=session-1;CjguiPreparationAdvanceTicket result={0};
+    __attribute__((objc_precise_lifetime)) CjguiOwnedPreparationOperation *released=nil;
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+    uint64_t generation=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire);
+    if(slot->ticket.nonce==nonce && slot->ticket.preparationId==preparationId &&
+        slot->ticket.generation==generation && slot->ticket.operationKind) {
+        result=slot->ticket;
+        *out=(CjguiInternalRendererPreparationOperationResult){.state=result.state,.stop=result.stop,
+            .status=result.status,.prefix=result.prefix,.nonce=result.nonce,.generation=generation};
+        if(consume && result.state==2) {
+            released=gCjguiPreparationOwnedOperations[index];gCjguiPreparationOwnedOperations[index]=nil;
+            memset(&slot->ticket,0,sizeof(slot->ticket));
+        }
+    }
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    released=nil;
+    if(consume && result.state==2)cjgui_internal_renderer_owner_trace_dispatch_event(CJGUI_OWNER_TRACE_OWNER_RETURN,
+        session,result.traceTurn,preparationId,result.traceDispatch,result.generation,
+        CjguiOwnedPreparationPhase(result.operationKind),0);
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+uint8_t cjgui_internal_renderer_preparation_operation_waiting(uint64_t session) {
+    if(!session || session>kCjguiSessionCapacity)return 0;
+    NSUInteger index=session-1;pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+    BOOL pending=slot->ticket.state==1 || slot->retirePreparationId!=0 || slot->retireExecutingId!=0;
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    uint64_t needed=atomic_load_explicit(&gCjguiPreparationOwnedCapacityNeed[index],memory_order_acquire);
+    return pending || (needed && !CjguiOwnedPreparationCapacity(index,needed));
+}
+void cjgui_internal_renderer_preparation_operation_retire(uint64_t session,uint64_t preparationId) {
+    if(!session || session>kCjguiSessionCapacity || !preparationId)return;
+    CjguiRetirePreparationAdvance(session,preparationId);
+    NSUInteger index=session-1;BOOL submit=NO;
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+    // There is one actual private graph; a queued never-started replacement
+    // cannot displace the earlier retirement it is still ordered behind.
+    if(!slot->retirePreparationId || slot->retirePreparationId==preparationId) {
+        slot->retirePreparationId=preparationId;
+        slot->retireGeneration=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire);
+    }
+    atomic_store_explicit(&gCjguiPreparationOwnedCapacityNeed[index],0,memory_order_release);
+    if(!slot->serviceScheduled){slot->serviceScheduled=YES;submit=YES;}
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(submit)dispatch_async(dispatch_get_main_queue(),^{CjguiServicePreparationAdvance(index);});
+}
+static void CjguiServiceOwnedPreparationRetirement(NSUInteger index) {
+    uint64_t preparation=0,generation=0;
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];
+    preparation=slot->retirePreparationId;generation=slot->retireGeneration;
+    slot->retirePreparationId=0;slot->retireGeneration=0;
+    if(preparation)slot->retireExecutingId=preparation;
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(!preparation)return;
+    CJGuiInternalSession *ctx=CjguiLookupSession(index+1);
+    if(ctx && !ctx.destroyed && ctx.sessionGeneration==generation)
+        (void)CjguiCancelComposablePreparationOnMain(index+1,preparation);
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    gCjguiPreparationAdvanceSlots[index].retireExecutingId=0;
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    cjgui_internal_renderer_owner_notify_work();
+}
+static void CjguiServiceOwnedPreparation(NSUInteger index,CjguiPreparationAdvanceTicket captured,
+    CjguiOwnedPreparationOperation *owned,uint64_t wakeRevision) {
+    CjguiInternalRendererStatus status=CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+    uint32_t prefix=0,stop=CJGUI_PREPARATION_STOP_COMPLETE;
+    BOOL resourceWait=NO;
+    uint32_t phase=CjguiOwnedPreparationPhase(captured.operationKind);
+    cjgui_internal_renderer_owner_trace_dispatch_event(CJGUI_OWNER_TRACE_MAIN_ENTER,captured.session,
+        captured.traceTurn,captured.preparationId,captured.traceDispatch,captured.generation,phase,0);
+    CJGuiInternalSession *ctx=CjguiLookupSession(captured.session);
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    BOOL stillCurrent=gCjguiPreparationAdvanceSlots[index].ticket.nonce==captured.nonce;
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(owned && stillCurrent && ctx && !ctx.destroyed && ctx.sessionGeneration==captured.generation &&
+        atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire)==captured.generation) {
+        uint64_t now=cjgui_internal_renderer_owner_clock_ns();
+        const CjguiInternalRendererPreparationOperation *r=&owned->operation;
+        const uint64_t *u=owned->words;const int64_t *i=owned->signedWords;
+        status=CJGUI_INTERNAL_RENDERER_OK;
+        if(now>=captured.deadlineNs || captured.deadlineNs-now<2000000u)stop=CJGUI_PREPARATION_STOP_DEADLINE;
+        else if(r->kind==CJGUI_PREPARATION_OPERATION_BEGIN) {
+            if(!CjguiDrainComposableRetirement(ctx,captured.deadlineNs))resourceWait=YES;
+            else status=CjguiBeginComposablePreparationOnMain(captured.session,captured.preparationId,u[0],u[1],(uint32_t)u[2]);
+        } else if(r->kind==CJGUI_PREPARATION_OPERATION_DRAWABLE) {
+            // The candidate has already promoted. Keep its original request
+            // pending until the actual drawable/resource completion wakes this
+            // same mailbox; no synchronous reserve/poll on every owner turn.
+            status=CjguiReserveComposableDrawableOnMain(captured.session,captured.preparationId,u[0],&prefix);
+            resourceWait=status==CJGUI_INTERNAL_RENDERER_OK && !prefix;
+        } else if(r->kind==CJGUI_PREPARATION_OPERATION_COMMAND_BEGIN || r->kind==CJGUI_PREPARATION_OPERATION_COMMAND_ITEM) {
+            if(ctx.composableSceneVersion!=u[16] || !u[17])status=CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+            else if(r->kind==CJGUI_PREPARATION_OPERATION_COMMAND_BEGIN) {
+                if(u[0]!=u[17] || u[1]>128)status=CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                else status=CjguiConfigureComposableCommandMenuOnMain(captured.session,u[0],(uint32_t)u[1]);
+            } else if(ctx.stagedComposableCommandMenuVersion!=u[17] ||
+                u[0]>UINT32_MAX || u[2]>1 || u[3]>1 || u[4]>1 || u[7]>UINT32_MAX || u[8]>UINT32_MAX)
+                status=CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            else {
+                status=CjguiSetComposableCommandMenuItemOnMain(captured.session,r->firstIndex,
+                    r->strings[0],r->strings[1],r->strings[2],r->strings[3],(uint32_t)u[0],u[1],
+                    (uint8_t)u[2],(uint8_t)u[3],(uint8_t)u[4]);
+                if(status==0)status=cjgui_internal_renderer_set_composable_command_identity(captured.session,
+                    r->firstIndex,u[5],u[6],i[0],(uint32_t)u[7]);
+                if(status==0)status=cjgui_internal_renderer_set_composable_command_completion_policy(captured.session,
+                    r->firstIndex,(uint32_t)u[8]);
+            }
+        } else if(!ctx.composablePreparation || ctx.composablePreparation.preparationId!=captured.preparationId ||
+            ctx.composablePreparation.sessionGeneration!=captured.generation ||
+            ctx.composablePreparation.baseSceneVersion!=ctx.composableSceneVersion)status=CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        else if(r->kind==CJGUI_PREPARATION_OPERATION_DECLARE || r->kind==CJGUI_PREPARATION_OPERATION_REUSE ||
+            r->kind==CJGUI_PREPARATION_OPERATION_MIXED_NODES) {
+            for(uint32_t n=0;n<r->count;n++) {
+                now=cjgui_internal_renderer_owner_clock_ns();
+                if(now>=captured.deadlineNs || captured.deadlineNs-now<2000000u){stop=CJGUI_PREPARATION_STOP_DEADLINE;break;}
+                uint32_t copied=0;const char *const *strings=r->strings+n*9u;
+                BOOL mixed=r->kind==CJGUI_PREPARATION_OPERATION_MIXED_NODES;
+                if(r->kind==CJGUI_PREPARATION_OPERATION_DECLARE || (mixed && (u[0] & (UINT64_C(1)<<n))))
+                    status=CjguiPrepareComposableNodeBatchOnMain(captured.session,captured.preparationId,
+                        r->firstIndex+n,1,r->nodes+n,r->geometry+n,strings,captured.deadlineNs,&copied);
+                else status=CjguiReuseComposableNodeBatchWithStopOnMain(captured.session,captured.preparationId,
+                    r->firstIndex+n,1,r->nodes+n,r->geometry+n,captured.deadlineNs,&copied,&stop);
+                if(mixed && status==0 && !copied && stop==CJGUI_PREPARATION_STOP_CACHE_MISS) {
+                    // A real miss has no side effect. The packet already owns
+                    // the full declaration; reuse the SAME absolute allowance.
+                    stop=CJGUI_PREPARATION_STOP_COMPLETE;
+                    status=CjguiPrepareComposableNodeBatchOnMain(captured.session,captured.preparationId,
+                        r->firstIndex+n,1,r->nodes+n,r->geometry+n,strings,captured.deadlineNs,&copied);
+                }
+                if(status!=0)break;
+                if(!copied){if(stop==CJGUI_PREPARATION_STOP_COMPLETE)stop=CJGUI_PREPARATION_STOP_DEADLINE;break;}
+                if(strings[8][0])status=CjguiSetComposableSemanticHelpOnMain(captured.session,captured.preparationId,r->firstIndex+n,strings[8]);
+                if(status!=0)break;
+                prefix++;
+#ifdef CJGUI_INTERNAL_TESTING
+                if(gCjguiOwnedPreparationNodeCompletedTestHook)
+                    gCjguiOwnedPreparationNodeCompletedTestHook(captured.session,captured.preparationId,prefix,captured.deadlineNs);
+#endif
+            }
+        } else if(r->kind==CJGUI_PREPARATION_OPERATION_RESIDENT)
+            status=cjgui_internal_renderer_stage_resident_text_source(captured.session,captured.preparationId,
+                u[0],u[1],u[2],u[3],u[4],u[5],i[0],(uint32_t)u[6],(uint32_t)u[7],u[8],i[1],(uint32_t)u[9]);
+        else if(r->kind==CJGUI_PREPARATION_OPERATION_CARET)
+            status=cjgui_internal_renderer_stage_candidate_caret_identity(captured.session,captured.preparationId,
+                u[0],(uint8_t)u[1],i[0],i[1],(uint32_t)u[2],u+8,i+8);
+        else if(r->kind==CJGUI_PREPARATION_OPERATION_IMAGE)
+            status=cjgui_internal_renderer_prepare_composable_image_node_resource(captured.session,captured.preparationId,
+                r->firstIndex,r->strings[0],r->strings[1],u[0]);
+    }
+    if(status!=0)stop=CJGUI_PREPARATION_STOP_FAILED;
+    cjgui_internal_renderer_owner_trace_dispatch_event(CJGUI_OWNER_TRACE_MAIN_EXIT,captured.session,
+        captured.traceTurn,captured.preparationId,captured.traceDispatch,captured.generation,phase,0);
+    BOOL published=NO,next=NO,stale=NO;
+    pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+    CjguiPreparationAdvanceSlot *slot=&gCjguiPreparationAdvanceSlots[index];slot->serviceScheduled=NO;
+    if(slot->ticket.state==1 && slot->ticket.nonce==captured.nonce && slot->ticket.generation==captured.generation &&
+        atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire)==captured.generation) {
+        slot->ticket.status=status;slot->ticket.prefix=prefix;slot->ticket.stop=stop;
+        if(resourceWait) {
+            if(slot->wakeRevision!=wakeRevision){slot->serviceScheduled=YES;next=YES;}
+        }else{slot->ticket.state=2;published=YES;}
+    }else{stale=YES;if(slot->ticket.state==1){slot->serviceScheduled=YES;next=YES;}}
+    if(slot->retirePreparationId && !slot->serviceScheduled){slot->serviceScheduled=YES;next=YES;}
+    pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+    if(stale && ctx && !ctx.destroyed && ctx.sessionGeneration==captured.generation &&
+        ctx.composablePreparation.preparationId==captured.preparationId)
+        (void)CjguiCancelComposablePreparationOnMain(captured.session,captured.preparationId);
+    if(published)cjgui_internal_renderer_owner_notify_work();
+    if(next)dispatch_async(dispatch_get_main_queue(),^{CjguiServicePreparationAdvance(index);});
+}
+
 static void CjguiServicePreparationAdvance(NSUInteger index) {
+    CjguiServiceOwnedPreparationRetirement(index);
+    CjguiOwnedPreparationOperation *owned=nil;
     CjguiPreparationAdvanceTicket captured = {0};
+    uint64_t capturedWakeRevision=0;
     pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
     CjguiPreparationAdvanceSlot *slot = &gCjguiPreparationAdvanceSlots[index];
-    if (slot->ticket.state == 1) captured = slot->ticket;
+    if (slot->ticket.state == 1) {
+        captured = slot->ticket;capturedWakeRevision=slot->wakeRevision;
+        owned=gCjguiPreparationOwnedOperations[index];
+    }
     else slot->serviceScheduled = NO;
     pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
-    if (!captured.nonce) return;
+    if (!captured.nonce) {
+        BOOL repeat=NO;
+        pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
+        slot=&gCjguiPreparationAdvanceSlots[index];
+        if(slot->retirePreparationId && !slot->serviceScheduled){slot->serviceScheduled=YES;repeat=YES;}
+        pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
+        if(repeat)dispatch_async(dispatch_get_main_queue(),^{CjguiServicePreparationAdvance(index);});
+        return;
+    }
+    if(captured.operationKind) {
+        CjguiServiceOwnedPreparation(index,captured,owned,capturedWakeRevision);
+        return;
+    }
 
     uint32_t ready = 0;
     CjguiInternalRendererStatus status = CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
@@ -38270,6 +39287,10 @@ static void CjguiServicePreparationAdvance(NSUInteger index) {
         captured.session, captured.traceTurn, captured.preparationId, captured.traceDispatch,
         captured.generation, CJGUI_OWNER_PHASE_NATIVE_PREPARATION_ADVANCE, 0);
 
+    uint64_t serviceFinished=cjgui_internal_renderer_owner_clock_ns();
+    BOOL allowanceSpent=captured.deadlineNs && (serviceFinished>=captured.deadlineNs ||
+        captured.deadlineNs-serviceFinished<12000000u);
+    BOOL waitingForResource=status==CJGUI_INTERNAL_RENDERER_OK && !ready && !advanced && !allowanceSpent;
     BOOL published = NO, serviceNext = NO;
     pthread_mutex_lock(&gCjguiPreparationAdvanceLock);
     slot = &gCjguiPreparationAdvanceSlots[index];
@@ -38280,8 +39301,16 @@ static void CjguiServicePreparationAdvance(NSUInteger index) {
         slot->ticket.status = status;
         slot->ticket.ready = status == CJGUI_INTERNAL_RENDERER_OK ? ready : 0;
         slot->ticket.advanced = advanced;
-        slot->ticket.state = 2;
-        published = YES;
+        if (waitingForResource) {
+            // Keep this exact pending ticket/absolute allowance. The actual
+            // worker, pipeline, drawable or capacity completion will wake it.
+            if (slot->wakeRevision!=capturedWakeRevision) {
+                slot->serviceScheduled=YES;serviceNext=YES;
+            }
+        } else {
+            slot->ticket.state = 2;
+            published = YES;
+        }
     } else if (slot->ticket.state == 1) {
         slot->serviceScheduled = YES;
         serviceNext = YES;
@@ -38306,7 +39335,7 @@ static CjguiInternalRendererStatus CjguiAdvancePreparationFromOwner(uint64_t ses
     CjguiPreparationAdvanceSlot *slot = &gCjguiPreparationAdvanceSlots[index];
     if (slot->ticket.state && slot->ticket.generation != generation)
         memset(&slot->ticket, 0, sizeof(slot->ticket));
-    if (slot->ticket.state && slot->ticket.preparationId != preparationId) {
+    if (slot->ticket.state && (slot->ticket.preparationId != preparationId || slot->ticket.operationKind)) {
         status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     } else if (slot->ticket.state == 2) {
         result = slot->ticket;
@@ -38336,6 +39365,12 @@ static CjguiInternalRendererStatus CjguiAdvancePreparationFromOwner(uint64_t ses
     pthread_mutex_unlock(&gCjguiPreparationAdvanceLock);
     if (submit) dispatch_async(dispatch_get_main_queue(), ^{ CjguiServicePreparationAdvance(index); });
     if (consumed) {
+        // Expiry is returned once, without renewing or resubmitting its nonce.
+        // A fresh caller allowance is runnable owner work; do not sleep over
+        // that opportunity after consuming an expired no-progress result.
+        if (result.status==CJGUI_INTERNAL_RENDERER_OK && !result.ready && !result.advanced &&
+            deadlineNs>now && deadlineNs-now>=12000000u)
+            cjgui_internal_renderer_owner_notify_work();
         if (atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index], memory_order_acquire) != generation)
             return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
         *outReady = result.ready;
@@ -39305,6 +40340,7 @@ static void CjguiCancelSourceProxyPreparation(CJGuiInternalSession *ctx) {
     ctx.sourceProxyPreparation = nil;
     if (!ctx.retiringSourceProxyPreparations) ctx.retiringSourceProxyPreparations = [NSMutableArray array];
     [ctx.retiringSourceProxyPreparations addObject:p];
+    CjguiOwnerPumpTicketNoteWork(ctx);
 }
 static void CjguiRetireSourceProxyPreparationUnit(CJGuiInternalSession *ctx) {
     CjguiSourceProxyPreparation *current = ctx.sourceProxyPreparation;
@@ -39862,6 +40898,7 @@ static CjguiInternalRendererStatus CjguiAdoptSourceProxyPreparation(CJGuiInterna
     ctx.sourceProxyPreparation=nil;
     if (!ctx.retiringSourceProxyPreparations) ctx.retiringSourceProxyPreparations=[NSMutableArray array];
     [ctx.retiringSourceProxyPreparations addObject:p];
+    CjguiOwnerPumpTicketNoteWork(ctx);
     [live postAccessibilityFocusChangedForNode:target]; [live resetCaretBlink];
     [ctx.view setNeedsDisplay:YES];
     if (ctx.window==NSApp.keyWindow) CjguiRebuildComposableCommandMenuForKeyWindow();
@@ -40747,14 +41784,17 @@ static CjguiInternalRendererStatus CjguiValidateModalReturn(CJGuiInternalSession
     CjguiCandidateModalReturn *intent) {
     if (!intent) return CJGUI_INTERNAL_RENDERER_OK;
     uint64_t *w = intent->words;
-    if (!ctx || ctx.destroyed || !ctx.window || !ctx.composableSceneOverlay ||
+    BOOL focusOnly=w[9]>=2, textFocus=w[9]==3;
+    if (!ctx || ctx.destroyed || !ctx.window || !ctx.composableSceneOverlay || w[9]>3 ||
         intent.generation != ctx.sessionGeneration || !w[0] || !w[15] ||
         w[1] != ctx.stagedComposableSceneVersion || w[2] != ctx.composableSceneVersion ||
-        w[7] > w[8] || w[8] > UINT32_MAX ||
-        (w[6] != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT &&
-         w[6] != CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT))
+        (focusOnly ? (w[7]!=UINT64_MAX || w[8]!=UINT64_MAX ||
+            CjguiComposableNodeIsTextInput((uint32_t)w[6])!=textFocus) :
+            (w[7] > w[8] || w[8] > UINT32_MAX ||
+             (w[6] != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT &&
+              w[6] != CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT))))
         return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
-    if (w[9] && (!ctx.ownedTextSessionEnabled || w[3] != ctx.ownedTextSessionBindingEpoch ||
+    if (w[9]==1 && (!ctx.ownedTextSessionEnabled || w[3] != ctx.ownedTextSessionBindingEpoch ||
         w[4] != ctx.ownedTextSessionNodeId || (int64_t)w[5] != ctx.ownedTextSessionResourceId ||
         w[6] != ctx.ownedTextSessionNodeKind)) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
     for (CJGuiInternalComposableSceneNode *node in ctx.stagedComposableNodes) {
@@ -40762,9 +41802,11 @@ static CjguiInternalRendererStatus CjguiValidateModalReturn(CJGuiInternalSession
             node.node.nodeKind != w[6]) continue;
         if (!node.node.isInteractive || node.node.isReadOnly ||
             node.node.semanticIncarnation != (int64_t)w[14] ||
-            ![node.value isEqualToString:intent.body] || w[8] > intent.body.length ||
+            ((!focusOnly || textFocus) && ![node.value isEqualToString:intent.body]) ||
+            (!focusOnly && w[8] > intent.body.length) ||
             NSIsEmptyRect(NSIntersectionRect(CjguiComposableRect(node,ctx.composableSceneOverlay),
                 CjguiComposableClipBounds(node)))) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        if(focusOnly)return CJGUI_INTERNAL_RENDERER_OK;
         NSRange range=CjguiComposedSelection(intent.body,(NSUInteger)w[7],(NSUInteger)w[8]);
         return range.location==w[7] && NSMaxRange(range)==w[8]
             ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
@@ -40772,10 +41814,69 @@ static CjguiInternalRendererStatus CjguiValidateModalReturn(CJGuiInternalSession
     return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
 }
 
+CjguiInternalRendererStatus cjgui_internal_renderer_modal_exit_interaction(uint64_t session,uint64_t *identity) {
+    if(!identity)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;*identity=0;
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+        CjguiModalExitInput *exit=ctx.modalExitInput;
+        if(exit.dequeued && exit.dequeueSerial==ctx.inputDequeueSerial)*identity=exit.identity;
+        return CJGUI_INTERNAL_RENDERER_OK;
+    });
+}
+// 0=continue the same scope, 1=accepted exit / associate logical request,
+// 2=named retirement, 3=common owner confirmed the actual install receipt.
+CjguiInternalRendererStatus cjgui_internal_renderer_settle_modal_exit(uint64_t session,uint64_t identity,
+    uint32_t decision,uint64_t request,const char *reason) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+        CjguiModalExitInput *exit=ctx.modalExitInput;
+        if(!exit || !identity || exit.identity!=identity || !exit.dequeued)
+            return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        if(decision==2) {CjguiTerminateModalExitInput(ctx,reason);return CJGUI_INTERNAL_RENDERER_OK;}
+        if(decision==3) {
+            CjguiCandidateModalReturn *fact=ctx.acceptedModalReturn;
+            CJGuiInternalComposableSceneOverlay *o=ctx.composableSceneOverlay;
+            CJGuiInternalComposableSceneNode *target=[o activeFocusableNode];
+            BOOL focusOnly=fact && fact->words[9]>=2;
+            BOOL textClient=target && CjguiComposableNodeIsTextInput(target.node.nodeKind);
+            if(!exit.exits || !request || exit.request!=request || !fact || !fact.installed ||
+                fact.generation!=ctx.sessionGeneration || fact->words[0]!=request ||
+                fact->words[1]!=ctx.composableSceneVersion || fact->words[3]!=exit.binding ||
+                ctx.ownedTextSessionBindingEpoch!=exit.binding ||
+                (CjguiInputProxyIsFirstResponder(o)!=textClient) ||
+                !target || target.node.nodeId!=fact->words[4] || target.node.resourceId!=(int64_t)fact->words[5] ||
+                target.node.nodeKind!=fact->words[6] || target.node.semanticIncarnation!=(int64_t)fact->words[14] ||
+                (textClient && ![o.inputProxy.string isEqualToString:fact.body]) ||
+                (!focusOnly && !NSEqualRanges(o.inputProxy.selectedRange,NSMakeRange(fact->words[7],fact->words[8]-fact->words[7])))) {
+                CjguiTerminateModalExitInput(ctx,"modal_exit_install_receipt_refused");return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+            }
+            uint64_t charge=256+(textClient ? 2*(uint64_t)o.inputProxy.string.length : 0);
+            uint64_t other=ctx.retainedAfterCaretInputBytes-exit.chargedBytes;
+            if(charge>kCjguiAfterCaretByteCapacity || other>kCjguiAfterCaretByteCapacity-charge) {
+                CjguiTerminateModalExitInput(ctx,"modal_exit_installed_source_capacity");return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            }
+            ctx.retainedAfterCaretInputBytes=other+charge;exit.chargedBytes=charge;
+            exit.target=target;exit.proxy=o.inputProxy;exit.scope=target.node.inputScope;
+            exit.body=textClient ? o.inputProxy.string : nil;exit.selection=o.inputProxy.selectedRange;exit.ready=YES;
+            exit.expectsTextClient=textClient;exit.responder=ctx.window.firstResponder;
+            exit.bodyGeneration=o.activeTextBodyGeneration;exit.proxyGeneration=ctx.installedRangeProxyGeneration;
+            exit.selectionRevision=o.installedRangeSelectionRevision;
+        } else {
+            if(decision>1 || exit.ready || !CjguiModalExitSourceMatches(ctx,exit)) {
+                CjguiTerminateModalExitInput(ctx,"modal_exit_original_scope_changed");return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+            }
+            if(decision==0) {exit.decided=YES;exit.ready=YES;}
+            else {
+                if(exit.request && request && exit.request!=request)return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+                exit.decided=YES;exit.exits=YES;if(request)exit.request=request;
+            }
+        }
+        CjguiFinishUnusedModalExit(ctx,exit);CjguiOwnerPumpTicketNoteWork(ctx);return CJGUI_INTERNAL_RENDERER_OK;
+    });
+}
+
 CjguiInternalRendererStatus cjgui_internal_renderer_stage_modal_return(uint64_t session,
     const uint64_t *request, const char *body) {
     if (!request || !body) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCandidateModalReturn *intent=[CjguiCandidateModalReturn new];
         memcpy(intent->words,request,sizeof(intent->words));
         intent.body=[NSString stringWithUTF8String:body]; intent.generation=ctx.sessionGeneration;
@@ -40790,7 +41891,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_modal_return_receipt(uint64_
     uint64_t scene, uint64_t request, uint64_t *receipt) {
     if (!receipt) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     memset(receipt,0,19*sizeof(uint64_t));
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCandidateModalReturn *fact=ctx.acceptedModalReturn;
         if (!fact || fact->words[0]!=request || fact->words[1]!=scene ||
             fact.generation!=ctx.sessionGeneration) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
@@ -41252,11 +42353,14 @@ CjguiPresentComposableSceneOnMain(uint64_t session, CjguiInternalRendererFrameOb
             if (modalReturn) {
                 uint32_t start=0,end=0; uint64_t *w=modalReturn->words;
                 BOOL focused=[ctx.composableSceneOverlay focusCommittedNodeId:w[4]];
-                modalReturn.installStatus=focused ? CjguiRestoreComposableSelectionOnMain(session,w[4],
+                BOOL focusOnly=w[9]>=2;
+                modalReturn.installStatus=focused ? (focusOnly ? CJGUI_INTERNAL_RENDERER_OK : CjguiRestoreComposableSelectionOnMain(session,w[4],
                     (int64_t)w[5],(uint32_t)w[6],w[1],modalReturn.body.UTF8String,
-                    (uint32_t)w[7],(uint32_t)w[8],&start,&end) : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+                    (uint32_t)w[7],(uint32_t)w[8],&start,&end)) : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
                 modalReturn.installed=modalReturn.installStatus==CJGUI_INTERNAL_RENDERER_OK &&
-                    CjguiInputProxyIsFirstResponder(ctx.composableSceneOverlay) && start==w[7] && end==w[8];
+                    (focusOnly ? (ctx.composableSceneOverlay.activeNodeId==w[4] &&
+                        CjguiInputProxyIsFirstResponder(ctx.composableSceneOverlay)==(w[9]==3)) :
+                        (CjguiInputProxyIsFirstResponder(ctx.composableSceneOverlay) && start==w[7] && end==w[8]));
                 if (!modalReturn.installed && modalReturn.installStatus==CJGUI_INTERNAL_RENDERER_OK)
                     modalReturn.installStatus=CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
                 if (!modalReturn.installed) [ctx.window makeFirstResponder:nil];
@@ -42619,7 +43723,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_candidate_caret(uint64
     int64_t nodeId, int64_t localByte, uint32_t affinity) {
     if (present > 1 || (present && (nodeId <= 0 || localByte < 0 || affinity > 2)))
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiCandidateCaretProjection *value = [CjguiCandidateCaretProjection new];
         value.present = present != 0; value.usesByteOffset = YES;
         value.nodeId = nodeId; value.localByte = localByte; value.affinity = affinity;
@@ -42697,7 +43801,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_candidate_caret_identi
     if (!semantic) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
     NSData *frozen=[NSData dataWithBytes:semantic length:12*sizeof(uint64_t)];
     NSData *origin=origin16 ? [NSData dataWithBytes:origin16 length:16*sizeof(int64_t)] : nil;
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInternalRendererStatus result=cjgui_internal_renderer_stage_candidate_caret(session,
             preparationId,sceneVersion,present,nodeId,localByte,affinity);
         if (result!=CJGUI_INTERNAL_RENDERER_OK) return result;
@@ -42721,7 +43825,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_accepted_selection_dec
         return CJGUI_INTERNAL_RENDERER_TEXT_RANGE_INVALID;
     NSString *wire=[[NSString alloc] initWithUTF8String:rows];
     NSData *key=[NSData dataWithBytes:semantic length:12*sizeof(uint64_t)];
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         CjguiInstalledRangeState *b=ctx.installedRangeBasis;
         CjguiCaretInputSnapshot *snapshot=CjguiCaptureCaretInputSnapshot(ctx);
         CJGuiInternalComposableSceneNode *target=CjguiCaretPrefixAcceptedNode(ctx,snapshot);
@@ -43205,6 +44309,41 @@ cjgui_internal_renderer_window_number(uint64_t session, int64_t *outNumber) {
     }
     *outNumber = (int64_t)ctx.view.window.windowNumber;
     return CJGUI_INTERNAL_RENDERER_OK;
+}
+
+CjguiInternalRendererStatus cjgui_internal_renderer_window_state(uint64_t session,uint64_t *words) {
+    if(!words)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    memset(words,0,11*sizeof(uint64_t));
+    if(!session || session>kCjguiSessionCapacity)return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if(CjguiIsMainThread())CjguiPublishViewportSnapshot(CjguiLookupSession(session));
+    NSUInteger index=(NSUInteger)(session-1);
+    pthread_mutex_lock(&gCjguiViewportSnapshotLock);
+    uint64_t generation=atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire);
+    CjguiViewportSnapshotEntry entry=gCjguiViewportSnapshots[index];
+    pthread_mutex_unlock(&gCjguiViewportSnapshotLock);
+    if(!generation)return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    if(!entry.valid || !entry.systemWindowValid || entry.sessionGeneration!=generation)
+        return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+    memcpy(words,entry.systemWindowWords,sizeof(entry.systemWindowWords));
+    if(atomic_load_explicit(&gCjguiCoordinateSessionGeneration[index],memory_order_acquire)!=generation) {
+        memset(words,0,11*sizeof(uint64_t));return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+    }
+    return CJGUI_INTERNAL_RENDERER_OK;
+}
+CjguiInternalRendererStatus cjgui_internal_renderer_request_full_screen(uint64_t session,uint32_t enabled) {
+    if(enabled>1)return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+        if(!ctx.window || ctx.destroyed || ctx.closeRequested || ctx.window.isMiniaturized)
+            return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+        BOOL desired=enabled!=0,actual=(ctx.window.styleMask&NSWindowStyleMaskFullScreen)!=0;
+        if(ctx.fullScreenTransition || ctx.fullScreenRequestPending)
+            return (ctx.fullScreenRequestPending && ctx.desiredFullScreen==desired) ?
+                CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_SCENE_STALE;
+        if(actual==desired)return CJGUI_INTERNAL_RENDERER_OK;
+        ctx.fullScreenRequestPending=YES;ctx.desiredFullScreen=desired;ctx.fullScreenLastFailure=0;
+        [ctx.window toggleFullScreen:nil];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    });
 }
 
 CjguiInternalRendererStatus
@@ -45749,7 +46888,7 @@ cjgui_internal_renderer_test_pending_selection_pointer_update_consumed(uint64_t 
 
 CjguiInternalRendererStatus cjgui_internal_renderer_test_caret_confirmation_pending_once(
     uint64_t session, uint32_t command) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if(command==1 || command==3) { ctx.testCaretConfirmationPendingOnce=command;ctx.testCaretConfirmationHoldCount=0;return 0; }
         if(command==4) { ctx.testCaretBindRejectOnce=YES;ctx.testCaretConfirmationHoldCount=0;return 0; }
         if(command==2) return ctx.testCaretConfirmationHoldCount;
@@ -45759,7 +46898,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_test_caret_confirmation_pend
 
 CjguiInternalRendererStatus cjgui_internal_renderer_test_selection_finalizing_pending_once(
     uint64_t session, uint32_t command) {
-    return CjguiInstalledRangeRunOnMain(session, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__, ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         if (command==0) { ctx.testHoldSelectionFinalizingOnce=NO;ctx.testHoldSelectionFinalizing=NO;return 0; }
         if (command==1) { ctx.testHoldSelectionFinalizingOnce=YES;ctx.testSelectionFinalizingHoldCount=0;return 0; }
         if (command==2) return ctx.testSelectionFinalizingHoldCount;
@@ -46397,7 +47536,7 @@ cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(uin
 // No input action, focus repair, or synthetic pointer edge is produced here.
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_fault_actual_activation_pair(uint64_t session,uint32_t fault) {
-    return CjguiInstalledRangeRunOnMain(session,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+    return CjguiInstalledRangeRunOnMainNamed(session,__func__,^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
         NSUInteger n=ctx.pendingInteractions.count;
         if (n<2 || fault<1 || fault>7) return CJGUI_INTERNAL_RENDERER_SCENE_STALE;
         CJGuiInternalQueuedInteraction *first=ctx.pendingInteractions[n-2],*last=ctx.pendingInteractions[n-1];
@@ -48152,6 +49291,7 @@ typedef struct CjguiOwnerPumpTicket {
     uint64_t traceDispatch;
     uint32_t tracePhase;
     BOOL wantsEvent;
+    BOOL canReuseEmptyProof;
     CjguiInternalRendererStatus status;
     CjguiInternalRendererEvent event;
     uint64_t pointerSessionGeneration;
@@ -48172,6 +49312,18 @@ typedef struct CjguiOwnerPumpTicket {
 } CjguiOwnerPumpTicket;
 
 static CjguiOwnerPumpTicket gCjguiOwnerPumpTickets[kCjguiSessionCapacity];
+// A consumed NONE contains no payload. Retain only its generation-qualified
+// fact, outside the one-event ticket, until real FIFO or retirement work arrives.
+// All accesses use the existing ticket lock; no source/UI pointer is cached.
+static uint64_t gCjguiOwnerPumpEmptyProofGeneration[kCjguiSessionCapacity];
+static void CjguiOwnerPumpRememberEmptyLocked(NSUInteger index,CjguiOwnerPumpTicket *ticket) {
+    gCjguiOwnerPumpEmptyProofGeneration[index]=
+        ticket->status==CJGUI_INTERNAL_RENDERER_OK &&
+        ticket->event.kind==CJGUI_INTERNAL_RENDERER_EVENT_NONE &&
+        ticket->wantsEvent && ticket->canReuseEmptyProof &&
+        ticket->workRevision==ticket->servicedWorkRevision ? ticket->sessionGeneration : 0;
+}
+
 static pthread_mutex_t gCjguiOwnerPumpTicketLock = PTHREAD_MUTEX_INITIALIZER;
 static CjguiInternalCommandSource gCjguiOwnerConsumedCommandSources[kCjguiSessionCapacity];
 static uint64_t gCjguiCommandSourceOwnerThreads[kCjguiSessionCapacity];
@@ -48229,7 +49381,7 @@ static BOOL CjguiOwnerWaitTraceEnabled(void) {
     static int enabled = -1;
     if (enabled < 0) {
         const char *value = getenv("CJGUI_OWNER_WAIT_TRACE");
-        enabled = value && strcmp(value, "1") == 0 && CjguiOwnerPhaseTraceEnabled() ? 1 : 0;
+        enabled = value && strcmp(value, "1") == 0 ? 1 : 0;
     }
     return enabled != 0;
 }
@@ -48374,6 +49526,7 @@ static void CjguiOwnerPumpTicketNoteWork(CJGuiInternalSession *session) {
     CjguiOwnerWaitNotifyFact notifyFact = {0};
     pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
     CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
+    gCjguiOwnerPumpEmptyProofGeneration[index]=0;
     (void)CjguiOwnerPumpGlobalWorkRevisionBumpLocked(CjguiOwnerWaitNotifyTicketWork,
         session.rendererSessionToken, &notifyFact);
     if (ticket->state != CjguiOwnerPumpTicketEmpty &&
@@ -48399,6 +49552,7 @@ void cjgui_internal_renderer_owner_notify_work(void) {
         UINT64_MAX, &notifyFact);
     pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
     CjguiOwnerWaitTraceEmitNotify(&notifyFact);
+    CjguiWakePendingPreparationAdvances();
 }
 
 static BOOL CjguiOwnerPumpHasLiveReadyEventLocked(void) {
@@ -48549,8 +49703,9 @@ uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t sessio
     pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
     CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
     BOOL held = ticket->session == session && ticket->sessionGeneration == generation &&
-        ticket->state == CjguiOwnerPumpTicketReady &&
-        ticket->event.kind != CJGUI_INTERNAL_RENDERER_EVENT_NONE;
+        ((ticket->state == CjguiOwnerPumpTicketPending && ticket->wantsEvent) ||
+         (ticket->state == CjguiOwnerPumpTicketReady &&
+          ticket->event.kind != CJGUI_INTERNAL_RENDERER_EVENT_NONE));
     pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
     return held ? 1u : 0u;
 }
@@ -48570,6 +49725,17 @@ static CjguiPresentInputDisposition CjguiPresentInputDispositionOnMain(
     if (ready) return CjguiPresentDispatchOriginalA;
     CJGuiInternalQueuedInteraction *head=ctx.pendingInteractions.firstObject;
     if (!head) return CjguiPresentNoActualInput;
+    // Only un-interpreted successors of THIS accepted exit may wait across
+    // its installation. Earlier input and independent scope events still win.
+    CjguiModalExitInput *exit=ctx.modalExitInput;
+    if(exit.exits && !exit.ready && exit.request && !exit.refusalReason && ctx.stagedModalReturn &&
+        ctx.stagedModalReturn->words[0]==exit.request) {
+        BOOL only=YES;
+        for(CJGuiInternalQueuedInteraction *q in ctx.pendingInteractions)
+            if(q.originalCommandKey.dependency!=CjguiOriginalKeyModalExit || q.originalCommandKey.modalExit!=exit ||
+                q.originalCommandKey.phase!=0) {only=NO;break;}
+        if(only)return CjguiPresentSuccessorWaitingThisB;
+    }
     // A confirmed owner receipt already authorizes this original successor.
     // Drain it on its captured A before B replaces the declaration/binding;
     // only input that still needs an installation waits for this B.
@@ -48598,7 +49764,7 @@ CjguiInternalRendererStatus cjgui_internal_renderer_owner_consumed_command_sourc
         fprintf(stderr,"CJGUI_COMMAND_ORIGIN_READ mono_ns=%llu serial=%llu owner_tid=%llu actual_tid=%llu same_owner=%d original_valid=%u phase=entry\n",(unsigned long long)CjguiOwnerTraceNanoseconds(),(unsigned long long)origin.originSerial,(unsigned long long)ownerThread,(unsigned long long)actualThread,sameOwner,origin.isValid);
     if (!sameOwner || !origin.isValid) return CJGUI_INTERNAL_RENDERER_OK;
     __block CjguiInternalCommandSource result=origin;result.isValid=0;
-    CjguiInternalRendererStatus status=CjguiInstalledRangeRunOnMain(session,
+    CjguiInternalRendererStatus status=CjguiInstalledRangeRunOnMainNamed(session,__func__,
         ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
             CJGuiInternalQueuedInteraction *queued=ctx.pumpedCommandInteraction;
             CjguiInternalCommandSource original=queued.commandSource;
@@ -48940,6 +50106,10 @@ static void CjguiOwnerPumpTicketService(uint64_t session, NSUInteger index,
         CjguiOwnerPumpTicketMatchesLocked(index, nonce, sessionGeneration)) {
         CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
         ticket->status = status;
+        ticket->canReuseEmptyProof = !ctx.pendingInteractions.count &&
+            !ctx.pendingTransferTerminalFacts.count && !ctx.pendingInputQueueFullNotice &&
+            !ctx.closeRequested && !ctx.retiringComposablePreparations.count &&
+            !ctx.retiringSourceProxyPreparations.count && !ctx.sourceProxyPreparation;
         ticket->event = event;
         ticket->pointerSessionGeneration = pointerGeneration;
         ticket->pointerCoordinateEpoch = pointerCoordinateEpoch;
@@ -49122,6 +50292,16 @@ cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs
             (ticket->session != session || ticket->sessionGeneration != sessionGeneration)) {
             memset(ticket, 0, sizeof(*ticket));
         }
+        if (ticket->state==CjguiOwnerPumpTicketEmpty && waitMicros==0 && outEvent &&
+            gCjguiOwnerPumpEmptyProofGeneration[index]==sessionGeneration) {
+            pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
+            if (CjguiOwnerPumpRetireIfSessionChanged(session,index,0,sessionGeneration))
+                return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
+            CjguiPublishConsumedActivationPrefix(session,sessionGeneration,
+                (CjguiInternalActivationPrefix){0});
+            CjguiTraceOwnerPhase(session,"pump.before_idle.cached_empty",phaseStarted);
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
         if (ticket->state == CjguiOwnerPumpTicketReady &&
             (readyEventCanDeliver || readyNoEventCanReturn)) {
             ticketNonce = ticket->nonce;
@@ -49145,6 +50325,7 @@ cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs
             deliveredGeometry = ticket->pointerGeometry;
             deliveredActivationPrefix = ticket->activationPrefix;
             deliveredCommandSource = ticket->commandSource;
+            CjguiOwnerPumpRememberEmptyLocked(index,ticket);
             memset(ticket, 0, sizeof(*ticket));
             consumedTicket = YES;
         } else if (ticket->state == CjguiOwnerPumpTicketReady &&
@@ -49296,6 +50477,7 @@ cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs
             deliveredGeometry = ticket->pointerGeometry;
             deliveredActivationPrefix = ticket->activationPrefix;
             deliveredCommandSource = ticket->commandSource;
+            CjguiOwnerPumpRememberEmptyLocked(index,ticket);
             memset(ticket, 0, sizeof(*ticket));
             consumedTicket = YES;
         }
@@ -49562,6 +50744,9 @@ cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs
         CjguiPublishMainPumpedPointerStream(ctx, interaction);
         CjguiPublishMainPumpedInputProvenance(ctx, interaction);
         if (ctx.inputDequeueSerial!=UINT64_MAX) ctx.inputDequeueSerial++;
+        if(interaction==ctx.modalExitInput.interaction) {
+            ctx.modalExitInput.dequeued=YES;ctx.modalExitInput.dequeueSerial=ctx.inputDequeueSerial;
+        }
         if (CjguiOwnerPhaseTraceEnabled()) CjguiOwnerTraceAppend(CJGUI_OWNER_TRACE_OBSERVATION_SCALAR,
             session,atomic_load(&gCjguiOwnerTraceCurrentTurn),ctx.inputDequeueSerial,interaction.nodeId,
             ctx.sessionGeneration,CJGUI_OWNER_PHASE_PROJECTION_INPUT_ADMISSION,interaction.kind);
@@ -49778,6 +50963,7 @@ cjgui_internal_renderer_request_close(uint64_t session) {
     NSLog(@"cjgui: post close request: probe");
     if (!ctx.closeRequested) {
         ctx.closeRequested = YES;
+        CjguiOwnerPumpTicketNoteWork(ctx);
         CjguiCancelDrawableSlot(ctx);
         NSLog(@"cjgui: close requested: probe");
     }
@@ -49835,10 +51021,12 @@ cjgui_internal_renderer_destroy(uint64_t session) {
             ctx.pointerTerminalCustody=nil;
         }
     }
+    CjguiTerminateModalExitInput(ctx,"window_closed");
     if (ctx.rejectedAfterCaretInputs.count || ctx.exportedCaretRecoveryBytes.count ||
         ctx.retainedAfterCaretInputBytes)
         return CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED;
 
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,1);
     if(CjguiFontLifetimeDebugEnabled())CjguiFontLifetimeDebugBoundary("before_destroy",session,ctx);
     // Remove scalar requester/subscriber interests while this token and
     // generation are still valid. A close never cancels another window's
@@ -49852,6 +51040,7 @@ cjgui_internal_renderer_destroy(uint64_t session) {
         CjguiCancelTextPreparationWorker(preparation);
     CjguiClearWorkloadAttemptCounts((NSUInteger)(session - 1), ctx.sessionGeneration);
     CjguiRetirePreparationAdvance(session, 0);
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,2);
     ctx.destroyed = YES;
     ctx.stagedModalReturn = nil;
     ctx.acceptedModalReturn = nil;
@@ -49881,6 +51070,7 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     ctx.stagedComposableCommandMenuVersion = 0;
     if (ctx.window == NSApp.keyWindow) CjguiRebuildComposableCommandMenuForKeyWindow();
 
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,3);
     if (ctx.view) {
         [ctx.diagnosticOverlay removeFromSuperview];
         ctx.diagnosticOverlay = nil;
@@ -49890,7 +51080,9 @@ cjgui_internal_renderer_destroy(uint64_t session) {
         ctx.sharedEditingFormOverlay = nil;
         [ctx.view invalidateBridgeResources];
     }
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,4);
     if (ctx.window) {
+        [NSApp removeWindowsItem:ctx.window];
         [[NSNotificationCenter defaultCenter] removeObserver:ctx
                                                         name:NSWindowDidChangeBackingPropertiesNotification
                                                       object:ctx.window];
@@ -49906,10 +51098,13 @@ cjgui_internal_renderer_destroy(uint64_t session) {
                                  OBJC_ASSOCIATION_ASSIGN);
         // Hidden/minimized windows still belong to NSApp until actually closed.
         // Retire that lifetime before releasing the session, regardless of visibility.
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,5);
         [ctx.window close];
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,6);
         [ctx.window setContentView:nil];
     }
 
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,7);
     // Destroy ends this window's resource responsibility even when a normal
     // callback/autorelease scope still retains the retired session or overlay.
     // Workers already hold their own frozen input leases; other windows do not
@@ -49921,11 +51116,13 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     [retiredOverlay.multilineLayoutCache removeAllObjects];
     [retiredOverlay.multilineLayoutCacheOrder removeAllObjects];
     [retiredOverlay removeFromSuperview];
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,8);
     ctx.composableSceneOverlay=nil;
     ctx.view = nil;
     ctx.windowMaterialView = nil;
     ctx.windowOpaqueFallbackView = nil;
     ctx.windowContentHost = nil;
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,9);
     [ctx.composableNodes removeAllObjects];
     [ctx.stagedComposableNodes removeAllObjects];
     [ctx.composableCommandMenuItems removeAllObjects];
@@ -49940,17 +51137,21 @@ cjgui_internal_renderer_destroy(uint64_t session) {
     // Other windows keep the shared domain, but no candidate or accepted
     // image in this retired session can own its transfer bytes or texture.
     // Leases held by this session end with it, before the orphan prune decides.
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,10);
     CjguiSettleComposableImageCandidateLeases(ctx.composableImageDomain, ctx, YES);
     CjguiPruneUnreferencedComposableTransferResources(ctx.composableImageDomain);
     CjguiReleaseComposableImageDomain(ctx);
     ctx.composableImageDomain = nil;
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,11);
     ctx.window = nil;
     ctx.commandQueue = nil;
     ctx.device = nil;
     ctx.app = nil;
 
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,12);
     CjguiReleaseSession(session);
     if(CjguiFontLifetimeDebugEnabled())CjguiFontLifetimeDebugBoundary("after_destroy",session,ctx);
+    CjguiTraceDestroyCallee(session,ctx.sessionGeneration,13);
     NSLog(@"cjgui: destroy complete");
     return CJGUI_INTERNAL_RENDERER_OK;
 }

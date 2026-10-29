@@ -1874,6 +1874,8 @@ public class CjguiSharedOperationExternalConnection {
         if (lines[2] == "GET_GENERATED_UI_CAPABILITIES") {
             return dispatchGeneratedUiCapabilities(lines)
         }
+        if (lines[2] == "GET_GENERATED_UI_HISTORY") { return dispatchGeneratedUiHistory(lines) }
+        if (lines[2].startsWith("APPLY_GENERATED_UI_HISTORY ")) { return dispatchGeneratedUiHistoryAction(lines) }
         if (lines[2] == "GET_GENERATED_UI_STRUCTURE") {
             return dispatchGeneratedUiStructure(lines)
         }
@@ -3243,47 +3245,94 @@ public class CjguiSharedOperationExternalConnection {
                 return errorPayload("generated_ui_payload_too_large")
             }
             let result = provider.submitStructure(candidate, parseInt64OrZero(header[1]))
-            if (result.accepted) {
-                // An accepted structure is an external mutation of this
-                // window's declarations: request the same bounded refresh the
-                // business-action path uses.
-                synchronized(transportLock) {
-                    windowRefreshRequested = true
-                }
-            }
-            let body = CjguiSharedOperationBoundedTextBuilder()
-            if (!body.append(
-                "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND GENERATED_UI_SUBMIT\n" +
-                "APPLIED ${result.accepted}\nREASON ${if (result.reason.size > 0) { result.reason } else { "none" }}\n" +
-                "PATH ${if (result.path.size > 0) { result.path } else { "none" }}\n" +
-                "VERSION_BEFORE ${result.versionBefore}\nVERSION_AFTER ${result.versionAfter}\n" +
-                // Candidate receipt and scene acceptance are reported
-                // separately: VERSION_AFTER stays the scene-accepted version,
-                // so a client cannot read a received candidate as an accepted
-                // interface.
-                "CANDIDATE_ACCEPTED ${result.candidateAccepted}\n" +
-                "SCENE_ACCEPTED ${result.sceneAccepted}\n" +
-                "CANDIDATE_VERSION ${result.candidateVersion}\n" +
-                // The attempt token and the endpoint it belongs to travel with
-                // the reply: they are the caller's ONLY way to ask later what
-                // happened to this exact submission.
-                "ENDPOINT_EPOCH ${endpointGeneration}\nENDPOINT_INSTANCE ${endpointInstanceValue}\nENDPOINT_BIND_GENERATION ${endpointGeneration}\n" +
-                "CANDIDATE_TOKEN ${result.candidateToken}\n" +
-                "RECEIPT ${if (result.receipt.size > 0) { result.receipt } else { "none" }}\nEND")) {
-                return errorPayload("response_too_large")
-            }
-            return body.toString()
+            return generatedUiSubmissionReply(result)
         }
         return errorPayload("generated_ui_unavailable")
     }
 
-    private func generatedUiPayload(kind: String, payload: String): String {
+    private func generatedUiSubmissionReply(result: CjguiSharedOperationGeneratedUiSubmit): String {
+        if (result.accepted) {
+            // An accepted structure is an external mutation of this
+            // window's declarations: request the same bounded refresh the
+            // business-action path uses.
+            synchronized(transportLock) {
+                windowRefreshRequested = true
+            }
+        }
         let body = CjguiSharedOperationBoundedTextBuilder()
         if (!body.append(
-            "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND ${kind}\n" +
-            "PAYLOAD_LENGTH ${payload.size}\n")) {
+            "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND GENERATED_UI_SUBMIT\n" +
+            "APPLIED ${result.accepted}\nREASON ${if (result.reason.size > 0) { result.reason } else { "none" }}\n" +
+            "PATH ${if (result.path.size > 0) { result.path } else { "none" }}\n" +
+            "VERSION_BEFORE ${result.versionBefore}\nVERSION_AFTER ${result.versionAfter}\n" +
+            // Candidate receipt and scene acceptance are reported
+            // separately: VERSION_AFTER stays the scene-accepted version,
+            // so a client cannot read a received candidate as an accepted
+            // interface.
+            "CANDIDATE_ACCEPTED ${result.candidateAccepted}\n" +
+            "SCENE_ACCEPTED ${result.sceneAccepted}\n" +
+            "CANDIDATE_VERSION ${result.candidateVersion}\n" +
+            // The attempt token and the endpoint it belongs to travel with
+            // the reply: they are the caller's ONLY way to ask later what
+            // happened to this exact submission.
+            "ENDPOINT_EPOCH ${endpointGeneration}\nENDPOINT_INSTANCE ${endpointInstanceValue}\nENDPOINT_BIND_GENERATION ${endpointGeneration}\n" +
+            "CANDIDATE_TOKEN ${result.candidateToken}\n" +
+            "RECEIPT ${if (result.receipt.size > 0) { result.receipt } else { "none" }}\nEND")) {
             return errorPayload("response_too_large")
         }
+        return body.toString()
+    }
+
+    private func dispatchGeneratedUiHistory(lines: Array<String>): String {
+        if (!authorization.permitsAction("GET_GENERATED_UI")) { return errorPayload("unauthorized_action") }
+        if (lines.size != 3) { return errorPayload("invalid_request") }
+        if (let Some(provider) <- generatedUiProvider) {
+            let payload = provider.uiDocumentHistoryPayload()
+            if (payload.size == 0) { return errorPayload("ui_document_history_unavailable") }
+            if (payload.size > CJGUI_SHARED_OPERATION_MAX_GENERATED_UI_BYTES) {
+                return errorPayload("generated_ui_payload_too_large")
+            }
+            return generatedUiPayload("GENERATED_UI_HISTORY", payload, withEndpoint: true)
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func dispatchGeneratedUiHistoryAction(lines: Array<String>): String {
+        if (!authorization.permitsAction("SUBMIT_GENERATED_UI")) { return errorPayload("unauthorized_action") }
+        let h = lines[2].split(" ")
+        if (lines.size != 3 || h.size != 8 || (h[1] != "UI_DOC_UNDO" && h[1] != "UI_DOC_REDO") ||
+            !isSafeInteger(h[2]) || !isSafeInteger(h[4]) || !isSafeInteger(h[5]) || !isSafeInteger(h[7])) {
+            return errorPayload("invalid_request")
+        }
+        if (h[6] != endpointInstanceValue || parseInt64OrZero(h[7]) != endpointGeneration) {
+            return errorPayload("endpoint_replaced")
+        }
+        if (parseInt64OrZero(h[2]) < 0 || parseInt64OrZero(h[4]) <= 0 ||
+            parseInt64OrZero(h[5]) <= 0 || h[3].size != 64) { return errorPayload("invalid_request") }
+        for (byte in h[3].toArray()) {
+            if (!((byte >= 48 && byte <= 57) || (byte >= 97 && byte <= 102))) {
+                return errorPayload("invalid_request")
+            }
+        }
+        if (let Some(provider) <- generatedUiProvider) {
+            let result = provider.submitUiDocumentHistory(h[1], parseInt64OrZero(h[2]), h[3],
+                parseInt64OrZero(h[4]), parseInt64OrZero(h[5]))
+            return generatedUiSubmissionReply(result)
+        }
+        return errorPayload("generated_ui_unavailable")
+    }
+
+    private func generatedUiPayload(kind: String, payload: String, withEndpoint!: Bool = false): String {
+        let body = CjguiSharedOperationBoundedTextBuilder()
+        if (!body.append(
+            "PROTOCOL ${CJGUI_SHARED_OPERATION_PROTOCOL}\nKIND ${kind}\n")) {
+            return errorPayload("response_too_large")
+        }
+        if (withEndpoint && !body.append("ENDPOINT_EPOCH ${endpointGeneration}\n" +
+            "ENDPOINT_INSTANCE ${endpointInstanceValue}\nENDPOINT_BIND_GENERATION ${endpointGeneration}\n")) {
+            return errorPayload("response_too_large")
+        }
+        if (!body.append("PAYLOAD_LENGTH ${payload.size}\n")) { return errorPayload("response_too_large") }
         if (!body.append(payload)) {
             return errorPayload("response_too_large")
         }

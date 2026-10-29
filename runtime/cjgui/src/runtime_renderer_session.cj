@@ -1363,6 +1363,9 @@ foreign {
         node: CPointer<CjguiInternalRendererComposableNode>, geometry: CPointer<CjguiInternalRendererComposableGeometry>,
         label: CString, value: CString, semanticId: CString, bindingKey: CString, rowKey: CString,
         parentRowKey: CString, semanticLabel: CString, encodedRuns: CString): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_prepare_composable_image_node_resource(session: UInt64, preparationId: UInt64,
+        index: UInt32, path: CString, identity: CString, version: UInt64): Int32
     @When[os == "macOS" || os == "Windows"]
     func cjgui_internal_renderer_prepare_composable_node_batch(session: UInt64, preparationId: UInt64,
         firstIndex: UInt32, count: UInt32, nodes: CPointer<CjguiInternalRendererComposableNode>,
@@ -1470,6 +1473,11 @@ foreign {
         session: UInt64,
         outNumber: CPointer<Int64>
     ): Int32
+
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_window_state(session: UInt64, words: CPointer<UInt64>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_request_full_screen(session: UInt64, enabled: UInt32): Int32
 
     func cjgui_internal_renderer_probe_image_texture(
         session: UInt64,
@@ -1655,6 +1663,11 @@ foreign {
     @When[os == "macOS"]
     func cjgui_internal_renderer_modal_return_receipt(session: UInt64, scene: UInt64,
         request: UInt64, receipt: CPointer<UInt64>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_modal_exit_interaction(session: UInt64, identity: CPointer<UInt64>): Int32
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_settle_modal_exit(session: UInt64, identity: UInt64,
+        decision: UInt32, request: UInt64, reason: CString): Int32
     @When[os == "macOS"]
     func cjgui_internal_renderer_stage_candidate_caret_identity(session: UInt64, preparationId: UInt64,
         sceneVersion: UInt64, present: UInt8, nodeId: Int64, localByte: Int64, affinity: UInt32,
@@ -3362,6 +3375,29 @@ func internalRendererPrepareComposableNode(session: UInt64, preparationId: UInt6
     return status
 }
 
+@When[os == "macOS"]
+func internalRendererPreparedImagesSupported(): Bool { return true }
+@When[os != "macOS"]
+func internalRendererPreparedImagesSupported(): Bool { return false }
+
+@When[os == "macOS"]
+func internalRendererPrepareComposableImageResource(session: UInt64, preparation: UInt64, index: UInt32,
+    path: String, identity: String, version: UInt64): Int32 {
+    var status: Int32 = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    let p = unsafe { LibC.mallocCString(path) }
+    try (pr = p.asResource()) {
+        let i = unsafe { LibC.mallocCString(identity) }
+        try (ir = i.asResource()) {
+            status = unsafe { cjgui_internal_renderer_prepare_composable_image_node_resource(session, preparation,
+                index, pr.value, ir.value, version) }
+        }
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererPrepareComposableImageResource(session: UInt64, preparation: UInt64, index: UInt32,
+    path: String, identity: String, version: UInt64): Int32 { return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
+
 @When[os == "macOS" || os == "Windows"]
 func internalRendererPrepareComposableNodeBatch(session: UInt64, preparationId: UInt64, firstIndex: UInt32,
     nodes: Array<CjguiInternalRendererComposableNode>, geometry: Array<CjguiInternalRendererComposableGeometry>,
@@ -3797,6 +3833,55 @@ func internalRendererModalReturnReceipt(session: UInt64, scene: UInt64, request:
 func internalRendererModalReturnReceipt(session: UInt64, scene: UInt64, request: UInt64): (Int32, Array<UInt64>) {
     return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Array<UInt64>(19, repeat: 0u64))
 }
+
+@When[os == "macOS"]
+func internalRendererMacosWindowState(session: UInt64): (Int32, Array<UInt64>) {
+    let words = Array<UInt64>(11, repeat: 0u64)
+    let status = unsafe {
+        let data = acquireArrayRawData(words)
+        try { cjgui_internal_renderer_window_state(session, data.pointer) }
+        finally { releaseArrayRawData(data) }
+    }
+    return (status, words)
+}
+@When[os != "macOS"]
+func internalRendererMacosWindowState(session: UInt64): (Int32, Array<UInt64>) {
+    return (CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED, Array<UInt64>(11, repeat: 0u64))
+}
+@When[os == "macOS"]
+func internalRendererRequestFullScreen(session: UInt64, enabled: Bool): Int32 {
+    return unsafe { cjgui_internal_renderer_request_full_screen(session, if (enabled) { 1u32 } else { 0u32 }) }
+}
+@When[os != "macOS"]
+func internalRendererRequestFullScreen(session: UInt64, enabled: Bool): Int32 {
+    return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED
+}
+
+@When[os == "macOS"]
+func internalRendererModalExitInteraction(session: UInt64): UInt64 {
+    let words = Array<UInt64>(1, repeat: 0u64)
+    let status = unsafe {
+        let data = acquireArrayRawData(words)
+        try { cjgui_internal_renderer_modal_exit_interaction(session, data.pointer) }
+        finally { releaseArrayRawData(data) }
+    }
+    return if (status == CJGUI_INTERNAL_RENDERER_OK) { words[0] } else { 0u64 }
+}
+@When[os != "macOS"]
+func internalRendererModalExitInteraction(session: UInt64): UInt64 { return 0u64 }
+@When[os == "macOS"]
+func internalRendererSettleModalExit(session: UInt64, identity: UInt64,
+    decision: UInt32, request: UInt64, reason: String): Int32 {
+    var status = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR
+    let wire = unsafe { LibC.mallocCString(reason) }
+    try (resource = wire.asResource()) {
+        unsafe { status = cjgui_internal_renderer_settle_modal_exit(session, identity, decision, request, resource.value) }
+    }
+    return status
+}
+@When[os != "macOS"]
+func internalRendererSettleModalExit(session: UInt64, identity: UInt64,
+    decision: UInt32, request: UInt64, reason: String): Int32 { return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED }
 
 func internalRendererPresentComposableScene(session: UInt64): InternalRendererFrameResult {
     var observation = CjguiInternalRendererFrameObservation()
@@ -4700,10 +4785,8 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
         if (let Some(found) <- base.cachedMeasurement(value, style, maximumWidth, 0)) {
             return pin(value, style, maximumWidth, 0, found)
         }
-        // A small UI label retains the existing bounded synchronous route.
-        // A long TEXT cold miss is indivisible even when it contains newlines;
-        // it must yield before entering NSString drawing on the AppKit thread.
-        if (value.size > 1024) {
+        // Every cold metrics miss uses the existing copied-font worker.
+        // Short labels can also block indivisibly in native font fallback.
             if (let Some(job) <- pendingTextMetrics) {
                 if (!job.matches(value, style, maximumWidth)) {
                     fail("layout_text_worker_identity_changed")
@@ -4723,15 +4806,7 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
             if (status == CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY) {
                 throw CjguiLayoutMeasurementNeedWorker(true)
             }
-            fail("layout_native_text_worker_unavailable")
-        }
-        // This runs BEFORE CString allocation/conversion/FFI in the real base.
-        checkpoint(true)
-        let actual = base.measure(value, style, maximumWidth)
-        if (base.measurementStatus() != CJGUI_INTERNAL_RENDERER_OK) {
-            fail("layout_native_measurement_failed")
-        }
-        return pin(value, style, maximumWidth, 0, actual)
+        fail("layout_native_text_worker_unavailable")
     }
     public func measureStyled(value: String, style: CjguiComposableUiStyle,
         runs: Array<CjguiComposableUiTextStyleRun>, maximumWidth: Int64): CjguiComposableUiTextMeasurement {
@@ -4740,7 +4815,6 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
         if (let Some(found) <- base.cachedMeasurement(value, style, maximumWidth, 2, runsKey: key)) {
             return pin(value, style, maximumWidth, 2, found, runsKey: key)
         }
-        if (value.size > 1024) {
             if (let Some(job) <- pendingTextMetrics) {
                 if (!job.matches(value, style, maximumWidth, runsKey: key)) { fail("layout_styled_worker_identity_changed") }
                 throw CjguiLayoutMeasurementNeedWorker(false)
@@ -4754,12 +4828,7 @@ class CjguiPreparedStaticTextMeasurer <: CjguiComposableUiTextMeasurer & CjguiCo
                 throw CjguiLayoutMeasurementNeedWorker(false)
             }
             if (status == CJGUI_ASYNC_MEASURE_DEFERRED_CAPACITY) { throw CjguiLayoutMeasurementNeedWorker(true) }
-            fail("layout_native_styled_worker_unavailable")
-        }
-        checkpoint(true)
-        let actual = base.measureStyled(value, style, runs, maximumWidth)
-        if (base.measurementStatus() != CJGUI_INTERNAL_RENDERER_OK) { fail("layout_native_styled_measurement_failed") }
-        return pin(value, style, maximumWidth, 2, actual, runsKey: key)
+        fail("layout_native_styled_worker_unavailable")
     }
     public func multilineNaturalContentHeight(value: String, style: CjguiComposableUiStyle, contentWidth: Int64): ?Int64 {
         if (let Some(found) <- lookup(value, style, contentWidth, 1)) {

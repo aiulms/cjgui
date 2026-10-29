@@ -38,6 +38,11 @@ public class CjguiGeneratedUiFieldSpec {
     /// field definition. It travels with the field so a consumer (or an external
     /// reader) never has to guess which argument the owner operation takes.
     public let argumentName: String
+    /// When the application declared a shared select for this field, the
+    /// generated leaf must present that select instead of the editor kind's
+    /// default input. The override is the selection's own declaration, not a
+    /// second component list.
+    public let declaredInputKind: String
 
     /// `writeActionName` may be given explicitly by an application whose owner
     /// writes immediately (for example SET_TITLE) instead of through the
@@ -45,7 +50,8 @@ public class CjguiGeneratedUiFieldSpec {
     /// consumer re-derives the writer from a field name.
     public init(fieldId: String, label: String, editorKind: String, resourceId: Int64, minimum!: Int64 = 0,
         maximum!: Int64 = 0, writeActionName!: String = "", required!: Bool = false, maximumLength!: Int64 = 0,
-        argumentName!: String = "") {
+        argumentName!: String = "", declaredInputKind!: String = "") {
+        this.declaredInputKind = declaredInputKind
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
@@ -75,8 +81,12 @@ public class CjguiGeneratedUiFieldSpec {
         return ""
     }
 
-    /// The generated input kind that presents this editor kind.
+    /// The generated input kind that presents this editor kind. A declared
+    /// shared select wins: the field's owner, options and transaction are the
+    /// select's, so publishing the plain boolean input would make a generated
+    /// consumer build a second, divergent editor for the same field.
     public func inputKind(): String {
+        if (declaredInputKind.size > 0) { return declaredInputKind }
         if (editorKind == "BOOLEAN") {
             return "booleanInput"
         }
@@ -123,9 +133,14 @@ public class CjguiGeneratedUiFieldSpec {
     /// carries them with the field, so an external caller (or a composite element)
     /// never guesses which argument `EDIT_DRAFT_TEXT`/`EDIT_DRAFT_BOOLEAN` takes.
     public static func fromFormBinding(binding: CjguiSharedFormBinding, textArgument!: String = "",
-        booleanArgument!: String = ""): ArrayList<CjguiGeneratedUiFieldSpec> {
+        booleanArgument!: String = "", selectFieldIds!: ?ArrayList<String> = None): ArrayList<CjguiGeneratedUiFieldSpec> {
         let result = ArrayList<CjguiGeneratedUiFieldSpec>()
         for (descriptor in binding.allFields()) {
+            let declaredInput = match (selectFieldIds) {
+                case Some(ids) =>
+                    if (ids.contains(descriptor.fieldId)) { "select" } else { "" }
+                case None => ""
+            }
             // The declared business constraints travel with the field: the
             // generated spec (and therefore the validator and the external
             // capability description) enforces and publishes exactly what the
@@ -139,7 +154,7 @@ public class CjguiGeneratedUiFieldSpec {
                 CjguiGeneratedUiFieldSpec(descriptor.fieldId, descriptor.label, descriptor.editorKind,
                     descriptor.resourceId, minimum: descriptor.minimum, maximum: descriptor.maximum,
                     required: descriptor.required, maximumLength: descriptor.maximumLength,
-                    argumentName: declaredArgument))
+                    argumentName: declaredArgument, declaredInputKind: declaredInput))
         }
         return result
     }
@@ -259,8 +274,8 @@ public let CJGUI_GENERATED_ACTION_OWNER_TARGET_UNSUPPORTED: String =
 /// is rejected as a whole candidate.
 public class CjguiGeneratedUiImageResourceSpec {
     public let key: String
-    /// Only decoded raster types the existing native path supports; PNG is the
-    /// supported set in this package.
+    /// Only decoded raster types the existing native path supports: PNG and
+    /// static RGB JPEG on macOS. Other backends are not claimed by this set.
     public let contentType: String
     public let version: Int64
     /// Human name/purpose published for discovery.
@@ -278,8 +293,20 @@ public class CjguiGeneratedUiImageResourceSpec {
     }
 
     public func isValid(): Bool {
-        return key.size > 0 && contentType == "PNG" && version >= 1 && name.size > 0 && rasterPath.size > 0
+        let formatKnown = contentType == "PNG" || contentType == "JPEG"
+        return key.size > 0 && formatKnown && version >= 1 && name.size > 0 && rasterPath.size > 0
     }
+}
+
+/// Compose ONE ordinary image node from a registered resource declaration. The
+/// key/version/path pairing comes from the SAME spec the catalog publishes, so a
+/// handwritten image never repeats those three fields by hand. The caller keeps
+/// the style/content mode.
+public func cjguiComposableImageResource(nodeId: Int64, semanticId: String,
+    resource: CjguiGeneratedUiImageResourceSpec, style: CjguiComposableUiStyle,
+    contentMode!: Int64 = 1): CjguiComposableUiNode {
+    return cjguiComposableImage(nodeId, semanticId, resource.rasterPath, style,
+        contentMode: contentMode, imageResourceId: resource.key, imageResourceVersion: resource.version)
 }
 
 public class CjguiGeneratedUiPresentation {
@@ -297,13 +324,18 @@ public class CjguiGeneratedUiPresentation {
             // that factory, so accepting it here cannot degrade an unregistered
             // kind into a label.
             presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE || presentation == "FIELD_TEXT" || presentation ==
-            "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER"
+            "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER" ||
+            presentation == "FIELD_SELECT" || presentation == "FIELD_RADIO_GROUP" || presentation ==
+            "FIELD_SEGMENTED"
     }
 
     /// Presentation inferred from a built-in kind. An application kind must
     /// declare its presentation explicitly.
     public static func forBuiltInKind(kind: String): String {
         if (kind == "slider") { return "FIELD_SLIDER" }
+        if (kind == "select") { return "FIELD_SELECT" }
+        if (kind == "radioGroup") { return "FIELD_RADIO_GROUP" }
+        if (kind == "segmented") { return "FIELD_SEGMENTED" }
         if (kind == "vertical") {
             return CJGUI_GENERATED_PRESENTATION_VERTICAL
         }
@@ -488,7 +520,8 @@ public class CjguiGeneratedUiPresentation {
             presentation != CJGUI_GENERATED_PRESENTATION_ASPECT_RATIO && presentation !=
             CJGUI_GENERATED_PRESENTATION_SPACER &&
             presentation != "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN" &&
-            presentation != "FIELD_SLIDER") {
+            presentation != "FIELD_SLIDER" && presentation != "FIELD_SELECT" && presentation != "FIELD_RADIO_GROUP" &&
+            presentation != "FIELD_SEGMENTED") {
             return false
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_VERTICAL || presentation ==
@@ -532,6 +565,21 @@ public class CjguiGeneratedUiPresentation {
         if (presentation == "FIELD_SLIDER") {
             if (name == "step" || name == "thumbDiameter" || name == "trackThickness") { return valueType == "INTEGER" }
             if (name == "label") { return valueType == "STRING" }
+        }
+        if (presentation == "FIELD_SELECT") {
+            if (name == "label" || name == "placeholder" || name == "searchable") {
+                return valueType == "STRING" || (name == "searchable" && valueType == "BOOLEAN")
+            }
+        }
+        if (presentation == "FIELD_RADIO_GROUP" || presentation == "FIELD_SEGMENTED") {
+            // Deliberate narrower vocabulary: the always-visible presentations
+            // have no query and no placeholder, so naming those properties is
+            // a named rejection here instead of a silently ignored attribute.
+            // Every other property the catalog publishes is a real style
+            // property consumed by the group's container/rows (validated by
+            // the shared style checks below), so none is accepted-but-ignored.
+            if (name == "label") { return valueType == "STRING" }
+            if (name == "searchable" || name == "placeholder") { return false }
         }
         if (presentation == CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
             // A composite's declared properties are consumed by the
@@ -847,6 +895,25 @@ public class CjguiGeneratedUiActionSpec {
     }
 }
 
+/// One candidate-scoped snapshot of the runtime-definition overlay. A rejected
+/// replacement restores it, so an invalid B can never retire the definition of
+/// a still-pending A. It copies references only; definitions are immutable.
+public class CjguiStagedCompositeSnapshot {
+    let components: ArrayList<CjguiGeneratedUiComponentSpec>
+    let composites: ArrayList<CjguiCompositeComponentSpec>
+    let factories: ArrayList<CjguiCompositeComponentFactory>
+    let removals: ArrayList<String>
+
+    init(components: ArrayList<CjguiGeneratedUiComponentSpec>,
+        composites: ArrayList<CjguiCompositeComponentSpec>,
+        factories: ArrayList<CjguiCompositeComponentFactory>, removals: ArrayList<String>) {
+        this.components = components
+        this.composites = composites
+        this.factories = factories
+        this.removals = removals
+    }
+}
+
 /// Typed capability catalog. The application registers what generated
 /// structures may use; the query result is what an external client reads
 /// before submitting a candidate.
@@ -854,6 +921,15 @@ public class CjguiGeneratedUiCapabilityCatalog {
     private let components: ArrayList<CjguiGeneratedUiComponentSpec>
     private let actions: ArrayList<CjguiGeneratedUiActionSpec>
     private let fields: ArrayList<CjguiGeneratedUiFieldSpec>
+    // Choice-option declarations, one list per choice field. The select, the
+    // radio group and the segmented bar all consume this same list, and the
+    // discovery text publishes it verbatim.
+    private let choiceOptions: HashMap<String, ArrayList<CjguiSelectOption>>
+    // A live option source for a field whose application can change its
+    // options at runtime. The snapshot above stays as the registration
+    // declaration; discovery and validation read the CURRENT source, so a
+    // disabled/removed option cannot be published from a stale copy.
+    private let choiceOptionBindings: HashMap<String, CjguiSelectFieldBinding>
     // Delivery evidence is app-declared and deliberately separate from the
     // registration support facts: a registered component is available to
     // admission, but it is not "verified on this backend" until a real
@@ -868,6 +944,21 @@ public class CjguiGeneratedUiCapabilityCatalog {
     // presentation can never exist without a real implementation.
     private let composites: ArrayList<CjguiCompositeComponentSpec>
     private let compositeFactories: ArrayList<CjguiCompositeComponentFactory>
+    // Candidate-scoped overlay for RUNTIME composition definitions. Staged
+    // definitions are visible to validation and rendering while a structure
+    // candidate is pending, but the accepted catalog is only changed by
+    // commitStagedComposites(). A rejected candidate discards the overlay, so
+    // the old definition and every accepted instance keep working.
+    private let stagedComponents: ArrayList<CjguiGeneratedUiComponentSpec>
+    private let stagedComposites: ArrayList<CjguiCompositeComponentSpec>
+    private let stagedCompositeFactories: ArrayList<CjguiCompositeComponentFactory>
+    // Explicit deletions travel in the SAME candidate as the update they
+    // accompany. They are applied to the accepted directory only at commit.
+    private let stagedCompositionRemovals: ArrayList<String>
+    // Accepted RUNTIME definitions, published in the SAME atomic structure
+    // snapshot as the instances expanded from them. A compiled application
+    // composite has no runtime definition payload and is not listed here.
+    private let acceptedCompositionDefinitions: ArrayList<CjguiRuntimeCompositionDefinition>
     // Application image resources: ONE declaration per logical key, published
     // through the same capability text the external caller already reads.
     private let imageResources: ArrayList<CjguiGeneratedUiImageResourceSpec>
@@ -905,10 +996,17 @@ public class CjguiGeneratedUiCapabilityCatalog {
         this.components = ArrayList<CjguiGeneratedUiComponentSpec>()
         this.actions = ArrayList<CjguiGeneratedUiActionSpec>()
         this.fields = ArrayList<CjguiGeneratedUiFieldSpec>()
+        this.choiceOptions = HashMap<String, ArrayList<CjguiSelectOption>>()
+        this.choiceOptionBindings = HashMap<String, CjguiSelectFieldBinding>()
         this.deliveryEvidenceDeclarations = ArrayList<CjguiGeneratedUiDeliveryEvidence>()
         this.declaredSupportFacts = ArrayList<CjguiGeneratedUiSupportFact>()
         this.composites = ArrayList<CjguiCompositeComponentSpec>()
         this.compositeFactories = ArrayList<CjguiCompositeComponentFactory>()
+        this.stagedComponents = ArrayList<CjguiGeneratedUiComponentSpec>()
+        this.stagedComposites = ArrayList<CjguiCompositeComponentSpec>()
+        this.stagedCompositeFactories = ArrayList<CjguiCompositeComponentFactory>()
+        this.stagedCompositionRemovals = ArrayList<String>()
+        this.acceptedCompositionDefinitions = ArrayList<CjguiRuntimeCompositionDefinition>()
         this.imageResources = ArrayList<CjguiGeneratedUiImageResourceSpec>()
         this.fontResources = ArrayList<CjguiFontResourceReference>()
         this.imageContentIdentities = HashMap<String, String>()
@@ -1358,6 +1456,83 @@ public class CjguiGeneratedUiCapabilityCatalog {
         return true
     }
 
+    /// ONE choice-option declaration per choice field. The three choice
+    /// presentations (select, radio group, segmented) consume the same list,
+    /// and the public discovery text publishes it so an external client can
+    /// build any presentation without asking the application a second time.
+    public func registerChoiceOptions(fieldId: String, options: ArrayList<CjguiSelectOption>): Bool {
+        var known = false
+        for (field in fields) {
+            if (field.fieldId == fieldId) { known = true }
+        }
+        if (!known) {
+            lastRegistrationIssue = "unknown_field:${fieldId}"
+            return false
+        }
+        if (let Some(_) <- choiceOptionsFor(fieldId)) {
+            lastRegistrationIssue = "duplicate_choice_options:${fieldId}"
+            return false
+        }
+        let keys = HashSet<String>()
+        let values = HashSet<String>()
+        for (option in options) {
+            if (option.key.size == 0 || option.label.size == 0 || option.value.size == 0) {
+                lastRegistrationIssue = "choice_option_identity_required:${fieldId}"
+                return false
+            }
+            if (!keys.add(option.key)) {
+                lastRegistrationIssue = "choice_duplicate_key:${fieldId}:${option.key}"
+                return false
+            }
+            if (!values.add(option.value)) {
+                lastRegistrationIssue = "choice_duplicate_value:${fieldId}:${option.value}"
+                return false
+            }
+        }
+        choiceOptions.add(fieldId, ArrayList<CjguiSelectOption>(options))
+        lastRegistrationIssue = ""
+        return true
+    }
+
+    /// Binds a LIVE option source to its field. Discovery, validation and every
+    /// presentation then resolve the CURRENT options; the registration snapshot
+    /// below is only the initial declaration. The binding's own updateOptions
+    /// enforces bounded identity and leaves the old list on refusal, so the
+    /// catalog never needs a second option state machine.
+    public func bindChoiceOptions(fieldId: String, binding: CjguiSelectFieldBinding): Bool {
+        var known = false
+        for (field in fields) {
+            if (field.fieldId == fieldId) { known = true }
+        }
+        if (!known) {
+            lastRegistrationIssue = "unknown_field:${fieldId}"
+            return false
+        }
+        choiceOptionBindings.add(fieldId, binding)
+        lastRegistrationIssue = ""
+        return true
+    }
+
+    public func choiceOptionsFor(fieldId: String): ?ArrayList<CjguiSelectOption> {
+        if (let Some(binding) <- choiceOptionBindings.get(fieldId)) {
+            return Some(binding.options())
+        }
+        return match (choiceOptions.get(fieldId)) {
+            case Some(value) => Some(ArrayList<CjguiSelectOption>(value))
+            case None => None
+        }
+    }
+
+    public func choiceFieldIds(): ArrayList<String> {
+        let result = ArrayList<String>()
+        for (field in fields) {
+            if (choiceOptions.contains(field.fieldId) || choiceOptionBindings.contains(field.fieldId)) {
+                result.add(field.fieldId)
+            }
+        }
+        return result
+    }
+
     private var lastRegistrationIssue: String = ""
 
     /// Registers an application composite kind together with its compiled
@@ -1559,6 +1734,9 @@ public class CjguiGeneratedUiCapabilityCatalog {
     }
 
     public func compositeFor(kind: String): ?CjguiCompositeComponentSpec {
+        for (spec in stagedComposites) {
+            if (spec.kind == kind) { return Some(spec) }
+        }
         for (spec in composites) {
             if (spec.kind == kind) {
                 return Some(spec)
@@ -1568,6 +1746,13 @@ public class CjguiGeneratedUiCapabilityCatalog {
     }
 
     public func compositeFactoryFor(kind: String): ?CjguiCompositeComponentFactory {
+        var stagedIndex: Int64 = 0
+        while (stagedIndex < stagedComposites.size) {
+            if (stagedComposites[stagedIndex].kind == kind) {
+                return Some(stagedCompositeFactories[stagedIndex])
+            }
+            stagedIndex += 1
+        }
         var index: Int64 = 0
         while (index < composites.size) {
             if (composites[index].kind == kind) {
@@ -1578,12 +1763,331 @@ public class CjguiGeneratedUiCapabilityCatalog {
         return None
     }
 
+    /// Stages one runtime definition for the CURRENT candidate. The accepted
+    /// catalog is untouched until commitStagedComposites(); the same kind may
+    /// be staged more than once (later wins), which is how a definition update
+    /// and its affected instances travel in ONE candidate.
+    public func stageComposite(spec: CjguiCompositeComponentSpec,
+        factory: CjguiCompositeComponentFactory): Bool {
+        lastRegistrationIssue = ""
+        if (spec.kind.size == 0) {
+            lastRegistrationIssue = "empty_component_kind"
+            return false
+        }
+        if (CjguiGeneratedUiPresentation.forBuiltInKind(spec.kind).size > 0) {
+            lastRegistrationIssue = "built_in_kind_not_overridable:${spec.kind}"
+            return false
+        }
+        // Replacing a previously ACCEPTED runtime definition is legal only when
+        // it already is a composite; a built-in/normal component is never
+        // shadowed by a runtime definition.
+        if (let Some(existing) <- acceptedComponentFor(spec.kind)) {
+            // Replacing a runtime COMPOSITE is the definition-update path; any
+            // other registered component keeps its kind.
+            if (existing.presentation != CJGUI_GENERATED_PRESENTATION_COMPOSITE) {
+                lastRegistrationIssue = "duplicate_component_kind:${spec.kind}"
+                return false
+            }
+        }
+        if (spec.elements.size == 0) {
+            lastRegistrationIssue = "composite_has_no_elements:${spec.kind}"
+            return false
+        }
+        if (spec.expandedNodeLimit <= 0 || spec.expandedNodeLimit > maxNodes) {
+            lastRegistrationIssue = "composite_expanded_node_limit:${spec.kind}"
+            return false
+        }
+        if (spec.expandedDepthLimit <= 0 || spec.expandedDepthLimit > maxDepth) {
+            lastRegistrationIssue = "composite_expanded_depth_limit:${spec.kind}"
+            return false
+        }
+        let elementKeys = HashSet<String>()
+        for (element in spec.elements) {
+            if (element.elementKey.size == 0 || elementKeys.contains(element.elementKey)) {
+                lastRegistrationIssue = "composite_duplicate_element_key:${spec.kind}:${element.elementKey}"
+                return false
+            }
+            elementKeys.add(element.elementKey)
+        }
+        for (element in spec.elements) {
+            if (!element.parentKey.isEmpty() && !elementKeys.contains(element.parentKey)) {
+                lastRegistrationIssue = "composite_unknown_parent:${spec.kind}:${element.elementKey}"
+                return false
+            }
+            validateCompositeElement(spec, element)
+            if (!lastRegistrationIssue.isEmpty()) { return false }
+        }
+        for (property in spec.properties) {
+            if (property.valueType != "STRING" && property.valueType != "INTEGER" &&
+                property.valueType != "BOOLEAN") {
+                lastRegistrationIssue = "unknown_property_type:${spec.kind}:${property.name}"
+                return false
+            }
+        }
+        let derived = CjguiGeneratedUiComponentSpec(spec.kind, spec.properties, spec.allowsChildren,
+            childLimit: spec.childLimit, presentation: CJGUI_GENERATED_PRESENTATION_COMPOSITE)
+        removeStagedKind(spec.kind)
+        stagedComponents.add(derived)
+        stagedComposites.add(spec)
+        stagedCompositeFactories.add(factory)
+        return true
+    }
+
+    private func acceptedComponentFor(kind: String): ?CjguiGeneratedUiComponentSpec {
+        for (spec in components) { if (spec.kind == kind) { return Some(spec) } }
+        return None
+    }
+
+    private func removeStagedKind(kind: String): Unit {
+        var index: Int64 = 0
+        while (index < stagedComposites.size) {
+            if (stagedComposites[index].kind == kind) {
+                let _ = stagedComposites.remove(at: index)
+                let _ = stagedComponents.remove(at: index)
+                let _ = stagedCompositeFactories.remove(at: index)
+            } else {
+                index += 1
+            }
+        }
+    }
+
+    /// Candidate-scoped copy for restore-on-rejection. See
+    /// CjguiStagedCompositeSnapshot.
+    public func snapshotStagedComposites(): CjguiStagedCompositeSnapshot {
+        return CjguiStagedCompositeSnapshot(
+            ArrayList<CjguiGeneratedUiComponentSpec>(stagedComponents),
+            ArrayList<CjguiCompositeComponentSpec>(stagedComposites),
+            ArrayList<CjguiCompositeComponentFactory>(stagedCompositeFactories),
+            ArrayList<String>(stagedCompositionRemovals))
+    }
+
+    public func restoreStagedComposites(snapshot: CjguiStagedCompositeSnapshot): Unit {
+        stagedComponents.clear()
+        stagedComposites.clear()
+        stagedCompositeFactories.clear()
+        stagedCompositionRemovals.clear()
+        for (spec in snapshot.components) { stagedComponents.add(spec) }
+        for (spec in snapshot.composites) { stagedComposites.add(spec) }
+        for (factory in snapshot.factories) { stagedCompositeFactories.add(factory) }
+        for (name in snapshot.removals) { stagedCompositionRemovals.add(name) }
+    }
+
+    /// Requests deletion of one ACCEPTED runtime definition. Deleting a
+    /// compiled application composite, an unknown name or a name already being
+    /// defined by the same candidate is refused with a stable reason.
+    public func stageCompositionRemoval(name: String): String {
+        for (existing in stagedCompositionRemovals) {
+            if (existing == name) { return "composition_remove_duplicate:${name}" }
+        }
+        for (staged in stagedComposites) {
+            if (staged.kind == name) { return "composition_remove_and_define:${name}" }
+        }
+        var isRuntime = false
+        for (definition in acceptedCompositionDefinitions) {
+            if (definition.name == name) { isRuntime = true }
+        }
+        if (!isRuntime) { return "composition_remove_unknown:${name}" }
+        // §16: a definition that REMAINS in the accepted directory (minus the
+        // names already staged for removal) may compose the removed name;
+        // deleting it would strand the reference. The instance-structure side
+        // is checked by the region (`cjguiCompositionReferences`) when the
+        // whole candidate is known; this covers the definition graph.
+        for (definition in acceptedCompositionDefinitions) {
+            if (definition.name == name) { continue }
+            var skip = false
+            for (pending in stagedCompositionRemovals) {
+                if (pending == definition.name) { skip = true; break }
+            }
+            if (skip) { continue }
+            var stack = ArrayList<CjguiCompositionTemplateNode>()
+            stack.add(definition.template)
+            while (stack.size > 0) {
+                let node = stack.remove(at: stack.size - 1)
+                if (node.composeName == name) {
+                    return "composition_remove_still_referenced:${name}"
+                }
+                for (child in node.children) { stack.add(child) }
+            }
+        }
+        stagedCompositionRemovals.add(name)
+        return ""
+    }
+
+    /// Accepted-only views. Candidate rendering/validation uses the staged
+    /// overlay (`componentFor`/`compositeFor`); PUBLIC discovery reads these.
+    public func acceptedComponentKinds(): ArrayList<String> {
+        let result = ArrayList<String>()
+        for (spec in components) { result.add(spec.kind) }
+        return result
+    }
+
+    public func acceptedRegisteredComponentFor(kind: String): ?CjguiGeneratedUiComponentSpec {
+        for (spec in components) {
+            if (spec.kind == kind) { return Some(spec) }
+        }
+        return None
+    }
+
+    public func acceptedCompositeKinds(): ArrayList<String> {
+        let result = ArrayList<String>()
+        for (spec in composites) { result.add(spec.kind) }
+        return result
+    }
+
+    public func acceptedCompositeFor(kind: String): ?CjguiCompositeComponentSpec {
+        for (spec in composites) {
+            if (spec.kind == kind) { return Some(spec) }
+        }
+        return None
+    }
+
+    /// The accepted runtime definitions in the SAME format a candidate submits.
+    /// Omitted definitions stay here unchanged; an accepted update replaces the
+    /// entry and an accepted removal deletes it.
+    public func acceptedCompositionPayload(): String {
+        let builder = StringBuilder()
+        for (definition in acceptedCompositionDefinitions) {
+            builder.append(cjguiCompositionDefinitionPayload(definition))
+        }
+        return builder.toString()
+    }
+
+    /// §16: the accepted runtime definitions verbatim, for the candidate-wide
+    /// compose-reference graph check. The array is copied so a caller cannot
+    /// mutate the accepted directory.
+    public func acceptedRuntimeCompositionDefinitions(): ArrayList<CjguiRuntimeCompositionDefinition> {
+        return ArrayList<CjguiRuntimeCompositionDefinition>(acceptedCompositionDefinitions)
+    }
+
+    public func hasAcceptedComposition(name: String): Bool {
+        for (definition in acceptedCompositionDefinitions) {
+            if (definition.name == name) { return true }
+        }
+        return false
+    }
+
+    private func removeAcceptedRuntimeKind(kind: String): Unit {
+        var index: Int64 = 0
+        while (index < composites.size) {
+            if (composites[index].kind == kind) {
+                let _ = composites.remove(at: index)
+                let _ = compositeFactories.remove(at: index)
+            } else {
+                index += 1
+            }
+        }
+        var componentIndex: Int64 = 0
+        while (componentIndex < components.size) {
+            if (components[componentIndex].kind == kind) {
+                let _ = components.remove(at: componentIndex)
+            } else {
+                componentIndex += 1
+            }
+        }
+        var definitionIndex: Int64 = 0
+        while (definitionIndex < acceptedCompositionDefinitions.size) {
+            if (acceptedCompositionDefinitions[definitionIndex].name == kind) {
+                let _ = acceptedCompositionDefinitions.remove(at: definitionIndex)
+            } else {
+                definitionIndex += 1
+            }
+        }
+    }
+
+    private func publishAcceptedDefinition(definition: CjguiRuntimeCompositionDefinition): Unit {
+        var index: Int64 = 0
+        while (index < acceptedCompositionDefinitions.size) {
+            if (acceptedCompositionDefinitions[index].name == definition.name) {
+                acceptedCompositionDefinitions[index] = definition
+                return
+            }
+            index += 1
+        }
+        acceptedCompositionDefinitions.add(definition)
+    }
+
+    /// Installs every staged definition and its derived component spec. Called
+    /// only in the SAME acceptance step that publishes the candidate structure.
+    public func commitStagedComposites(): Unit {
+        for (index in 0..stagedComposites.size) {
+            let spec = stagedComposites[index]
+            let derived = stagedComponents[index]
+            let factory = stagedCompositeFactories[index]
+            var acceptedIndex: Int64 = 0
+            var found = false
+            while (acceptedIndex < composites.size) {
+                if (composites[acceptedIndex].kind == spec.kind) {
+                    composites[acceptedIndex] = spec
+                    compositeFactories[acceptedIndex] = factory
+                    found = true
+                    break
+                }
+                acceptedIndex += 1
+            }
+            if (!found) {
+                composites.add(spec)
+                compositeFactories.add(factory)
+            }
+            // A runtime definition is published in the SAME commit as its
+            // derived component spec, so the atomic snapshot can return the
+            // exact template and the accepted instances together.
+            match (factory) {
+                case runtime: CjguiRuntimeCompositionFactory =>
+                    publishAcceptedDefinition(runtime.runtimeDefinition())
+                case _ => ()
+            }
+            var componentIndex: Int64 = 0
+            var componentFound = false
+            while (componentIndex < components.size) {
+                if (components[componentIndex].kind == spec.kind) {
+                    components[componentIndex] = derived
+                    componentFound = true
+                    break
+                }
+                componentIndex += 1
+            }
+            if (!componentFound) { components.add(derived) }
+        }
+        // Deletions are explicit candidate content; they settle with the same
+        // acceptance step as the update they travel with.
+        for (name in stagedCompositionRemovals) {
+            removeAcceptedRuntimeKind(name)
+        }
+        stagedComponents.clear()
+        stagedComposites.clear()
+        stagedCompositeFactories.clear()
+        stagedCompositionRemovals.clear()
+    }
+
+    /// Discards candidate-scoped definitions; the accepted catalog stays as it
+    /// was. Safe when nothing is staged.
+    public func rollbackStagedComposites(): Unit {
+        stagedComponents.clear()
+        stagedComposites.clear()
+        stagedCompositeFactories.clear()
+        stagedCompositionRemovals.clear()
+    }
+
+    public func hasStagedComposites(): Bool {
+        return stagedComposites.size > 0
+    }
+
+    public func stagedCompositeNames(): ArrayList<String> {
+        let names = ArrayList<String>()
+        for (spec in stagedComposites) { names.add(spec.kind) }
+        return names
+    }
+
     /// Declared composite kinds, so an external reader can discover them beside
     /// the built-in component kinds.
     public func compositeKinds(): ArrayList<String> {
         let result = ArrayList<String>()
+        let seen = HashSet<String>()
+        for (spec in stagedComposites) {
+            if (seen.add(spec.kind)) { result.add(spec.kind) }
+        }
         for (spec in composites) {
-            result.add(spec.kind)
+            if (seen.add(spec.kind)) { result.add(spec.kind) }
         }
         return result
     }
@@ -1594,7 +2098,17 @@ public class CjguiGeneratedUiCapabilityCatalog {
         return lastRegistrationIssue
     }
 
+    /// The reason the most recent registration call was refused. Empty after a
+    /// successful registration. Consumers can report the concrete vocabulary
+    /// failure instead of turning it into a generic registration exception.
+    public func registrationIssue(): String {
+        return lastRegistrationIssue
+    }
+
     public func componentFor(kind: String): ?CjguiGeneratedUiComponentSpec {
+        for (spec in stagedComponents) {
+            if (spec.kind == kind) { return Some(spec) }
+        }
         for (spec in components) {
             if (spec.kind == kind) {
                 return Some(spec)
@@ -1627,8 +2141,12 @@ public class CjguiGeneratedUiCapabilityCatalog {
 
     public func componentKinds(): ArrayList<String> {
         let result = ArrayList<String>()
+        let seen = HashSet<String>()
+        for (spec in stagedComponents) {
+            if (seen.add(spec.kind)) { result.add(spec.kind) }
+        }
         for (spec in components) {
-            result.add(spec.kind)
+            if (seen.add(spec.kind)) { result.add(spec.kind) }
         }
         return result
     }
@@ -2308,6 +2826,18 @@ public class CjguiGeneratedUiValidator {
     }
 
     private func validateBinding(node: CjguiGeneratedUiNodeSpec, spec: CjguiGeneratedUiComponentSpec, path: String): ?String {
+        if (spec.presentation == "FIELD_SELECT" || spec.presentation == "FIELD_RADIO_GROUP" ||
+            spec.presentation == "FIELD_SEGMENTED") {
+            if (node.fieldId.isEmpty()) { return "field_binding_required" }
+            if (let None <- catalog.fieldFor(node.fieldId)) { return "unknown_field" }
+            // A choice presentation needs the field's declared options; without
+            // them the node would pass validation and fail at render time with
+            // an unnamed gap. Reject by name here.
+            if (let None <- catalog.choiceOptionsFor(node.fieldId)) {
+                return "choice_options_not_declared:${node.fieldId}"
+            }
+            return None
+        }
         let requiredEditor = CjguiGeneratedUiPresentation.requiredEditorKind(spec.presentation)
         if (requiredEditor.size > 0) {
             if (node.fieldId.isEmpty()) {
@@ -2484,6 +3014,13 @@ public interface CjguiGeneratedUiBindingProvider {
     }
     /// Draft text for a field ("", when the field has no text value).
     func draftText(fieldId: String): String
+    /// The ONE declared Select field binding (options, controller and owner
+    /// commit) a generated factory may present. None means the provider did not
+    /// declare select options for this field; the candidate is refused.
+    func generatedSelectBinding(fieldId: String): ?CjguiSelectFieldBinding {
+        let _ = fieldId
+        return None
+    }
     /// Instance-aware draft projection for composites. The default preserves
     /// the single-owner provider contract.
     func draftText(fieldId: String, instanceKey: String): String {
@@ -2825,11 +3362,48 @@ class CjguiCompositeInstanceIdentity {
     }
 }
 
+/// Allocates a structural template identity in the SAME instance registry the
+/// composite elements use, and adds it to the accepted allocation set so the
+/// expansion audit treats it exactly like an element identity.
+class CjguiGeneratedCompositeAllocator <: CjguiCompositeIdentityAllocator {
+    private let instance: CjguiComposableUiComponentInstance
+    private let allocated: HashSet<Int64>
+
+    init(instance: CjguiComposableUiComponentInstance, allocated: HashSet<Int64>) {
+        this.instance = instance
+        this.allocated = allocated
+    }
+
+    public func allocate(slot: String): CjguiCompositeAllocatedIdentity {
+        let registryNodeId = instance.nodeId("template-${slot}")
+        let nodeId = if (registryNodeId > 0) { 800000 + registryNodeId } else { -1 }
+        if (nodeId > 0) { allocated.add(nodeId) }
+        return CjguiCompositeAllocatedIdentity(nodeId, instance.semanticId("template-${slot}"))
+    }
+}
+
 public class CjguiGeneratedUiStructureHolder {
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let validator: CjguiGeneratedUiValidator
     private let registry: CjguiComposableUiComponentRegistry
     private let rootScope: CjguiComposableUiIdentityScope
+    // DS51 §12: the REAL holder identity and the composite factories that keep
+    // holder-scoped view state. Publishing, rollback and disposal of those
+    // mounts belong to THIS accept transaction, never to a build call: a build
+    // may still fail after a factory returned, and the LAST instance removal has
+    // no replacement build at all.
+    private let holderIdentityValue: Int64 = cjguiNextGeneratedUiHolderIdentity()
+
+    /// Stable identity of this holder's accepted scene. Displayed for bounded
+    /// diagnostics and used by region-level resolved lookups; it is a runtime
+    /// handle, not a business/global name.
+    public func holderIdentity(): Int64 {
+        return holderIdentityValue
+    }
+    private var viewStateParticipants: HashMap<Int64, CjguiGeneratedUiViewStateParticipant>
+    private var nextViewHolderTransaction: Int64 = 0
+    private var candidateViewHolderTransaction: Int64 = 0
+    private var acceptedRenderViewHolderTransaction: Int64 = 0
     // Accepted (scene-committed) structure and identity table. Only the
     // commit hook below advances these.
     private var accepted: ?CjguiGeneratedUiNodeSpec
@@ -2844,6 +3418,12 @@ public class CjguiGeneratedUiStructureHolder {
     /// (a retried or rebuilt refresh); the second build starts a FRESH
     /// composition instead of re-claiming keys the first pass already claimed.
     private var candidateCompositionUsed: Bool = false
+    // The existing scene transaction may outlive a newer admitted submit.
+    // Terminal hooks own its captured token, including zero for a style pass.
+    private var candidateRefreshToken: Int64 = -1
+    // True between beginCandidateRefresh and its commit/rollback: only then does
+    // candidateRefreshToken describe the scene being built.
+    private var candidateRefreshOpen: Bool = false
     private var lastReason: String
     private var lastSceneOutcomeValue: String
     private var renderFailureReason: String
@@ -2934,6 +3514,10 @@ public class CjguiGeneratedUiStructureHolder {
     // session can never follow a key to a different accepted object.
     private var compositeInstanceIncarnations: HashMap<String, CjguiCompositeInstanceIdentity>
     private var candidateCompositeInstanceIncarnations: HashMap<String, CjguiCompositeInstanceIdentity>
+    // Instance keys the accepted structure of THIS region declares. Set only
+    // around an accepted traversal, so a composite factory can retire a mount
+    // whose instance the scene no longer declares - removal has no replacement.
+    private var acceptedSceneInstanceKeys: ?HashSet<String> = None
     private var nextCompositeInstanceIncarnation: Int64
     // Motion references are staged with the generated candidate and promoted
     // only when the corresponding scene transaction commits.
@@ -2958,6 +3542,7 @@ public class CjguiGeneratedUiStructureHolder {
         this.validator = CjguiGeneratedUiValidator(catalog)
         this.registry = CjguiComposableUiComponentRegistry()
         this.rootScope = rootScope
+        this.viewStateParticipants = HashMap<Int64, CjguiGeneratedUiViewStateParticipant>()
         this.accepted = None
         this.acceptedVersion = 0
         this.candidate = None
@@ -3221,6 +3806,80 @@ public class CjguiGeneratedUiStructureHolder {
         return !candidate.isNone()
     }
 
+    // --- DS51 §12: holder-owned view-state transaction ----------------------
+
+    /// Opens a fresh view-state transaction for the build about to run. A new
+    /// build supersedes an uncommitted one: its staging is dropped, never
+    /// republished, so a retried build cannot inherit half-prepared mounts.
+    private func openViewHolderTransaction(): Int64 {
+        nextViewHolderTransaction += 1
+        return nextViewHolderTransaction
+    }
+
+    private func collectAcceptedInstanceKinds(spec: CjguiGeneratedUiNodeSpec,
+        into: HashMap<String, String>): Unit {
+        if (catalog.compositeFor(spec.kind).isSome()) {
+            into.add(spec.key, spec.kind)
+        }
+        for (child in spec.children) {
+            collectAcceptedInstanceKinds(child, into)
+        }
+    }
+
+    /// Every composite instance key the ACCEPTED structure declares together
+    /// with its kind. It is the reconciliation input: a key that is absent (or
+    /// now another kind) is a removal with no replacement build.
+    private func acceptedInstanceKinds(): HashMap<String, String> {
+        let kinds = HashMap<String, String>()
+        if (let Some(structure) <- accepted) {
+            collectAcceptedInstanceKinds(structure, kinds)
+        }
+        return kinds
+    }
+
+    private func publishViewStates(transaction: Int64, kinds: HashMap<String, String>): Unit {
+        if (transaction <= 0) { return }
+        for ((_, participant) in viewStateParticipants) {
+            participant.commitViewStateTransaction(holderIdentityValue, transaction, kinds)
+        }
+    }
+
+    private func discardViewStates(transaction: Int64): Unit {
+        if (transaction <= 0) { return }
+        for ((_, participant) in viewStateParticipants) {
+            participant.rollbackViewStateTransaction(holderIdentityValue, transaction)
+        }
+    }
+
+    /// Settles the ACCEPTED immediate render (buildAccepted) the window just
+    /// committed. A style-only refresh has no candidate: the accepted render is
+    /// the scene, so its staged mounts are published exactly here.
+    public func settleAcceptedRenderViewState(): Unit {
+        if (acceptedRenderViewHolderTransaction <= 0) { return }
+        let transaction = acceptedRenderViewHolderTransaction
+        acceptedRenderViewHolderTransaction = 0
+        publishViewStates(transaction, acceptedInstanceKinds())
+    }
+
+    /// Drops every open view-state transaction of THIS holder (a rejected or
+    /// abandoned scene). Accepted mounts are never changed here.
+    public func discardSceneViewState(): Unit {
+        discardViewStates(candidateViewHolderTransaction)
+        candidateViewHolderTransaction = 0
+        discardViewStates(acceptedRenderViewHolderTransaction)
+        acceptedRenderViewHolderTransaction = 0
+    }
+
+    /// Releases every accepted and staged mount of THIS holder (window/region
+    /// disposal). Other holders of the same registered factory stay untouched.
+    public func disposeViewState(): Unit {
+        discardSceneViewState()
+        for ((_, participant) in viewStateParticipants) {
+            participant.disposeViewState(holderIdentityValue)
+        }
+        viewStateParticipants.clear()
+    }
+
     /// "scene_accepted", "scene_rejected:<reason>", or "" before any commit.
     public func lastSceneOutcome(): String {
         return lastSceneOutcomeValue
@@ -3288,6 +3947,10 @@ public class CjguiGeneratedUiStructureHolder {
             // Its staged instance view state goes back too, for the same reason a
             // rejected candidate's does.
             restoreStagedInstanceViewStates()
+            // Its staged MOUNTS are abandoned with it: they were never part of
+            // any accepted scene and must not seed the next one.
+            discardViewStates(candidateViewHolderTransaction)
+            candidateViewHolderTransaction = 0
         }
         let motionBindings = HashMap<String, CjguiGeneratedMotionRule>()
         cjguiCollectGeneratedMotionRules(candidate, catalog.motionRuleRegistry(), motionBindings)
@@ -3298,6 +3961,7 @@ public class CjguiGeneratedUiStructureHolder {
         this.candidateCompositionUsed = false
         this.pendingCandidateTokenValue = token
         this.lastReason = ""
+        this.lastSceneOutcomeValue = "scene_pending"
         if (let Some(record) <- candidateRecord(token)) {
             record.markReceived()
         }
@@ -3309,7 +3973,12 @@ public class CjguiGeneratedUiStructureHolder {
     /// Called from the window's begin-scene-refresh hook, before the scene is
     /// built; it publishes nothing.
     public func beginCandidateRefresh(): Bool {
+        candidateRefreshToken = pendingCandidateTokenValue
+        candidateRefreshOpen = true
         refreshIdentities.clear()
+        // A new refresh supersedes any open candidate staging.
+        discardViewStates(candidateViewHolderTransaction)
+        candidateViewHolderTransaction = 0
         if (candidate.isNone()) {
             return true
         }
@@ -3332,6 +4001,9 @@ public class CjguiGeneratedUiStructureHolder {
         candidateTouchedSplitStates = ArrayList<CjguiComposableUiSplitState>()
         candidateTouchedTabsStates = ArrayList<CjguiComposableUiTabsState>()
         lastSceneOutcomeValue = "scene_pending"
+        // Every composite factory build of THIS candidate stages its mounts
+        // under this transaction; only the scene commit publishes them.
+        candidateViewHolderTransaction = openViewHolderTransaction()
         return true
     }
 
@@ -3340,6 +4012,14 @@ public class CjguiGeneratedUiStructureHolder {
     /// structure. The candidate's identities are used for the scene, but the
     /// accepted identity table is only replaced by `commitCandidateRefresh`.
     public func buildRefreshNode(provider: CjguiGeneratedUiBindingProvider, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiComposableUiNode {
+        // THIS scene transaction captured the candidate that existed when it
+        // began. A candidate admitted afterwards is a LATER scene: building it
+        // here would display nodes this transaction never settles, and a late
+        // consumer hook would then roll back its staged definitions.
+        if (candidateRefreshOpen && candidateRefreshToken >= 0 &&
+            candidateRefreshToken != pendingCandidateTokenValue && candidate.isSome()) {
+            return buildAccepted(provider, feedback: feedback)
+        }
         if (let Some(structure) <- candidate) {
             // A SECOND build of the SAME pending candidate must start a fresh
             // identity composition: the first pass already claimed these keys and
@@ -3378,6 +4058,8 @@ public class CjguiGeneratedUiStructureHolder {
     /// Completes the candidate declaration before layout/native submission, so
     /// a duplicate/capacity fault fails while the old interface is untouched.
     public func prepareCandidateRefresh(): Bool {
+        if (candidateRefreshToken >= 0 && candidateRefreshToken != pendingCandidateTokenValue &&
+            candidate.isSome()) { return false }
         if (candidate.isNone()) {
             return true
         }
@@ -3405,6 +4087,11 @@ public class CjguiGeneratedUiStructureHolder {
     /// component identities are promoted in the same step, and only then are
     /// the instances it dropped destroyed.
     public func commitCandidateRefresh(): Bool {
+        if (candidateRefreshToken >= 0 && candidateRefreshToken != pendingCandidateTokenValue &&
+            candidate.isSome()) {
+            candidateRefreshOpen = false
+            return true
+        }
         refreshIdentities.clear()
         let pending = candidate
         if (let Some(structure) <- pending) {
@@ -3469,12 +4156,24 @@ public class CjguiGeneratedUiStructureHolder {
             // The accepted scene's style resolutions become the committed ones in
             // the SAME transaction as the accepted structure.
             commitStyleRefresh()
+            // Holder-scoped view mounts are published in the SAME transaction:
+            // a mount the accepted structure no longer declares (including the
+            // last instance, which has no replacement build) retires here.
+            let kinds = HashMap<String, String>()
+            collectAcceptedInstanceKinds(structure, kinds)
+            publishViewStates(candidateViewHolderTransaction, kinds)
+            candidateViewHolderTransaction = 0
+            candidateRefreshOpen = false
             return true
         }
         lastSceneOutcomeValue = "scene_accepted"
+        candidateRefreshOpen = false
         candidateViewStateStagingActive = false
         discardStagedInstanceViewStates()
         commitStyleRefresh()
+        // No candidate was accepted, so nothing this holder staged may publish.
+        discardViewStates(candidateViewHolderTransaction)
+        candidateViewHolderTransaction = 0
         return true
     }
 
@@ -3488,6 +4187,41 @@ public class CjguiGeneratedUiStructureHolder {
     /// A scene carrier may be cancelled for a known source/viewport reason.
     /// Settle only its pending ticket; an older terminal refusal wins.
     public func rollbackCandidateRefresh(reason: String): Unit {
+        candidateRefreshOpen = false
+        // A rejected/abandoned candidate never publishes its mounts; only the
+        // staging of the transaction it built under is dropped.
+        discardViewStates(candidateViewHolderTransaction)
+        candidateViewHolderTransaction = 0
+        // §16.6: a transport supersession — native replaced the prepared
+        // private graph (for example the first-frame submission racing the
+        // startup document carrier) — never judged this candidate's content.
+        // Keep it pending: the window has already requested a new refresh and
+        // the next scene transaction re-carries the SAME candidate with a
+        // fresh identity composition. The staged definitions overlay belongs
+        // to the still-pending candidate; its owner rolls it back only when
+        // the candidate is terminally refused.
+        if (reason == "native_source_superseded" && candidateRefreshToken == pendingCandidateTokenValue &&
+            candidate.isSome()) {
+            registry.rollbackTransaction()
+            refreshIdentities.clear()
+            restoreStagedInstanceViewStates()
+            releaseCandidateImageHolds()
+            candidatePrepared = false
+            candidateCompositionUsed = false
+            rollbackStyleRefresh()
+            return
+        }
+        if (candidateRefreshToken >= 0 && candidateRefreshToken != pendingCandidateTokenValue && candidate.isSome()) {
+            let explicitlyRejected = if (let Some(record) <- candidateRecord(pendingCandidateTokenValue)) {
+                record.terminalState() == "REJECTED"
+            } else { false }
+            if (!explicitlyRejected) {
+                // Submit already retires superseded staging. A style-only
+                // carrier has no candidate staging; finish only its old style.
+                rollbackStyleRefresh()
+                return
+            }
+        }
         refreshIdentities.clear()
         // The candidate's staged identities die with it: a failed candidate
         // must never change the accepted binding a live session is using.
@@ -3531,6 +4265,16 @@ public class CjguiGeneratedUiStructureHolder {
         }
     }
 
+    /// The empty/failed-render placeholder, scoped below THIS holder's root
+    /// scope: two empty regions in one window must not collide on a fixed
+    /// numeric id (a duplicate rejects the whole scene commit). The window
+    /// resolves the scoped identity during candidate assembly.
+    private func emptyPlaceholder(): CjguiComposableUiNode {
+        return CjguiComposableUiNode(-1, "${rootScope.diagnosticPath()}-generated-empty",
+            CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, CjguiComposableUiStyle(gap: 4),
+            identity: Some(rootScope.local("generated-empty")))
+    }
+
     /// Renders the currently accepted structure (empty group when none was
     /// accepted yet).
     public func buildAccepted(provider: CjguiGeneratedUiBindingProvider, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiComposableUiNode {
@@ -3542,12 +4286,10 @@ public class CjguiGeneratedUiStructureHolder {
             // The accepted structure was built successfully when it was
             // committed; a later provider-driven build failure keeps the
             // placeholder so the rest of the window scene still commits.
-            return cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4))
+            return emptyPlaceholder()
         }
         refreshIdentities.clear()
-        // A dedicated placeholder id: node id 1 belongs to the window's own
-        // layer host, and a duplicate id rejects the whole scene commit.
-        return cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4))
+        return emptyPlaceholder()
     }
 
     /// Renders the accepted structure through the immediate composition path
@@ -3556,6 +4298,13 @@ public class CjguiGeneratedUiStructureHolder {
         intoAcceptedTable: Bool, feedback!: ?CjguiGeneratedUiFormFeedback = None): CjguiGeneratedUiRendered {
         buildIntoAcceptedTable = true
         refreshIdentities.clear()
+        // The accepted immediate render is a transaction too. Its factories may
+        // prepare mounts, but the window may still reject the scene, so nothing
+        // publishes until `settleAcceptedRenderViewState`; a superseded render's
+        // staging is dropped immediately.
+        discardViewStates(acceptedRenderViewHolderTransaction)
+        acceptedRenderViewHolderTransaction = openViewHolderTransaction()
+        let viewStateTransaction = acceptedRenderViewHolderTransaction
         // Publish the accepted route/binding/identity tables only when the WHOLE
         // render succeeds. An immediate rebuild that fails (for example the
         // accepted fallback after a rejected candidate) must leave the accepted
@@ -3577,17 +4326,28 @@ public class CjguiGeneratedUiStructureHolder {
         renderFailurePath = ""
         if (!registry.begin()) {
             restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
+            discardViewStates(viewStateTransaction)
+            acceptedRenderViewHolderTransaction = 0
             return CjguiGeneratedUiRendered(false, "component_composition_failed", "",
-                cjguiComposableVertical(900001, "generated-empty", CjguiComposableUiStyle(gap: 4)))
+                emptyPlaceholder())
         }
         let frozenFeedback = if (feedback.isSome()) { feedback } else { provider.formFeedback() }
+        let sceneKeys = HashSet<String>()
+        collectAcceptedInstanceKeys(structure, sceneKeys)
+        let previousSceneKeys = acceptedSceneInstanceKeys
+        acceptedSceneInstanceKeys = sceneKeys
         let node = nodeFor(structure, provider, intoAcceptedTable, frozenFeedback)
+        acceptedSceneInstanceKeys = previousSceneKeys
         if (!registry.finish()) {
             restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
+            discardViewStates(viewStateTransaction)
+            acceptedRenderViewHolderTransaction = 0
             return CjguiGeneratedUiRendered(false, "component_composition_commit_failed", "", node)
         }
         if (!renderFailureReason.isEmpty()) {
             restoreAcceptedIdentityTables(previousNodeIdToKey, previousCompositeElements, previousIncarnations)
+            discardViewStates(viewStateTransaction)
+            acceptedRenderViewHolderTransaction = 0
             return CjguiGeneratedUiRendered(false, renderFailureReason, renderFailurePath, node)
         }
         preservedAcceptedCompositeElements = None
@@ -3602,6 +4362,19 @@ public class CjguiGeneratedUiStructureHolder {
         acceptedCompositeElements = elements
         compositeInstanceIncarnations = incarnations
         preservedAcceptedCompositeElements = None
+    }
+
+    /// Every composite instance key the accepted structure DECLARES, not only
+    /// the ones this traversal happened to build. The spec is the authority:
+    /// a subtree a node skips for now still keeps its mount.
+    private func collectAcceptedInstanceKeys(spec: CjguiGeneratedUiNodeSpec,
+        into: HashSet<String>): Unit {
+        if (catalog.compositeFor(spec.kind).isSome()) {
+            into.add(spec.key)
+        }
+        for (child in spec.children) {
+            collectAcceptedInstanceKeys(child, into)
+        }
     }
 
     /// Renders the pending candidate inside the identity transaction already
@@ -3668,12 +4441,141 @@ public class CjguiGeneratedUiStructureHolder {
 
     /// Accepted instance key for a composite element node, or empty for an
     /// ordinary generated node. Derived from the same accepted binding that
-    /// routed the target, not from a window-global "selected object".
+    /// routed the target, not from a window-global "selected object". An
+    /// accepted composite element always wins over an app-declared alias for
+    /// the same node id: the generated element is the truth for its own nodes.
     public func compositeInstanceKeyForNodeId(nodeId: Int64): String {
         if (let Some(element) <- acceptedCompositeElements.get(nodeId)) {
             return element.instanceKey
         }
+        if (let Some(alias) <- handwrittenInstanceAliases.get(nodeId)) {
+            return alias
+        }
         return ""
+    }
+
+    // App-declared instance aliases for HANDWRITTEN nodes outside this holder
+    // (the mixed consumer's selected-card detail editors). The alias only
+    // NAMES the instance; the range-session entry still verifies the resolved
+    // provider's actual owner against the accepted node's frozen
+    // operationResourceId before any owned session is built, so a stale or
+    // wrong alias can never install a cross-owner session.
+    private var handwrittenInstanceAliases: HashMap<Int64, String> = HashMap<Int64, String>()
+    private var stagedHandwrittenInstanceAliases: ?HashMap<Int64, String> = None
+    private var handwrittenAliasIncarnations: HashMap<Int64, Int64> = HashMap<Int64, Int64>()
+    private var handwrittenAliasNodes: HashMap<Int64, CjguiComposableUiLayoutNode> =
+        HashMap<Int64, CjguiComposableUiLayoutNode>()
+
+    /// Experimental scene-participant support. Build declarations belong to
+    /// the scene already opened by the region; live range sources keep reading
+    /// the accepted table until that exact scene receives its terminal hook.
+    public func beginHandwrittenInstanceAliasRefresh(): Unit {
+        stagedHandwrittenInstanceAliases = Some(HashMap<Int64, String>(handwrittenInstanceAliases))
+    }
+
+    public func rollbackHandwrittenInstanceAliasRefresh(): Unit {
+        stagedHandwrittenInstanceAliases = None
+    }
+
+    private func sameHandwrittenAliasNode(a: CjguiComposableUiLayoutNode,
+        b: CjguiComposableUiLayoutNode): Bool {
+        return a.nodeId == b.nodeId && a.semanticId == b.semanticId && a.nodeKind == b.nodeKind &&
+            a.fieldId == b.fieldId && a.resourceId == b.resourceId &&
+            a.operationActionName == b.operationActionName && a.operationResourceId == b.operationResourceId
+    }
+
+    /// Publish only after acceptance. Re-declaring an unchanged binding keeps
+    /// its generation; remove/re-add, owner, field or semantic rebind cannot
+    /// revive an adapter which captured an older accepted generation.
+    public func commitHandwrittenInstanceAliasRefresh(
+        acceptedNodes!: ?ArrayList<CjguiComposableUiLayoutNode> = None): Unit {
+        let staged = match (stagedHandwrittenInstanceAliases) {
+            case Some(value) => value
+            case None => return
+        }
+        let aliases = HashMap<Int64, String>()
+        let incarnations = HashMap<Int64, Int64>()
+        let nodes = HashMap<Int64, CjguiComposableUiLayoutNode>()
+        for ((nodeId, key) in staged) {
+            var node: ?CjguiComposableUiLayoutNode = None
+            if (let Some(scene) <- acceptedNodes) {
+                for (acceptedNode in scene) {
+                    if (acceptedNode.nodeId == nodeId) { node = Some(acceptedNode); break }
+                }
+                if (node.isNone()) { continue }
+            }
+            var unchanged = handwrittenInstanceAliases.get(nodeId) == Some(key) &&
+                handwrittenAliasIncarnations.contains(nodeId)
+            if (let Some(currentNode) <- node) {
+                let sameNode = match (handwrittenAliasNodes.get(nodeId)) {
+                    case Some(previous) => sameHandwrittenAliasNode(previous, currentNode)
+                    case None => false
+                }
+                unchanged = unchanged && sameNode
+                nodes.add(nodeId, currentNode)
+            }
+            var incarnation = handwrittenAliasIncarnations.get(nodeId).getOrDefault({ => 0 })
+            if (!unchanged) {
+                incarnation = nextCompositeInstanceIncarnation
+                nextCompositeInstanceIncarnation += 1
+            }
+            aliases.add(nodeId, key)
+            incarnations.add(nodeId, incarnation)
+        }
+        handwrittenInstanceAliases = aliases
+        handwrittenAliasIncarnations = incarnations
+        handwrittenAliasNodes = nodes
+        stagedHandwrittenInstanceAliases = None
+    }
+
+    /// Prospective binding for the open scene, without publishing it to a
+    /// range source. A candidate's removed element never falls back to its
+    /// previous accepted composite binding.
+    public func compositeInstanceKeyForPreparedNodeId(nodeId: Int64): String {
+        let elements = if (candidateRefreshOpen && candidatePrepared && candidate.isSome() &&
+            candidateRefreshToken == pendingCandidateTokenValue) { candidateCompositeElements }
+            else { acceptedCompositeElements }
+        if (let Some(element) <- elements.get(nodeId)) { return element.instanceKey }
+        let aliases = stagedHandwrittenInstanceAliases.getOrDefault({ => handwrittenInstanceAliases })
+        return aliases.get(nodeId).getOrDefault({ => "" })
+    }
+
+    public func compositeInstanceIncarnationForPreparedNodeId(nodeId: Int64): Int64 {
+        let elements = if (candidateRefreshOpen && candidatePrepared && candidate.isSome() &&
+            candidateRefreshToken == pendingCandidateTokenValue) { candidateCompositeElements }
+            else { acceptedCompositeElements }
+        if (let Some(element) <- elements.get(nodeId)) { return element.instanceIncarnation }
+        let aliases = stagedHandwrittenInstanceAliases.getOrDefault({ => handwrittenInstanceAliases })
+        if (aliases.get(nodeId) != handwrittenInstanceAliases.get(nodeId)) { return 0 }
+        return if (aliases.contains(nodeId)) { handwrittenAliasIncarnations.get(nodeId).getOrDefault({ => 0 }) } else { 0 }
+    }
+
+    /// Declares (or replaces) the instance key a handwritten node belongs to.
+    /// Safe to redeclare on every rebuild; the consumer owns the mapping.
+    public func declareHandwrittenInstanceAlias(nodeId: Int64, instanceKey: String): Unit {
+        let aliases = stagedHandwrittenInstanceAliases.getOrDefault({ => handwrittenInstanceAliases })
+        let unchanged = aliases.get(nodeId) == Some(instanceKey)
+        if (aliases.contains(nodeId)) {
+            let _ = aliases.remove(nodeId)
+        }
+        aliases.add(nodeId, instanceKey)
+        if (stagedHandwrittenInstanceAliases.isNone() && !unchanged) {
+            if (handwrittenAliasIncarnations.contains(nodeId)) { let _ = handwrittenAliasIncarnations.remove(nodeId) }
+            handwrittenAliasIncarnations.add(nodeId, nextCompositeInstanceIncarnation)
+            nextCompositeInstanceIncarnation += 1
+            if (handwrittenAliasNodes.contains(nodeId)) { let _ = handwrittenAliasNodes.remove(nodeId) }
+        }
+    }
+
+    /// Drops all app-declared aliases in one call so a selection change never
+    /// leaves a previous object's mapping behind.
+    public func clearHandwrittenInstanceAliases(): Unit {
+        if (let Some(staged) <- stagedHandwrittenInstanceAliases) { staged.clear() }
+        else {
+            handwrittenInstanceAliases.clear()
+            handwrittenAliasIncarnations.clear()
+            handwrittenAliasNodes.clear()
+        }
     }
 
     /// Framework-assigned generation of one accepted composite instance. It is
@@ -3683,7 +4585,7 @@ public class CjguiGeneratedUiStructureHolder {
         if (let Some(element) <- acceptedCompositeElements.get(nodeId)) {
             return element.instanceIncarnation
         }
-        return 0
+        return handwrittenAliasIncarnations.get(nodeId).getOrDefault({ => 0 })
     }
 
     /// True only while the accepted element for `nodeId` is still the exact
@@ -3699,6 +4601,28 @@ public class CjguiGeneratedUiStructureHolder {
         return element.role == CJGUI_COMPOSITE_ELEMENT_ACTION && element.actionName == actionName &&
             element.instanceKey == instanceKey && element.ownerTargetResourceId == ownerTargetResourceId &&
             element.instanceIncarnation == instanceIncarnation
+    }
+
+    /// The ONE action-dispatch route every generated consumer reuses: an
+    /// instance-scoped intent must still match the accepted element (node,
+    /// action, key, ORIGINAL owner target and generation) and then executes
+    /// with exactly those identities; anything else is a retired binding and
+    /// writes nothing. A non-instance action keeps the single-owner overload.
+    /// Callers resolve the intent on the same owner turn that services this
+    /// dispatch; this method takes no lock of its own.
+    public func dispatchActionIntent(intent: CjguiGeneratedUiIntent,
+        provider: CjguiGeneratedUiBindingProvider): CjguiComposableUiDispatchResult {
+        if (intent.instanceKey.size > 0) {
+            if (!compositeActionIntentIsBound(intent.nodeId, intent.actionName, intent.instanceKey,
+                intent.ownerTargetResourceId, intent.instanceIncarnation)) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            let outcome = provider.executeAction(intent.actionName, intent.nodeKey, intent.instanceKey,
+                intent.ownerTargetResourceId, intent.instanceIncarnation)
+            return CjguiComposableUiDispatchResult(outcome.applied)
+        }
+        let outcome = provider.executeAction(intent.actionName, intent.nodeKey)
+        return CjguiComposableUiDispatchResult(outcome.applied)
     }
 
     /// True only when `key` is an instance the ACCEPTED scene still contains.
@@ -3753,9 +4677,9 @@ public class CjguiGeneratedUiStructureHolder {
     /// The owner target an instance currently binds, derived from the same
     /// resolved field/action targeting the elements use. -1 keeps the legacy
     /// single-owner identity.
-    private func compositeOwnerTargetFor(composite: CjguiCompositeComponentSpec, instanceKey: String,
+    private func compositeOwnerTargetFor(elements: ArrayList<CjguiCompositeElementSpec>, instanceKey: String,
         provider: CjguiGeneratedUiBindingProvider): Int64 {
-        for (element in composite.elements) {
+        for (element in elements) {
             if (element.role == CJGUI_COMPOSITE_ELEMENT_FIELD && element.fieldId.size > 0) {
                 let target = provider.fieldOperationResourceId(element.fieldId, instanceKey)
                 if (target >= 0) {
@@ -3821,6 +4745,60 @@ public class CjguiGeneratedUiStructureHolder {
         }
     }
 
+    /// Accepted binding of ONE declared element of ONE instance. The instance
+    /// key and element key are both part of the identity: two cards of the same
+    /// composition never share a select state or a write target.
+    public func acceptedCompositeElementFor(instanceKey: String,
+        elementKey: String): ?CjguiCompositeElementBinding {
+        for ((_, element) in acceptedCompositeElements) {
+            if (element.instanceKey == instanceKey && element.elementKey == elementKey) {
+                return Some(element)
+            }
+        }
+        return None
+    }
+
+    /// The SAME accepted binding the radio rows use, re-checked at commit time.
+    /// A select popup that outlived a removal/rebind/disable cannot write: the
+    /// captured owner target, node identity and generation must all still
+    /// match the accepted element.
+    public func compositionSelectIntent(instanceKey: String, elementKey: String, optionKey: String,
+        ownerTargetResourceId: Int64, nodeId: Int64, instanceIncarnation: Int64): CjguiGeneratedUiIntent {
+        let element = match (acceptedCompositeElementFor(instanceKey, elementKey)) {
+            case Some(value) => value
+            case None => return CjguiGeneratedUiIntent.none("composition_select_stale")
+        }
+        if (element.role != CJGUI_COMPOSITE_ELEMENT_FIELD || element.nodeId != nodeId ||
+            element.ownerTargetResourceId != ownerTargetResourceId ||
+            element.instanceIncarnation != instanceIncarnation) {
+            return CjguiGeneratedUiIntent.none("composition_select_stale")
+        }
+        if (!element.ownerAvailable) {
+            return CjguiGeneratedUiIntent.none("composition_select_unavailable")
+        }
+        let field = match (catalog.fieldFor(element.fieldId)) {
+            case Some(value) => value
+            case None => return CjguiGeneratedUiIntent.none("unknown_field")
+        }
+        for (option in element.choiceOptions) {
+            if (option.key != optionKey) { continue }
+            if (!option.enabled) {
+                return CjguiGeneratedUiIntent.none("composition_select_option_disabled")
+            }
+            let value = if (field.editorKind == "BOOLEAN") {
+                CjguiSharedOperationValue.boolean(option.value == "true")
+            } else {
+                CjguiSharedOperationValue.string(option.value)
+            }
+            return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, element.instanceKey,
+                "", fieldId: element.fieldId, writerOperation: element.writerOperation,
+                ownerTargetResourceId: element.ownerTargetResourceId,
+                argumentName: element.argumentName, value: value, instanceKey: element.instanceKey,
+                nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation)
+        }
+        return CjguiGeneratedUiIntent.none("unknown_choice_option")
+    }
+
     /// Accepted composite element bindings belonging to one instance key, so a
     /// consumer (or a test) can address an element without knowing its node id.
     public func compositeElementNodeIdsForKey(key: String): ArrayList<CjguiCompositeElementBinding> {
@@ -3873,10 +4851,102 @@ public class CjguiGeneratedUiStructureHolder {
         return true
     }
 
-    public func resolveIntent(node: CjguiComposableUiLayoutNode, eventKind: Int64, text: String): CjguiGeneratedUiIntent {
+    /// An accepted composite radio/segmented row is a DYNAMIC child of the
+    /// element, not a declared element, so it has no key/accepted-binding row
+    /// of its own. It is matched by the element's accepted semantic prefix and
+    /// option key, and the resolved edit keeps the element's accepted writer,
+    /// owner target and generation. This is deliberately NOT the single-owner
+    /// Select controller's commit closure: a per-instance row must write the
+    /// instance's own field.
+    private func compositeChoiceIntent(node: CjguiComposableUiLayoutNode,
+        eventKind: Int64): ?CjguiGeneratedUiIntent {
+        if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
+            return None
+        }
+        for ((_, element) in acceptedCompositeElements) {
+            if (element.role != CJGUI_COMPOSITE_ELEMENT_FIELD || element.choiceOptions.size == 0) {
+                continue
+            }
+            let prefix = "${element.semanticId}${CJGUI_SELECT_CHOOSE_SUFFIX}"
+            if (!node.actionName.startsWith(prefix)) {
+                continue
+            }
+            if (!node.semanticId.startsWith("${element.semanticId}-option-")) {
+                return Some(CjguiGeneratedUiIntent.none("choice_row_binding_mismatch"))
+            }
+            let key = node.actionName[prefix.size..node.actionName.size]
+            let field = match (catalog.fieldFor(element.fieldId)) {
+                case Some(value) => value
+                case None => return Some(CjguiGeneratedUiIntent.none("unknown_field"))
+            }
+            for (option in element.choiceOptions) {
+                if (option.key != key) {
+                    continue
+                }
+                if (!option.enabled || !element.ownerAvailable) {
+                    return Some(CjguiGeneratedUiIntent.none("choice_option_unavailable"))
+                }
+                let value = if (field.editorKind == "BOOLEAN") {
+                    CjguiSharedOperationValue.boolean(option.value == "true")
+                } else {
+                    CjguiSharedOperationValue.string(option.value)
+                }
+                return Some(CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, element.instanceKey,
+                    "", fieldId: element.fieldId, writerOperation: element.writerOperation,
+                    ownerTargetResourceId: element.ownerTargetResourceId,
+                    argumentName: element.argumentName, value: value, instanceKey: element.instanceKey,
+                    nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation))
+            }
+            return Some(CjguiGeneratedUiIntent.none("unknown_choice_option"))
+        }
+        return None
+    }
+
+    public func resolveIntent(node: CjguiComposableUiLayoutNode, eventKind: Int64, text: String,
+        selectionStart!: Int64 = -1, selectionEnd!: Int64 = -1): CjguiGeneratedUiIntent {
+        if (let Some(intent) <- compositeChoiceIntent(node, eventKind)) {
+            return intent
+        }
         let key = keyForNodeId(node.nodeId)
         if (key.isEmpty()) {
-            return CjguiGeneratedUiIntent.none("unknown_node")
+            // Handwritten aliases name accepted owner instances without
+            // pretending that their controls belong to the generated tree.
+            let instance = match (handwrittenInstanceAliases.get(node.nodeId)) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiIntent.none("unknown_node")
+            }
+            let accepted = match (handwrittenAliasNodes.get(node.nodeId)) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiIntent.none("handwritten_alias_not_accepted")
+            }
+            if (!sameHandwrittenAliasNode(accepted, node) ||
+                accepted.semanticIncarnation != node.semanticIncarnation) {
+                return CjguiGeneratedUiIntent.none("handwritten_alias_binding_mismatch")
+            }
+            if (!accepted.isEnabled || accepted.isReadOnly) {
+                return CjguiGeneratedUiIntent.none("field_not_editable")
+            }
+            let field = match (catalog.fieldFor(accepted.fieldId)) {
+                case Some(value) => value
+                case None => return CjguiGeneratedUiIntent.none("unknown_field")
+            }
+            if (!field.acceptsChangeEventKind(eventKind)) {
+                return CjguiGeneratedUiIntent.none("event_not_a_field_change")
+            }
+            if (node.resourceId != field.resourceId || node.operationActionName != field.writeActionName ||
+                node.operationResourceId < 0) {
+                return CjguiGeneratedUiIntent.none("node_binding_mismatch")
+            }
+            let value = if (field.editorKind == "BOOLEAN") {
+                CjguiSharedOperationValue.boolean(text == "true")
+            } else {
+                CjguiSharedOperationValue.string(text)
+            }
+            return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, "", "", fieldId: field.fieldId,
+                writerOperation: field.writeActionName, ownerTargetResourceId: accepted.operationResourceId,
+                argumentName: field.argumentName, value: value, instanceKey: instance, nodeId: node.nodeId,
+                instanceIncarnation: compositeInstanceIncarnationForNodeId(node.nodeId),
+                selectionStart: selectionStart, selectionEnd: selectionEnd)
         }
         // Composite element: the role and the resolved owner binding are the
         // framework's, not the consumer's.
@@ -3911,7 +4981,8 @@ public class CjguiGeneratedUiStructureHolder {
                 return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: element.fieldId,
                     writerOperation: element.writerOperation, ownerTargetResourceId: element.ownerTargetResourceId,
                     argumentName: element.argumentName, value: value, instanceKey: element.instanceKey,
-                    nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation)
+                    nodeId: element.nodeId, instanceIncarnation: element.instanceIncarnation,
+                    selectionStart: selectionStart, selectionEnd: selectionEnd)
             }
             if (element.role == CJGUI_COMPOSITE_ELEMENT_PRESET) {
                 if (eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
@@ -3968,7 +5039,8 @@ public class CjguiGeneratedUiStructureHolder {
                 }
                 return CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT, key, "", fieldId: spec.fieldId,
                     writerOperation: field.writeActionName, ownerTargetResourceId: node.operationResourceId,
-                    argumentName: field.argumentName, value: value)
+                    argumentName: field.argumentName, value: value,
+                    selectionStart: selectionStart, selectionEnd: selectionEnd)
             }
             // Not a change for that field: fall through to the action intent so an
             // activation is never swallowed by the field branch.
@@ -4347,6 +5419,98 @@ public class CjguiGeneratedUiStructureHolder {
             if (spec.property("label").size > 0) { slider.semanticLabel = spec.property("label") }
             return slider
         }
+        // A generated choice presentation consumes the SAME declared binding,
+        // options and owner commit as the handwritten control. It contributes
+        // only its allocated presentation identity; value, availability, error
+        // and the commit all derive from ONE frozen feedback projection.
+        if (presentation == "FIELD_SELECT" || presentation == "FIELD_RADIO_GROUP" ||
+            presentation == "FIELD_SEGMENTED") {
+            let declaredChoice = match (provider.generatedSelectBinding(spec.fieldId)) {
+                case Some(value) => value
+                case None =>
+                    noteRenderFailure("choice_options_missing", spec.key)
+                    return cjguiComposableText(nodeId, semanticId, "未声明选项：${spec.fieldId}",
+                        CjguiComposableUiStyle(fixedHeight: 28, textColor: CjguiComposableUiColor(0.55, 0.36, 0.20, 1.0)))
+            }
+            let label = spec.property("label")
+            // ONE frozen fact set: when the accepted feedback carries this field
+            // (same resource, same owner), value, availability and validation
+            // error all come from that snapshot; otherwise they all come from
+            // the live provider. The two sources are never mixed in one frame.
+            var frozenValue = ""
+            var frozenError = ""
+            var frozenEnabled = fieldEnabledFor(provider, spec.fieldId, ownerTarget)
+            if (let Some(state) <- feedback) {
+                if (let Some(value) <- state.fieldFor(spec.fieldId)) {
+                    if (value.resourceId == bindingResourceId && state.ownerResourceId == ownerTarget) {
+                        let availability = state.fieldAvailability(spec.fieldId)
+                        frozenValue = value.draftText
+                        frozenError = value.validationError
+                        frozenEnabled = availability.known && availability.isAvailable && ownerTarget >= 0
+                    } else {
+                        frozenValue = provider.draftText(spec.fieldId)
+                    }
+                } else {
+                    frozenValue = provider.draftText(spec.fieldId)
+                }
+            } else {
+                frozenValue = provider.draftText(spec.fieldId)
+            }
+            if (presentation == "FIELD_SELECT") {
+                if (label.size > 0 && declaredChoice.select.selectedLabel().size == 0) {
+                    noteRenderFailure("select_label_unavailable", spec.key)
+                }
+                // The declared `searchable` property extends the binding's own
+                // constructor declaration; a style declared on the node reaches
+                // the trigger the same way a handwritten style does.
+                declaredChoice.declare(frozenValue,
+                    enabled: frozenEnabled,
+                    placeholder: if (spec.property("placeholder").size > 0) { spec.property("placeholder") } else { label },
+                    style: if (specDeclaresStyleProperties(spec)) {
+                        Some(CjguiSelectStyle(trigger: style))
+                    } else {
+                        None
+                    },
+                    searchable: spec.property("searchable") == "true",
+                    error: frozenError)
+                let trigger = declaredChoice.select.trigger(nodeId: nodeId, semanticId: semanticId)
+                trigger.semanticLabel = if (label.size > 0) {
+                    "${label}：${declaredChoice.select.selectedLabel()}"
+                } else {
+                    declaredChoice.select.selectedLabel()
+                }
+                if (frozenError.size == 0) { return trigger }
+                return choiceValidationGroup(instance, semanticId, trigger, frozenError)
+            }
+            // RadioGroup and Segmented presentations of the same field: the
+            // binding owns the ONE instance per scope, so the scene builder and
+            // the consumer's event router see the same interaction state.
+            // The always-visible presentations reuse the ONE public choice
+            // group over the SAME frozen facts the select projection derived;
+            // the binding registers the action family for event routing.
+            let declaresStyle = specDeclaresStyleProperties(spec)
+            declaredChoice.declare(frozenValue, enabled: frozenEnabled,
+                style: if (declaresStyle) { Some(CjguiSelectStyle(trigger: style)) } else { None },
+                error: frozenError)
+            // The declared style must reach the REAL group container/rows, not
+            // only the parsed style value: the same resolved style and
+            // interaction the select trigger receives feeds the choice group.
+            let choiceStyle: ?CjguiChoiceGroupStyle = if (declaresStyle) {
+                Some(CjguiChoiceGroupStyleTheme.fromResolvedStyle(style,
+                    interaction: interactionStyleFor(spec, intoAcceptedTable)))
+            } else {
+                None
+            }
+            let instanceScope = "choice-${cjguiCommonControlKey(spec.key)}-${spec.fieldId}"
+            let node = if (presentation == "FIELD_RADIO_GROUP") {
+                declaredChoice.radioGroupNode(instanceScope, semanticId, label: label, nodeId: nodeId,
+                    style: choiceStyle)
+            } else {
+                declaredChoice.segmentedNode(instanceScope, semanticId, label: label, nodeId: nodeId,
+                    style: choiceStyle)
+            }
+            return node
+        }
         if (let Some(state) <- feedback) {
             if (let Some(descriptor) <- state.descriptorFor(spec.fieldId)) {
                 if (let Some(value) <- state.fieldFor(spec.fieldId)) {
@@ -4402,6 +5566,31 @@ public class CjguiGeneratedUiStructureHolder {
             renderFailureReason = reason
             renderFailurePath = key
         }
+    }
+
+    /// Whether the node declared any style/paint property. A choice trigger
+    /// that declared a style must receive it; one that declared none keeps the
+    /// control's own default trigger style instead of a blank override.
+    private func specDeclaresStyleProperties(spec: CjguiGeneratedUiNodeSpec): Bool {
+        for ((name, _) in spec.properties) {
+            if (CjguiGeneratedUiPresentation.isPaintPropertyName(name) ||
+                CjguiGeneratedUiPresentation.isStylePropertyName(name) || name == "style") {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// The owner's exact validation fact under a choice presentation, as a
+    /// readable row beside the control - the same shape the bound form field
+    /// uses, never a paraphrase of the machine reason.
+    private func choiceValidationGroup(instance: CjguiComposableUiComponentInstance, semanticId: String,
+        control: CjguiComposableUiNode, errorText: String): CjguiComposableUiNode {
+        let group = cjguiComposableVertical(-1, "${semanticId}-field", CjguiComposableUiStyle(gap: 3, growX: 1))
+        group.add(control)
+        group.add(cjguiComposableText(allocatedElementNodeId(instance, "choice-validation"),
+            instance.semanticId("choice-validation"), errorText, cjguiComposableFormValidationStyle()))
+        return group
     }
 
     /// The enabled projection of one field: the owner's CURRENT availability when
@@ -4594,6 +5783,11 @@ public class CjguiGeneratedUiStructureHolder {
                     instanceKey: preserved.instanceKey, feedback: feedback))
         }
         if (preserved.editorKind == "BOOLEAN") {
+            let liveSelect = provider.generatedSelectBinding(preserved.fieldId)
+            let liveChoiceOptions = match (liveSelect) {
+                case Some(binding) => binding.options()
+                case None => ArrayList<CjguiSelectOption>()
+            }
             return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
                 preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
                 instanceIncarnation: preserved.instanceIncarnation, fieldId: preserved.fieldId,
@@ -4610,7 +5804,13 @@ public class CjguiGeneratedUiStructureHolder {
                 ownerAvailable: fieldEnabledFor(provider, preserved.fieldId, preserved.ownerTargetResourceId,
                     instanceKey: preserved.instanceKey, feedback: feedback),
                 blockedReason: fieldBlockedReasonFor(provider, preserved.fieldId,
-                    instanceKey: preserved.instanceKey, feedback: feedback))
+                    instanceKey: preserved.instanceKey, feedback: feedback),
+                selectBinding: liveSelect, choiceOptions: liveChoiceOptions)
+        }
+        let liveSelect = provider.generatedSelectBinding(preserved.fieldId)
+        let liveChoiceOptions = match (liveSelect) {
+            case Some(binding) => binding.options()
+            case None => ArrayList<CjguiSelectOption>()
         }
         return CjguiCompositeElementBinding(preserved.elementKey, preserved.role, preserved.nodeId,
             preserved.semanticId, preserved.label, instanceKey: preserved.instanceKey,
@@ -4624,7 +5824,8 @@ public class CjguiGeneratedUiStructureHolder {
             ownerAvailable: fieldEnabledFor(provider, preserved.fieldId, preserved.ownerTargetResourceId,
                 instanceKey: preserved.instanceKey, feedback: feedback),
             blockedReason: fieldBlockedReasonFor(provider, preserved.fieldId,
-                instanceKey: preserved.instanceKey, feedback: feedback))
+                instanceKey: preserved.instanceKey, feedback: feedback),
+            selectBinding: liveSelect, choiceOptions: liveChoiceOptions)
     }
 
     /// Resolves one composite element from the registered field/action
@@ -4685,6 +5886,14 @@ public class CjguiGeneratedUiStructureHolder {
         } else {
             field.label
         }
+        // The option set is a FIELD fact, so every instance of the same field
+        // reads the same current declaration; only the selected value and the
+        // owner resolve per instance.
+        let selectBinding = provider.generatedSelectBinding(element.fieldId)
+        let choiceOptions = match (selectBinding) {
+            case Some(binding) => binding.options()
+            case None => ArrayList<CjguiSelectOption>()
+        }
         if (field.editorKind == "BOOLEAN") {
             return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
                 instanceKey: instanceKey, instanceIncarnation: instanceIncarnation, fieldId: element.fieldId,
@@ -4696,7 +5905,7 @@ public class CjguiGeneratedUiStructureHolder {
                 ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget, instanceKey: instanceKey,
                     feedback: feedback),
                 blockedReason: fieldBlockedReasonFor(provider, element.fieldId, instanceKey: instanceKey,
-                    feedback: feedback))
+                    feedback: feedback), selectBinding: selectBinding, choiceOptions: choiceOptions)
         }
         return CjguiCompositeElementBinding(element.elementKey, element.role, nodeId, semanticId, label,
             instanceKey: instanceKey, instanceIncarnation: instanceIncarnation, fieldId: element.fieldId,
@@ -4708,7 +5917,7 @@ public class CjguiGeneratedUiStructureHolder {
             ownerAvailable: fieldEnabledFor(provider, element.fieldId, ownerTarget, instanceKey: instanceKey,
                 feedback: feedback),
             blockedReason: fieldBlockedReasonFor(provider, element.fieldId, instanceKey: instanceKey,
-                feedback: feedback))
+                feedback: feedback), selectBinding: selectBinding, choiceOptions: choiceOptions)
     }
 
     /// Renders one application composite. The framework allocates every
@@ -4735,13 +5944,35 @@ public class CjguiGeneratedUiStructureHolder {
             case Some(value) => value
             case None => CjguiCompositeMissingFactory()
         }
+        // A factory that keeps holder-scoped view state participates in THIS
+        // holder's accept transaction. Registration is per holder and stable, so
+        // a factory that is no longer declared still receives the commit that
+        // retires its last mount.
+        if (let Some(participant) <- (factory as CjguiGeneratedUiViewStateParticipant)) {
+            viewStateParticipants.add(participant.viewStateParticipantIdentity(), participant)
+        }
         let properties = HashMap<String, String>()
         for ((name, value) in spec.properties) {
             properties.add(name, value)
         }
         let bindings = ArrayList<CjguiCompositeElementBinding>()
         let allocated = HashSet<Int64>()
-        let resolvedOwner = compositeOwnerTargetFor(composite, spec.key, provider)
+        // A runtime composition may expand nested definitions inline. Their
+        // fields/actions bind through THIS instance, so the identity set is the
+        // transitive union, not only the kind's own declarations.
+        let effectiveElements = cjguiEffectiveCompositeElements(catalog, spec.kind)
+        let resolvedOwner = compositeOwnerTargetFor(effectiveElements, spec.key, provider)
+        // The expansion plan runs BEFORE any presentation identity is allocated:
+        // repeated references and multiple instances are all charged, and a
+        // wide legal fan-out is refused while the accepted scene stays intact.
+        // The post-expansion audit remains the consistency check on the REAL
+        // built subtree.
+        let expansionPlan = cjguiCompositionExpansionPlan(catalog, spec.kind,
+            composite.expandedNodeLimit, composite.expandedDepthLimit)
+        if (!expansionPlan.issue.isEmpty()) {
+            noteRenderFailure(expansionPlan.issue, spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
         // An immediate ACCEPTED render carries the bindings that were actually
         // accepted. The live provider may already map this key to another owner
         // (an external change no scene has accepted); that must not rebind an
@@ -4781,8 +6012,14 @@ public class CjguiGeneratedUiStructureHolder {
             // another's error.
             instanceFeedback = provider.formFeedback(spec.key)
         }
-        for (element in composite.elements) {
-            let elementNodeId = allocatedElementNodeId(instance, element.elementKey)
+        let scopedElements = HashMap<String, CjguiCompositeElementBinding>()
+        let occurrences = expansionPlan.occurrences
+        var occurrenceIndex = 0
+        while (occurrenceIndex < occurrences.size) {
+            let occurrence = occurrences[occurrenceIndex]
+            let element = occurrence.element
+            let slot = occurrence.slotKey()
+            let elementNodeId = allocatedElementNodeId(instance, slot)
             if (elementNodeId <= 0) {
                 noteRenderFailure("composite_element_identity_missing", spec.key)
                 return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
@@ -4796,22 +6033,52 @@ public class CjguiGeneratedUiStructureHolder {
                     }
                 }
             }
-            if (let Some(value) <- preservedBinding) {
+            let binding: CjguiCompositeElementBinding = if (let Some(value) <- preservedBinding) {
                 // Identity stays accepted; the live projection is refreshed only
                 // while the provider still resolves this instance to the same
                 // accepted owner. A mapping that moved ahead of the accepted
                 // scene keeps the frozen facts instead of borrowing another
                 // object's values.
                 if (resolvedOwner == instanceOwnerTarget) {
-                    bindings.add(reprojectCompositeElement(value, provider, instanceFeedback))
+                    reprojectCompositeElement(value, provider, instanceFeedback)
                 } else {
-                    bindings.add(value)
+                    value
                 }
             } else {
-                bindings.add(
-                    resolveCompositeElement(element, spec.key, instanceIncarnation, instanceOwnerTarget,
-                        elementNodeId, instance.semanticId(element.elementKey), provider, instanceFeedback))
+                resolveCompositeElement(element, spec.key, instanceIncarnation, instanceOwnerTarget,
+                    elementNodeId, instance.semanticId(slot), provider, instanceFeedback)
             }
+            bindings.add(binding)
+            let _ = scopedElements.add(slot, binding)
+            occurrenceIndex += 1
+        }
+        // Radio/segmented presentations allocate their label and one dynamic
+        // row per option inside the factory. Charge those against the SAME
+        // pre-expansion limits before the factory runs.
+        var dynamicNodes: Int64 = 0
+        var dynamicBytes: Int64 = 0
+        occurrenceIndex = 0
+        while (occurrenceIndex < occurrences.size) {
+            let presentation = occurrences[occurrenceIndex].presentation
+            if (presentation == CJGUI_COMPOSITION_PRESENTATION_RADIO ||
+                presentation == CJGUI_COMPOSITION_PRESENTATION_SEGMENTED) {
+                let options = bindings[occurrenceIndex].choiceOptions
+                dynamicNodes += 2 + Int64(options.size)
+                for (option in options) { dynamicBytes += Int64(option.label.size) }
+            }
+            occurrenceIndex += 1
+        }
+        if (expansionPlan.nodes + dynamicNodes > composite.expandedNodeLimit) {
+            noteRenderFailure("composite_expansion_node_limit", spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        if (expansionPlan.nodes + dynamicNodes > catalog.maxNodes) {
+            noteRenderFailure("composite_expansion_catalog_limit", spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
+        }
+        if (expansionPlan.bytes + dynamicBytes > CJGUI_COMPOSITION_EXPANSION_MAX_BYTES) {
+            noteRenderFailure("composite_expansion_byte_limit", spec.key)
+            return cjguiComposableText(-1, "generated-rejected", "", CjguiComposableUiStyle())
         }
         let children = ArrayList<CjguiComposableUiNode>()
         for (child in spec.children) {
@@ -4826,7 +6093,23 @@ public class CjguiGeneratedUiStructureHolder {
         let context = CjguiCompositeBuildContext(spec.key, properties, bindings, children: children,
             resolvedStyle: styleFromDeclaredProperties(properties, false, intoAcceptedTable),
             resolvedInteraction: interactionStyleFor(spec, intoAcceptedTable),
-            ownerFeedback: instanceFeedback)
+            ownerFeedback: instanceFeedback, namedStyles: catalog.namedStyles(),
+            scopedElements: scopedElements,
+            identityAllocator: CjguiGeneratedCompositeAllocator(instance, allocated),
+            holderScope: Some(rootScope),
+            instanceIncarnation: instanceIncarnation,
+            acceptedBuild: intoAcceptedTable,
+            acceptedSceneKeys: if (intoAcceptedTable) {
+                acceptedSceneInstanceKeys
+            } else {
+                None
+            },
+            holderIdentity: holderIdentityValue,
+            viewStateTransaction: if (intoAcceptedTable) {
+                acceptedRenderViewHolderTransaction
+            } else {
+                candidateViewHolderTransaction
+            })
         let built = factory.buildComposite(context)
         let audit = CjguiCompositeExpansionAudit()
         // Caller-provided children carry identities another instance allocated:
@@ -5588,7 +6871,8 @@ public class CjguiGeneratedUiStructureHolder {
         if (!isContainer && presentation != CJGUI_GENERATED_PRESENTATION_LABEL && presentation !=
             CJGUI_GENERATED_PRESENTATION_ACTION && presentation != CJGUI_GENERATED_PRESENTATION_IMAGE && presentation !=
             "FIELD_TEXT" && presentation != "FIELD_INTEGER" && presentation != "FIELD_BOOLEAN" &&
-            presentation != "FIELD_SLIDER") {
+            presentation != "FIELD_SLIDER" && presentation != "FIELD_SELECT" &&
+            presentation != "FIELD_RADIO_GROUP" && presentation != "FIELD_SEGMENTED") {
             return CjguiComposableUiStyle()
         }
         // Generated buttons and editors are real pointer targets. Their kind is
@@ -5597,7 +6881,9 @@ public class CjguiGeneratedUiStructureHolder {
         // otherwise every generated press is rejected before the controller sees
         // it even though the same scene renders and the binding is live.
         let interactive = presentation == CJGUI_GENERATED_PRESENTATION_ACTION || presentation == "FIELD_TEXT" ||
-            presentation == "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER"
+            presentation == "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN" || presentation == "FIELD_SLIDER" ||
+            presentation == "FIELD_SELECT" || presentation == "FIELD_RADIO_GROUP" ||
+            presentation == "FIELD_SEGMENTED"
         return styleFromDeclaredProperties(spec.properties, isContainer, intoAcceptedTable, interactive: interactive)
     }
 
@@ -5651,11 +6937,27 @@ public class CjguiGeneratedUiDecoded {
     public let ok: Bool
     public let reason: String
     public let root: ?CjguiGeneratedUiNodeSpec
+    /// The optional runtime composition definitions carried by the SAME payload
+    /// (`GENERATED_UI_STRUCTURE 2`). Empty means an ordinary structure
+    /// submission that does not touch any definition. Every definition of a
+    /// multi-definition ticket is staged or the whole ticket is refused.
+    public let definitions: ArrayList<CjguiCompositionPayload>
+    /// Legacy single-definition view: Some only when exactly one definition was
+    /// submitted.
+    public let definition: ?CjguiCompositionPayload
+    /// Explicit definition deletions carried by the SAME payload. Empty means
+    /// the submission says nothing about existing definitions (they stay).
+    public let removals: ArrayList<String>
 
-    public init(ok: Bool, reason: String, root: ?CjguiGeneratedUiNodeSpec) {
+    public init(ok: Bool, reason: String, root: ?CjguiGeneratedUiNodeSpec,
+        definitions!: ArrayList<CjguiCompositionPayload> = ArrayList<CjguiCompositionPayload>(),
+        removals!: ArrayList<String> = ArrayList<String>()) {
         this.ok = ok
         this.reason = reason
         this.root = root
+        this.definitions = definitions
+        this.definition = if (definitions.size == 1) { Some(definitions[0]) } else { None }
+        this.removals = removals
     }
 }
 
@@ -5925,6 +7227,14 @@ public class CjguiGeneratedUiEncoding {
         builder.append(
             "BOUNDS ${catalog.maxDepth} ${catalog.maxNodes} ${catalog.maxPropertiesPerNode} " +
                 "${catalog.maxStringLength}\n")
+        // Candidate-wide composition capacity, published from the SAME constants
+        // the decoder enforces. A client that does not see this line keeps the
+        // legacy one-definition behaviour instead of optimistically batching.
+        builder.append(
+            "COMPOSITION_BUDGET version=1 definitions=${CJGUI_COMPOSITION_CANDIDATE_MAX_DEFINITIONS} " +
+                "elements=${CJGUI_COMPOSITION_CANDIDATE_MAX_ELEMENTS} " +
+                "template_nodes=${CJGUI_COMPOSITION_CANDIDATE_MAX_TEMPLATE_NODES} " +
+                "bytes=${CJGUI_COMPOSITION_CANDIDATE_MAX_BYTES}\n")
         builder.append(
             "SEMANTIC_PROPERTY semanticRole outline:scrollArea,row:action " +
                 "semanticLabel semanticSelected semanticExpandable semanticExpanded semanticLevel " +
@@ -5945,8 +7255,12 @@ public class CjguiGeneratedUiEncoding {
                     "stability=${CjguiWindowBackgroundPolicy.STABILITY} " +
                     "support=${CjguiWindowBackgroundPolicy.BACKEND_SUPPORT}\n")
         }
-        for (kind in catalog.componentKinds()) {
-            if (let Some(spec) <- catalog.componentFor(kind)) {
+        // PUBLIC discovery is the ACCEPTED directory only. A submitted but not
+        // yet scene-accepted definition is visible to validation/rendering, not
+        // to an external reader; final rollback must not be the first time the
+        // caller learns that the advertised kind did not exist.
+        for (kind in catalog.acceptedComponentKinds()) {
+            if (let Some(spec) <- catalog.acceptedRegisteredComponentFor(kind)) {
                 builder.append(
                     "COMPONENT ${spec.kind} ${if (spec.allowsChildren) { 1 } else { 0 }} " + "${spec.childLimit}\n")
                 for (property in spec.properties) {
@@ -6005,8 +7319,8 @@ public class CjguiGeneratedUiEncoding {
         // an instance of the kind without reading the application source. The
         // element label is the LAST token (labels may contain spaces); every
         // other field is a single token, `none` when unset.
-        for (kind in catalog.compositeKinds()) {
-            if (let Some(composite) <- catalog.compositeFor(kind)) {
+        for (kind in catalog.acceptedCompositeKinds()) {
+            if (let Some(composite) <- catalog.acceptedCompositeFor(kind)) {
                 builder.append(
                     "COMPOSITE ${composite.kind} " + "children=${if (composite.allowsChildren) { 1 } else { 0 }} " +
                         "child_limit=${composite.childLimit} " + "expanded_nodes=${composite.expandedNodeLimit} " +
@@ -6067,6 +7381,29 @@ public class CjguiGeneratedUiEncoding {
                 builder.append(
                     "FIELD ${fieldId} unknown writer=none required=0 min=0 max=0 maxlen=0 " +
                         "callable=0 argument=none input= label=\n")
+            }
+        }
+        // One line per option of every declared choice field, published from
+        // the SAME live table the three choice presentations consume. An
+        // external client can build a select, a radio group or a segmented bar
+        // for the field without a second round trip. Every machine token uses
+        // the shared bounded text encoding (safe ASCII stays verbatim, other
+        // text becomes `u8:<hex>`); the human label is last and encoded too so
+        // one option is always exactly one line. `reason` is the option's
+        // current disabled reason, `none` when the owner publishes none.
+        let choiceFieldIds = catalog.choiceFieldIds()
+        if (choiceFieldIds.size > 0) {
+            builder.append("CHOICE_FORMAT version=1 encoding=token fields=fieldId,key,value,enabled,reason,label\n")
+        }
+        for (fieldId in choiceFieldIds) {
+            if (let Some(options) <- catalog.choiceOptionsFor(fieldId)) {
+                for (option in options) {
+                    builder.append("CHOICE ${fieldId} key=${cjguiGeneratedUiEncodeTextToken(option.key)} " +
+                        "value=${cjguiGeneratedUiEncodeTextToken(option.value)} " +
+                        "enabled=${if (option.enabled) { 1 } else { 0 }} " +
+                        "reason=${if (option.disabledReason.size > 0) { cjguiGeneratedUiEncodeChoiceTextToken(option.disabledReason) } else { "none" }} " +
+                        "label=${cjguiGeneratedUiEncodeTextToken(option.label)}\n")
+                }
             }
         }
         // One line per registered image resource, published from the SAME table
@@ -6185,9 +7522,31 @@ public class CjguiGeneratedUiEncoding {
         return token
     }
 
-    public static func encode(structure: ?CjguiGeneratedUiNodeSpec, version: Int64): String {
+    /// One ATOMIC accepted readback: the structure version, every accepted
+    /// runtime definition in submission grammar, then the nodes that use them.
+    /// `definitions` is empty for an ordinary structure without runtime
+    /// compositions. The whole text is produced under the caller's lock and
+    /// describes ONE accepted structure version.
+    public static func encode(structure: ?CjguiGeneratedUiNodeSpec, version: Int64,
+        definitions!: String = ""): String {
         let builder = StringBuilder()
         builder.append("STRUCTURE ${version}\n")
+        builder.append(definitions)
+        if (let Some(root) <- structure) {
+            encodeNode(root, 0, builder)
+        }
+        builder.append("END")
+        return builder.toString()
+    }
+
+    /// The portable `cjgui.ui-document` structure text: the SAME candidate
+    /// grammar the Python exporter/importer and the window submit use, with the
+    /// format header instead of the accepted-state version line.
+    public static func encodeCandidate(structure: ?CjguiGeneratedUiNodeSpec,
+        formatVersion: Int64, definitions!: String = ""): String {
+        let builder = StringBuilder()
+        builder.append("GENERATED_UI_STRUCTURE ${formatVersion}\n")
+        builder.append(definitions)
         if (let Some(root) <- structure) {
             encodeNode(root, 0, builder)
         }
@@ -6227,9 +7586,21 @@ public class CjguiGeneratedUiEncoding {
         if (candidate.size > CJGUI_GENERATED_UI_DECODE_MAX_BYTES) {
             return CjguiGeneratedUiDecoded(false, "candidate_too_large", None)
         }
-        let lines = candidate.split("\n")
-        if (lines.size < 2 || lines[0] != "GENERATED_UI_STRUCTURE 1") {
+        let lines = ArrayList<String>(candidate.split("\n"))
+        if (lines.size < 2 || (lines[0] != "GENERATED_UI_STRUCTURE 1" &&
+            lines[0] != "GENERATED_UI_STRUCTURE 2")) {
             return CjguiGeneratedUiDecoded(false, "invalid_header", None)
+        }
+        // The optional definition section shares this ONE submission: a client
+        // cannot submit an instance of a definition the same candidate did not
+        // declare, and a failed definition never leaves a half-installed name.
+        let composition = cjguiRuntimeCompositionDecode(lines)
+        if (!composition.ok) {
+            return CjguiGeneratedUiDecoded(false, composition.reason, None)
+        }
+        let compositionPayloads = ArrayList<CjguiCompositionPayload>()
+        for (definition in composition.definitions) {
+            compositionPayloads.add(CjguiCompositionPayload(definition))
         }
         // Pending nodes per depth keep parent/child relationships without a
         // second pass; the root is the depth-0 node. `seenProperties` is the
@@ -6255,7 +7626,13 @@ public class CjguiGeneratedUiEncoding {
                 index += 1
                 continue
             }
-            let fields = line.split(" ")
+            let fields = ArrayList<String>(line.split(" "))
+            if (fields[0] == "COMPOSITION" || fields[0] == "CPARAM" || fields[0] == "CELEMENT" ||
+                fields[0] == "CTEMPLATE" || fields[0] == "COMPOSITION_END" ||
+                fields[0] == "COMPOSITION_REMOVE") {
+                index += 1
+                continue
+            }
             if (fields[0] == "NODE") {
                 if (fields.size < 4) {
                     return CjguiGeneratedUiDecoded(false, "malformed_node:${index}", None)
@@ -6411,7 +7788,14 @@ public class CjguiGeneratedUiEncoding {
         if (!endSeen) {
             return CjguiGeneratedUiDecoded(false, "missing_end", None)
         }
-        return CjguiGeneratedUiDecoded(true, "", root)
+        if (compositionPayloads.size > 0 && root.isNone()) {
+            // A definition without its instances is a legal DECLARATION-ONLY
+            // candidate? No: this channel always carries a structure. Refusing
+            // keeps the payload's two halves tied together.
+            return CjguiGeneratedUiDecoded(false, "composition_without_structure", None)
+        }
+        return CjguiGeneratedUiDecoded(true, "", root, definitions: compositionPayloads,
+            removals: composition.removals)
     }
 }
 

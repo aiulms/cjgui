@@ -43,6 +43,44 @@ public func cjguiNavigateGeneratedCollection(collection: CjguiGeneratedUiCollect
     return CjguiGeneratedCollectionKeyboardResult(true, navigation.didChange, requested, navigation.focus)
 }
 
+/// The accepted-mount overload: navigation and reveal operate on ONE explicitly
+/// resolved generated mount. The event must carry that mount's viewport object
+/// (not a same-semantic sibling), and a stale/retired/foreign handle is
+/// unhandled with zero selection write. Higher levels still decide whether a
+/// plain-key move becomes an owner selection; this helper only moves the shared
+/// selection model and reveals the ACTIVE mount with its measured row geometry.
+public func cjguiNavigateGeneratedCollection(collection: CjguiGeneratedUiCollection,
+    view: CjguiGeneratedCollectionView, event: CjguiComposableUiEvent,
+    window: ?CjguiComposableUiWindow): CjguiGeneratedCollectionKeyboardResult {
+    let empty = CjguiGeneratedCollectionKeyboardResult(false, false, false, collection.selection.focus())
+    if (event.eventKind != 35 || event.node.nodeKind != CJGUI_COMPOSABLE_UI_SCROLL_AREA) { return empty }
+    if (view.isRetired() || !collection.isAcceptedMount(view)) { return empty }
+    let viewport = match (event.node.scrollViewport) {
+        case Some(value) => value
+        case None => return empty
+    }
+    if (!refEq(viewport, view.viewport)) { return empty }
+    let supported = event.text == "up" || event.text == "down" || event.text == "page_up" ||
+        event.text == "page_down" || event.text == "home" || event.text == "end" ||
+        event.text == "select_all"
+    if (!supported) { return empty }
+    let navigation = collection
+        .selection
+        .navigate(event.text, (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) != 0, collection.order())
+    let focus = navigation.focus
+    var requested = false
+    if (focus.size > 0 && view.revealItem(focus)) {
+        // The mount's own variable-height geometry moved its viewport. Focus the
+        // SURVIVING scroll scope only when the accepted scene still carries it.
+        requested = if (let Some(value) <- window) {
+            value.focusAcceptedSemanticNode(event.node.semanticId)
+        } else {
+            false
+        }
+    }
+    return CjguiGeneratedCollectionKeyboardResult(true, navigation.didChange, requested, focus)
+}
+
 /// Experimental keyboard wiring for the compiled collection projection. The
 /// caller uses CollectionSelection.navigate and its ordinary business select.
 /// Source-key framing stays here with the collection adapter, never in apps.

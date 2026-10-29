@@ -88,6 +88,8 @@ def source_category(source):
     relative = source.relative_to(runtime).as_posix() if source.is_relative_to(runtime) else 'repository/' + source.name
     if relative.startswith('repository/'):
         return 'license'
+    if relative == 'src/macos_owner_fixture_test.cj':
+        return 'test-fixture'
     if relative == 'build.cj':
         return 'build'
     if relative.startswith('native/'):
@@ -138,7 +140,7 @@ def source_files(source):
             if path.is_symlink():
                 raise ValueError(f'export does not follow source symlinks: {path}')
         for name in sorted(filenames):
-            if name not in ignored:
+            if name not in ignored and not name.endswith(('.cj.orig', '.cj.rej')):
                 yield Path(directory) / name
 
 
@@ -173,11 +175,36 @@ for name in ['LICENSE', 'NOTICE']:
 for source in sorted((runtime / 'shared_operation_core').glob('*.py')):
     if not source.name.startswith('test_') and not source.name.endswith('_test.py'):
         add(source, framework / 'shared_operation_core' / source.name)
+# The editing guide is part of the public client contract, not incidental
+# documentation: ship it beside the API it documents.
+add(runtime / 'shared_operation_core/GENERATED_EDITING.md',
+    framework / 'shared_operation_core/GENERATED_EDITING.md')
 tree(runtime / 'resources', framework / 'resources')
 tree(runtime / 'templates/macos_application', framework / 'templates/macos_application', require_application_sources=True)
+# Mixed template tests call this framework-owned AppKit fixture. Ship a
+# package-renamed copy beside the tests so an extracted SDK is test-closed.
+owner_fixture = runtime / 'src/macos_owner_fixture_test.cj'
+if owner_fixture.is_file():
+    if lock_mode == 'legacy' and owner_fixture.relative_to(runtime).as_posix() not in locked:
+        raise ValueError('source lock omitted required mixed template test dependency: src/macos_owner_fixture_test.cj')
+    mixed = runtime / 'templates/macos_application/mixed_form'
+    manifest = (mixed / 'cjpm.toml').read_text()
+    package_match = re.search(r'(?m)^\s*name\s*=\s*"([^"]+)"', manifest)
+    if not package_match:
+        raise ValueError('mixed_form package name is required for owner fixture test closure')
+    fixture_text = owner_fixture.read_text()
+    if fixture_text.count('package cjgui') != 1:
+        raise ValueError('owner fixture must declare the cjgui framework package exactly once')
+    fixture_text = re.sub(r'(?m)^package cjgui$', 'package ' + package_match[1], fixture_text, count=1)
+    add(owner_fixture, Path('framework/cjgui/templates/macos_application/mixed_form/src/cjgui_macos_owner_fixture_test.cj'),
+        fixture_text)
+else:
+    raise ValueError('required mixed template test dependency is missing: src/macos_owner_fixture_test.cj')
 for name in ['run_macos_application.sh', 'create_macos_application.sh', 'macos_build_config.py']:
     add(runtime / 'scripts' / name, framework / 'scripts' / name)
 add(runtime / 'native/scripts/lib_cjgui_source_set.sh', framework / 'native/scripts/lib_cjgui_source_set.sh')
+add(runtime / 'native/scripts/verify_cjpm_mac_testing_link.py',
+    framework / 'native/scripts/verify_cjpm_mac_testing_link.py')
 add(runtime / 'MACOS_APPLICATION_HOST.md', framework / 'MACOS_APPLICATION_HOST.md')
 for name in ['LAYOUT_PRIMITIVES.md', 'FIELD_CONTROLS.md', 'CARD_GRID.md', 'ACCESSIBILITY.md', 'FONT_RESOURCES.md', 'STYLED_TEXT.md']:
     add(runtime / name, framework / name)
@@ -194,7 +221,8 @@ if profile == 'macos-dev':
     add(runtime / 'README.md', framework / 'README.md',
         '# CJGUI macOS framework source\n\n[快速开始](../../README.md) · '
         '[应用宿主](MACOS_APPLICATION_HOST.md) · '
-        '[混合表单接入](templates/macos_application/mixed_form/README.md)\n\n'
+        '[混合表单接入](templates/macos_application/mixed_form/README.md) · '
+        '[生成界面编辑](shared_operation_core/GENERATED_EDITING.md)\n\n'
         'Experimental，macOS Apple Silicon / Cangjie 1.1.3。原生缓存由正常 runner 从本包源码生成。\n')
 else:
     add(runtime / 'README.md', framework / 'README.md')
@@ -203,6 +231,7 @@ add(client_readme if client_readme.exists() else runtime / 'README.md',
     framework / 'shared_operation_core/README.md',
     '# Shared operation clients\n\n[本包快速开始](../../../README.md)。'
     '`client.py` 是通用 descriptor 客户端；`cjgui_generated_client.py` 是同一协议的 typed generated-UI 层。'
+    '生成界面的保存计划、跨进程应用与拒绝/恢复见 [GENERATED_EDITING.md](GENERATED_EDITING.md)。'
     '运行应用显式启用连接后才有 descriptor；动作、参数与授权从实际应用发现。'
     '不包含模型服务，不保有第二份业务状态。\n')
 
@@ -289,6 +318,9 @@ original = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source, 
 # (source, native/ABI, build.cj, scripts, config, templates, assets, license),
 # keyed by its raw source path and SHA-256. Documentation is deliberately out of
 # the closure: it is relocated/rewritten on export and is not an input contract.
+# The generated-UI editing guide is the one exception: it is the usage contract
+# for the public client, so consumer code and its usage text are pinned together.
+essential_closure_docs = {runtime / 'shared_operation_core/GENERATED_EDITING.md'}
 closure = {}
 closure_categories = {}
 # A source is one input even when the package ships it at several destinations
@@ -298,7 +330,7 @@ for source in sorted(set(source for source, _ in plan.values())):
     if source in excluded_closure_sources:
         continue  # The lock file ships as data; it cannot contain its own digest.
     category = source_category(source)
-    if category == 'doc':
+    if category == 'doc' and source not in essential_closure_docs:
         continue
     key = lock_key(source)
     closure[key] = original[source]

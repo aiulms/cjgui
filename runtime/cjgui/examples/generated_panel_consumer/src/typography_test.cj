@@ -42,3 +42,33 @@ func typographyGeneratedDecimalsApplyAndInvalidCandidateRetainsAccepted(): Unit 
     }
     @Assert(domain.snapshot().recordAt(0).title, TYPOGRAPHY_SAMPLE)
 }
+
+// The consumer's actual declaration, measured through the existing layout
+// engine. This is a source/layout counterexample; Sol owns the real IME chain.
+@Test
+func typographyWideAndNarrowKeepTheNormalNotesEditorUsable(): Unit {
+    let domain = CjguiSharedOperationList(ArrayList<CjguiSharedOperationRecord>([
+        CjguiSharedOperationRecord(TYPOGRAPHY_OWNER, TYPOGRAPHY_SAMPLE, false)
+    ]))
+    @Assert(CjguiTaskFields.installIntoEveryRecord(domain), true)
+    let _ = domain.selectFromHuman(TYPOGRAPHY_OWNER)
+    let controller = TypographyConsumerController(domain)
+    @Assert(controller.beginSceneRefresh(), true)
+    let wideTree = controller.buildUi()
+    @Assert(controller.prepareSceneRefresh(), true)
+    controller.commitSceneRefresh()
+    let wide = CjguiComposableUiLayoutEngine.layout(wideTree, CjguiComposableUiRect(0, 0, 920, 740), 1)
+    @Assert(wide.nodeForId(702).bounds.width > 800, true)
+    @Assert(wide.nodeForId(722).bounds.width > 700, true)
+    let widthButton = wide.nodeForId(713)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(widthButton, CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, 1)).didApply, true)
+    @Assert(controller.beginSceneRefresh(), true)
+    let narrowTree = controller.buildUi()
+    @Assert(controller.prepareSceneRefresh(), true)
+    controller.commitSceneRefresh()
+    let narrow = CjguiComposableUiLayoutEngine.layout(narrowTree, CjguiComposableUiRect(0, 0, 920, 740), 2)
+    @Assert(narrow.nodeForId(702).bounds.width, 320)
+    @Assert(narrow.nodeForId(722).bounds.width > 200, true)
+    @Assert(narrow.nodeForId(722).bounds.width < 320, true)
+    @Assert(domain.snapshot().recordAt(0).title, TYPOGRAPHY_SAMPLE)
+}

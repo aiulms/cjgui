@@ -89,6 +89,44 @@ func presetCardApplyRefusesInvalidDraftAndCancelRestores(): Unit {
 }
 
 @Test
+func presetCardApplyAndCancelLeaveTheSelectedCardClean(): Unit {
+    let domain = PrintPresetDomain()
+    let card = domain.cards.card("cardB").getOrThrow()
+    @Assert(card.setText("jobName", "只改 B"), true)
+    let beforeApply = card.snapshot(domain.formSnapshot().contextVersion)
+    @Assert(beforeApply.draftVersion != beforeApply.appliedConfigVersion, true)
+    let applied = card.apply()
+    @Assert(applied[0], true)
+    let afterApply = card.snapshot(domain.formSnapshot().contextVersion)
+    @Assert(afterApply.draftVersion, afterApply.appliedConfigVersion)
+    @Assert(afterApply.fieldForResourceId(6201).appliedValue.displayText(), "只改 B")
+    // Edit AGAIN after Apply, then Cancel: the draft returns to the values the
+    // Apply just accepted, the card is clean (not merely restored-but-dirty),
+    // and a request carrying the pre-Cancel draft basis is refused as stale.
+    @Assert(card.setText("jobName", "又改 B"), true)
+    @Assert(card.setText("copies", "12"), true)
+    let beforeCancel = card.snapshot(domain.formSnapshot().contextVersion)
+    @Assert(beforeCancel.draftVersion != beforeCancel.appliedConfigVersion, true)
+    let draftVersionBeforeCancel = beforeCancel.draftVersion
+    let cancelled = card.cancel()
+    @Assert(cancelled[0], true)
+    let afterCancel = card.snapshot(domain.formSnapshot().contextVersion)
+    @Assert(afterCancel.fieldForResourceId(6201).draftText, "只改 B")
+    @Assert(afterCancel.fieldForResourceId(6202).draftText, "2")
+    @Assert(afterCancel.draftVersion, afterCancel.appliedConfigVersion)
+    // The pre-Cancel draft basis is no longer an accepted input: a write
+    // stamped with it must be rejected instead of silently rebasing.
+    let staleAfterCancel = cardTextAction(domain, "EDIT_DRAFT_TEXT", "jobName", "过期写", 6302,
+        draftVersionBeforeCancel)
+    @Assert(staleAfterCancel.applied, false)
+    @Assert(staleAfterCancel.reason, "stale_draft")
+    // Sibling card is untouched and still clean.
+    let sibling = domain.cards.card("cardA").getOrThrow().snapshot(domain.formSnapshot().contextVersion)
+    @Assert(sibling.draftVersion, sibling.appliedConfigVersion)
+    @Assert(domain.cards.card("cardA").getOrThrow().draftText("jobName"), "资料 A")
+}
+
+@Test
 func presetCardRebindRetiresTheOldOwner(): Unit {
     let domain = PrintPresetDomain()
     let rebind = domain.executeFromHuman(cardCall(domain, "REBIND_CARD", 6302,
@@ -245,14 +283,23 @@ func presetCardReadableProjectionAndEditabilityFollowTheOwner(): Unit {
     let domain = PrintPresetDomain()
     let form = CjguiGeneratedUiFormBinding(domain, PrintPresetDomain.ownerId)
     let catalog = form.capabilityCatalog(maxNodes: 96)
-    var theme = CjguiComposableUiTheme.beaconDark()
+    let appearance = MixedAppearance()
+    appearance.light = true
+    var theme = mixedFormTheme(appearance.light)
     // The factory captures the appearance the CONTROLLER holds, not this local:
     // the theme is swapped by mutating that object, exactly like the window does.
-    let appearance = MixedAppearance()
     @Assert(registerPresetCardComposite(catalog, { => mixedFormTheme(appearance.light) }), true)
     @Assert(syncPresetCardNamedStyles(catalog, theme), true)
     let holder = CjguiGeneratedUiStructureHolder(catalog)
-    let provider = MixedPresetProvider(form, domain.cards, domain)
+    // Mirror the window's REAL provider: the default form is only the fallback;
+    // cardA/cardB are routed through the multi-object binding, so per-card lock
+    // and availability (not the 6200 form) are what the generated card sees.
+    let fallback = MixedPresetProvider(form, domain.cards, domain)
+    let provider = CjguiGeneratedUiMultiObjectBinding(
+        fallback,
+        { key => key.size > 0 && key.startsWith("card") },
+        { key => presetCardObjectBinding(domain.cards, key) },
+        ownerBlockedReason: { => domain.lockReason() })
     let submitted = holder.submit(cardTestStructure(), provider)
     @Assert(submitted.candidateAccepted, true)
     @Assert(cardTestCommit(holder, provider), true)
@@ -272,7 +319,10 @@ func presetCardReadableProjectionAndEditabilityFollowTheOwner(): Unit {
     let cardNode = cardTestFind(built, rootBinding.nodeId).getOrThrow()
     @Assert(cardNode.style.background.red, theme.card.background.red)
     // A clean, editable card publishes its business state, not an invented one.
-    @Assert(cardTestBinding(holder, "cardA", "stateText").projectionText, "草稿与已应用值一致")
+    // A clean owner itself refuses CANCEL (nothing to restore). The generated
+    // action projection is covered by the action tests; this check stays on the
+    // owner fact.
+    @Assert(domain.cards.card("cardA").getOrThrow().actionAvailability("CANCEL_DRAFT").isAvailable, false)
     @Assert(cardTestBinding(holder, "cardA", "cardReason").projectionText, "")
     @Assert(cardTestBinding(holder, "cardA", "nameError").projectionText, "")
 
@@ -473,4 +523,51 @@ func mixedPresetCardBridgeMapsUnprimedRangeAfterExternalWholeValue(): Unit {
         @Assert(range[2], 23)
     }
     @Assert(domain.formSnapshot().fieldForResourceId(6201).draftText, "资料")
+}
+
+/// The range-session owner facts the region entry now checks: the SAME
+/// declared fieldId resolves to DIFFERENT owners by instance. The old wiring
+/// bound the DEFAULT instance's provider (root form owner 6200) against a
+/// handwritten card node whose accepted target is the CARD owner 6301, and
+/// the mismatched session then rejected every delta as owner_target_retired
+/// while suppressing the node's ordinary writer. The region entry compares
+/// the RESOLVED provider owner with the node's frozen target before building
+/// any owned session; this pins the three resolutions it relies on.
+@Test
+func rangeProviderOwnerFollowsInstanceNotGlobalFieldId(): Unit {
+    let domain = PrintPresetDomain()
+    let formBinding = CjguiGeneratedUiFormBinding(domain, PrintPresetDomain.ownerId)
+    let cardObjects = domain.cards
+    let fallback = MixedPresetProvider(formBinding, cardObjects, domain)
+    let multiObject = CjguiGeneratedUiMultiObjectBinding(
+        fallback,
+        { key => key.size > 0 && key.startsWith("card") },
+        { key => presetCardObjectBinding(cardObjects, key) },
+        ownerBlockedReason: { => domain.lockReason() })
+    // DEFAULT instance (legal empty instanceKey): the root form owner.
+    @Assert(multiObject.fieldOperationResourceId("jobName", ""), PrintPresetDomain.ownerId)
+    @Assert(multiObject.fieldOperationResourceId("jobName", ""), 6200)
+    // The CARD instance on the same fieldId: its own owner.
+    @Assert(multiObject.fieldOperationResourceId("jobName", "cardA"), 6301)
+    @Assert(multiObject.fieldOperationResourceId("jobName", "cardB"), 6302)
+    // An unknown instance resolves to NO owner; the region check skips it.
+    @Assert(multiObject.fieldOperationResourceId("jobName", "nosuch"), -1)
+    @Assert(multiObject.rangeTextEditSupported("jobName", "cardA"), true)
+}
+
+/// The handwritten-alias seam the mixed consumer uses to point its selected
+/// card's HANDWRITTEN editors at the card instance: declare/refresh/clear on
+/// the real holder, with no accepted composite involved (an accepted element
+/// always wins over the alias for its own nodes).
+@Test
+func handwrittenInstanceAliasNamesInstanceForRangeBinding(): Unit {
+    let holder = CjguiGeneratedUiStructureHolder(CjguiGeneratedUiCapabilityCatalog())
+    @Assert(holder.compositeInstanceKeyForNodeId(910), "")
+    holder.declareHandwrittenInstanceAlias(910, "cardA")
+    @Assert(holder.compositeInstanceKeyForNodeId(910), "cardA")
+    // Re-declaration follows the consumer's selection change.
+    holder.declareHandwrittenInstanceAlias(910, "cardB")
+    @Assert(holder.compositeInstanceKeyForNodeId(910), "cardB")
+    holder.clearHandwrittenInstanceAliases()
+    @Assert(holder.compositeInstanceKeyForNodeId(910), "")
 }

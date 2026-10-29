@@ -89,9 +89,11 @@ private class CjguiDetailLayoutChoiceComposite <: CjguiCompositeComponentFactory
             CJGUI_COMPOSITE_ELEMENT_ACTION, -1, "", "")
         let choices = ArrayList<CjguiChoiceOption>([
             CjguiChoiceOption("standard", standard.nodeId, "标准", "standard", "GENERATED_ACTION",
-                semanticId: standard.semanticId, enabled: standard.actionEnabled),
+                semanticId: standard.semanticId, enabled: standard.actionEnabled,
+                ownerTargetResourceId: standard.ownerTargetResourceId),
             CjguiChoiceOption("compact", compact.nodeId, "紧凑", "compact", "GENERATED_ACTION",
-                semanticId: compact.semanticId, enabled: compact.actionEnabled)
+                semanticId: compact.semanticId, enabled: compact.actionEnabled,
+                ownerTargetResourceId: compact.ownerTargetResourceId)
         ])
         return CjguiChoiceGroup.build(root.nodeId, root.semanticId, options.nodeId, choices,
             context.property("selected"), unmatched.nodeId,

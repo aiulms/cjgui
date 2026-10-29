@@ -15,6 +15,39 @@ import std.collection.*
 import std.unittest.*
 import std.unittest.testmacro.*
 
+// The window accepts a scene on ordinary host turns (a retained candidate or an
+// image/drawable preparation may span several of them), so tests request the
+// refresh and pump until the accepted scene reaches the target and no refresh
+// remains pending. The earlier synchronous-return assertions are not part of
+// the current contract.
+//
+// Cleanup closes the window, not the Host: Host.close() calls the process-global
+// stopApplicationLoop, and creating another native window in the same test
+// process after that stop aborts the renderer bridge (runtime lifecycle defect
+// in this frozen tree). The Host owns no external connection in these tests.
+private func pumpRejectSceneAccepted(host: CjguiMacosApplicationHost, window: CjguiComposableUiWindow,
+    atLeast!: Int64 = 1): Bool {
+    let _ = window.refresh()
+    var turns: Int64 = 0
+    while (turns < 128) {
+        let progress = window.windowProgress()
+        if (progress.acceptedSceneVersion >= atLeast && progress.pendingRefreshReason == "none") {
+            return true
+        }
+        if (!host.isOpen()) {
+            break
+        }
+        let _ = host.pumpOneTurn()
+        turns += 1
+    }
+    let progress = window.windowProgress()
+    return progress.acceptedSceneVersion >= atLeast && progress.pendingRefreshReason == "none"
+}
+
+private func pumpRejectNextScene(host: CjguiMacosApplicationHost, window: CjguiComposableUiWindow): Bool {
+    return pumpRejectSceneAccepted(host, window, atLeast: window.windowProgress().acceptedSceneVersion + 1)
+}
+
 private class CjguiRejectingSceneController <: CjguiComposableUiController {
     private var versionValue: Int64 = 1
     // When set, the second declaration reuses the first one's node id.
@@ -55,8 +88,12 @@ private class CjguiRejectingSceneController <: CjguiComposableUiController {
 @Test
 func rejectedCandidateKeepsLiveSceneAndPublishesItsReason(): Unit {
     let controller = CjguiRejectingSceneController()
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Rejected candidate", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let accepted = window.windowProjection()
     @Assert(accepted.acceptedSceneVersion > 0, true)
     @Assert(accepted.lastNativeFailure, "none")
@@ -76,7 +113,7 @@ func rejectedCandidateKeepsLiveSceneAndPublishesItsReason(): Unit {
     // window legitimately republishes it without a new native scene version.
     controller.duplicateNodeId = false
     controller.bump()
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectSceneAccepted(host, window, atLeast: accepted.acceptedSceneVersion), true)
     let recovered = window.windowProjection()
     @Assert(recovered.lastNativeFailure, "none")
     @Assert(recovered.pendingRefreshReason, "none")
@@ -86,11 +123,13 @@ func rejectedCandidateKeepsLiveSceneAndPublishesItsReason(): Unit {
     // A real content change after the rejection must still reach the window.
     controller.secondLabel = "第二（已恢复）"
     controller.bump()
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let functioning = window.windowProjection()
     @Assert(functioning.lastNativeFailure, "none")
     @Assert(functioning.acceptedSceneVersion > accepted.acceptedSceneVersion, true)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 // --- rejected scene with a generated candidate ------------------------------
@@ -192,13 +231,17 @@ func rejectedSceneRollsBackGeneratedCandidateAndKeepsEditor(): Unit {
     let recordId = domain.selectedRecordId()
     @Assert(recordId >= 0, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Rejected generated candidate", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
 
     // First structure is accepted normally.
     @Assert(region.submitStructure(GEN_REJECT_S1, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 1)
     let acceptedBefore = window.windowProjection()
     let nodeBefore = region.acceptedNodeIdForKey("nameField")
@@ -234,14 +277,16 @@ func rejectedSceneRollsBackGeneratedCandidateAndKeepsEditor(): Unit {
     // fresh candidate can then be committed with the same identity.
     controller.duplicateNodeId = false
     controller.bump()
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectSceneAccepted(host, window, atLeast: acceptedBefore.acceptedSceneVersion), true)
     @Assert(region.acceptedStructureVersion(), 1)
     @Assert(region.submitStructure(GEN_REJECT_S2, 1).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 2)
     @Assert(region.acceptedNodeIdForKey("nameField"), nodeBefore)
     @Assert(window.windowProjection().lastNativeFailure, "none")
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 // Candidate OWNERSHIP at the application provider (package A1): the token is
@@ -253,8 +298,12 @@ func generatedCandidateTicketsArePerAttemptInTheApplicationProvider(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("票据归属", true, 7, "cache", "gen-ticket-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Candidate tickets", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
 
     // (a) A payload that never becomes a structure still owns an attempt.
@@ -286,7 +335,7 @@ func generatedCandidateTicketsArePerAttemptInTheApplicationProvider(): Unit {
     @Assert(firstTicket.contains("TERMINAL_STATE SUPERSEDED"), true)
     @Assert(firstTicket.contains("TERMINAL_STATE ACCEPTED"), false)
     @Assert(region.acceptedStructureVersion(), 0)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 1)
     let secondTicket = region.candidateTicketPayload(second.candidateToken)
     @Assert(secondTicket.contains("TERMINAL_STATE ACCEPTED"), true)
@@ -295,13 +344,83 @@ func generatedCandidateTicketsArePerAttemptInTheApplicationProvider(): Unit {
     // (d) Accepted-then-replaced is an observation, not a rewrite: the earlier
     // ticket stays ACCEPTED while the endpoint reports a newer accepted token.
     let third = region.submitStructure(GEN_REJECT_S1, 1)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 2)
     let replacedTicket = region.candidateTicketPayload(second.candidateToken)
     @Assert(replacedTicket.contains("TERMINAL_STATE ACCEPTED"), true)
     @Assert(replacedTicket.contains("ACCEPTED_VERSION 1"), true)
     @Assert(replacedTicket.contains("CURRENT_ACCEPTED_TOKEN ${third.candidateToken}"), true)
-    window.close()
+    } finally {
+        window.close()
+    }
+}
+
+// §16.6 startup-load order. The first document load used to fail when native
+// superseded the scene carrier that was carrying the document candidate (the
+// first-frame pipelines / static layout basis settling while the candidate was
+// at native promote): the provider rejected the candidate terminally even though
+// nothing had judged its content, and the application fell back to the default
+// seed. The RULES provider must keep such a candidate pending with the SAME
+// token so the next ordinary scene transaction re-carries it, and the document
+// ticket the startup wait reads must stay PENDING, never REJECTED. A genuine
+// refusal still terminates. No window: the provider's own transaction hooks are
+// exercised exactly as the window calls them.
+@Test
+func transportSupersededCarrierKeepsRulesDocumentCandidatePending(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("载入顺序", true, 7, "cache", "gen-superseded-create").applied, true)
+    let region = CjguiRuleSetGeneratedRegion(domain)
+    let theme = CjguiComposableUiTheme.beaconDark()
+    let bodyStyle = CjguiComposableUiStyle()
+
+    let submitted = region.submitStructure(GEN_REJECT_S1, 0)
+    @Assert(submitted.candidateAccepted, true)
+    let token = submitted.candidateToken
+    @Assert(token > 0, true)
+    @Assert(region.uiDocumentTicket(token).terminalState, "PENDING")
+
+    // Scene transaction 1 carries the candidate through build/prepare and is
+    // then cancelled by native as a transport supersession.
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildSection(theme, bodyStyle)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.rollbackSceneRefresh("native_source_superseded")
+    // Nothing judged the content: same token, still pending, nothing accepted.
+    let afterSupersede = region.uiDocumentTicket(token)
+    @Assert(afterSupersede.terminalState, "PENDING")
+    @Assert(afterSupersede.reason, "")
+    @Assert(region.acceptedStructureVersion(), 0)
+    @Assert(region.candidateStructureVersion(), 1)
+    @Assert(region.statusText().contains("场景重载"), true)
+    @Assert(region.statusText().contains("${token}"), true)
+
+    // Scene transaction 2 re-carries the SAME candidate; no resubmission.
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildSection(theme, bodyStyle)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    let accepted = region.uiDocumentTicket(token)
+    @Assert(accepted.terminalState, "ACCEPTED")
+    @Assert(accepted.acceptedVersion, 1)
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(region.candidateStructureVersion(), 0)
+    @Assert(region.acceptedNodeIdForKey("nameField") > 0, true)
+
+    // A genuine refusal of a later candidate still settles its ticket as
+    // REJECTED and leaves the accepted structure untouched.
+    let refused = region.submitStructure(GEN_REJECT_S2, 1)
+    @Assert(refused.candidateAccepted, true)
+    @Assert(region.beginSceneRefresh(), true)
+    let _ = region.buildSection(theme, bodyStyle)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.rollbackSceneRefresh("owner_or_view_changed")
+    let refusedTicket = region.uiDocumentTicket(refused.candidateToken)
+    @Assert(refusedTicket.terminalState, "REJECTED")
+    @Assert(refusedTicket.sceneState, "scene_rejected:owner_or_view_changed")
+    @Assert(region.acceptedStructureVersion(), 1)
+    @Assert(region.candidateStructureVersion(), 0)
+    @Assert(region.acceptedNodeIdForKey("note"), -1)
+    @Assert(region.statusText().contains("场景拒绝"), true)
 }
 
 /// The accepted layout node for one declared key of the generated region.
@@ -328,8 +447,12 @@ func generatedStyleVocabularyReachesTheRuleConsumerGeometry(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("样式验收", true, 7, "cache", "gen-style-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated style geometry", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
 
     let row = """
@@ -345,7 +468,7 @@ PROPERTY 1 second growX 1
 END
 """
     @Assert(region.submitStructure(row, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let first = ruleStyleNodeBounds(window, region, "first")
     let second = ruleStyleNodeBounds(window, region, "second")
     @Assert(first.width, 40)
@@ -370,10 +493,10 @@ PROPERTY 1 largeNote fontSize 24
 END
 """
     @Assert(region.submitStructure(small, 1).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let smallHeight = ruleStyleNodeBounds(window, region, "smallNote").height
     @Assert(region.submitStructure(large, 2).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let largeHeight = ruleStyleNodeBounds(window, region, "largeNote").height
     @Assert(smallHeight > 0, true)
     @Assert(largeHeight > smallHeight, true)
@@ -398,7 +521,9 @@ END
     } else {
         @Assert(false, true)
     }
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// Reads one `<LABEL> <value>` non-negative number out of an observation payload.
@@ -428,8 +553,12 @@ func generatedObservationSeparatesRebindFromRelayout(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("换绑观测", true, 7, "cache", "gen-rebind-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated rebind observation", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
     // The same wiring the application performs: the accepted-instance
     // projection (and therefore the binding/geometry/instance revisions) needs
@@ -443,7 +572,7 @@ NODE 1 nameField textInput field=label
 END
 """
     @Assert(region.submitStructure(s1, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let baseline = region.snapshotPayload()
     let streamEpoch = observationField(baseline, "STREAM_EPOCH")
     let baselineCursor = observationField(baseline, "CURSOR")
@@ -460,7 +589,7 @@ NODE 1 nameField textInput field=label
 END
 """
     @Assert(region.submitStructure(s2, 1).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let relayout = region.changesPayload(streamEpoch, baselineCursor)
     @Assert(relayout.contains("STRUCTURE"), true)
     @Assert(relayout.contains("BINDINGS"), false)
@@ -477,11 +606,13 @@ NODE 1 nameField textInput field=excludedType
 END
 """
     @Assert(region.submitStructure(s3, 2).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let rebind = region.changesPayload(streamEpoch, relayoutCursor)
     @Assert(rebind.contains("BINDINGS"), true)
     @Assert(rebind.contains("STRUCTURE"), true)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// Bounded history on the REAL application: once the tracker's history floor
@@ -537,8 +668,12 @@ func generatedImageDeclarationDrivesDiscoveryAndSwap(): Unit {
     @Assert(described.contains("composable-beacon.png"), false)
 
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated image declaration", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let live = controller.generatedRegion()
     live.attachWindow(window)
 
@@ -576,7 +711,7 @@ END
     @Assert(live.acceptedStructureVersion(), 0)
 
     @Assert(live.submitStructure(imageStructure, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(live.acceptedStructureVersion(), 1)
     let iconNodeId = live.acceptedNodeIdForKey("icon")
     @Assert(iconNodeId > 0, true)
@@ -609,7 +744,9 @@ END
     @Assert(observationField(current, "RESOURCE_REVISION") != observationField(sender, "RESOURCE_REVISION"), true)
     // The accepted image state did not silently change with the declaration.
     @Assert(live.acceptedStructureVersion(), 1)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// The DRAFT_HEX token of one published field line, so a test can prove a
@@ -641,8 +778,12 @@ func generatedAcceptedInterfaceKeepsEditingAcrossDeclarationSwap(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("换版连续", true, 7, "cache", "gen-continuity-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated declaration swap", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
     region.attachWindow(window)
 
@@ -659,7 +800,7 @@ PROPERTY 1 nameEditor label 规则名称编辑
 END
 """
     @Assert(region.submitStructure(v1, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 1)
     let acceptedV1 = region.acceptedInstancesPayload()
     @Assert(acceptedV1.contains("kind=image"), true)
@@ -689,7 +830,7 @@ END
     @Assert(region.setBeaconVersion(2), true)
     @Assert(region.capabilitiesPayload().contains("IMAGE_RESOURCE rule-set-beacon PNG 2"), true)
     // An ORDINARY refresh, with NO structure resubmission.
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 1)
     let afterSwap = region.acceptedInstancesPayload()
     @Assert(afterSwap.contains("kind=image"), true)
@@ -720,13 +861,15 @@ PROPERTY 1 nameEditor label 规则名称编辑
 END
 """
     @Assert(region.submitStructure(v2, 1).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 2)
     let acceptedV2 = region.acceptedInstancesPayload()
     @Assert(acceptedV2.contains("resource_version=2"), true)
     @Assert(acceptedV2.contains("kind=textInput"), true)
     @Assert(fieldDraftToken(region.fieldsPayload(), "label"), draftToken)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// ONE named paint role drives the handwritten helper, the generated action node
@@ -738,8 +881,12 @@ func sharedNamedStyleDrivesGeneratedPaintAndKeepsEditing(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("主题连续", true, 7, "cache", "gen-theme-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated named style", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
     region.attachWindow(window)
 
@@ -764,7 +911,7 @@ PROPERTY 1 themeEditor label 规则名称编辑
 END
 """
     @Assert(region.submitStructure(structure, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(region.acceptedStructureVersion(), 1)
     let actionNodeId = region.acceptedNodeIdForKey("themeAction")
     @Assert(actionNodeId > 0, true)
@@ -809,16 +956,25 @@ END
     // The application's own appearance switch retargets the named style.
     @Assert(region.setAccentAppearance(true), true)
     @Assert(region.capabilitiesPayload().contains("STYLE rule_primary_action "), true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
 
-    // Paint changed on the SAME accepted structure, geometry and identity.
+    // Paint changed on the SAME accepted structure, geometry and identity. A
+    // paint-only accepted change reaches the window's resolved projection on a
+    // following ordinary turn (the semantic scene version alone is not the whole
+    // paint fact), so wait for the resolved style to move.
     var switchedPaint = ""
     var switchedResolved = ""
-    for (node in window.acceptedSceneNodes()) {
-        if (node.nodeId == actionNodeId) {
-            switchedPaint = sharedPaintSignature(node.declaredStyle)
-            switchedResolved = sharedPaintSignature(node.style)
+    var paintTurns: Int64 = 0
+    while (paintTurns < 128) {
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeId == actionNodeId) {
+                switchedPaint = sharedPaintSignature(node.declaredStyle)
+                switchedResolved = sharedPaintSignature(node.style)
+            }
         }
+        if (switchedResolved.size > 0 && switchedResolved != actionResolved) { break }
+        let _ = host.pumpOneTurn()
+        paintTurns += 1
     }
     @Assert(switchedPaint.size > 0, true)
     // The declared paint followed the application's named style, and the resolved
@@ -834,7 +990,9 @@ END
     // A color-only change moves no layout: the accepted instance bounds are equal.
     @Assert(instanceBoundsText(imageBefore, "themeEditor"), instanceBoundsText(imageAfter, "themeEditor"))
     @Assert(instanceBoundsText(imageBefore, "themeBeacon"), instanceBoundsText(imageAfter, "themeBeacon"))
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// The full paint of one style, so a theme switch is compared on everything that
@@ -925,8 +1083,12 @@ func generatedObservationSeparatesOwnerProgressFromCandidatePending(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("进度观测", true, 7, "cache", "gen-progress-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated owner progress", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
     region.attachWindow(window)
 
@@ -937,7 +1099,7 @@ NODE 1 nameField textInput field=label
 END
 """
     @Assert(region.submitStructure(structural, 0).candidateAccepted, true)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let settled = region.snapshotPayload()
     @Assert(observationField(settled, "OWNER_PENDING_SCENE"), 0)
     @Assert(observationField(settled, "STRUCTURE_CANDIDATE_PENDING"), 0)
@@ -964,7 +1126,7 @@ END
 
     // The window accepts a scene built from the new projection: pending clears.
     controller.bump()
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     let accepted = region.snapshotPayload()
     @Assert(observationField(accepted, "OWNER_PENDING_SCENE"), 0)
     @Assert(observationField(accepted, "STRUCTURE_CANDIDATE_PENDING"), 0)
@@ -975,9 +1137,11 @@ END
     let candidatePending = region.snapshotPayload()
     @Assert(observationField(candidatePending, "STRUCTURE_CANDIDATE_PENDING"), 1)
     @Assert(observationField(candidatePending, "OWNER_PENDING_SCENE"), 0)
-    @Assert(window.refreshIfNeeded(), true)
+    @Assert(pumpRejectNextScene(host, window), true)
     @Assert(observationField(region.snapshotPayload(), "STRUCTURE_CANDIDATE_PENDING"), 0)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 /// A guarded section read performs only the work it is asked for: a stale cursor
@@ -989,8 +1153,12 @@ func generatedSectionReadsDoOnlyTheRequestedWork(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()
     @Assert(domain.createRecordFromHuman("工作量观测", true, 7, "cache", "gen-work-create").applied, true)
     let controller = CjguiGeneratedRejectionSceneController(domain)
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
+    let host = CjguiMacosApplicationHost(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("Generated section reads", 980u32, 620u32))
+    let window = host.window()
+    @Assert(host.start(), true)
+    try {
+    @Assert(pumpRejectSceneAccepted(host, window), true)
     let region = controller.generatedRegion()
     region.attachWindow(window)
 
@@ -1019,7 +1187,9 @@ func generatedSectionReadsDoOnlyTheRequestedWork(): Unit {
     // The section response carries its own provenance.
     @Assert(fields.contains("SECTION FIELDS"), true)
     @Assert(observationField(fields, "STREAM_EPOCH") > 0, true)
-    window.close()
+    } finally {
+        window.close()
+    }
 }
 
 // The generated declaration and the handwritten tree reach the SAME layout
@@ -1478,7 +1648,7 @@ func generatedScopedReadsServeEachBoundOwnerWithoutSelectingIt(): Unit {
 GENERATED_UI_STRUCTURE 1
 NODE 0 root vertical
 NODE 1 rule${aId} retentionIntegerEdit
-NODE 2 rule${bId} retentionIntegerEdit
+NODE 1 rule${bId} retentionIntegerEdit
 END
 """
     @Assert(region.submitStructure(structure, 0).candidateAccepted, true)
@@ -1507,6 +1677,352 @@ END
     // (deleting A selects it first, so this also shows the owner is gone, not
     // merely unselected).
     @Assert(domain.selectRecordFromHuman(aId).applied, true)
+    // The owner refuses deleting a record with an unapplied draft; A's own
+    // draft is cancelled first (the correct owner contract, not a workaround).
+    let deleteBase = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(domain.cancelDraftForCollectionItemFromHuman(aId, deleteBase.draftVersion,
+        deleteBase.baseAppliedConfigVersion).applied, true)
     @Assert(domain.deleteSelectedCollectionItemFromHuman().applied, true)
     @Assert(region.fieldsPayload("rule${aId}"), "")
+}
+
+/// Named instances (`rule<recordId>`) must project and act on THEIR OWN owner:
+/// with B selected and A/B holding different drafts, A's generated control
+/// shows A's value, A's step button writes A, and availability/errors come from
+/// each instance's own snapshot - never the selected object. A stale event for
+/// a deleted owner is refused by name and cannot fall onto another record.
+@Test
+func namedInstanceControlsProjectAndActOnTheirOwnOwner(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("甲", true, 80, "cache", "owner-a").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("乙", true, 40, "cache", "owner-b").applied, true)
+    let bId = domain.selectedRecordId()
+    let controller = CjguiGeneratedRejectionSceneController(domain)
+    let region = controller.generatedRegion()
+    let structure = """
+GENERATED_UI_STRUCTURE 1
+NODE 0 root vertical
+NODE 1 rule${aId} retentionIntegerEdit
+NODE 1 rule${bId} retentionIntegerEdit
+END
+"""
+    let submitted = region.submitStructure(structure, 0)
+    @Assert(submitted.reason, "")
+    @Assert(submitted.candidateAccepted, true)
+    let scene = buildGeneratedLayoutScene(controller, region)
+    @Assert(region.prepareSceneRefresh(), true)
+    region.commitSceneRefresh()
+    @Assert(region.acceptedStructureVersion(), 1)
+
+    // DISPLAY: each accepted instance's edit element carries its own owner's
+    // draft, not the selected record's.
+    let aEdit = region.acceptedCompositeElement("rule${aId}", "edit").getOrThrow()
+    let bEdit = region.acceptedCompositeElement("rule${bId}", "edit").getOrThrow()
+    @Assert(aEdit.draftText, "80")
+    @Assert(bEdit.draftText, "40")
+    @Assert(aEdit.ownerTargetResourceId, aId)
+    @Assert(bEdit.ownerTargetResourceId, bId)
+
+    // AVAILABILITY: an invalid draft on B blocks only B's apply; A keeps its
+    // own verdict from its own snapshot.
+    @Assert(domain.editTextForCollectionItemFromHuman(bId,
+        CjguiRuleSetEditingDomain.formRetentionResourceId, "100", 3, 3).applied, true)
+    let aApply = region.actionAvailability("APPLY_DRAFT", "rule${aId}")
+    let bApply = region.actionAvailability("APPLY_DRAFT", "rule${bId}")
+    @Assert(aApply.known && aApply.isAvailable, true)
+    @Assert(aApply.ownerResourceId, aId)
+    @Assert(bApply.known && !bApply.isAvailable, true)
+    @Assert(bApply.ownerResourceId, bId)
+
+    // ACTION: activating A's step-down writes A only; B's whole projection
+    // (draft, label, versions) is unchanged.
+    let aDownId = region.acceptedCompositeElementNodeId("rule${aId}", "decrement")
+    @Assert(aDownId > 0, true)
+    let bVersionBefore = domain.formSnapshotForRecord(bId).getOrThrow().contextVersion
+    let dispatched = region.handleEvent(CjguiComposableUiEvent(scene.nodeForId(aDownId),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version))
+    @Assert(dispatched.didApply, true)
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "79")
+    let bAfter = domain.formSnapshotForRecord(bId).getOrThrow()
+    @Assert(bAfter.fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "100")
+    @Assert(bAfter.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+    @Assert(domain.selectedRecordId(), bId)
+
+    // STALE TARGET: after A is deleted, an event for A's old accepted button is
+    // refused (no write) and B's facts stay intact. (A's draft is cancelled
+    // first: the owner refuses deleting a record with an unapplied draft.)
+    @Assert(domain.selectRecordFromHuman(aId).applied, true)
+    let aSnapshotForDelete = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(domain.cancelDraftForCollectionItemFromHuman(aId, aSnapshotForDelete.draftVersion,
+        aSnapshotForDelete.baseAppliedConfigVersion).applied, true)
+    @Assert(domain.deleteSelectedCollectionItemFromHuman().applied, true)
+    @Assert(domain.selectRecordFromHuman(bId).applied, true)
+    let stale = region.handleEvent(CjguiComposableUiEvent(scene.nodeForId(aDownId),
+        CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE, "", 0, 0, scene.version))
+    @Assert(stale.didApply, false)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formRetentionResourceId).draftText, "100")
+}
+
+private func recordEditorRouteScene(controller: CjguiRuleSetComposableController): CjguiComposableUiScene {
+    let root = controller.buildUi()
+    let rect = CjguiComposableUiRect(0, 0, 980, 620)
+    let registry = CjguiComposableUiIdentityRegistry()
+    if (!registry.beginCandidate()) {
+        return CjguiComposableUiLayoutEngine.layout(root, rect, 1)
+    }
+    let _ = registry.resolveCandidate(root)
+    let _ = registry.replaceCandidateRoot(root)
+    let scene = CjguiComposableUiLayoutEngine.layoutWithMetrics(root, rect, 1,
+        CjguiComposableUiFallbackTextMeasurer(), identityRegistry: Some(registry)).scene
+    let _ = registry.prepareCandidate()
+    return scene
+}
+
+private func recordEditorRouteNode(scene: CjguiComposableUiScene,
+    semanticId: String): CjguiComposableUiLayoutNode {
+    for (node in scene.nodes()) {
+        if (node.semanticId == semanticId) {
+            return node
+        }
+    }
+    return CjguiComposableUiLayoutNode(
+        cjguiComposableSpacer(-1, "record-editor-route-missing"), CjguiComposableUiRect(0, 0, 0, 0),
+        CjguiComposableUiRect(0, 0, 0, 0))
+}
+
+/// The record editor opened for card A must show and write A's own draft while
+/// card B stays selected, even though the runtime identity registry remaps the
+/// dialog field's declared node id. Apply/Cancel carry A as their declared owner
+/// too; a deleted owner is refused by name and never redirected to B.
+@Test
+func recordEditorRoutesByDeclaredOwnerNotEncodedNodeId(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("甲", true, 7, "cache", "owner-route-a").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("乙", true, 9, "cache", "owner-route-b").applied, true)
+    let bId = domain.selectedRecordId()
+    @Assert(aId != bId, true)
+    let controller = CjguiRuleSetComposableController(domain)
+    let openEdit = CjguiComposableUiLayoutNode(
+        cjguiComposableButton(117001, "rule-card-edit-${aId}", "编辑", "OPEN_RULE_CARD_EDIT", aId,
+            CjguiComposableUiStyle(fixedHeight: 26)), CjguiComposableUiRect(0, 0, 80, 26),
+        CjguiComposableUiRect(0, 0, 80, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(openEdit, 27, "", 0, 0, 1)).didApply, true)
+    let scene = recordEditorRouteScene(controller)
+    let nameNode = recordEditorRouteNode(scene, "rule-card-editor-name-${aId}")
+    @Assert(nameNode.nodeId > 0, true)
+    // The declared numeric id is not what the event path sees after the legal
+    // identity remap, so decoding the id cannot tell A from B.
+    @Assert(nameNode.nodeId != 400000016, true)
+    @Assert(nameNode.operationActionName, "EDIT_DRAFT_TEXT")
+    @Assert(nameNode.operationResourceId, aId)
+    @Assert(nameNode.value, "甲")
+    @Assert(domain.selectedRecordId(), bId)
+    // A real text event on the remapped node writes A only.
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(nameNode, 28, "甲改", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲改")
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+    // Boolean and note edits on the SAME remapped dialog write A only, and B's
+    // field versions stay untouched.
+    let notesNode = recordEditorRouteNode(scene, "rule-card-dialog-field-notes")
+    let enabledNode = recordEditorRouteNode(scene, "rule-card-dialog-field-enabled")
+    @Assert(notesNode.nodeId > 0 && enabledNode.nodeId > 0, true)
+    @Assert(notesNode.value, "")
+    @Assert(enabledNode.value, "true")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(notesNode, 28, "甲备注", 0, 0, 1)).didApply, true)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(enabledNode, 29, "false", 0, 0, 1)).didApply, true)
+    let dirtyA = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(dirtyA.fieldForResourceId(CjguiRuleSetEditingDomain.formNotesResourceId).draftText, "甲备注")
+    @Assert(dirtyA.fieldForResourceId(CjguiRuleSetEditingDomain.formEnabledResourceId).draftText, "false")
+    @Assert(dirtyA.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftFieldVersion > 0, true)
+    let cleanB = domain.formSnapshotForRecord(bId).getOrThrow()
+    @Assert(cleanB.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftFieldVersion, 0)
+    @Assert(cleanB.fieldForResourceId(CjguiRuleSetEditingDomain.formNotesResourceId).draftText, "")
+    // Apply declares A directly and commits only A's draft.
+    let applyScene = recordEditorRouteScene(controller)
+    let applyNode = recordEditorRouteNode(applyScene, "rule-card-dialog-apply")
+    @Assert(applyNode.operationResourceId, aId)
+    // The public projection publishes the same owner: TARGETS is the card's
+    // resource, not the rule-set form resource, and the command INVOKES the
+    // domain action.
+    let projection = CjguiComposableUiWindowProjectionBuilder.fromScene(controller.buildUi(), applyScene)
+    var applyTargets = ""
+    var applyInvokes = ""
+    for (relation in projection.relations) {
+        if (relation.sourceId == "rule-card-dialog-apply") {
+            if (relation.relation == "TARGETS") {
+                applyTargets = relation.targetId
+            }
+            if (relation.relation == "INVOKES") {
+                applyInvokes = relation.targetId
+            }
+        }
+    }
+    @Assert(applyTargets, "resource${aId}")
+    @Assert(applyInvokes, "APPLY_DRAFT")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(applyNode, 27, "", 0, 0, 1)).didApply, true)
+    let afterApplyA = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(afterApplyA.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲改")
+    @Assert(afterApplyA.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).validationError, "")
+    @Assert(afterApplyA.fieldForResourceId(CjguiRuleSetEditingDomain.formNotesResourceId).appliedValue.stringValue, "甲备注")
+    @Assert(afterApplyA.fieldForResourceId(CjguiRuleSetEditingDomain.formEnabledResourceId).appliedValue.booleanValue, false)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+    // Cancel also travels with the owner: A's dirty draft is discarded, B stays.
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(openEdit, 27, "", 0, 0, 1)).didApply, true)
+    let cancelScene = recordEditorRouteScene(controller)
+    let cancelName = recordEditorRouteNode(cancelScene, "rule-card-editor-name-${aId}")
+    @Assert(cancelName.value, "甲改")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(cancelName, 28, "甲再度", 0, 0, 1)).didApply, true)
+    let cancelNode = recordEditorRouteNode(cancelScene, "rule-card-dialog-cancel")
+    @Assert(cancelNode.operationResourceId, aId)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(cancelNode, 27, "", 0, 0, 1)).didApply, true)
+    let afterCancelA = domain.formSnapshotForRecord(aId).getOrThrow()
+    @Assert(afterCancelA.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲改")
+    @Assert(afterCancelA.fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).validationError, "")
+    @Assert(afterCancelA.fieldForResourceId(CjguiRuleSetEditingDomain.formNotesResourceId).draftText, "甲备注")
+    @Assert(afterCancelA.fieldForResourceId(CjguiRuleSetEditingDomain.formEnabledResourceId).appliedValue.booleanValue, false)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+    // Stale owner: delete A while its editor is open, then the old field node is
+    // refused by name (no write, no redirect) and B's draft is untouched.
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(openEdit, 27, "", 0, 0, 1)).didApply, true)
+    let staleScene = recordEditorRouteScene(controller)
+    let staleName = recordEditorRouteNode(staleScene, "rule-card-editor-name-${aId}")
+    @Assert(domain.selectRecordFromHuman(aId).applied, true)
+    @Assert(domain.deleteSelectedCollectionItemFromHuman().applied, true)
+    @Assert(!domain.hasRecord(aId), true)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(staleName, 28, "幽灵", 0, 0, 1)).didApply, false)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+}
+
+/// Owner metadata is a contract, not a hint. A declared owner that names no
+/// live record, or a declared field resource outside the bound form, must be
+/// refused by name and must not be repaired by falling back to the selection or
+/// to an encoded node id. No owner moves in that case.
+@Test
+func recordEditorRefusesInvalidOrMismatchedOwnerMetadata(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("甲", true, 7, "cache", "guard-a").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("乙", true, 9, "cache", "guard-b").applied, true)
+    let bId = domain.selectedRecordId()
+    let controller = CjguiRuleSetComposableController(domain)
+    let openEdit = CjguiComposableUiLayoutNode(
+        cjguiComposableButton(118001, "rule-card-edit-${aId}", "编辑", "OPEN_RULE_CARD_EDIT", aId,
+            CjguiComposableUiStyle(fixedHeight: 26)), CjguiComposableUiRect(0, 0, 80, 26),
+        CjguiComposableUiRect(0, 0, 80, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(openEdit, 27, "", 0, 0, 1)).didApply, true)
+    let beforeA = domain.draftVersionForCollectionItem(aId)
+    let beforeB = domain.draftVersionForCollectionItem(bId)
+    let beforeAppliedA = domain.baseAppliedVersionForCollectionItem(aId)
+    // The field resource is real, the declared owner is not. The node id uses
+    // the old numeric dialog encoding for A on purpose: under the former
+    // routing this event wrote A, so only the declared metadata can refuse it.
+    let unknownOwner = CjguiComposableUiLayoutNode(
+        cjguiComposableTextInput(400000000 + aId * 16, "owner-route-unknown-owner", "名称", "入侵",
+            CjguiRuleSetEditingDomain.formLabelResourceId, CjguiComposableUiStyle(), fieldId: "label",
+            operationActionName: "EDIT_DRAFT_TEXT", operationResourceId: aId + 100000),
+        CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(unknownOwner, 28, "入侵", 0, 0, 1)).didApply, false)
+    // The owner is live, the declared field resource is outside the bound form.
+    let mismatchedField = CjguiComposableUiLayoutNode(
+        cjguiComposableTextInput(990202, "owner-route-mismatched-field", "名称", "入侵", 990999,
+            CjguiComposableUiStyle(), fieldId: "label", operationActionName: "EDIT_DRAFT_TEXT",
+            operationResourceId: aId),
+        CjguiComposableUiRect(0, 0, 120, 26), CjguiComposableUiRect(0, 0, 120, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(mismatchedField, 28, "入侵", 0, 0, 1)).didApply, false)
+    // Apply with the same invalid owner is refused too; no owner is committed.
+    let invalidApply = CjguiComposableUiLayoutNode(
+        cjguiComposableButton(990203, "owner-route-invalid-apply", "应用草稿", "APPLY", aId + 100000,
+            CjguiComposableUiStyle(fixedHeight: 26), operationActionName: "APPLY_DRAFT",
+            operationResourceId: aId + 100000),
+        CjguiComposableUiRect(0, 0, 96, 26), CjguiComposableUiRect(0, 0, 96, 26))
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(invalidApply, 27, "", 0, 0, 1)).didApply, false)
+    @Assert(domain.draftVersionForCollectionItem(aId), beforeA)
+    @Assert(domain.draftVersionForCollectionItem(bId), beforeB)
+    @Assert(domain.baseAppliedVersionForCollectionItem(aId), beforeAppliedA)
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲")
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙")
+}
+
+/// The selected record's ordinary detail page and its public-detail page keep
+/// writing the selected owner through the declared metadata, so the dialog
+/// routing change does not trade away the page paths.
+@Test
+func selectedDetailPagesRouteByDeclaredOwnerNotEncodedNodeId(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("甲", true, 7, "cache", "page-route-a").applied, true)
+    let aId = domain.selectedRecordId()
+    @Assert(domain.createRecordFromHuman("乙", true, 9, "cache", "page-route-b").applied, true)
+    let bId = domain.selectedRecordId()
+    let controller = CjguiRuleSetComposableController(domain)
+    let scene = recordEditorRouteScene(controller)
+    let pageLabel = recordEditorRouteNode(scene, "field-label")
+    @Assert(pageLabel.nodeId > 0, true)
+    @Assert(pageLabel.operationResourceId, bId)
+    @Assert(pageLabel.value, "乙")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(pageLabel, 28, "乙页", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙页")
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲")
+    // The public-detail page is a tab page; select it through the SAME public
+    // tab state, then read its own editor.
+    @Assert(controller.requestDetailPage("publicDetail"), true)
+    let publicScene = recordEditorRouteScene(controller)
+    let publicLabel = recordEditorRouteNode(publicScene, "public-detail-label")
+    @Assert(publicLabel.nodeId > 0, true)
+    @Assert(publicLabel.operationResourceId, bId)
+    // The public page reads the SAME owner draft the page edit just produced.
+    @Assert(publicLabel.value, "乙页")
+    // Its own Apply/Cancel publish that owner too. This page builds its buttons
+    // through localPresentationButton, a different helper from the dialog, and
+    // the reported defect was exactly this projection targeting the rule-set
+    // form resource 8000 instead of the card.
+    // TARGETS is the owner relation this page previously got wrong. The page
+    // buttons are presented through localPresentationButton, which carries no
+    // operationActionName, so INVOKES stays a dialog-only relation here; their
+    // action names are dispatched by actionName and were never the defect.
+    let publicProjection = CjguiComposableUiWindowProjectionBuilder.fromScene(controller.buildUi(), publicScene)
+    var publicApplyTargets = ""
+    var publicCancelTargets = ""
+    for (relation in publicProjection.relations) {
+        if (relation.sourceId == "public-detail-apply" && relation.relation == "TARGETS") {
+            publicApplyTargets = relation.targetId
+        }
+        if (relation.sourceId == "public-detail-cancel" && relation.relation == "TARGETS") {
+            publicCancelTargets = relation.targetId
+        }
+    }
+    @Assert(publicApplyTargets, "resource${bId}")
+    @Assert(publicCancelTargets, "resource${bId}")
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(publicLabel, 28, "乙公开", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙公开")
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲")
+    // The detail page's own Apply declares the selected owner and commits it.
+    var detailApply = CjguiComposableUiLayoutNode(cjguiComposableSpacer(-1, "detail-apply-missing"),
+        CjguiComposableUiRect(0, 0, 0, 0), CjguiComposableUiRect(0, 0, 0, 0))
+    for (node in publicScene.nodes()) {
+        if (node.actionName == "APPLY" && node.operationResourceId == bId &&
+            node.nodeId >= 300000000 && node.nodeId < 400000000) {
+            detailApply = node
+        }
+    }
+    @Assert(detailApply.nodeId > 0, true)
+    @Assert(controller.applyUiEvent(CjguiComposableUiEvent(detailApply, 27, "", 0, 0, 1)).didApply, true)
+    @Assert(domain.formSnapshotForRecord(bId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "乙公开")
+    @Assert(domain.formSnapshotForRecord(aId).getOrThrow()
+        .fieldForResourceId(CjguiRuleSetEditingDomain.formLabelResourceId).draftText, "甲")
 }

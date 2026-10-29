@@ -186,6 +186,10 @@ uint32_t cjgui_linux_text_take_fallback_log(CjguiLinuxText *text, CjguiLinuxText
 // 统计：已光栅化的字形槽数、图集使用字节数（诊断用）。
 void cjgui_linux_text_stats(CjguiLinuxText *text, uint32_t *outGlyphCount, uint32_t *outAtlasBytes);
 
+// 统计：准备调用、memo 复用、实际整形与换行次数（诊断用）。
+void cjgui_linux_text_prepare_stats(CjguiLinuxText *text, uint32_t *outPrepares,
+                                    uint32_t *outReused, uint32_t *outShapes, uint32_t *outWraps);
+
 // ---------------------------------------------------------------- 光标 / 行几何
 //
 // 下面三个查询与 cjgui_linux_text_layout 共用同一条整形 + 换行路径（同样的行断点、

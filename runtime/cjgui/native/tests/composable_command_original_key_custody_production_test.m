@@ -100,7 +100,7 @@ static uint64_t CompleteOriginalSelectionB(CJGuiInternalSession *ctx,CjguiInstal
                 a.candidate.windowInstanceToken,a.candidate.contextEpoch,&actual,10,2)==0,
             "raw_actual_B_same_adopted_revision_metadata_published_without_completing_handoff");
         CHECK(CjguiConfigureComposableCommandMenuOnMain(token,2,1)==0 &&
-            CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0)==0 &&
+            CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0,0)==0 &&
             cjgui_internal_renderer_set_composable_command_identity(token,0,9100,403,1,
                 CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON)==0 &&
             cjgui_internal_renderer_commit_installed_selection_command_menu(token,transfer,
@@ -287,7 +287,7 @@ static void OriginalCommandNegative(id<MTLDevice> device,int fault) {
                     ctx.caretInputBranch.valid=NO; // independent choice retires the original prefix
                 } else if(fault==9 || fault==10 || fault==11) {
                     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,2,1)==0 &&
-                        CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0)==0 &&
+                        CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0,0)==0 &&
                         cjgui_internal_renderer_set_composable_command_identity(token,0,9002,
                             fault==11 ? 401 : 403,1,fault==11 ? CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT : CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON)==0,
                         "raw_changed_declaration_group_staged");
@@ -384,7 +384,7 @@ static void ExplicitInstallationPublicationBoundary(id<MTLDevice> device) {
     CHECK(InstallButtonContextA(ctx,&installed) && installed.transferId!=first.transferId &&
         ctx.selectionReceiptOwnerRevision==-1,"raw_explicit_actual_B_precedes_owner_choice_paint_publication");
     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,ctx.composableSceneVersion,1)==0 &&
-        CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0)==0 &&
+        CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0,0)==0 &&
         cjgui_internal_renderer_set_composable_command_identity(token,0,9100,403,1,
             CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON)==0,"raw_explicit_B_new_binding_declaration_staged");
     int before=cjgui_internal_renderer_commit_installed_selection_command_menu(token,installed.transferId,
@@ -527,7 +527,7 @@ static void OriginalRangeAckInstallationPrefix(id<MTLDevice> device) {
     target.value=@"FGHImJ";ctx.stagedComposableNodes[1]=target;ctx.stagedComposableDataTransferVersion=3;
     int background=cjgui_internal_renderer_stage_window_background(token,3,0,1);
     int menu=CjguiConfigureComposableCommandMenuOnMain(token,3,1);
-    int item=CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0);
+    int item=CjguiSetComposableCommandMenuItemOnMain(token,0,"mode","Mode","","",0,0,1,0,0);
     int declaration=cjgui_internal_renderer_set_composable_command_identity(token,0,9200,403,1,
         CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON);
     int text=CjguiPrepareComposableTextResources(ctx);

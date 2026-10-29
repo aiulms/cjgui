@@ -344,8 +344,10 @@ class PresetCard {
                 CjguiSharedOperationValue.string(draft[index])
             }
         }
-        appliedVersion += 1
-        draftVersion += 1
+        // Apply copies the draft INTO the applied side. It must not advance
+        // the draft revision again, or the card would remain forever dirty
+        // (applied=1, draft=2) after a successful Apply.
+        appliedVersion = draftVersion
         revision += 1
         return (true, "none")
     }
@@ -366,8 +368,11 @@ class PresetCard {
         }
         if (changed) {
             draftVersion += 1
-            revision += 1
         }
+        // Cancel restores the applied values; the card is clean afterwards even
+        // when no byte changed (only the version marker was stale).
+        appliedVersion = draftVersion
+        revision += 1
         return (true, "none")
     }
 
@@ -426,6 +431,23 @@ class PresetCard {
 class PresetCardCollection {
     public static let cardAOwner: Int64 = 6301
     public static let cardBOwner: Int64 = 6302
+    /// Explicit application authorization for the public client. It is the
+    /// collection's own bounded owner allotment (the 30 seeded objects plus the
+    /// next 30 objects this demo may create), plus the two owner ids the
+    /// REBIND_CARD demonstration may target. It is not "all resources": the
+    /// domain still refuses an owner that is not live, and an owner outside this
+    /// declaration is refused by the transport before any domain work.
+    public static func externalOwnerTargets(): ArrayList<Int64> {
+        let owners = ArrayList<Int64>()
+        var owner = 6301
+        while (owner <= 6360) {
+            owners.add(owner)
+            owner += 1
+        }
+        owners.add(6400)
+        owners.add(6500)
+        return owners
+    }
     private let declarations: CjguiSharedFormBinding
     private let cards: HashMap<String, PresetCard>
     /// The owner context version shared with the handwritten form. Card reads
@@ -554,6 +576,21 @@ class PresetCardCollection {
             return false
         }
         filterValue = value
+        return true
+    }
+
+    /// Applies ONE explicit sort target (a restored view preference), rather than
+    /// a repeated header toggle. The table and the business view stay the same
+    /// fact: the caller writes this only when the restored snapshot says so.
+    public func setSortState(column: String, ascending: Bool): Bool {
+        if (column.size > 0 && column != "name" && column != "owner") {
+            return false
+        }
+        if (sortColumnValue == column && sortAscendingValue == ascending) {
+            return false
+        }
+        sortColumnValue = column
+        sortAscendingValue = ascending
         return true
     }
 
@@ -947,10 +984,10 @@ func registerPresetCardComposite(catalog: CjguiGeneratedUiCapabilityCatalog,
             expandedNodeLimit: 22, expandedDepthLimit: 3), PresetCardFactory(themeReader))
 }
 
-/// The region binding: every single-owner call keeps the handwritten preset's
-/// exact behaviour, and every instance-aware call reads/writes the card deck.
-/// A card action carries the ORIGINAL accepted owner target; a key that moved
-/// is refused by name instead of writing whatever object it maps to now.
+/// The fallback binding for DEFAULT instances: the handwritten preset's exact
+/// behaviour plus the collection row's SELECT_CARD transaction. Card instances
+/// are routed by the shared `CjguiGeneratedUiMultiObjectBinding`; this class no
+/// longer contains a second per-card router.
 class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     private let form: CjguiGeneratedUiFormBinding
     private let cards: PresetCardCollection
@@ -962,18 +999,7 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         this.domain = domain
     }
 
-    /// Whether an instance key NAMES a card object. It deliberately stays true
-    /// for a key whose object was DELETED, so the card branches below can refuse
-    /// by name instead of silently falling back to the handwritten preset (a
-    /// deleted card is not the handwritten owner).
-    private func isCard(instanceKey: String): Bool {
-        return instanceKey.size > 0 && instanceKey.startsWith("card")
-    }
-
     public func ownerRevision(): Int64 {
-        // The ONE owner context version the transport checks for CAS. Card
-        // writes advance the same domain version, so no second counter is
-        // mixed in (a synthetic number would make every client CAS stale).
         return form.ownerRevision()
     }
 
@@ -983,9 +1009,6 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         if (reason.size == 0) {
             return inner
         }
-        // A locked handwritten preset publishes the SAME owner reason the write
-        // path refuses; the projection is rebuilt from the one snapshot, never
-        // from a second UI switch.
         let snapshot = domain.formSnapshot()
         let fieldStates = HashMap<String, CjguiSharedAvailability>()
         for (field in form.fieldSpecs()) {
@@ -1002,14 +1025,19 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func formFeedback(instanceKey: String): ?CjguiGeneratedUiFormFeedback {
-        if (isCard(instanceKey)) {
-            return cards.feedback(instanceKey)
-        }
-        return form.formFeedback()
+        return form.formFeedback(instanceKey)
     }
 
     public func fieldResourceId(fieldId: String): Int64 {
         return form.fieldResourceId(fieldId)
+    }
+
+    public func generatedSelectBinding(fieldId: String): ?CjguiSelectFieldBinding {
+        return form.generatedSelectBinding(fieldId)
+    }
+
+    public func generatedSelectBindings(): ArrayList<CjguiSelectFieldBinding> {
+        return form.generatedSelectBindings()
     }
 
     public func fieldOperationResourceId(fieldId: String): Int64 {
@@ -1017,13 +1045,7 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func fieldOperationResourceId(fieldId: String, instanceKey: String): Int64 {
-        if (isCard(instanceKey)) {
-            // A deleted/never-bound key resolves to NO owner; the accepted
-            // element's operationResourceId stays the frozen target and the
-            // range/generation guards can then name the retirement.
-            return cards.ownerFor(instanceKey)
-        }
-        return form.fieldOperationResourceId(fieldId)
+        return form.fieldOperationResourceId(fieldId, instanceKey)
     }
 
     public func draftText(fieldId: String): String {
@@ -1031,14 +1053,7 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func draftText(fieldId: String, instanceKey: String): String {
-        if (!isCard(instanceKey)) {
-            return form.draftText(fieldId)
-        }
-        let card = match (cards.card(instanceKey)) {
-            case Some(value) => value
-            case None => return ""
-        }
-        return card.draftText(fieldId)
+        return form.draftText(fieldId, instanceKey)
     }
 
     public func appliedText(fieldId: String): String {
@@ -1050,13 +1065,7 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func draftBoolean(fieldId: String, instanceKey: String): ?Bool {
-        if (!isCard(instanceKey)) {
-            return form.draftBoolean(fieldId)
-        }
-        return match (cards.card(instanceKey)) {
-            case Some(card) => card.draftBoolean(fieldId)
-            case None => None
-        }
+        return form.draftBoolean(fieldId, instanceKey)
     }
 
     public func fieldAvailability(fieldId: String): CjguiSharedAvailability {
@@ -1068,13 +1077,11 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func fieldAvailability(fieldId: String, instanceKey: String): CjguiSharedAvailability {
-        if (!isCard(instanceKey)) {
-            return form.fieldAvailability(fieldId)
+        let reason = domain.lockReason()
+        if (reason.size > 0) {
+            return CjguiSharedAvailability.blocked(reason, PrintPresetDomain.ownerId, ownerRevision())
         }
-        return match (cards.card(instanceKey)) {
-            case Some(card) => card.fieldAvailability(fieldId)
-            case None => CjguiSharedAvailability.blocked("对象已删除", -1, ownerRevision())
-        }
+        return form.fieldAvailability(fieldId, instanceKey)
     }
 
     public func actionAvailability(actionName: String): CjguiSharedAvailability {
@@ -1086,13 +1093,11 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
     }
 
     public func actionAvailability(actionName: String, instanceKey: String): CjguiSharedAvailability {
-        if (!isCard(instanceKey)) {
-            return form.actionAvailability(actionName)
+        let reason = domain.lockReason()
+        if (reason.size > 0) {
+            return CjguiSharedAvailability.blocked(reason, PrintPresetDomain.ownerId, ownerRevision())
         }
-        return match (cards.card(instanceKey)) {
-            case Some(card) => card.actionAvailability(actionName)
-            case None => CjguiSharedAvailability.blocked("对象已删除", -1, ownerRevision())
-        }
+        return form.actionAvailability(actionName, instanceKey)
     }
 
     public func actionAvailable(actionName: String): Bool {
@@ -1101,9 +1106,7 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
 
     public func actionOperationResourceId(actionName: String, instanceKey: String): Int64 {
         let _ = actionName
-        if (isCard(instanceKey)) {
-            return cards.ownerFor(instanceKey)
-        }
+        let _ = instanceKey
         return -1
     }
 
@@ -1111,9 +1114,14 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         return form.executeAction(actionName, nodeKey)
     }
 
+    public func executeAction(actionName: String, nodeKey: String, instanceKey: String):
+        CjguiGeneratedUiActionResult {
+        return form.executeAction(actionName, nodeKey, instanceKey)
+    }
+
     /// The collection's row activation. The collection composite is NOT a card
     /// instance; its row action names the card OWNER it was built for, and this
-    /// provider is the one place that translates that public owner id into the
+    /// fallback is the one place that translates that public owner id into the
     /// domain's SELECT_CARD transaction (the domain still owns the selection).
     private func selectCollectionRow(nodeKey: String,
         ownerTargetResourceId: Int64): CjguiGeneratedUiActionResult {
@@ -1122,8 +1130,6 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         if (key.size == 0) {
             return CjguiGeneratedUiActionResult(false, "unknown_target")
         }
-        // The domain's published context version is the CAS the same public
-        // transaction checks; the provider reads it from the owner snapshot.
         let call = CjguiSharedOperationActionInvocation("SELECT_CARD",
             domain.formSnapshot().contextVersion,
             ArrayList<Int64>([PrintPresetDomain.ownerId]),
@@ -1134,21 +1140,128 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         return CjguiGeneratedUiActionResult(outcome.applied, outcome.reason)
     }
 
-    /// The card transaction: the accepted owner target must still be this key's
-    /// object, and only then does the action run on THAT card.
     public func executeAction(actionName: String, nodeKey: String, instanceKey: String,
         ownerTargetResourceId: Int64, instanceIncarnation: Int64): CjguiGeneratedUiActionResult {
         let _ = instanceIncarnation
-        if (!isCard(instanceKey)) {
-            if (actionName == "SELECT_CARD") {
-                return selectCollectionRow(nodeKey, ownerTargetResourceId)
-            }
-            return form.executeAction(actionName, nodeKey)
+        if (actionName == "SELECT_CARD") {
+            return selectCollectionRow(nodeKey, ownerTargetResourceId)
         }
-        if (cards.ownerFor(instanceKey) != ownerTargetResourceId) {
-            return CjguiGeneratedUiActionResult(false, "owner_target_retired")
+        return form.executeAction(actionName, nodeKey, instanceKey,
+            ownerTargetResourceId, instanceIncarnation)
+    }
+
+    public func applyFieldIntent(intent: CjguiGeneratedUiIntent): CjguiComposableUiDispatchResult {
+        return form.applyFieldIntent(intent)
+    }
+
+    public func rangeTextEditSupported(fieldId: String, instanceKey: String): Bool {
+        return form.rangeTextEditSupported(fieldId, instanceKey)
+    }
+
+    public func fieldTextVersion(fieldId: String, instanceKey: String): Int64 {
+        return form.fieldTextVersion(fieldId, instanceKey)
+    }
+
+    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool,
+        instanceKey: String): Bool {
+        return form.confirmFieldTextVersion(fieldId, expectedVersion, action, instanceKey)
+    }
+
+    public func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String,
+        instanceKey: String): CjguiRangeTextEditOutcome {
+        return form.applyTextEdit(fieldId, expectedVersion, newText, instanceKey)
+    }
+
+    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
+        endByte: Int64, instanceKey: String): ?(Int64, Int64, Int64) {
+        return form.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte, instanceKey)
+    }
+
+    public func rangeTextEditSupported(fieldId: String): Bool {
+        return form.rangeTextEditSupported(fieldId)
+    }
+
+    public func fieldTextVersion(fieldId: String): Int64 {
+        return form.fieldTextVersion(fieldId)
+    }
+
+    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool): Bool {
+        return form.confirmFieldTextVersion(fieldId, expectedVersion, action)
+    }
+
+    public func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String): CjguiRangeTextEditOutcome {
+        let outcome = form.applyTextEdit(fieldId, expectedVersion, newText)
+        getStdOut().writeln("PRESET_FORM_RANGE_EDIT field=${fieldId} expected=${expectedVersion} " +
+            "applied=${outcome.applied} conflict=${outcome.isVersionConflict} before=${outcome.versionBefore} " +
+            "after=${outcome.versionAfter} reason=${outcome.reason}")
+        getStdOut().flush()
+        return outcome
+    }
+
+    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
+        endByte: Int64): ?(Int64, Int64, Int64) {
+        return form.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
+    }
+}
+
+/// ONE card addressed by its declared instance key. The accepted owner target,
+/// draft, availability and range transaction all stay on the original
+/// `PresetCard`; this wrapper only presents that owner through the shared
+/// object contract.
+class PresetCardObjectBinding <: CjguiGeneratedUiObjectBinding {
+    private let card: PresetCard
+    private let feedback: () -> ?CjguiGeneratedUiFormFeedback
+
+    init(card: PresetCard, feedback: () -> ?CjguiGeneratedUiFormFeedback) {
+        this.card = card
+        this.feedback = feedback
+    }
+
+    public func ownerTargetResourceId(): Int64 {
+        return card.ownerId
+    }
+
+    public func formFeedback(): ?CjguiGeneratedUiFormFeedback {
+        return feedback()
+    }
+
+    public func fieldAvailability(fieldId: String): CjguiSharedAvailability {
+        return card.fieldAvailability(fieldId)
+    }
+
+    public func actionAvailability(actionName: String): CjguiSharedAvailability {
+        return card.actionAvailability(actionName)
+    }
+
+    public func draftText(fieldId: String): String {
+        return card.draftText(fieldId)
+    }
+
+    public func draftBoolean(fieldId: String): ?Bool {
+        return card.draftBoolean(fieldId)
+    }
+
+    public func applyFieldIntent(intent: CjguiGeneratedUiIntent): CjguiComposableUiDispatchResult {
+        if (!intent.isFieldEdit() || intent.ownerTargetResourceId != card.ownerId ||
+            intent.fieldId.size == 0) {
+            return CjguiComposableUiDispatchResult(false)
         }
-        let card = cards.card(instanceKey).getOrThrow()
+        if (card.rangeTextEditSupported(intent.fieldId)) {
+            getStdOut().writeln("PRESET_CARD_WHOLE_TEXT_INTENT key=${intent.instanceKey} field=${intent.fieldId}")
+            getStdOut().flush()
+        }
+        let applied = if (intent.value.valueType == "BOOLEAN") {
+            card.setBoolean(intent.fieldId, intent.value.booleanValue)
+        } else if (intent.value.valueType == "STRING") {
+            card.setText(intent.fieldId, intent.value.stringValue)
+        } else {
+            card.setText(intent.fieldId, intent.value.displayText())
+        }
+        return CjguiComposableUiDispatchResult(applied)
+    }
+
+    public func executeAction(actionName: String, nodeKey: String): CjguiGeneratedUiActionResult {
+        let _ = nodeKey
         if (actionName == "SET_LOCK") {
             return CjguiGeneratedUiActionResult(false, "lock_is_domain_action")
         }
@@ -1166,136 +1279,42 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
         return CjguiGeneratedUiActionResult(outcome[0], outcome[1])
     }
 
-    public func applyFieldIntent(intent: CjguiGeneratedUiIntent): CjguiComposableUiDispatchResult {
-        if (!isCard(intent.instanceKey)) {
-            return form.applyFieldIntent(intent)
-        }
-        let card = match (cards.card(intent.instanceKey)) {
-            case Some(value) => value
-            case None => return CjguiComposableUiDispatchResult(false)
-        }
-        if (!intent.isFieldEdit() || intent.ownerTargetResourceId != card.ownerId ||
-            intent.fieldId.size == 0) {
-            return CjguiComposableUiDispatchResult(false)
-        }
-        if (isCard(intent.instanceKey) &&
-            cards.card(intent.instanceKey).getOrThrow().rangeTextEditSupported(intent.fieldId)) {
-            // A TEXT card field that supports the owned range session must NOT
-            // arrive here as a whole-value write; if it does, that is a route
-            // regression and this line makes it visible.
-            getStdOut().writeln("PRESET_CARD_WHOLE_TEXT_INTENT key=${intent.instanceKey} field=${intent.fieldId}")
-            getStdOut().flush()
-        }
-        let applied = if (intent.value.valueType == "BOOLEAN") {
-            card.setBoolean(intent.fieldId, intent.value.booleanValue)
-        } else if (intent.value.valueType == "STRING") {
-            card.setText(intent.fieldId, intent.value.stringValue)
-        } else {
-            card.setText(intent.fieldId, intent.value.displayText())
-        }
-        return CjguiComposableUiDispatchResult(applied)
-    }
-
-    /// A card's TEXT field opts into the SAME owned range session the handwritten
-    /// form uses: the framework binds CjguiGeneratedFieldRangeSession with this
-    /// accepted instance key, owner target and generation, and this provider only
-    /// forwards the owner's own transaction probes. No second input state machine
-    /// lives here or in the card.
-    public func rangeTextEditSupported(fieldId: String, instanceKey: String): Bool {
-        if (isCard(instanceKey)) {
-            return match (cards.card(instanceKey)) {
-                case Some(card) => card.rangeTextEditSupported(fieldId)
-                case None => false
-            }
-        }
-        return form.rangeTextEditSupported(fieldId)
-    }
-
-    public func fieldTextVersion(fieldId: String, instanceKey: String): Int64 {
-        if (isCard(instanceKey)) {
-            return match (cards.card(instanceKey)) {
-                case Some(card) => card.textVersion(fieldId)
-                case None => -1
-            }
-        }
-        return form.fieldTextVersion(fieldId)
-    }
-
-    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool,
-        instanceKey: String): Bool {
-        if (isCard(instanceKey)) {
-            return match (cards.card(instanceKey)) {
-                case Some(card) => card.confirmTextVersion(fieldId, expectedVersion, action)
-                case None => false
-            }
-        }
-        return form.confirmFieldTextVersion(fieldId, expectedVersion, action)
-    }
-
-    public func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String,
-        instanceKey: String): CjguiRangeTextEditOutcome {
-        if (isCard(instanceKey)) {
-            let outcome = match (cards.card(instanceKey)) {
-                case Some(card) => card.applyTextEdit(fieldId, expectedVersion, newText)
-                case None => CjguiRangeTextEditOutcome.rejected(expectedVersion, "unknown_instance")
-            }
-            // Evidence channel: the OWNER transaction this range edit reached.
-            // A whole-value intent would print nothing here (and is counted
-            // separately), so a reader can tell the two paths apart.
-            getStdOut().writeln("PRESET_CARD_RANGE_EDIT key=${instanceKey} field=${fieldId} expected=${expectedVersion} " +
-                "applied=${outcome.applied} conflict=${outcome.isVersionConflict} before=${outcome.versionBefore} " +
-                "after=${outcome.versionAfter} reason=${outcome.reason}")
-            getStdOut().flush()
-            return outcome
-        }
-        return form.applyTextEdit(fieldId, expectedVersion, newText)
-    }
-
-    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
-        endByte: Int64, instanceKey: String): ?(Int64, Int64, Int64) {
-        if (isCard(instanceKey)) {
-            return match (cards.card(instanceKey)) {
-                case Some(card) => card.rebaseTextSelection(fieldId, fromVersion, startByte, endByte)
-                case None => None
-            }
-        }
-        return form.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
-    }
-
-    // The five LEGACY single-owner range entries: the handwritten preset (owner
-    // 6200, empty instance key) keeps the same capability/version/CAS/confirm/
-    // rebase contract as the card instances, so an empty-instance probe is NOT
-    // answered by the interface's unsupported defaults. A card key never falls
-    // through to these: the instance-aware overloads above decide per card and
-    // refuse unknown/retired objects by name.
     public func rangeTextEditSupported(fieldId: String): Bool {
-        return form.rangeTextEditSupported(fieldId)
+        return card.rangeTextEditSupported(fieldId)
     }
 
     public func fieldTextVersion(fieldId: String): Int64 {
-        return form.fieldTextVersion(fieldId)
+        return card.textVersion(fieldId)
     }
 
-    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64, action: () -> Bool): Bool {
-        return form.confirmFieldTextVersion(fieldId, expectedVersion, action)
-    }
-
-    public func applyTextEdit(fieldId: String, expectedVersion: Int64, newText: String): CjguiRangeTextEditOutcome {
-        let outcome = form.applyTextEdit(fieldId, expectedVersion, newText)
-        // Evidence channel for the LEGACY single-owner path: the handwritten
-        // preset area's range session is bound only when the empty-instance
-        // probe above answers true; this line proves the edit reached the owner
-        // transaction (a visual-only preview prints nothing).
-        getStdOut().writeln("PRESET_FORM_RANGE_EDIT field=${fieldId} expected=${expectedVersion} " +
+    public func applyTextEdit(fieldId: String, expectedVersion: Int64,
+        newText: String): CjguiRangeTextEditOutcome {
+        let outcome = card.applyTextEdit(fieldId, expectedVersion, newText)
+        getStdOut().writeln("PRESET_CARD_RANGE_EDIT key=${card.title} field=${fieldId} expected=${expectedVersion} " +
             "applied=${outcome.applied} conflict=${outcome.isVersionConflict} before=${outcome.versionBefore} " +
             "after=${outcome.versionAfter} reason=${outcome.reason}")
         getStdOut().flush()
         return outcome
     }
 
-    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64, startByte: Int64,
-        endByte: Int64): ?(Int64, Int64, Int64) {
-        return form.rebaseFieldTextSelection(fieldId, fromVersion, startByte, endByte)
+    public func confirmFieldTextVersion(fieldId: String, expectedVersion: Int64,
+        action: () -> Bool): Bool {
+        return card.confirmTextVersion(fieldId, expectedVersion, action)
+    }
+
+    public func rebaseFieldTextSelection(fieldId: String, fromVersion: Int64,
+        startByte: Int64, endByte: Int64): ?(Int64, Int64, Int64) {
+        return card.rebaseTextSelection(fieldId, fromVersion, startByte, endByte)
+    }
+}
+
+/// Resolve one DECLARED card key to its live object wrapper, or None after the
+/// object was deleted. `namesObject` keeps the key named either way.
+func presetCardObjectBinding(cards: PresetCardCollection,
+    key: String): ?CjguiGeneratedUiObjectBinding {
+    return match (cards.card(key)) {
+        case Some(card) => Some(PresetCardObjectBinding(card, { => cards.feedback(key) }))
+        case None => None
     }
 }
 
@@ -1312,8 +1331,10 @@ class MixedPresetProvider <: CjguiGeneratedUiRegionBinding {
 
 public class PresetCardRows <: CjguiComposableUiVariableHeightListSource {
     private let cards: PresetCardCollection
-    init(cards: PresetCardCollection) {
+    private let themeReader: () -> CjguiComposableUiTheme
+    init(cards: PresetCardCollection, themeReader: () -> CjguiComposableUiTheme) {
         this.cards = cards
+        this.themeReader = themeReader
     }
     public func itemCount(): Int64 {
         return cards.count()
@@ -1345,18 +1366,30 @@ public class PresetCardRows <: CjguiComposableUiVariableHeightListSource {
     }
     public func buildRow(item: CjguiComposableUiVariableHeightListItem, selected: Bool,
         focused: Bool): CjguiComposableUiNode {
-        let background = if (selected || focused) {
-            CjguiComposableUiColor(0.28, 0.40, 0.62, 1.0)
-        } else {
-            CjguiComposableUiColor(0.14, 0.17, 0.24, 1.0)
-        }
+        // DS51 §12 B1: a REAL variable-height row. The title wraps at the
+        // current width (no fixed height, unlimited lines), so a long object
+        // name and a short one have different measured heights; the trailing
+        // button keeps the ordinary SELECT_CARD activation. It is NOT the fixed
+        // table row renamed: the list presentation measures this subtree.
+        let theme = themeReader()
+        let background = if (selected || focused) { theme.page.background } else { theme.card.background }
         let scope = CjguiComposableUiIdentityScope("preset-card-list")
-        return cjguiComposableButton(-1, "preset-card-row-${item.key}", item.title, "SELECT_CARD",
-            item.resourceId, CjguiComposableUiStyle(fixedHeight: 30, growX: 1, padding: 6,
-                background: background, textColor: CjguiComposableUiColor(0.95, 0.96, 1.0, 1.0),
-                textMaxLines: 1, textOverflow: "ellipsis"),
-            operationActionName: "SELECT_CARD", operationResourceId: item.resourceId,
+        let row = cjguiComposableVertical(-1, "preset-card-row-${item.key}",
+            CjguiComposableUiStyle(growX: 1, padding: 6, gap: 3, background: background,
+                border: if (selected || focused) { theme.primaryAction.background } else { theme.card.border },
+                borderWidth: if (selected || focused) { 2 } else { 1 }, cornerRadius: 4),
             identity: Some(scope.child(item.key).local("row")))
+        row.add(cjguiComposableText(-1, "preset-card-row-title-${item.key}", item.title,
+            CjguiComposableUiStyle(growX: 1, textColor: theme.body.textColor,
+                fontSize: 12.5, lineHeight: 17.0, textMaxLines: 0, textOverflow: "clip"),
+            identity: Some(scope.child(item.key).local("title"))))
+        row.add(cjguiComposableButton(-1, "preset-card-row-select-${item.key}", "选择", "SELECT_CARD",
+            item.resourceId, CjguiComposableUiStyle(fixedHeight: 24, minWidth: 56, padding: 2,
+                background: theme.card.background, textColor: theme.body.textColor,
+                border: theme.card.border, borderWidth: 1, textMaxLines: 1, textOverflow: "ellipsis"),
+            operationActionName: "SELECT_CARD", operationResourceId: item.resourceId,
+            identity: Some(scope.child(item.key).local("select"))))
+        return row
     }
 }
 
@@ -1370,13 +1403,22 @@ public class PresetCardList {
     private let cards: PresetCardCollection
     private let filtered: CjguiComposableUiFilteredListSource
     private let table: CjguiComposableUiTableSource
+    // DS51 §12 B: the SAME public view state and thin workspace the rules
+    // consumer mounts. Query/sort stay projections of the business view the
+    // domain owns; mode/columns and the validated snapshot text belong to the
+    // public view state.
+    private let viewState: CjguiComposableUiCollectionViewState
+    private let workspace: CjguiCollectionWorkspace
+    private let themeReader: () -> CjguiComposableUiTheme
+    private var savedViewSnapshot: String = ""
 
-    init(cards: PresetCardCollection) {
+    init(cards: PresetCardCollection, themeReader: () -> CjguiComposableUiTheme) {
         this.cards = cards
+        this.themeReader = themeReader
         // Locals first: a closure may not read members before every member is
         // initialized, and the table needs one selection object for its paint.
         let selected = CjguiComposableUiCollectionSelection()
-        let rows = PresetCardRows(cards)
+        let rows = PresetCardRows(cards, themeReader)
         // The filter reuses the table's existing query field: rows are matched by
         // their visible title only, so a hidden object keeps its key and draft.
         let filtered = CjguiComposableUiFilteredListSource(rows, {item => item.title})
@@ -1402,6 +1444,23 @@ public class PresetCardList {
             rowAction: Some({item => CjguiComposableUiTableRowAction("SELECT_CARD", item.resourceId)}),
             rowSelected: Some({key => selected.isSelected(key)}))
         this.collection = CjguiGeneratedUiCollection("presetCards", "presetCardList", rows, table, selection)
+        let view = CjguiComposableUiCollectionViewState(table, ["list", "table"], "list")
+        this.viewState = view
+        let modePresentations = HashMap<String, String>()
+        modePresentations.add("list", "list")
+        modePresentations.add("table", "table")
+        this.workspace = CjguiCollectionWorkspace(collection, view,
+            CjguiComposableUiIdentityScope("preset-card-workspace"),
+            title: "预设卡片集合", modePresentations: modePresentations,
+            viewAuthority: { query, sortKey, ascending =>
+                // The cards owner is the authority for query/sort. Apply the
+                // restored values through it before the view adopts mode/columns;
+                // the next ordinary syncFilter then projects the SAME facts.
+                let _ = cards.setFilterText(query)
+                let _ = cards.setSortState(sortKey, ascending)
+                cards.filterText() == query && cards.sortColumn() == sortKey &&
+                    cards.sortAscending() == ascending
+            })
         let order = collection.order()
         if (order.indexOfKey(cards.selectedKey()) >= 0) {
             selection.click(cards.selectedKey(), false, false, order)
@@ -1416,16 +1475,35 @@ public class PresetCardList {
         return collection.register(catalog)
     }
 
+    /// The accepted generated mount whose EXACT viewport object this event
+    /// carries. Stale generations and foreign viewports resolve to None.
+    public func acceptedViewForEvent(event: CjguiComposableUiEvent): ?CjguiGeneratedCollectionView {
+        let viewport = match (event.node.scrollViewport) {
+            case Some(value) => value
+            case None => return None
+        }
+        return collection.acceptedViewForViewport(viewport)
+    }
+
     /// Applies the owner's current filter and sort to the view. This is the ONLY
     /// place either moves; the collection composite reads the same table.
     public func syncFilter(): Bool {
-        // The QUERY goes through the table (not straight to the filtered source):
-        // the table caches its own sorted order and only a table-level query
-        // change invalidates it, so a hidden object cannot survive in a cached
-        // order.
-        var changed = table.setQuery(cards.filterText())
-        if (cards.sortColumn().size > 0 && table.sortColumnKey() != cards.sortColumn()) {
-            changed = table.setSortState(cards.sortColumn(), cards.sortAscending()) || changed
+        if (getVariable("CJGUI_VIEW_TRACE") == Some("1")) {
+            getStdOut().writeln("PRESET_VIEW_TRACE owner=[${cards.filterText()}] " +
+                "sort=[${cards.sortColumn()}] asc=${cards.sortAscending()} " +
+                "view=[${workspace.viewState().query()}] viewSort=[${workspace.viewState().sortColumnKey()}]")
+            getStdOut().flush()
+        }
+        // The QUERY goes through the shared table (not straight to the filtered
+        // source): the table caches its own sorted order and only a table-level
+        // query change invalidates it, so a hidden object cannot survive in a
+        // cached order. The public workspace applies this one business fact; the
+        // rules consumer uses the same entry for its view-state-owned filter.
+        var changed = workspace.projectBusinessQuery(cards.filterText())
+        if (cards.sortColumn().size > 0) {
+            changed = workspace.projectBusinessSort(cards.sortColumn(), cards.sortAscending()) || changed
+        } else {
+            changed = workspace.projectBusinessSort("", true) || changed
         }
         return changed
     }
@@ -1451,7 +1529,129 @@ public class PresetCardList {
     /// Brings one object's row into the collection's visible range. Selection
     /// and drafts are untouched; only the collection viewport moves.
     public func revealItem(key: String): Bool {
-        return collection.revealItem(key)
+        return revealItemIn(key, "preset-card-table")
+    }
+
+    /// Reveals in ONE accepted generated mount. A missing/retired instance
+    /// refuses instead of moving the last built (or every) viewport.
+    public func revealItemIn(key: String, instanceKey: String): Bool {
+        return workspace.revealIn(CjguiComposableUiIdentityScope("print-preset-runtime"),
+            instanceKey, key)
+    }
+
+    // --- DS51 §13 C: ONE public action/column surface -----------------------
+
+    /// The workspace's ordinary action bar. Labels, node identity, action names
+    /// and restore availability all come from the workspace; this consumer only
+    /// supplies its own saved snapshot and mounts the row.
+    public func buildViewActions(idBase: Int64, rowStyle: CjguiComposableUiStyle,
+        buttonStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        return workspace.buildActionBar(idBase, rowStyle, savedViewSnapshot, buttonStyle)
+    }
+
+    /// Reusable column controls over the same TableColumnLayout the header and
+    /// rows read. The application does not carry a second column branch.
+    public func buildColumnControls(idBase: Int64, rowStyle: CjguiComposableUiStyle,
+        buttonStyle: CjguiComposableUiStyle): CjguiComposableUiNode {
+        return workspace.buildColumnEditor(idBase, rowStyle, buttonStyle)
+    }
+
+    public func commandDeclarations(): ArrayList<CjguiComposableUiCommand> {
+        return workspace.commandDeclarations(savedViewSnapshot)
+    }
+
+    public func commandMetadata(resourceId: Int64): ArrayList<CjguiCommandToolbarMetadata> {
+        return workspace.commandMetadata(resourceId, savedViewSnapshot)
+    }
+
+    /// The window command route (`event.text` is the scoped command id) lands
+    /// on the SAME execution method as the visible button.
+    public func handleCommandEvent(event: CjguiComposableUiEvent): ?Bool {
+        let action = match (workspace.commandForEvent(event)) {
+            case Some(value) => value
+            case None => return None
+        }
+        let outcome = workspace.executeAction(action,
+            { encoded => savedViewSnapshot = encoded; true }, { => savedViewSnapshot })
+        return Some(outcome.applied)
+    }
+
+    /// Route the public workspace's action/column events with THIS application's
+    /// persistence callbacks. Returns None for other scopes/components.
+    public func handleWorkspaceEvent(event: CjguiComposableUiEvent): ?Bool {
+        if (let Some(action) <- workspace.actionForEvent(event)) {
+            let outcome = workspace.executeAction(action,
+                { encoded => savedViewSnapshot = encoded; true }, { => savedViewSnapshot })
+            return Some(outcome.applied)
+        }
+        return workspace.applyColumnEvent(event)
+    }
+
+    // --- DS51 §12 B2/B3: public view snapshot + workspace actions -----------
+
+    public func filterQuery(): String {
+        return workspace.viewState().query()
+    }
+
+    public func encodedView(): String {
+        return workspace.encodedSnapshot()
+    }
+
+    public func savedView(): String {
+        return savedViewSnapshot
+    }
+
+    public func saveView(): Bool {
+        let encoded = workspace.encodedSnapshot()
+        if (encoded.size == 0) {
+            workspace.noteStatus("当前视图无法按公共快照保存")
+            return false
+        }
+        savedViewSnapshot = encoded
+        workspace.noteStatus("视图快照已保存（${encoded.size} 字节）")
+        return true
+    }
+
+    public func restoreView(): Bool {
+        if (savedViewSnapshot.size == 0) {
+            workspace.noteStatus("尚未保存视图")
+            return false
+        }
+        let outcome = workspace.restoreEncoded(savedViewSnapshot)
+        if (!outcome.applied) { return false }
+        // A restored VIEW changes the one visible fact: the business-owned
+        // filter/sort is a projection of the same table. Publish it here so the
+        // next ordinary refresh does not project the changed business value back
+        // over the restored one.
+        let _ = cards.setFilterText(viewState.query())
+        let _ = cards.setSortState(viewState.sortColumnKey(), viewState.sortAscending())
+        getStdOut().writeln("PRESET_COLLECTION_VIEW_RESTORED mode=${viewState.mode()} " +
+            "query=[${viewState.query()}] sort=${viewState.sortColumnKey()}:${viewState.sortAscending()} " +
+            "status=[${workspace.status()}]")
+        getStdOut().flush()
+        return true
+    }
+
+    public func resetView(): Bool {
+        return workspace.resetView().applied
+    }
+
+    public func viewMode(): String {
+        return viewState.mode()
+    }
+
+    public func viewStatus(): String {
+        return workspace.status()
+    }
+
+    /// The accepted mount's staged scroll offset, or -1 when that instance is
+    /// not currently published. Evidence-only read: never moves any view.
+    public func mountOffset(instanceKey: String): Int64 {
+        return match (collection.acceptedView(
+            CjguiComposableUiIdentityScope("print-preset-runtime"), instanceKey)) {
+            case Some(view) => view.scrollOffset()
+            case None => -1
+        }
     }
 
     /// The view's current single selection, for readback/assertions.
@@ -1460,10 +1660,11 @@ public class PresetCardList {
     }
 
     public func toggleSort(actionName: String): Bool {
-        // The table owns sort state; toggling the SAME column flips direction and
-        // naming another column starts ascending, exactly as its header implies.
+        // The shared table owns sort state; toggling the SAME column flips
+        // direction and naming another column starts ascending, exactly as its
+        // header implies. The public workspace is the ONE entry for that fact.
         let column = if (actionName == "SORT_OWNER") { "owner" } else { "name" }
-        return table.setSort(column)
+        return workspace.toggleSort(column)
     }
 
     /// Sort/filter state for the evidence channel (view state, never identity).

@@ -413,6 +413,51 @@ public class CjguiOwnerTurnBudget {
         return max(0, idle) / 1000
     }
 
+    // Only a framework-owned outer turn uses the ordinary event-driven
+    // wait. Caller-owned rounds retain finishScheduling's existing deadline.
+    // Work is bounded before sleeping; measured idle is still credited once.
+    func finishFrameworkScheduling(maximumIdleWaitMs: UInt32): Int64 {
+        if (!active || schedulingWaitFinished) { return 0 }
+        schedulingWaitFinished = true
+        // The frozen scheduling revision can already include a completion
+        // delivered during this turn. Consume its retained result next turn;
+        // pending native work remains asleep until its real notification.
+        if (maximumIdleWaitMs == 0u32 || readyContinuation || remainingMicroseconds() <= 0) { return 0 }
+        for (owner in preparedOwners) {
+            // The high-bit source-install holder keeps its existing policy.
+            if (owner < 0x8000000000000000u64 && !internalRendererPreparationOperationWaiting(owner)) { return 0 }
+        }
+        let deadline = if (maximumIdleWaitMs == UInt32.Max) { UInt64.Max }
+            else { UInt64(max(0, now())).saturatingAdd(UInt64(maximumIdleWaitMs) * 1000000u64) }
+        let wake = min(deadline, UInt64(max(0, nextSchedulingWakeNs)))
+        let idle = cjguiWaitIdleSchedulingWork(schedulingRevision, wake)
+        creditPumpIdle(idle)
+        return max(0, idle) / 1000
+    }
+
+    func hasReadyContinuation(): Bool { return readyContinuation }
+
+    // Owner-only scalar observation; never called unless the bounded Host
+    // no-progress diagnostic is enabled. It does not consume queue entries.
+    func observedIdleNanoseconds(): Int64 { return idleNs }
+    func schedulingObservation(): String {
+        var queue = ""
+        for (owner in refreshWaiters) { queue += "${owner}," }
+        var prepared = ""
+        for (owner in preparedOwners) { prepared += "${owner}," }
+        return "ready=${readyContinuation} wait_finished=${schedulingWaitFinished} " +
+            "wake_us=${if (nextSchedulingWakeNs == Int64.Max) { -1 } else { (nextSchedulingWakeNs-now())/1000 }} " +
+            "priority=${refreshPriority} waiters=${queue} prepared=${prepared}"
+    }
+
+
+
+    // Admission is between whole external actions, not inside business code.
+    // Leave the existing preparation/submit reserve for a retained owner.
+    func admitsAnotherExternalAction(): Bool {
+        return admits(if (preparedOwners.size > 0 || refreshWaiters.size > 0) { 12000 } else { 1000 })
+    }
+
     /// Diagnostic elapsed owner work for the active turn, excluding only
     /// pump idle time that was explicitly credited by this budget.
     func elapsedWorkMicroseconds(): Int64 {
@@ -439,6 +484,7 @@ public class CjguiOwnerTurnBudget {
         // Source installation has a separate bounded holder from a scene
         // candidate. Native close clears its scalar gate, so no H close or
         // terminal function needs to own this E pacing cleanup.
+        var runnable = false
         var i: Int64 = 0
         while (i < preparedOwners.size) {
             let owner = preparedOwners[i]
@@ -446,10 +492,13 @@ public class CjguiOwnerTurnBudget {
                 unsafe { cjgui_internal_renderer_source_install_pending_scalar(owner - 0x8000000000000000u64) } == 0u8) {
                 preparedOwners.remove(at: i)
             } else {
+                if (owner >= 0x8000000000000000u64 || !internalRendererPreparationOperationWaiting(owner)) {
+                    runnable = true
+                }
                 i += 1
             }
         }
-        return preparedOwners.size > 0
+        return runnable
     }
 
     func retainPreparedOwner(owner: UInt64): Bool {
@@ -496,6 +545,14 @@ public class CjguiOwnerTurnBudget {
             }
             i += 1
         }
+    }
+
+    // The accepted scene proves that this owner's earlier admission request
+    // no longer names work. Retire only that demand; another owner's ready
+    // continuation, input or prepared candidate is never cleared here.
+    func retireRefreshDemand(owner: UInt64): Unit {
+        removeRefreshWaiter(owner)
+        if (refreshPriority == owner) { refreshPriority = 0u64 }
     }
 
     func admitsRefresh(owner: UInt64, reserveMicroseconds: Int64): Bool {

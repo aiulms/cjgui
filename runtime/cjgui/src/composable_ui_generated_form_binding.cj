@@ -26,6 +26,7 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
     private let domain: CjguiSharedEditableFormDomain
     private let ownerResourceId: Int64
     private let fields: ArrayList<CjguiGeneratedUiFieldSpec>
+    private let selectBindings: ArrayList<CjguiSelectFieldBinding>
     // Bounded per-field body history. A standard form edit replaces the whole
     // value, so a cross-version selection can only be mapped when this
     // provider remembers the older body; the generic range bridge never
@@ -33,11 +34,34 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
     private static let fieldBodyHistoryLimit: Int64 = 4
     private let fieldBodies: HashMap<String, ArrayList<(Int64, String)>> = HashMap<String, ArrayList<(Int64, String)>>()
 
-    public init(domain: CjguiSharedEditableFormDomain, ownerResourceId: Int64) {
+    public init(domain: CjguiSharedEditableFormDomain, ownerResourceId: Int64,
+        selectBindings!: ArrayList<CjguiSelectFieldBinding> = ArrayList<CjguiSelectFieldBinding>()) {
         this.domain = domain
         this.ownerResourceId = ownerResourceId
+        this.selectBindings = ArrayList<CjguiSelectFieldBinding>(selectBindings)
+        // A declared select is the field's presentation: the published field
+        // kind must name it so any generated consumer builds the same control
+        // instead of the editor kind's default input.
+        let selectIds = ArrayList<String>()
+        for (declaredSelect in this.selectBindings) { selectIds.add(declaredSelect.fieldId) }
         this.fields = CjguiGeneratedUiFieldSpec.fromFormBinding(domain.formBinding(), textArgument: "text",
-            booleanArgument: "value")
+            booleanArgument: "value", selectFieldIds: Some(selectIds))
+        for (declaredSelect in this.selectBindings) {
+            var known = false
+            for (field in this.fields) { if (field.fieldId == declaredSelect.fieldId) { known = true } }
+            if (!known) { throw IllegalArgumentException("select_binding_unknown_field:${declaredSelect.fieldId}") }
+        }
+    }
+
+    public func generatedSelectBinding(fieldId: String): ?CjguiSelectFieldBinding {
+        for (declaredSelect in selectBindings) {
+            if (declaredSelect.fieldId == fieldId) { return Some(declaredSelect) }
+        }
+        return None
+    }
+
+    public func generatedSelectBindings(): ArrayList<CjguiSelectFieldBinding> {
+        return ArrayList<CjguiSelectFieldBinding>(selectBindings)
     }
 
     public func fieldSpecs(): ArrayList<CjguiGeneratedUiFieldSpec> {
@@ -61,6 +85,25 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
                     ArrayList<CjguiGeneratedUiPropertySpec>(
                         [CjguiGeneratedUiPropertySpec("text", "STRING", required: true, maxLength: maxStringLength)]),
                     true), false))
+        // Only an application that actually declared Select fields publishes
+        // the kind; existing forms keep their exact catalog vocabulary.
+        if (selectBindings.size > 0) {
+            let selectProperties = ArrayList<CjguiGeneratedUiPropertySpec>()
+            selectProperties.add(CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 80))
+            selectProperties.add(CjguiGeneratedUiPropertySpec("placeholder", "STRING", maxLength: 80))
+            selectProperties.add(CjguiGeneratedUiPropertySpec("searchable", "BOOLEAN", defaultValue: "false"))
+            if (!catalog.registerComponent(
+                CjguiGeneratedUiComponentSpec("select", cjguiGeneratedFormLeafProperties(selectProperties, false), false))) {
+                throw Exception("select_component_registration:${catalog.registrationIssue()}")
+            }
+            // The always-visible presentations of the SAME field share its
+            // options and commit; their catalogs deliberately omit
+            // searchable/placeholder, so naming those is a named rejection.
+            if (!catalog.registerComponent(cjguiGeneratedRadioGroupComponent()) ||
+                !catalog.registerComponent(cjguiGeneratedSegmentedComponent())) {
+                throw Exception("choice_component_registration:${catalog.registrationIssue()}")
+            }
+        }
         for (kind in ["textInput", "integerInput", "booleanInput"]) {
             let _ = catalog.registerComponent(
                 CjguiGeneratedUiComponentSpec(kind,
@@ -75,6 +118,19 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
                         [CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 80),
                             CjguiGeneratedUiPropertySpec("action", "STRING", maxLength: 64)]), true), false))
         let _ = catalog.registerFields(fieldSpecs())
+        // The choice options can only be published after their fields exist:
+        // one option list per choice field, consumed by all three
+        // presentations and published verbatim by the discovery text.
+        for (declaredSelect in selectBindings) {
+            if (!catalog.registerChoiceOptions(declaredSelect.fieldId, declaredSelect.options())) {
+                throw Exception("choice_options_registration:${catalog.registrationIssue()}")
+            }
+            // Dynamic options: discovery and validation read the binding's
+            // CURRENT list, never the registration copy.
+            if (!catalog.bindChoiceOptions(declaredSelect.fieldId, declaredSelect)) {
+                throw Exception("choice_options_binding:${catalog.registrationIssue()}")
+            }
+        }
         for (action in domain.actionDescriptors()) {
             if (action.name == "APPLY_DRAFT" || action.name == "CANCEL_DRAFT") {
                 let parameters = ArrayList<String>()

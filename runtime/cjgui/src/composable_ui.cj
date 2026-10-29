@@ -1531,32 +1531,44 @@ public class CjguiComposableUiTheme {
     public let body: CjguiComposableUiStyle
     public let input: CjguiComposableUiStyle
     public let primaryAction: CjguiComposableUiStyle
+    /// The secondary command role: neutral surface, readable foreground, the
+    /// SAME full state coverage as the primary role. Consumers that used to
+    /// pass a neutral base style together with `primaryActionInteraction`
+    /// (whose `normal` repainted the base in the primary color) resolve here
+    /// instead, so secondary commands keep hover/focus/pressed/disabled
+    /// feedback without becoming solid primary buttons.
+    public let secondaryAction: CjguiComposableUiStyle
     public let pageInteraction: CjguiComposableUiInteractionStyle
     public let cardInteraction: CjguiComposableUiInteractionStyle
     public let headingInteraction: CjguiComposableUiInteractionStyle
     public let bodyInteraction: CjguiComposableUiInteractionStyle
     public let inputInteraction: CjguiComposableUiInteractionStyle
     public let primaryActionInteraction: CjguiComposableUiInteractionStyle
+    public let secondaryActionInteraction: CjguiComposableUiInteractionStyle
     public init(page: CjguiComposableUiStyle, card: CjguiComposableUiStyle, heading: CjguiComposableUiStyle,
         body: CjguiComposableUiStyle, input: CjguiComposableUiStyle, primaryAction: CjguiComposableUiStyle,
+        secondaryAction!: CjguiComposableUiStyle = CjguiComposableUiStyle(fixedHeight: 30),
         pageInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         cardInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         headingInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         bodyInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
         inputInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
-        primaryActionInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle()) {
+        primaryActionInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        secondaryActionInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle()) {
         this.page = page
         this.card = card
         this.heading = heading
         this.body = body
         this.input = input
         this.primaryAction = primaryAction
+        this.secondaryAction = secondaryAction
         this.pageInteraction = pageInteraction
         this.cardInteraction = cardInteraction
         this.headingInteraction = headingInteraction
         this.bodyInteraction = bodyInteraction
         this.inputInteraction = inputInteraction
         this.primaryActionInteraction = primaryActionInteraction
+        this.secondaryActionInteraction = secondaryActionInteraction
     }
     public static func beaconDark(): CjguiComposableUiTheme {
         return CjguiComposableUiTheme(
@@ -1576,6 +1588,10 @@ public class CjguiComposableUiTheme {
             CjguiComposableUiStyle(fixedHeight: 34, background: CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0),
                 border: CjguiComposableUiColor(0.36, 0.58, 0.96, 1.0),
                 textColor: CjguiComposableUiColor(0.96, 0.98, 1.0, 1.0), fontWeight: 1),
+            secondaryAction: CjguiComposableUiStyle(fixedHeight: 34,
+                background: CjguiComposableUiColor(0.14, 0.21, 0.34, 1.0),
+                border: CjguiComposableUiColor(0.32, 0.44, 0.66, 1.0),
+                textColor: CjguiComposableUiColor(0.88, 0.92, 0.98, 1.0)),
             inputInteraction: CjguiComposableUiInteractionStyle(
                 normal: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.42, 0.56, 0.80, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0))),
@@ -1602,7 +1618,21 @@ public class CjguiComposableUiTheme {
                     border: Some(CjguiComposableUiColor(0.28, 0.34, 0.44, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.56, 0.62, 0.72, 1.0))),
                 selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.30, 0.60, 0.92, 1.0))),
-                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.44, 0.94, 0.78, 1.0))))
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.44, 0.94, 0.78, 1.0)))),
+            secondaryActionInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.14, 0.21, 0.34, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.32, 0.44, 0.66, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.88, 0.92, 0.98, 1.0))),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.18, 0.26, 0.42, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.40, 0.54, 0.78, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.10, 0.16, 0.28, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.52, 0.80, 1.0, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.16, 0.19, 0.26, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.24, 0.28, 0.36, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.52, 0.56, 0.66, 1.0))),
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.20, 0.32, 0.52, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.36, 0.80, 0.66, 1.0))))
         )
     }
     public static func paperLight(): CjguiComposableUiTheme {
@@ -1618,6 +1648,10 @@ public class CjguiComposableUiTheme {
             CjguiComposableUiStyle(fixedHeight: 30, background: CjguiComposableUiColor(0.20, 0.45, 0.82, 1.0),
                 border: CjguiComposableUiColor(0.12, 0.32, 0.68, 1.0),
                 textColor: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0), fontWeight: 1),
+            secondaryAction: CjguiComposableUiStyle(fixedHeight: 30,
+                background: CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0),
+                border: CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0),
+                textColor: CjguiComposableUiColor(0.18, 0.22, 0.30, 1.0)),
             inputInteraction: CjguiComposableUiInteractionStyle(
                 normal: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.18, 0.22, 0.30, 1.0))),
@@ -1644,7 +1678,21 @@ public class CjguiComposableUiTheme {
                     border: Some(CjguiComposableUiColor(0.64, 0.66, 0.70, 1.0)),
                     textColor: Some(CjguiComposableUiColor(0.86, 0.87, 0.90, 1.0))),
                 selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.34, 0.58, 0.92, 1.0))),
-                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.10, 0.52, 0.30, 1.0))))
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.10, 0.52, 0.30, 1.0)))),
+            secondaryActionInteraction: CjguiComposableUiInteractionStyle(
+                normal: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.64, 0.68, 0.75, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.18, 0.22, 0.30, 1.0))),
+                hover: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.96, 0.97, 1.0, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.38, 0.54, 0.86, 1.0))),
+                pressed: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.90, 0.93, 0.99, 1.0))),
+                focused: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.18, 0.42, 0.84, 1.0)),
+                    borderWidth: Some(2)),
+                disabled: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.88, 0.89, 0.92, 1.0)),
+                    border: Some(CjguiComposableUiColor(0.76, 0.78, 0.82, 1.0)),
+                    textColor: Some(CjguiComposableUiColor(0.52, 0.54, 0.60, 1.0))),
+                selected: CjguiComposableUiPaintStyle(background: Some(CjguiComposableUiColor(0.84, 0.90, 1.0, 1.0))),
+                checked: CjguiComposableUiPaintStyle(border: Some(CjguiComposableUiColor(0.12, 0.62, 0.38, 1.0))))
         )
     }
 }
@@ -3245,6 +3293,98 @@ public class CjguiComposableUiVirtualListState {
     private var sharedViewportIdentityValue: Int64 = -1
     private var sharedViewportRequestGenerationValue: Int64 = -1
 
+    // Candidate-only derivative copy; never another domain or input owner.
+    func preparedLayoutCopy(): CjguiComposableUiVirtualListState {
+        let copy = CjguiComposableUiVirtualListState()
+        copy.acceptPreparedLayout(this)
+        return copy
+    }
+    func acceptPreparedLayout(source: CjguiComposableUiVirtualListState): Unit {
+        this.scrollOffsetValue = source.scrollOffsetValue
+        this.selectedKeyValue = source.selectedKeyValue
+        this.focusedKeyValue = source.focusedKeyValue
+        this.anchorKeyValue = source.anchorKeyValue
+        this.materializedStartValue = source.materializedStartValue
+        this.materializedEndValue = source.materializedEndValue
+        this.lastViewportHeight = source.lastViewportHeight
+        this.lastRowStride = source.lastRowStride
+        this.anchorIntraRowOffsetValue = source.anchorIntraRowOffsetValue
+        this.variableCaptureSerial = source.variableCaptureSerial
+        this.variableCaptureToken = source.variableCaptureToken
+        this.variableCaptureKey = source.variableCaptureKey
+        this.variableCaptureTitle = source.variableCaptureTitle
+        this.variableCaptureRevision = source.variableCaptureRevision
+        this.variableCaptureGeneration = source.variableCaptureGeneration
+        this.hasPendingUserScroll = source.hasPendingUserScroll
+        this.lastDataIssueValue = source.lastDataIssueValue
+        this.variableHeightCache = ArrayList<CjguiComposableUiVariableHeightCacheEntry>()
+        for (entry in source.variableHeightCache) {
+            this.variableHeightCache.add(CjguiComposableUiVariableHeightCacheEntry(entry.key, entry.title,
+                entry.layoutRevision, entry.resolvedHeight, entry.measured, entry.liveIndex))
+        }
+        this.variableMeasurementCandidateActive = source.variableMeasurementCandidateActive
+        this.variableCandidateMeasurementKeys = ArrayList<String>(source.variableCandidateMeasurementKeys)
+        this.variableCandidateMeasurementIssue = source.variableCandidateMeasurementIssue
+        this.variableMeasurementWidth = source.variableMeasurementWidth
+        this.variableMeasurementGeneration = source.variableMeasurementGeneration
+        this.variableAnchorIndexValue = source.variableAnchorIndexValue
+        this.variableMaterializedOriginValue = source.variableMaterializedOriginValue
+        this.variableEstimatedHeightValue = source.variableEstimatedHeightValue
+        this.variableRowGapValue = source.variableRowGapValue
+        this.sharedViewportIdentityValue = source.sharedViewportIdentityValue
+        this.sharedViewportRequestGenerationValue = source.sharedViewportRequestGenerationValue
+    }
+    func preparedLayoutBasisMatches(other: CjguiComposableUiVirtualListState): Bool {
+        if (scrollOffsetValue != other.scrollOffsetValue) { return false }
+        if (selectedKeyValue != other.selectedKeyValue) { return false }
+        if (focusedKeyValue != other.focusedKeyValue) { return false }
+        if (anchorKeyValue != other.anchorKeyValue) { return false }
+        if (materializedStartValue != other.materializedStartValue) { return false }
+        if (materializedEndValue != other.materializedEndValue) { return false }
+        if (lastViewportHeight != other.lastViewportHeight) { return false }
+        if (lastRowStride != other.lastRowStride) { return false }
+        if (anchorIntraRowOffsetValue != other.anchorIntraRowOffsetValue) { return false }
+        if (variableCaptureSerial != other.variableCaptureSerial) { return false }
+        if (variableCaptureToken != other.variableCaptureToken) { return false }
+        if (variableCaptureKey != other.variableCaptureKey) { return false }
+        if (variableCaptureTitle != other.variableCaptureTitle) { return false }
+        if (variableCaptureRevision != other.variableCaptureRevision) { return false }
+        if (variableCaptureGeneration != other.variableCaptureGeneration) { return false }
+        if (hasPendingUserScroll != other.hasPendingUserScroll) { return false }
+        if (lastDataIssueValue != other.lastDataIssueValue) { return false }
+        if (variableHeightCache.size != other.variableHeightCache.size) { return false }
+        for (i in 0..variableHeightCache.size) {
+            let a = variableHeightCache[i]; let b = other.variableHeightCache[i]
+            if (a.key != b.key || a.title != b.title || a.layoutRevision != b.layoutRevision ||
+                a.resolvedHeight != b.resolvedHeight || a.measured != b.measured || a.liveIndex != b.liveIndex) { return false }
+        }
+        if (variableMeasurementCandidateActive != other.variableMeasurementCandidateActive) { return false }
+        if (variableCandidateMeasurementKeys.size != other.variableCandidateMeasurementKeys.size) { return false }
+        for (i in 0..variableCandidateMeasurementKeys.size) {
+            if (variableCandidateMeasurementKeys[i] != other.variableCandidateMeasurementKeys[i]) { return false }
+        }
+        if (variableCandidateMeasurementIssue != other.variableCandidateMeasurementIssue) { return false }
+        if (variableMeasurementWidth != other.variableMeasurementWidth) { return false }
+        if (variableMeasurementGeneration != other.variableMeasurementGeneration) { return false }
+        if (variableAnchorIndexValue != other.variableAnchorIndexValue) { return false }
+        if (variableMaterializedOriginValue != other.variableMaterializedOriginValue) { return false }
+        if (variableEstimatedHeightValue != other.variableEstimatedHeightValue) { return false }
+        if (variableRowGapValue != other.variableRowGapValue) { return false }
+        if (sharedViewportIdentityValue != other.sharedViewportIdentityValue) { return false }
+        if (sharedViewportRequestGenerationValue != other.sharedViewportRequestGenerationValue) { return false }
+        return true
+    }
+    func preparedLayoutCacheKeys(): ArrayList<String> {
+        let keys = ArrayList<String>()
+        for (entry in variableHeightCache) { keys.add(entry.key) }
+        return keys
+    }
+    func adoptPreparedViewport(identity: Int64, generation: Int64, offset: Int64): Unit {
+        if (identity == sharedViewportIdentityValue && generation == sharedViewportRequestGenerationValue) { return }
+        sharedViewportIdentityValue = identity; sharedViewportRequestGenerationValue = generation
+        scrollOffsetValue = offset; hasPendingUserScroll = true
+    }
+
     public init() {
         this.scrollOffsetValue = 0
         this.selectedKeyValue = ""
@@ -4172,6 +4312,22 @@ public class CjguiComposableUiIdentityScope {
         return CjguiComposableUiIdentity(this, localKey)
     }
 
+    /// Places another scope below this one. Materialised rows that an
+    /// application source declares with its own local scope are mounted once
+    /// per region, so their identities must carry the region scope instead of
+    /// colliding across two independent mounts in one window.
+    func prefixed(inner: CjguiComposableUiIdentityScope): CjguiComposableUiIdentityScope {
+        return CjguiComposableUiIdentityScope(
+            "${canonicalPathValue}/${inner.canonicalPathValue}",
+            if (diagnosticPathValue.size > 0) {
+                "${diagnosticPathValue}--${inner.diagnosticPathValue}"
+            } else {
+                inner.diagnosticPathValue
+            },
+            validValue && inner.isValid() && canonicalPathValue.size + inner.canonicalPathValue.size + 1 <= 256
+        )
+    }
+
     func canonicalPath(): String {
         return canonicalPathValue
     }
@@ -4234,6 +4390,14 @@ public class CjguiComposableUiIdentity {
 
     func materializedContentIdentity(): CjguiComposableUiIdentity {
         return scopeValue.child(localKeyValue).local("materialized")
+    }
+
+    func rebased(prefix: CjguiComposableUiIdentityScope): CjguiComposableUiIdentity {
+        return CjguiComposableUiIdentity(prefix.prefixed(scopeValue), localKeyValue)
+    }
+
+    func nodeReference(): CjguiComposableUiNodeReference {
+        return CjguiComposableUiNodeReference.scoped(scopeValue, localKeyValue)
     }
 
     func isValid(): Bool {
@@ -4775,6 +4939,43 @@ public class CjguiComposableUiNode {
         childNodes.clear()
         childNodes.add(all: children)
     }
+    var preparedLayoutInputs: ?CjguiPreparedLayoutInputs = None
+    var preparedIdentityResolved: Bool = false
+    func layoutVirtualListSource(): ?CjguiComposableUiVirtualListSource {
+        if (let Some(inputs) <- preparedLayoutInputs) { return inputs.fixedSource }
+        return virtualListSourceValue
+    }
+    func layoutVariableHeightListSource(): ?CjguiComposableUiVariableHeightListSource {
+        if (let Some(inputs) <- preparedLayoutInputs) { return inputs.variableSource }
+        return variableHeightListSourceValue
+    }
+    func layoutVirtualListState(): ?CjguiComposableUiVirtualListState {
+        if (let Some(inputs) <- preparedLayoutInputs) { return inputs.workingState }
+        return virtualListStateValue
+    }
+    func layoutSplitFirstSize(): Int64 {
+        if (let Some(inputs) <- preparedLayoutInputs) { return inputs.splitFirst }
+        return if (let Some(state) <- splitState) { state.firstSize() } else { splitFirstSize() }
+    }
+    func layoutTabsActiveKey(): String {
+        if (let Some(inputs) <- preparedLayoutInputs) { return inputs.tabsKey }
+        return if (let Some(state) <- tabsState) { state.activeKey() } else { "" }
+    }
+    func layoutViewportOffset(fallback: Int64): Int64 {
+        return if (let Some(inputs) <- preparedLayoutInputs) { inputs.viewportOffset } else { fallback }
+    }
+    func preparedLayoutInputsMatch(): Bool {
+        if (let Some(inputs) <- preparedLayoutInputs) { if (!inputs.matches()) { return false } }
+        for (child in childNodes) { if (!child.preparedLayoutInputsMatch()) { return false } }
+        return true
+    }
+    func acceptPreparedLayoutInputs(): Unit {
+        if (let Some(inputs) <- preparedLayoutInputs) { inputs.accept() }
+        // Candidate-only rows/bases/pins are not a second accepted cache.
+        preparedLayoutInputs = None
+        preparedIdentityResolved = false
+        for (child in childNodes) { child.acceptPreparedLayoutInputs() }
+    }
     func virtualListSource(): ?CjguiComposableUiVirtualListSource {
         return virtualListSourceValue
     }
@@ -4783,6 +4984,12 @@ public class CjguiComposableUiNode {
     }
     func virtualListState(): ?CjguiComposableUiVirtualListState {
         return virtualListStateValue
+    }
+    func layoutListContentId(): Int64 {
+        if (let Some(inputs) <- preparedLayoutInputs) {
+            if (let Some(data) <- inputs.list) { return data.contentId }
+        }
+        return virtualListContentNodeIdValue
     }
     func virtualListContentNodeId(): Int64 {
         return virtualListContentNodeIdValue
@@ -4938,8 +5145,18 @@ public class CjguiComposableUiNode {
     /// their domain-owned list state remain references, while transient
     /// materialised rows are rebuilt only for this candidate.
     func cloneForWindowCandidate(includeChildren!: Bool = true,
-        virtualContentHeightOverride!: Int64 = -1, virtualVerticalOriginOverride!: Int64 = -1): CjguiComposableUiNode {
-        let cloned = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId, style,
+        virtualContentHeightOverride!: Int64 = -1, virtualVerticalOriginOverride!: Int64 = -1,
+        preservePreparedLayout!: Bool = false,
+        identityPrefix!: ?CjguiComposableUiIdentityScope = None): CjguiComposableUiNode {
+        // A region-qualified mount re-bases every scoped identity it
+        // materialises; the caller's declaration and the handwritten tree keep
+        // their own scopes unchanged.
+        let clonedIdentity = match ((identityPrefix, scopedIdentityValue)) {
+            case (Some(prefix), Some(identity)) => Some(identity.rebased(prefix))
+            case _ => scopedIdentityValue
+        }
+        let cloned = CjguiComposableUiNode(nodeId, semanticId, nodeKind, label, value, actionName, resourceId,
+            if (preservePreparedLayout && preparedLayoutInputs.isSome()) { preparedLayoutInputs.getOrThrow().frozenStyle } else { style },
             // The window snapshots the declaration; presentation runs are part of
             // the declaration and must survive the snapshot, otherwise every
             // accepted node silently loses its inline styles.
@@ -4976,7 +5193,11 @@ public class CjguiComposableUiNode {
             semanticExpandable: semanticExpandable,
             semanticExpanded: semanticExpanded, semanticLevel: semanticLevel, semanticKey: semanticKey,
             semanticParentKey: semanticParentKey, semanticIncarnation: semanticIncarnation,
-            layoutSpec: layoutSpec, identity: scopedIdentityValue)
+            layoutSpec: layoutSpec, identity: clonedIdentity)
+        if (preservePreparedLayout) {
+            if (let Some(inputs) <- preparedLayoutInputs) { cloned.preparedLayoutInputs = Some(inputs.copyForPass()) }
+            cloned.preparedIdentityResolved = preparedIdentityResolved
+        }
         cloned.markVariableRow(variableRowKeyValue, variableRowTitleValue, variableRowRevisionValue)
         cloned.setVariableRowOffset(variableRowOffsetValue)
         var ownsVirtualChildren = false
@@ -4988,14 +5209,16 @@ public class CjguiComposableUiNode {
         }
         if (includeChildren && !ownsVirtualChildren) {
             for (child in childNodes) {
-                cloned.add(child.cloneForWindowCandidate())
+                cloned.add(child.cloneForWindowCandidate(preservePreparedLayout: preservePreparedLayout,
+                    identityPrefix: identityPrefix))
             }
         } else if (includeChildren && variableHeightListSourceValue.isSome() && childNodes.size == 1 &&
             childNodes[0].nodeId == virtualListContentNodeIdValue &&
             childNodes[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
             // Preserve the declared content identity and input metadata, but
             // never copy previously materialized rows into a new candidate.
-            cloned.add(childNodes[0].cloneForWindowCandidate(includeChildren: false))
+            cloned.add(childNodes[0].cloneForWindowCandidate(includeChildren: false,
+                preservePreparedLayout: preservePreparedLayout, identityPrefix: identityPrefix))
         }
         return cloned
     }
@@ -5005,11 +5228,14 @@ private class CjguiComposableUiIdentityEntry {
     let canonicalKey: String
     let diagnosticKey: String
     let nodeId: Int64
+    let reference: CjguiComposableUiNodeReference
 
-    init(canonicalKey: String, diagnosticKey: String, nodeId: Int64) {
+    init(canonicalKey: String, diagnosticKey: String, nodeId: Int64,
+        reference: CjguiComposableUiNodeReference) {
         this.canonicalKey = canonicalKey
         this.diagnosticKey = diagnosticKey
         this.nodeId = nodeId
+        this.reference = reference
     }
 }
 
@@ -5019,8 +5245,13 @@ private class CjguiComposableUiIdentityEntry {
 /// monotonic scalar generation supplies a fresh layout node ID when a removed
 /// key later returns, while scene/projection generations continue to reject
 /// delayed input from the removed declaration.
+/// Layout node ids at or above this value are VIRTUAL ids the identity
+/// registry assigned to scoped component identities; they are not real
+/// allocated node ids and must not be used as manual node references.
+public let CJGUI_COMPOSABLE_UI_FIRST_SCOPED_NODE_ID: Int64 = 8000000000000000000
+
 public class CjguiComposableUiIdentityRegistry {
-    private static let firstScopedNodeId: Int64 = 8000000000000000000
+    private static let firstScopedNodeId: Int64 = CJGUI_COMPOSABLE_UI_FIRST_SCOPED_NODE_ID
     private static let maximumScopedIdentityCount: Int64 = 1024
 
     private let acceptedEntries: ArrayList<CjguiComposableUiIdentityEntry>
@@ -5234,6 +5465,18 @@ public class CjguiComposableUiIdentityRegistry {
         return reference.manualNodeId()
     }
 
+    // Numeric scoped IDs are transport identities, never manual references.
+    // Export the immutable declaration from this accepted generation only.
+    func referenceForAcceptedNode(nodeId: Int64): ?CjguiComposableUiNodeReference {
+        if (nodeId < 0) { return None }
+        for (entry in acceptedEntries) {
+            if (entry.nodeId == nodeId) { return Some(entry.reference) }
+        }
+        return if (nodeId < CjguiComposableUiIdentityRegistry.firstScopedNodeId) {
+            Some(CjguiComposableUiNodeReference.manual(nodeId))
+        } else { None }
+    }
+
     public func liveRetainedStringBytes(): Int64 {
         return retainedIdentityStringBytes(acceptedEntries)
     }
@@ -5280,7 +5523,7 @@ public class CjguiComposableUiIdentityRegistry {
                 return false
             }
             candidateByKey.add(canonicalKey, candidateEntries.size)
-            candidateEntries.add(CjguiComposableUiIdentityEntry(canonicalKey, identity.diagnosticKey(), nodeId))
+            candidateEntries.add(CjguiComposableUiIdentityEntry(canonicalKey, identity.diagnosticKey(), nodeId, identity.nodeReference()))
             node.nodeId = nodeId
         } else {
             // Preserve legacy numeric IDs unchanged. The later canonical
@@ -8553,7 +8796,7 @@ public class CjguiComposableUiLayoutEngine {
                 0
             }
             var originOffset: Int64 = 0
-            var offset = if (node.variableHeightListSource().isSome() && node.virtualListState().isSome()) {
+            var offset = if (node.layoutVariableHeightListSource().isSome() && node.layoutVirtualListState().isSome()) {
                 node.scrollOffset
             } else if (let Some(viewport) <- node.scrollViewport) {
                 // A viewport-bound scroll area takes its offset from the PUBLIC
@@ -8575,7 +8818,7 @@ public class CjguiComposableUiLayoutEngine {
                 } else {
                     viewport.acceptedOriginOffset()
                 }
-                let requestedLocal = viewport.offset() - requestBase
+                let requestedLocal = node.layoutViewportOffset(viewport.offset()) - requestBase
                 if (requestedLocal > maximumOffset) {
                     maximumOffset
                 } else if (requestedLocal < 0) {
@@ -8699,7 +8942,11 @@ public class CjguiComposableUiLayoutEngine {
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER && children.size == 3) {
-            let parts = cjguiSliderPaintBounds(node, bounds)
+            let parts = if (node.pointerControlRole == "scrollbar") {
+                cjguiScrollbarPaintBounds(node, bounds)
+            } else {
+                cjguiSliderPaintBounds(node, bounds)
+            }
             var index: Int64 = 0
             for (child in children) {
                 layoutNode(child, parts[index], childClipConstraints, output, measurer, inputScope, work,
@@ -8930,19 +9177,19 @@ public class CjguiComposableUiLayoutEngine {
     private static func materializeVirtualList(node: CjguiComposableUiNode, inner: CjguiComposableUiRect,
         measurer: CjguiComposableUiTextMeasurer, work: CjguiComposableUiLayoutWorkCounter,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
-        if (let Some(variableSource) <- node.variableHeightListSource()) {
-            if (let Some(state) <- node.virtualListState()) {
+        if (let Some(variableSource) <- node.layoutVariableHeightListSource()) {
+            if (let Some(state) <- node.layoutVirtualListState()) {
                 materializeVariableHeightList(node, variableSource, state, inner, measurer, work, identityRegistry)
                 return
             }
         }
-        if (let Some(source) <- node.virtualListSource()) {
-            if (let Some(state) <- node.virtualListState()) {
+        if (let Some(source) <- node.layoutVirtualListSource()) {
+            if (let Some(state) <- node.layoutVirtualListState()) {
                 let totalHeight = state.updateMaterializedRange(source, node.virtualListRowHeight(),
                     node.virtualListRowGap(), inner.height, node.virtualListOverscan())
                 node.scrollOffset = state.scrollOffset()
                 let content = CjguiComposableUiNode(
-                    node.virtualListContentNodeId(),
+                    node.layoutListContentId(),
                     "${node.semanticId}_materialized",
                     CJGUI_COMPOSABLE_UI_VERTICAL,
                     "",
@@ -8950,7 +9197,7 @@ public class CjguiComposableUiLayoutEngine {
                     "",
                     -1,
                     CjguiComposableUiStyle(gap: node.virtualListRowGap()),
-                    identity: if (node.virtualListContentNodeId() < 0) {
+                    identity: if (node.layoutListContentId() < 0) {
                         match (node.scopedIdentity()) {
                             case Some(identity) => Some(identity.materializedContentIdentity())
                             case None => None
@@ -8961,6 +9208,7 @@ public class CjguiComposableUiLayoutEngine {
                         .materializedStart()
                         .saturatingMul(node.virtualListRowHeight().saturatingAdd(node.virtualListRowGap()))
                 )
+                content.preparedIdentityResolved = node.preparedLayoutInputs.isSome()
                 let contentIdentityIssue = resolveMaterializedIdentity(content, identityRegistry)
                 if (contentIdentityIssue.size > 0) {
                     work.dynamicIdentityIssue = contentIdentityIssue
@@ -9015,7 +9263,9 @@ public class CjguiComposableUiLayoutEngine {
         inner: CjguiComposableUiRect, measurer: CjguiComposableUiTextMeasurer, work: CjguiComposableUiLayoutWorkCounter,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): Unit {
         if (let Some(viewport) <- node.scrollViewport) {
-            state.adoptSharedViewportRequest(viewport)
+            if (let Some(inputs) <- node.preparedLayoutInputs) {
+                state.adoptPreparedViewport(inputs.viewportIdentity, inputs.viewportGeneration, inputs.viewportOffset)
+            } else { state.adoptSharedViewportRequest(viewport) }
         }
         state.prepareVariableMeasurementContext(source, inner.width)
         state.beginVariableMeasurementCandidate()
@@ -9144,13 +9394,13 @@ public class CjguiComposableUiLayoutEngine {
             node.virtualListRowGap(), inner.height, node.virtualListOverscan())
         node.scrollOffset = state.scrollOffset()
         let templates = node.children()
-        let template: ?CjguiComposableUiNode = if (templates.size == 1 && templates[0].nodeId == node.virtualListContentNodeId() &&
+        let template: ?CjguiComposableUiNode = if (templates.size == 1 && templates[0].nodeId == node.layoutListContentId() &&
             templates[0].nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) { Some(templates[0]) } else { None }
         let content = if (let Some(value) <- template) {
             value.cloneForWindowCandidate(includeChildren: false, virtualContentHeightOverride: totalHeight,
-                virtualVerticalOriginOverride: state.variableMaterializedOrigin())
+                virtualVerticalOriginOverride: state.variableMaterializedOrigin(), preservePreparedLayout: true)
         } else {
-            CjguiComposableUiNode(node.virtualListContentNodeId(), "${node.semanticId}_materialized",
+            CjguiComposableUiNode(node.layoutListContentId(), "${node.semanticId}_materialized",
                 CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1, CjguiComposableUiStyle(gap: node.virtualListRowGap()),
                 virtualContentHeight: totalHeight, virtualVerticalOrigin: state.variableMaterializedOrigin())
         }
@@ -9228,6 +9478,7 @@ public class CjguiComposableUiLayoutEngine {
 
     private static func resolveMaterializedIdentity(node: CjguiComposableUiNode,
         identityRegistry: ?CjguiComposableUiIdentityRegistry): String {
+        if (node.preparedIdentityResolved) { return "" }
         if (let Some(registry) <- identityRegistry) {
             return registry.resolveDynamicNode(node)
         }
@@ -9649,11 +9900,7 @@ public class CjguiComposableUiLayoutEngine {
         // A split whose author bound shared view state takes its current size from
         // that state, so a divider drag changes geometry without rebuilding the
         // structure or inventing a business version.
-        let requestedFirst = if (let Some(state) <- owner.splitState) {
-            state.firstSize()
-        } else {
-            owner.splitFirstSize()
-        }
+        let requestedFirst = owner.layoutSplitFirstSize()
         let firstSize = CjguiComposableUiSplitGeometry.firstSizeForTrack(requestedFirst, track, handleSize,
             owner.splitMinFirst(), owner.splitMinSecond())
         let available = if (track > handleSize) {
@@ -9721,10 +9968,7 @@ public class CjguiComposableUiLayoutEngine {
     }
 
     private static func tabsPageIsActive(owner: CjguiComposableUiNode, page: CjguiComposableUiNode): Bool {
-        let activeKey = match (owner.tabsState) {
-            case Some(state) => state.activeKey()
-            case None => ""
-        }
+        let activeKey = owner.layoutTabsActiveKey()
         return page.tabsPageActive || (activeKey.size > 0 && page.tabsPageKey == activeKey)
     }
 
@@ -9958,6 +10202,24 @@ public class CjguiComposableUiLayoutEngine {
             node.style.idealWidth)
     }
     private static func preferredHeight(node: CjguiComposableUiNode, availableWidth: Int64,
+        measurer: CjguiComposableUiTextMeasurer): Int64 {
+        // A complete intrinsic calculation is reusable inside this one frozen
+        // candidate. Budget/worker exceptions store nothing; a new candidate
+        // gets a fresh input object, and mutable list heights stay uncached.
+        if (let Some(pacer) <- (measurer as CjguiComposableUiLayoutPacer)) { pacer.checkpointLayoutSlice() }
+        if (node.layoutHeightOverride() > 0 || node.style.fixedHeight > 0) {
+            return preferredHeightUncached(node, availableWidth, measurer)
+        }
+        if (let Some(inputs) <- node.preparedLayoutInputs) {
+            if (let Some(height) <- inputs.cachedIntrinsicHeight(availableWidth)) { return height }
+            let height = preferredHeightUncached(node, availableWidth, measurer)
+            inputs.rememberIntrinsicHeight(availableWidth, height)
+            return height
+        }
+        return preferredHeightUncached(node, availableWidth, measurer)
+    }
+
+    private static func preferredHeightUncached(node: CjguiComposableUiNode, availableWidth: Int64,
         measurer: CjguiComposableUiTextMeasurer): Int64 {
         if (node.layoutHeightOverride() > 0) {
             return node.layoutHeightOverride()
@@ -10437,8 +10699,8 @@ public class CjguiComposableUiWindowProjectionBuilder {
                 )
             )
         }
-        if (let Some(source) <- node.virtualListSource()) {
-            if (let Some(state) <- node.virtualListState()) {
+        if (let Some(source) <- node.layoutVirtualListSource()) {
+            if (let Some(state) <- node.layoutVirtualListState()) {
                 outputCollections.add(
                     CjguiSharedOperationWindowCollection(
                         node.semanticId,
@@ -10450,8 +10712,8 @@ public class CjguiComposableUiWindowProjectionBuilder {
                     )
                 )
             }
-        } else if (let Some(source) <- node.variableHeightListSource()) {
-            if (let Some(state) <- node.virtualListState()) {
+        } else if (let Some(source) <- node.layoutVariableHeightListSource()) {
+            if (let Some(state) <- node.layoutVirtualListState()) {
                 outputCollections.add(
                     CjguiSharedOperationWindowCollection(
                         node.semanticId,

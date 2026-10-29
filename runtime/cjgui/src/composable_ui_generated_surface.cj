@@ -43,6 +43,17 @@ public func cjguiGeneratedUiEncodeTextToken(value: String): String {
     return "u8:" + CjguiSharedOperationFrame.encodeUtf8Hex(value)
 }
 
+/// `none` is the empty-reason marker in CHOICE. A NON-empty reason whose text
+/// happens to be `none` is not that marker, so it is always written as bytes
+/// instead of making the reader guess. The rule is scoped to that one token;
+/// ordinary option text keeps the shared encoding.
+public func cjguiGeneratedUiEncodeChoiceTextToken(value: String): String {
+    if (value == "none") {
+        return "u8:" + CjguiSharedOperationFrame.encodeUtf8Hex(value)
+    }
+    return cjguiGeneratedUiEncodeTextToken(value)
+}
+
 public func cjguiGeneratedUiTextFits(value: String, maxBytes: Int64): Bool {
     return value.toArray().size <= maxBytes
 }

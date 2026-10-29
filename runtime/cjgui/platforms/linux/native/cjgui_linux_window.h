@@ -67,7 +67,12 @@ typedef enum CjguiLinuxWindowEventKind {
     // UTF-16 光标位置（相对 preedit，不是文档坐标）。
     CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_UPDATE = 13,
     CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_COMMIT = 14,
-    CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_CANCEL = 15
+    CJGUI_LINUX_WINDOW_EVENT_COMPOSITION_CANCEL = 15,
+    // Xdnd 接收：Drop 完成并取回真实载荷后才上报。utf8 是文本或本地 PNG
+    // 文件路径；两者由 kind 区分，上层再按目标声明决定是否受理。
+    CJGUI_LINUX_WINDOW_EVENT_DROP_TEXT = 16,
+    CJGUI_LINUX_WINDOW_EVENT_DROP_PNG_FILE = 17,
+    CJGUI_LINUX_WINDOW_EVENT_DROP_LEAVE = 18
 } CjguiLinuxWindowEventKind;
 
 // 单条窗口事件的文本容量。组合提交可以包含多个字符；超限整条拒绝，绝不截断
@@ -154,6 +159,10 @@ int cjgui_linux_window_size(CjguiLinuxWindow *window, uint32_t *outWidth, uint32
                             int *outResized);
 
 // 是否已收到 WM_DELETE_WINDOW。闩锁语义：收到后恒为 1，不会被本层清零。
+// 真实映射状态：MapNotify 后为 1，UnmapNotify 后为 0。不可绘制不等于销毁，
+// 会话必须在恢复后重画最新 accepted 内容，期间不得伪造 present 完成。
+int cjgui_linux_window_is_mapped(CjguiLinuxWindow *window);
+
 int cjgui_linux_window_close_requested(CjguiLinuxWindow *window);
 
 // 核心的 requestClose：只给这个窗口立关闭闩锁，核心随后 destroy 本会话。
@@ -193,6 +202,42 @@ int cjgui_linux_window_set_clipboard(CjguiLinuxWindow *window, const char *utf8,
 
 // 显式剪贴板容量：完整 UTF-8 文本超过它时整笔拒绝（不复制前缀、不截断半个字符）。
 #define CJGUI_LINUX_CLIPBOARD_CAPACITY 65536u
+// 二进制（image/png）剪贴板容量。与共同层的 512 KiB 单笔预算一致。
+#define CJGUI_LINUX_CLIPBOARD_BINARY_CAPACITY 524288u
+
+// 剪贴板数据类型。FORMAT_NONE 表示当前没有自有内容。
+typedef enum CjguiLinuxClipboardFormat {
+    CJGUI_LINUX_CLIPBOARD_FORMAT_NONE = 0,
+    CJGUI_LINUX_CLIPBOARD_FORMAT_TEXT = 1,
+    CJGUI_LINUX_CLIPBOARD_FORMAT_PNG = 2
+} CjguiLinuxClipboardFormat;
+
+// 带上类型的写入/读取。文本仍用 UTF-8；PNG 用原始字节。空文本是合法的
+// 清空写入；PNG 不接受 0 字节。
+int cjgui_linux_window_set_clipboard_format(CjguiLinuxWindow *window, int format,
+                                            const void *bytes, size_t length);
+int cjgui_linux_window_request_clipboard_format(CjguiLinuxWindow *window, int format);
+int cjgui_linux_window_take_clipboard_format(CjguiLinuxWindow *window, int format,
+                                             void *outBytes, size_t capacity, size_t *outLength);
+
+// Xdnd 接收能力位：bit0 text/plain，bit1 本地 PNG 文件 URI。会话在场景
+// 接受后按声明目标更新；Enter/Position 只对已声明的能力回 Status。
+#define CJGUI_LINUX_DROP_TEXT 0x1u
+#define CJGUI_LINUX_DROP_PNG_FILE 0x2u
+void cjgui_linux_window_set_drop_mask(CjguiLinuxWindow *window, uint32_t mask);
+
+// Per-drop negotiation: the session reports which formats the node under the
+// pointer actually declares (same bits as above). The window then intersects
+// that with the atoms the source offered in XdndEnter. A file URI is never
+// converted into text just because the window has some other text target.
+typedef int (*CjguiLinuxDropFormatProvider)(void *user, double x, double y);
+void cjgui_linux_window_set_drop_format_provider(CjguiLinuxWindow *window,
+                                                 CjguiLinuxDropFormatProvider provider,
+                                                 void *user);
+
+// A file drop defers XdndFinished until the bounded read settles. The session
+// calls this exactly once per delivered PNG_FILE drop with the real outcome.
+void cjgui_linux_window_finish_drop(CjguiLinuxWindow *window, int success);
 
 // 异步读取状态。Ctrl+V 只发起请求并继续泵键鼠/关闭事件；结果由 take 取走。
 typedef enum CjguiLinuxClipboardReadStatus {

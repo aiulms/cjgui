@@ -131,9 +131,9 @@ func scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocus(): Unit {
 private func pressScrollRebuildAction(window: CjguiComposableUiWindow, node: UInt64): Unit {
     let before = window.windowProgress().acceptedSceneVersion
     @Assert(unsafe { cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(
-        window.testSessionToken(), node) }, 0)
+        window.testSessionToken(), node) }, 0i32)
     @Assert(unsafe { cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(
-        window.testSessionToken()) }, 0)
+        window.testSessionToken()) }, 0i32)
     let _ = window.pump(0u32)
     finishScrollRebuildScene(window, before + 1)
 }

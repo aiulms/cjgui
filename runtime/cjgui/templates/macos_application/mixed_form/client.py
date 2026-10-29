@@ -32,6 +32,12 @@ def generate(capabilities, cards=None):
         nodes.append(GeneratedNode(1, "preset-card-list", "presetCardList", None, None,
                                    props(collection="presetCards", presentation="list", growX=1,
                                          fixedHeight=150)))
+        # The SAME registered collection and selection, mounted a second time
+        # as a table in the same region. Each generated instance owns its own
+        # viewport; reveal is addressed to one instance key below.
+        nodes.append(GeneratedNode(1, "preset-card-table", "presetCardList", None, None,
+                                   props(collection="presetCards", presentation="table", growX=1,
+                                         fixedHeight=170)))
     if capabilities.component("presetCard"):
         labels = {field.field_id: field.label for field in capabilities.fields}
         # Each card declares FIVE children in this order: title, note and the
@@ -156,8 +162,9 @@ def reorder(nodes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("descriptor")
-    parser.add_argument("operation", choices=("inspect", "generate", "reorder", "read", "set", "apply", "cancel", "check-refusal", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current", "card-read", "card-set", "card-apply", "card-cancel", "card-rebind", "stale-write", "lock", "unlock",
-                        "select-card", "add-card", "delete-card", "filter-cards", "sort-cards"))
+    parser.add_argument("operation", choices=("ui-history", "ui-undo", "ui-redo", "inspect", "generate", "reorder", "read", "set", "apply", "cancel", "check-refusal", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current", "card-read", "card-set", "card-apply", "card-cancel", "card-rebind", "stale-write", "lock", "unlock",
+                        "select-card", "add-card", "delete-card", "filter-cards", "sort-cards",
+                        "collection-edit"))
     parser.add_argument("--instance")
     parser.add_argument("--owner", type=int)
     parser.add_argument("--new-owner", type=int)
@@ -171,113 +178,216 @@ def main():
     parser.add_argument("--cards", default=None,
                         help="comma-separated card keys to render details for")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--history-baseline", type=Path, help="exact saved UI-history CAS observation")
     args = parser.parse_args()
+    if args.operation in ("ui-history", "ui-undo", "ui-redo"):
+        from cjgui_generated_edit import run_cli
+        command = [args.descriptor, args.operation]
+        if args.operation != "ui-history":
+            if args.history_baseline is None:
+                parser.error("ui-undo/ui-redo requires --history-baseline; no implicit refresh/replay")
+            command.append(str(args.history_baseline))
+        return run_cli(command + ["--json"])
     card_keys = args.cards.split(",") if args.cards else None
-    session = GeneratedUiSession.connect(args.descriptor)
-    capabilities = session.capabilities()
-    result = {"operation": args.operation}
-    if args.operation == "inspect":
-        result["capabilities"] = asdict(capabilities)
-    elif args.operation == "check-refusal":
-        # An actual refused READ against this endpoint. No capability/token is
-        # printed; a typed ERROR must not become an empty successful snapshot.
-        before = session.form_state()
-        descriptor = dict(session.client.descriptor)
-        descriptor["capability"] = "mixed-form-invalid-capability"
-        refused = GeneratedUiSession(SharedOperationClient(descriptor))
-        try:
-            refused.fields()
-        except GeneratedUiError as error:
-            result["refused"] = str(error)
-        else:
-            raise AssertionError("typed fields read swallowed refusal")
-        after = session.form_state()
-        assert before == after, "refused read changed owner state"
-        result["owner_unchanged"] = True
-    elif args.operation in ("generate", "reorder", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current"):
-        before = session.structure()
-        if args.operation == "styled-generate":
-            nodes = styled_nodes(capabilities)
-        elif args.operation in ("styled-color", "styled-size", "styled-font-current"):
-            nodes = update_styled_nodes(list(before.nodes), capabilities, args.operation)
-        elif args.operation == "font-switch":
-            font = next((font for font in capabilities.font_resources if font.key == args.font_resource
-                         and font.state != "withdrawn"), None)
-            if font is None:
-                parser.error("--font-resource must name an application-published font")
-            nodes = [GeneratedNode(n.depth, n.key, n.kind, n.field_id, n.action,
-                tuple(p for p in n.properties if p.name not in ("fontResource", "fontVersion")) +
-                tuple(props(fontResource=font.key, fontVersion=font.version))
-                if n.kind in ("textInput", "label") else n.properties) for n in before.nodes]
-        else:
-            nodes = generate(capabilities, card_keys) if args.operation == "generate" else reorder(list(before.nodes))
-        reply = session.submit(nodes, before.version)
-        result["submit"] = asdict(reply)
-        if reply.candidate_accepted:
-            result["terminal"] = asdict(session.wait_for_candidate(reply.ticket(), timeout_ms=5000))
-            assert result["terminal"]["terminal_state"] == "ACCEPTED", result["terminal"]
-            assert same_structure(nodes, session.structure().nodes)
-    elif args.operation in ("lock", "unlock"):
-        # Owner-level lock through the SAME declared action; the target is the
-        # handwritten preset or one card.
-        if args.instance is not None:
-            state = session.form_state(instance_key=args.instance)
-            target = state.owner_resource_id
-        else:
+    result = {"operation": args.operation, "request": {
+        "instance": args.instance, "owner": args.owner,
+        "expected_version": args.expected_version,
+        "expected_draft_version": args.expected_draft_version}}
+    status = 0
+    try:
+        session = GeneratedUiSession.connect(args.descriptor)
+        capabilities = session.capabilities()
+        if args.operation == "inspect":
+            result["capabilities"] = asdict(capabilities)
+        elif args.operation == "check-refusal":
+            # An actual refused READ against this endpoint. No capability/token is
+            # printed; a typed ERROR must not become an empty successful snapshot.
+            before = session.form_state()
+            descriptor = dict(session.client.descriptor)
+            descriptor["capability"] = "mixed-form-invalid-capability"
+            refused = GeneratedUiSession(SharedOperationClient(descriptor))
+            try:
+                refused.fields()
+            except GeneratedUiError as error:
+                result["refused"] = str(error)
+            else:
+                raise AssertionError("typed fields read swallowed refusal")
+            after = session.form_state()
+            assert before == after, "refused read changed owner state"
+            result["owner_unchanged"] = True
+        elif args.operation in ("generate", "reorder", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current"):
+            before = session.structure()
+            if args.operation == "styled-generate":
+                nodes = styled_nodes(capabilities)
+            elif args.operation in ("styled-color", "styled-size", "styled-font-current"):
+                nodes = update_styled_nodes(list(before.nodes), capabilities, args.operation)
+            elif args.operation == "font-switch":
+                font = next((font for font in capabilities.font_resources if font.key == args.font_resource
+                             and font.state != "withdrawn"), None)
+                if font is None:
+                    parser.error("--font-resource must name an application-published font")
+                nodes = [GeneratedNode(n.depth, n.key, n.kind, n.field_id, n.action,
+                    tuple(p for p in n.properties if p.name not in ("fontResource", "fontVersion")) +
+                    tuple(props(fontResource=font.key, fontVersion=font.version))
+                    if n.kind in ("textInput", "label") else n.properties) for n in before.nodes]
+            else:
+                nodes = generate(capabilities, card_keys) if args.operation == "generate" else reorder(list(before.nodes))
+            reply = session.submit(nodes, before.version)
+            result["submit"] = asdict(reply)
+            if reply.candidate_accepted:
+                result["terminal"] = asdict(session.wait_for_candidate(reply.ticket(), timeout_ms=5000))
+                assert result["terminal"]["terminal_state"] == "ACCEPTED", result["terminal"]
+                assert same_structure(nodes, session.structure().nodes)
+        elif args.operation == "collection-edit":
+            before = session.structure()
+            nodes = list(before.nodes)
+
+            def find(key):
+                return next((i for i, n in enumerate(nodes) if n.key == key), -1)
+
+            action = args.value or "swap"
+            if action == "swap":
+                i = find("preset-card-list")
+                if i < 0:
+                    parser.error("preset-card-list is not in the accepted structure")
+                node = nodes[i]
+                nodes[i] = GeneratedNode(node.depth, node.key, "presetCardList", node.field_id,
+                                         node.action,
+                                         tuple(p for p in node.properties if p.name != "presentation") +
+                                         tuple(props(presentation="table")))
+            elif action == "remove-table":
+                nodes = [n for n in nodes if n.key != "preset-card-table"]
+            elif action == "remove-list":
+                nodes = [n for n in nodes if n.key != "preset-card-list"]
+            elif action == "restore":
+                # Add back whichever of the two named mounts is missing, keeping a
+                # stable order (list then table). This is the ordinary candidate
+                # path: published mounts appear only when the scene commits.
+                if find("preset-card-list") < 0:
+                    nodes.insert(max(0, len(nodes) - 1),
+                                 GeneratedNode(1, "preset-card-list", "presetCardList", None, None,
+                                               props(collection="presetCards", presentation="list",
+                                                     growX=1, fixedHeight=150)))
+                if find("preset-card-table") < 0:
+                    i = find("preset-card-list")
+                    nodes.insert(i + 1 if i >= 0 else len(nodes) - 1,
+                                 GeneratedNode(1, "preset-card-table", "presetCardList", None, None,
+                                               props(collection="presetCards", presentation="table",
+                                                     growX=1, fixedHeight=170)))
+            else:
+                parser.error("collection-edit --value must be swap|remove-table|remove-list|restore")
+            reply = session.submit(nodes, before.version)
+            result["submit"] = asdict(reply)
+            if reply.candidate_accepted:
+                result["terminal"] = asdict(session.wait_for_candidate(reply.ticket(), timeout_ms=5000))
+                assert result["terminal"]["terminal_state"] == "ACCEPTED", result["terminal"]
+                result["instances"] = [n.key for n in session.structure().nodes]
+        elif args.operation in ("lock", "unlock"):
+            # Owner-level lock through the SAME declared action; the target is the
+            # handwritten preset or one card.
+            if args.instance is not None:
+                state = session.form_state(instance_key=args.instance)
+                target = state.owner_resource_id
+            else:
+                state = session.form_state()
+                target = state.owner_resource_id
+            result["lock_target"] = target
+            result["lock_action"] = asdict(session.invoke_action(
+                "SET_LOCK", [target],
+                [Argument.boolean("locked", args.operation == "lock")],
+                expected_version=state.state_version))
+            if args.instance is not None:
+                result["lock_after"] = [asdict(field) for field in
+                                        session.form_state(instance_key=args.instance).fields]
+            else:
+                result["lock_after"] = [asdict(field) for field in session.form_state().fields]
+            result["lock_actions"] = [asdict(a) for a in
+                                      (session.form_state(instance_key=args.instance).actions
+                                       if args.instance is not None else session.form_state().actions)]
+        elif args.operation == "card-rebind":
+            # Explicit rebind through the SAME declared vocabulary. The accepted
+            # scene only follows after a candidate containing the key is accepted,
+            # so this call reports the mapping change, not a new accepted owner.
+            if args.instance is None or args.new_owner is None:
+                parser.error("card-rebind requires --instance and --new-owner")
+            card = session.form_state(instance_key=args.instance)
+            result["card_owner_before"] = card.owner_resource_id
+            result["card_action"] = asdict(session.invoke_action(
+                "REBIND_CARD", [card.owner_resource_id],
+                [Argument.string("cardKey", args.instance), Argument.integer("newOwner", args.new_owner)],
+                expected_version=card.state_version))
+        elif args.operation == "stale-write":
+            # An operation addressed to a RETIRED owner id: the domain must refuse
+            # it by name instead of resolving the key to the new object.
+            if args.owner is None or args.field is None or args.value is None:
+                parser.error("stale-write requires --owner, --field and --value")
+            result["stale_owner"] = args.owner
+            result["stale_action"] = asdict(session.invoke_action(
+                "EDIT_DRAFT_TEXT", [args.owner],
+                [Argument.string("fieldId", args.field), Argument.string("text", args.value),
+                 Argument.integer("expectedDraftVersion", 0)]))
+        elif args.operation in ("card-read", "card-set", "card-apply", "card-cancel"):
+            # The card owner is named explicitly; a stale/unknown instance is
+            # refused by the endpoint instead of answered with another object.
+            if args.instance is None:
+                parser.error("card operations require --instance cardA|cardB")
+            card = session.form_state(instance_key=args.instance)
+            result["card_instance"] = args.instance
+            result["card_owner"] = card.owner_resource_id
+            result["card_fields"] = [asdict(field) for field in card.fields]
+            result["card_actions"] = [asdict(action) for action in card.actions]
+            if args.operation != "card-read":
+                action = "APPLY_DRAFT" if args.operation == "card-apply" else "CANCEL_DRAFT"
+                expected_draft = (card.draft_version if args.expected_draft_version is None
+                                  else args.expected_draft_version)
+                arguments = [Argument.integer("expectedDraftVersion", expected_draft)]
+                if args.operation == "card-set":
+                    spec = next((item for item in capabilities.fields if item.field_id == args.field), None)
+                    if spec is None or args.value is None:
+                        parser.error("card-set requires a published --field and --value")
+                    action = spec.writer
+                    arguments.append(Argument.string("fieldId", spec.field_id))
+                    if spec.editor_kind == "BOOLEAN":
+                        if args.value not in ("true", "false"):
+                            parser.error("boolean --value must be true or false")
+                        arguments.append(Argument.boolean(spec.argument, args.value == "true"))
+                    else:
+                        arguments.append(Argument.string(spec.argument, args.value))
+                result["card_action"] = asdict(session.invoke_action(
+                    action, [card.owner_resource_id], arguments,
+                    expected_version=card.state_version if args.expected_version is None else args.expected_version))
+                result["card_after"] = [asdict(field) for field in session.form_state(
+                    instance_key=args.instance).fields]
+        elif args.operation in ("select-card", "add-card", "delete-card", "filter-cards",
+                                "sort-cards"):
             state = session.form_state()
-            target = state.owner_resource_id
-        result["lock_target"] = target
-        result["lock_action"] = asdict(session.invoke_action(
-            "SET_LOCK", [target],
-            [Argument.boolean("locked", args.operation == "lock")],
-            expected_version=state.state_version))
-        if args.instance is not None:
-            result["lock_after"] = [asdict(field) for field in
-                                    session.form_state(instance_key=args.instance).fields]
-        else:
-            result["lock_after"] = [asdict(field) for field in session.form_state().fields]
-        result["lock_actions"] = [asdict(a) for a in
-                                  (session.form_state(instance_key=args.instance).actions
-                                   if args.instance is not None else session.form_state().actions)]
-    elif args.operation == "card-rebind":
-        # Explicit rebind through the SAME declared vocabulary. The accepted
-        # scene only follows after a candidate containing the key is accepted,
-        # so this call reports the mapping change, not a new accepted owner.
-        if args.instance is None or args.new_owner is None:
-            parser.error("card-rebind requires --instance and --new-owner")
-        card = session.form_state(instance_key=args.instance)
-        result["card_owner_before"] = card.owner_resource_id
-        result["card_action"] = asdict(session.invoke_action(
-            "REBIND_CARD", [card.owner_resource_id],
-            [Argument.string("cardKey", args.instance), Argument.integer("newOwner", args.new_owner)],
-            expected_version=card.state_version))
-    elif args.operation == "stale-write":
-        # An operation addressed to a RETIRED owner id: the domain must refuse
-        # it by name instead of resolving the key to the new object.
-        if args.owner is None or args.field is None or args.value is None:
-            parser.error("stale-write requires --owner, --field and --value")
-        result["stale_owner"] = args.owner
-        result["stale_action"] = asdict(session.invoke_action(
-            "EDIT_DRAFT_TEXT", [args.owner],
-            [Argument.string("fieldId", args.field), Argument.string("text", args.value),
-             Argument.integer("expectedDraftVersion", 0)]))
-    elif args.operation in ("card-read", "card-set", "card-apply", "card-cancel"):
-        # The card owner is named explicitly; a stale/unknown instance is
-        # refused by the endpoint instead of answered with another object.
-        if args.instance is None:
-            parser.error("card operations require --instance cardA|cardB")
-        card = session.form_state(instance_key=args.instance)
-        result["card_instance"] = args.instance
-        result["card_owner"] = card.owner_resource_id
-        result["card_fields"] = [asdict(field) for field in card.fields]
-        result["card_actions"] = [asdict(action) for action in card.actions]
-        if args.operation != "card-read":
-            action = "APPLY_DRAFT" if args.operation == "card-apply" else "CANCEL_DRAFT"
-            arguments = [Argument.integer("expectedDraftVersion", card.draft_version)]
-            if args.operation == "card-set":
-                spec = next((item for item in capabilities.fields if item.field_id == args.field), None)
+            if not state.known or not state.consistent:
+                parser.error("owner form feedback is unknown; cannot choose a CAS version")
+            action = {"select-card": "SELECT_CARD", "add-card": "ADD_CARD",
+                      "delete-card": "DELETE_CARD", "filter-cards": "FILTER_CARDS",
+                      "sort-cards": "SORT_CARDS"}[args.operation]
+            argument_name = {"select-card": "cardKey", "add-card": "title",
+                             "delete-card": "cardKey", "filter-cards": "query",
+                             "sort-cards": "column"}[args.operation]
+            value = args.instance if args.operation in ("select-card", "delete-card") else args.value
+            if value is None:
+                parser.error(f"{args.operation} requires " +
+                             ("--instance" if args.operation in ("select-card", "delete-card") else "--value"))
+            result["collection_action"] = asdict(session.invoke_action(
+                action, [state.owner_resource_id], [Argument.string(argument_name, value)],
+                expected_version=state.state_version))
+        elif args.operation in ("set", "apply", "cancel"):
+            state = session.form_state()
+            if not state.known or not state.consistent:
+                parser.error("owner form feedback is unknown; cannot choose a draft CAS")
+            expected_draft = (state.draft_version if args.expected_draft_version is None
+                              else args.expected_draft_version)
+            arguments = [Argument.integer("expectedDraftVersion", expected_draft)]
+            action = "CANCEL_DRAFT" if args.operation == "cancel" else "APPLY_DRAFT"
+            if args.operation == "set":
+                spec = next((spec for spec in capabilities.fields if spec.field_id == args.field), None)
                 if spec is None or args.value is None:
-                    parser.error("card-set requires a published --field and --value")
+                    parser.error("set requires a published --field and --value")
                 action = spec.writer
                 arguments.append(Argument.string("fieldId", spec.field_id))
                 if spec.editor_kind == "BOOLEAN":
@@ -286,63 +396,40 @@ def main():
                     arguments.append(Argument.boolean(spec.argument, args.value == "true"))
                 else:
                     arguments.append(Argument.string(spec.argument, args.value))
-            result["card_action"] = asdict(session.invoke_action(
-                action, [card.owner_resource_id], arguments,
-                expected_version=card.state_version))
-            result["card_after"] = [asdict(field) for field in session.form_state(
-                instance_key=args.instance).fields]
-    elif args.operation in ("select-card", "add-card", "delete-card", "filter-cards",
-                            "sort-cards"):
-        state = session.form_state()
-        if not state.known or not state.consistent:
-            parser.error("owner form feedback is unknown; cannot choose a CAS version")
-        action = {"select-card": "SELECT_CARD", "add-card": "ADD_CARD",
-                  "delete-card": "DELETE_CARD", "filter-cards": "FILTER_CARDS",
-                  "sort-cards": "SORT_CARDS"}[args.operation]
-        argument_name = {"select-card": "cardKey", "add-card": "title",
-                         "delete-card": "cardKey", "filter-cards": "query",
-                         "sort-cards": "column"}[args.operation]
-        value = args.instance if args.operation in ("select-card", "delete-card") else args.value
-        if value is None:
-            parser.error(f"{args.operation} requires " +
-                         ("--instance" if args.operation in ("select-card", "delete-card") else "--value"))
-        result["collection_action"] = asdict(session.invoke_action(
-            action, [state.owner_resource_id], [Argument.string(argument_name, value)],
-            expected_version=state.state_version))
-    elif args.operation in ("set", "apply", "cancel"):
-        state = session.form_state()
-        if not state.known or not state.consistent:
-            parser.error("owner form feedback is unknown; cannot choose a draft CAS")
-        expected_draft = (state.draft_version if args.expected_draft_version is None
-                          else args.expected_draft_version)
-        arguments = [Argument.integer("expectedDraftVersion", expected_draft)]
-        action = "CANCEL_DRAFT" if args.operation == "cancel" else "APPLY_DRAFT"
-        if args.operation == "set":
-            spec = next((spec for spec in capabilities.fields if spec.field_id == args.field), None)
-            if spec is None or args.value is None:
-                parser.error("set requires a published --field and --value")
-            action = spec.writer
-            arguments.append(Argument.string("fieldId", spec.field_id))
-            if spec.editor_kind == "BOOLEAN":
-                if args.value not in ("true", "false"):
-                    parser.error("boolean --value must be true or false")
-                arguments.append(Argument.boolean(spec.argument, args.value == "true"))
-            else:
-                arguments.append(Argument.string(spec.argument, args.value))
-        result["action"] = asdict(session.invoke_action(
-            action, [state.owner_resource_id], arguments,
-            expected_version=state.state_version if args.expected_version is None else args.expected_version))
-    result["structure"] = asdict(session.structure())
-    state = session.form_state()
-    result["form_state"] = asdict(state)
-    result["fields"] = [asdict(field) for field in state.fields]
-    result["actions"] = [asdict(action) for action in state.actions]
-    result["instances"] = asdict(session.instances())
+            result["action"] = asdict(session.invoke_action(
+                action, [state.owner_resource_id], arguments,
+                expected_version=state.state_version if args.expected_version is None else args.expected_version))
+        result["structure"] = asdict(session.structure())
+        # A read selector must reach the existing typed request. An aggregate
+        # header can be unknown while each FIELD still has an exact owner/version.
+        selector = {}
+        if args.operation in ("read", "inspect", "card-read", "card-set", "card-apply", "card-cancel", "lock", "unlock"):
+            if args.instance is not None:
+                selector["instance_key"] = args.instance
+            if args.owner is not None:
+                selector["owner_resource_id"] = args.owner
+        state = session.form_state(**selector)
+        result["form_state"] = asdict(state)
+        result["fields"] = [asdict(field) for field in state.fields]
+        result["actions"] = [asdict(action) for action in state.actions]
+        result["instances"] = asdict(session.instances())
+    except (GeneratedUiError, AssertionError) as error:
+        status = 1
+        result["error"] = {"type": type(error).__name__, "message": str(error)}
+        # These are the public client's actual ERROR facts, not a new wire
+        # protocol or values inferred from a different owner/header.
+        for name in ("code", "expected_kind", "detail", "versions",
+                     "request_version", "observed_version", "target", "raw", "unknown"):
+            if hasattr(error, name):
+                result["error"][name] = getattr(error, name)
+        for name in ("form_state", "fields", "actions"):
+            result.setdefault(name, None)
     rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.output:
         args.output.write_text(rendered)
     print(rendered)
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

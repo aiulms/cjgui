@@ -51,11 +51,13 @@
 // 二、本阶段"具名拒绝"的部分（消费方会看到什么）
 // ============================================================================
 // 以下入口**不假装成功**，全部返回具名状态、并把 out 参数清零（不写"已完成"的假状态）：
-//   * PNG 二进制传输（本包只做本地文件，不扩传输）：
-//       prepare_composable_png_transfer     -> 31，width/height/micros 全 0
-//       finish_composable_png_transfer      -> 31（accepted 被忽略，没有任何暂存条目可结算）
-//     本地图片的 prepare/state/probe 已由 session.c 的图片域实现（真实解码/上传），
-//     不在本文件的"具名拒绝"清单里。
+//   * PNG 二进制传输：传输来源与本地文件共用 session.c 的图片域。
+//       prepare_composable_png_transfer -> 头边界 + 真实解码 + 解码字节预算准入；
+//          非法/损坏/尺寸超限/预算不足分别返回 25/27/26/28，width/height/decode_us
+//          清零；成功时 decode_us 是真实解码耗时，并保留同身份准入供场景节点接管。
+//       finish_composable_png_transfer  -> 接受只结算本层 hold（准入留给场景）；
+//          拒绝撤回准入并释放预算；没有对应 hold 时仍返回 DATA_TRANSFER_REJECTED。
+//     本层不另造图片缓存或第二个 decoder；像素、纹理与候选持有仍归图片域。
 //   * X11 组合输入（IME 属第二阶段；session.c 与本层都只做 ASCII 直输）：
 //       arm_composition_reanchor / reanchor_composition
 //                                          -> CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED(32)，
@@ -116,8 +118,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "cjgui_linux_aux.h"
+#include "cjgui_linux_image.h"
+
+// 会话所属的图片域；aux 只借它在受理前做真实解码与预算准入。
+CjguiLinuxImageDomain *cjgui_linux_session_image_domain(uint64_t token);
 
 // ---------------------------------------------------------------- 跨语言声明
 // 下面这些入口在本文件实现，但**C 头文件里没有它们的声明**：它们只出现在仓颉侧的
@@ -273,6 +280,18 @@ typedef struct CjguiLinuxAuxTransferItem {
     uint32_t byteLength;
 } CjguiLinuxAuxTransferItem;
 
+// PNG 传输准备的本层持有：只保存校验后的尺寸与次数，不把字节或纹理
+// 泄漏成公共接口。已接受项在下一次同 identity 准备或会话销毁时退休。
+#define AUX_MAX_TRANSFER_HOLDS 8u
+typedef struct CjguiLinuxAuxTransferHold {
+    int present;
+    int accepted;
+    char identity[256];
+    uint32_t width;
+    uint32_t height;
+    uint32_t preparations;
+} CjguiLinuxAuxTransferHold;
+
 typedef struct CjguiLinuxAuxSlot {
     int inUse;
     uint64_t token;
@@ -329,6 +348,13 @@ typedef struct CjguiLinuxAuxSlot {
     uint64_t transferStagedVersion;
     uint32_t transferStagedCount;
     CjguiLinuxAuxTransferItem transferStaged[AUX_MAX_TRANSFER_ITEMS];
+    // 已接受声明：只在场景候选成功提交时整体替换。候选失败/丢弃不能把
+    // 上一代已接受声明清空，否则旧场景节点会突然失去收发能力。
+    int transferAcceptedActive;
+    uint64_t transferAcceptedVersion;
+    uint32_t transferAcceptedCount;
+    CjguiLinuxAuxTransferItem transferAccepted[AUX_MAX_TRANSFER_ITEMS];
+    CjguiLinuxAuxTransferHold transferHolds[AUX_MAX_TRANSFER_HOLDS];
 } CjguiLinuxAuxSlot;
 
 static CjguiLinuxAuxSlot g_auxSlots[CJGUI_LINUX_MAX_SESSIONS];
@@ -392,6 +418,7 @@ static void aux_slot_reset(int slot) {
     aux_clear_command_menu(state->menuStaged, AUX_MAX_MENU_ITEMS);
     aux_clear_command_menu(state->menuAccepted, AUX_MAX_MENU_ITEMS);
     aux_clear_transfer(state->transferStaged, AUX_MAX_TRANSFER_ITEMS);
+    aux_clear_transfer(state->transferAccepted, AUX_MAX_TRANSFER_ITEMS);
     memset(state, 0, sizeof(*state));
 }
 
@@ -913,9 +940,95 @@ cjgui_internal_renderer_set_composable_data_transfer_item_bytes(uint64_t session
     return CJGUI_INTERNAL_RENDERER_OK;
 }
 
-// ---------------------------------------------------------------- PNG 传输（具名拒绝）
-// 本地 PNG 的准备/状态/纹理探针已由 session.c 的图片域实现；这里只保留
-// 未实现的二进制传输入口（本包不扩传输），仍具名拒绝而不是假装成功。
+int cjgui_linux_aux_transfer_find(uint64_t token, uint64_t acceptedVersion,
+                                  uint64_t nodeId, int64_t resourceId, uint32_t nodeKind,
+                                  uint32_t role, uint32_t wantFormat,
+                                  CjguiInternalRendererComposableDataTransferItem *outItem,
+                                  const char **outPayload,
+                                  const uint8_t **outBytes, uint32_t *outByteLength) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    // Only the accepted declaration set is visible to OS input. Staging belongs
+    // to a candidate scene and must never answer a drop, paste or copy.
+    if (!state || acceptedVersion == 0u || state->transferAcceptedActive == 0 ||
+        state->transferAcceptedVersion != acceptedVersion) return 0;
+    const char *format = wantFormat == 2u ? "image/png" : "text/plain";
+    for (uint32_t index = 0u; index < state->transferAcceptedCount; index += 1u) {
+        CjguiLinuxAuxTransferItem *item = &state->transferAccepted[index];
+        if (!item->present || item->item.role != role ||
+            item->item.nodeId != nodeId || item->item.resourceId != resourceId ||
+            item->item.nodeKind != nodeKind || !item->format ||
+            strcmp(item->format, format) != 0) continue;
+        if (outItem) *outItem = item->item;
+        if (outPayload) *outPayload = item->payload ? item->payload : "";
+        if (outBytes) *outBytes = item->bytes;
+        if (outByteLength) *outByteLength = item->byteLength;
+        return 1;
+    }
+    return 0;
+}
+
+int cjgui_linux_aux_transfer_declared(uint64_t token, uint64_t acceptedVersion,
+                                      uint32_t role, uint32_t wantFormat,
+                                      int *outLocalPngFileAllowed) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (outLocalPngFileAllowed) *outLocalPngFileAllowed = 0;
+    if (!state || acceptedVersion == 0u || state->transferAcceptedActive == 0 ||
+        state->transferAcceptedVersion != acceptedVersion) return 0;
+    const char *format = wantFormat == 2u ? "image/png" : "text/plain";
+    int found = 0;
+    for (uint32_t index = 0u; index < state->transferAcceptedCount; index += 1u) {
+        CjguiLinuxAuxTransferItem *item = &state->transferAccepted[index];
+        if (!item->present || item->item.role != role || !item->format ||
+            strcmp(item->format, format) != 0) continue;
+        found = 1;
+        if (outLocalPngFileAllowed && item->item.localPngFileAllowed) {
+            *outLocalPngFileAllowed = 1;
+        }
+    }
+    return found;
+}
+
+// 场景候选成功提交后调用：staging 与已接受代相同才整体替换；没有对应
+// staging 的提交保留原已接受声明，不做“空代覆盖”。
+void cjgui_linux_aux_commit_transfer(uint64_t token, uint64_t acceptedVersion) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (!state || !state->transferStaging || state->transferStagedVersion != acceptedVersion) return;
+    aux_clear_transfer(state->transferAccepted, state->transferAcceptedCount);
+    memcpy(state->transferAccepted, state->transferStaged, sizeof(state->transferAccepted));
+    state->transferAcceptedCount = state->transferStagedCount;
+    state->transferAcceptedVersion = state->transferStagedVersion;
+    state->transferAcceptedActive = 1;
+    memset(state->transferStaged, 0, sizeof(state->transferStaged));
+    state->transferStaging = 0;
+    state->transferStagedVersion = 0u;
+    state->transferStagedCount = 0u;
+    if (getenv("CJGUI_LINUX_AUX_TRACE")) {
+        fprintf(stderr, "CJGUI_LINUX_AUX transfer_commit version=%llu items=%u\n",
+                (unsigned long long)acceptedVersion, state->transferAcceptedCount);
+    }
+}
+
+// 候选丢弃/取消：只撤 staging；已接受声明保持原样。
+void cjgui_linux_aux_discard_transfer(uint64_t token) {
+    CjguiLinuxAuxSlot *state = aux_acquire(token);
+    if (!state) return;
+    aux_clear_transfer(state->transferStaged, state->transferStagedCount);
+    memset(state->transferStaged, 0, sizeof(state->transferStaged));
+    state->transferStaging = 0;
+    state->transferStagedVersion = 0u;
+    state->transferStagedCount = 0u;
+}
+
+// ---------------------------------------------------------------- PNG 传输
+// 共同层在目标受理前要求一次同步的 PNG 准备：完整校验签名/IHDR/尺寸，
+// 给出真实的解码微秒，并把准备次数记在本层有界 hold 表里；finish 只做
+// 接受/拒绝结算。像素解码和纹理仍由 session 的图片域/scene 消费，不在
+// 这里另造图片缓存。
+
+static uint32_t aux_read_be32(const uint8_t *bytes) {
+    return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
+           ((uint32_t)bytes[2] << 8) | (uint32_t)bytes[3];
+}
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_prepare_composable_png_transfer(uint64_t session, const char *resourceIdentity,
@@ -925,13 +1038,88 @@ cjgui_internal_renderer_prepare_composable_png_transfer(uint64_t session, const 
     CjguiLinuxAuxSlot *state = aux_acquire(session);
     if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
     if (!outWidth || !outHeight || !outDecodeMicros) return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
-    (void)resourceIdentity;
-    (void)bytes;
-    (void)length;
     *outWidth = 0u;
     *outHeight = 0u;
     *outDecodeMicros = 0u;
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    if (!resourceIdentity || !resourceIdentity[0] || strlen(resourceIdentity) >= 256u ||
+        !bytes || length < 33u || length > 512u * 1024u) {
+        return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    }
+    static const uint8_t signature[8] = {0x89u, 'P', 'N', 'G', 0x0Du, 0x0Au, 0x1Au, 0x0Au};
+    if (memcmp(bytes, signature, 8u) != 0) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    // IHDR 必须是第一个块：4 字节长度 + 4 字节类型 + 13 字节数据。
+    if (aux_read_be32(bytes + 8u) != 13u || memcmp(bytes + 12u, "IHDR", 4u) != 0) {
+        return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    }
+    uint32_t width = aux_read_be32(bytes + 16u);
+    uint32_t height = aux_read_be32(bytes + 20u);
+    uint8_t bitDepth = bytes[24];
+    uint8_t colorType = bytes[25];
+    if (bytes[26] != 0u || bytes[27] != 0u || bytes[28] > 1u) {
+        return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    }
+    int depthOk = bitDepth == 1u || bitDepth == 2u || bitDepth == 4u ||
+                  bitDepth == 8u || bitDepth == 16u;
+    int colorOk = colorType == 0u || colorType == 2u || colorType == 3u ||
+                  colorType == 4u || colorType == 6u;
+    if (!depthOk || !colorOk) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    if (width == 0u || height == 0u) return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    // 与图片域同一边界：超过 2048 的图不可能进入纹理缓存，不能在受理前
+    // 用一个比消费端更宽的头检查放行。
+    if (width > 2048u || height > 2048u ||
+        (uint64_t)width * (uint64_t)height > 2048u * 2048u) {
+        return CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED;
+    }
+    CjguiLinuxImageDomain *image = cjgui_linux_session_image_domain(session);
+    if (!image) return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    uint32_t decodedWidth = 0u;
+    uint32_t decodedHeight = 0u;
+    uint64_t decodeMicros = 0u;
+    int admitted = cjgui_linux_image_admit_transfer_png(image, resourceIdentity, bytes, length,
+                                                         &decodedWidth, &decodedHeight,
+                                                         &decodeMicros);
+    if (admitted != CJGUI_LINUX_IMAGE_ADMIT_OK) {
+        if (admitted == CJGUI_LINUX_IMAGE_ADMIT_DIMENSION) {
+            return CJGUI_INTERNAL_RENDERER_PNG_DIMENSION_EXCEEDED;
+        }
+        if (admitted == CJGUI_LINUX_IMAGE_ADMIT_DECODE) {
+            return CJGUI_INTERNAL_RENDERER_PNG_DECODE_FAILED;
+        }
+        if (admitted == CJGUI_LINUX_IMAGE_ADMIT_BUDGET) {
+            return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
+        }
+        return CJGUI_INTERNAL_RENDERER_PNG_INVALID;
+    }
+    CjguiLinuxAuxTransferHold *hold = NULL;
+    for (uint32_t index = 0u; index < AUX_MAX_TRANSFER_HOLDS; index += 1u) {
+        CjguiLinuxAuxTransferHold *candidate = &state->transferHolds[index];
+        if (candidate->present && strcmp(candidate->identity, resourceIdentity) == 0) {
+            hold = candidate;
+            break;
+        }
+        if (!candidate->present && hold == NULL) hold = candidate;
+    }
+    if (hold == NULL) {
+        // 预算满：优先退休已接受、preparations 已归零的最老项。
+        for (uint32_t index = 0u; index < AUX_MAX_TRANSFER_HOLDS; index += 1u) {
+            CjguiLinuxAuxTransferHold *candidate = &state->transferHolds[index];
+            if (candidate->preparations == 0u) { hold = candidate; break; }
+        }
+        if (hold == NULL) {
+            cjgui_linux_image_release_transfer_admission(image, resourceIdentity);
+            return CJGUI_INTERNAL_RENDERER_PNG_RESOURCE_BUDGET_EXCEEDED;
+        }
+    }
+    memset(hold, 0, sizeof(*hold));
+    hold->present = 1;
+    snprintf(hold->identity, sizeof(hold->identity), "%s", resourceIdentity);
+    hold->width = decodedWidth;
+    hold->height = decodedHeight;
+    hold->preparations = 1u;
+    *outWidth = decodedWidth;
+    *outHeight = decodedHeight;
+    *outDecodeMicros = decodeMicros;
+    return CJGUI_INTERNAL_RENDERER_OK;
 }
 
 CjguiInternalRendererStatus
@@ -939,9 +1127,26 @@ cjgui_internal_renderer_finish_composable_png_transfer(uint64_t session, const c
                                                         uint8_t accepted) {
     CjguiLinuxAuxSlot *state = aux_acquire(session);
     if (!state) return CJGUI_INTERNAL_RENDERER_INVALID_SESSION;
-    (void)resourceIdentity;
-    (void)accepted;   // 没有任何暂存条目可结算：接受/拒绝都是无对象可结算
-    return CJGUI_INTERNAL_RENDERER_PNG_UNSUPPORTED;
+    if (!resourceIdentity) return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
+    for (uint32_t index = 0u; index < AUX_MAX_TRANSFER_HOLDS; index += 1u) {
+        CjguiLinuxAuxTransferHold *hold = &state->transferHolds[index];
+        if (!hold->present || strcmp(hold->identity, resourceIdentity) != 0) continue;
+        if (hold->preparations > 0u) hold->preparations -= 1u;
+        if (accepted) {
+            // 受理：准入由随后接管同一身份的场景节点消费。
+            hold->accepted = 1;
+            return CJGUI_INTERNAL_RENDERER_OK;
+        }
+        cjgui_linux_image_release_transfer_admission(
+            cjgui_linux_session_image_domain(session), resourceIdentity);
+        if (hold->preparations == 0u) memset(hold, 0, sizeof(*hold));
+        return CJGUI_INTERNAL_RENDERER_OK;
+    }
+    if (!accepted) {
+        cjgui_linux_image_release_transfer_admission(
+            cjgui_linux_session_image_domain(session), resourceIdentity);
+    }
+    return CJGUI_INTERNAL_RENDERER_DATA_TRANSFER_REJECTED;
 }
 
 // ---------------------------------------------------------------- 组合输入（具名拒绝）

@@ -244,9 +244,11 @@ public class CjguiChoiceOption {
     public let ownerTargetResourceId: Int64
     public let enabled: Bool
 
+    public let disabledReason: String
+
     public init(key: String, nodeId: Int64, label: String, value: String, actionName: String,
                 semanticId!: String = "", writerOperation!: String = "", bindingResourceId!: Int64 = -1,
-                ownerTargetResourceId!: Int64 = -1, enabled!: Bool = true) {
+                ownerTargetResourceId!: Int64 = -1, enabled!: Bool = true, disabledReason!: String = "") {
         this.key = key
         this.nodeId = nodeId
         this.semanticId = semanticId
@@ -257,6 +259,7 @@ public class CjguiChoiceOption {
         this.bindingResourceId = bindingResourceId
         this.ownerTargetResourceId = ownerTargetResourceId
         this.enabled = enabled
+        this.disabledReason = disabledReason
     }
 }
 
@@ -285,6 +288,38 @@ public class CjguiChoiceGroupStyle {
         this.unmatched = unmatched
         this.gap = gap
         this.rowGap = rowGap
+    }
+}
+
+public class CjguiChoiceGroupStyleTheme {
+    public static func fromTheme(theme: CjguiComposableUiTheme): CjguiChoiceGroupStyle {
+        return CjguiChoiceGroupStyle(
+            button: CjguiComposableUiStyle(fixedHeight: 30, padding: 6, cornerRadius: 4,
+                background: theme.input.background, border: theme.input.border,
+                borderWidth: theme.input.borderWidth, textColor: theme.input.textColor))
+    }
+
+    /// Maps one node's framework-resolved style (the same `CjguiComposableUiStyle`
+    /// every generated leaf receives) onto the choice group's real container and
+    /// rows. The declaration's size/growth/paint belongs to the container; the
+    /// row height/paint/font belongs to each option button, so a declared style
+    /// is painted instead of merely parsed.
+    public static func fromResolvedStyle(style: CjguiComposableUiStyle,
+        interaction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle()): CjguiChoiceGroupStyle {
+        let rowGap = if (style.gap > 0) { style.gap } else { 4 }
+        let rowHeight = if (style.fixedHeight > 0) { style.fixedHeight } else { 28 }
+        let container = CjguiComposableUiStyle(
+            background: style.background, border: style.border, padding: style.padding, gap: style.gap,
+            fixedWidth: style.fixedWidth, growX: style.growX, growY: style.growY, borderWidth: style.borderWidth,
+            cornerRadius: style.cornerRadius, minWidth: style.minWidth, maxWidth: style.maxWidth,
+            minHeight: style.minHeight, maxHeight: style.maxHeight, alignX: style.alignX, alignY: style.alignY)
+        let button = CjguiComposableUiStyle(
+            background: style.background, border: style.border, textColor: style.textColor,
+            padding: style.padding, fixedHeight: rowHeight, borderWidth: style.borderWidth,
+            cornerRadius: style.cornerRadius, fontSize: style.fontSize, fontWeight: style.fontWeight,
+            letterSpacing: style.letterSpacing, lineHeight: style.lineHeight, fontFamily: style.fontFamily)
+        return CjguiChoiceGroupStyle(container: container, button: button, interaction: interaction,
+            rowGap: rowGap, gap: rowGap)
     }
 }
 
@@ -319,18 +354,31 @@ public class CjguiChoiceGroup {
     /// Build a segmented/radio-like group. The selected option is chosen by
     /// VALUE, never by index. A current value absent from the options leaves
     /// every option unselected and adds an explicit unmatched line.
+    /// `radioSemantics` exposes each option through the existing transport
+    /// role the native layer already maps to a radio button, with
+    /// selected/disabled/help from the same declaration; `verticalRows` lays
+    /// the options one per row (radio list) instead of the default wrapped
+    /// segmented row.
     public static func build(nodeId: Int64, semanticId: String, optionsNodeId: Int64,
         options: ArrayList<CjguiChoiceOption>, currentValue: String, unmatchedNodeId: Int64,
         unmatchedPrefix!: String = "未匹配选项",
-        style!: CjguiChoiceGroupStyle = CjguiChoiceGroupStyle()): CjguiComposableUiNode {
+        style!: CjguiChoiceGroupStyle = CjguiChoiceGroupStyle(), radioSemantics!: Bool = false,
+        verticalRows!: Bool = false, errorNodeId!: Int64 = -1, errorText!: String = "",
+        identityScope!: ?CjguiComposableUiIdentityScope = None): CjguiComposableUiNode {
         let declarationIssue = issue(options)
         if (declarationIssue.size > 0) {
             return cjguiComposableText(nodeId, semanticId, "选项声明无效：${declarationIssue}",
                 CjguiComposableUiStyle(fixedHeight: 24, fontSize: 11.0))
         }
-        let group = cjguiComposableVertical(nodeId, semanticId,
+        let groupIdentity: ?CjguiComposableUiIdentity = if (let Some(scope) <- identityScope) {
+            Some(scope.local("group"))
+        } else {
+            None
+        }
+        let group = CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1,
             CjguiComposableUiStyle(fixedWidth: style.container.fixedWidth, growX: style.container.growX,
-                growY: style.container.growY, padding: style.container.padding, gap: style.rowGap))
+                growY: style.container.growY, padding: style.container.padding, gap: style.rowGap),
+            identity: groupIdentity)
         var matched = false
         for (option in options) {
             if (currentValue.size > 0 && option.value == currentValue) {
@@ -346,8 +394,42 @@ public class CjguiChoiceGroup {
                     CjguiComposableUiStyle(fixedHeight: 0)))
             }
         }
-        let row = cjguiComposableWrap(optionsNodeId, "${semanticId}-options",
-            CjguiComposableUiStyle(gap: style.gap), rowGap: style.rowGap)
+        if (errorNodeId != -1 && errorText.size > 0) {
+            group.add(cjguiComposableText(errorNodeId, "${semanticId}-error", errorText,
+                cjguiComposableFormValidationStyle()))
+        }
+        if (options.size == 0) {
+            group.add(cjguiComposableText(-1, "${semanticId}-empty", "没有可选项",
+                CjguiComposableUiStyle(fixedHeight: 26, growX: 1,
+                    textColor: CjguiComposableUiColor(0.45, 0.48, 0.54, 1.0))))
+            return group
+        }
+        let optionSemanticBase = semanticId
+        let optionsIdentity: ?CjguiComposableUiIdentity = if (let Some(scope) <- identityScope) {
+            Some(scope.local("options"))
+        } else {
+            None
+        }
+        if (verticalRows) {
+            let list = CjguiComposableUiNode(optionsNodeId, "${optionSemanticBase}-options",
+                CJGUI_COMPOSABLE_UI_VERTICAL, "", "", "", -1,
+                CjguiComposableUiStyle(gap: style.rowGap, growX: 1), identity: optionsIdentity)
+            appendOptionRows(list, options, currentValue, optionSemanticBase, style, radioSemantics, identityScope)
+            group.add(list)
+            return group
+        }
+        let row = CjguiComposableUiNode(optionsNodeId, "${optionSemanticBase}-options",
+            CJGUI_COMPOSABLE_UI_HORIZONTAL, "", "", "", -1,
+            CjguiComposableUiStyle(gap: style.gap), identity: optionsIdentity,
+            layoutSpec: Some(CjguiComposableUiLayoutSpec(CJGUI_COMPOSABLE_UI_LAYOUT_WRAP, rowGap: style.rowGap)))
+        appendOptionRows(row, options, currentValue, optionSemanticBase, style, radioSemantics, identityScope)
+        group.add(row)
+        return group
+    }
+
+    private static func appendOptionRows(row: CjguiComposableUiNode, options: ArrayList<CjguiChoiceOption>,
+        currentValue: String, semanticId: String, style: CjguiChoiceGroupStyle, radioSemantics: Bool,
+        identityScope: ?CjguiComposableUiIdentityScope): Unit {
         for (option in options) {
             let selected = currentValue.size > 0 && option.value == currentValue
             let optionSemantic = if (option.semanticId.size > 0) {
@@ -355,7 +437,12 @@ public class CjguiChoiceGroup {
             } else {
                 "${semanticId}-option-${option.key}"
             }
-            row.add(cjguiComposableButton(option.nodeId, optionSemantic, option.label, option.actionName,
+            let buttonIdentity: ?CjguiComposableUiIdentity = if (let Some(scope) <- identityScope) {
+                if (option.semanticId.size > 0) { Some(scope.local(option.semanticId)) } else { None }
+            } else {
+                None
+            }
+            let button = cjguiComposableButton(option.nodeId, optionSemantic, option.label, option.actionName,
                 option.bindingResourceId, style.button, enabled: option.enabled,
                 operationActionName: option.writerOperation,
                 operationResourceId: option.ownerTargetResourceId,
@@ -364,9 +451,14 @@ public class CjguiChoiceGroup {
                     CjguiComposableUiInteractionState.SELECTED
                 } else {
                     CjguiComposableUiInteractionState.NONE
-                }))
+                }, identity: buttonIdentity)
+            if (radioSemantics) {
+                button.semanticRole = CJGUI_COMPOSABLE_UI_SEMANTIC_TAB
+                button.semanticLabel = option.label
+                button.semanticHelp = if (option.disabledReason.size > 0) { option.disabledReason } else { option.label }
+                button.semanticSelected = selected
+            }
+            row.add(button)
         }
-        group.add(row)
-        return group
     }
 }

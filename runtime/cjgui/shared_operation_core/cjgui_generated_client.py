@@ -22,9 +22,10 @@ What is deliberately NOT here:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 import re
+import json
 import socket
 import time
 
@@ -61,6 +62,14 @@ from client import (
 
 class GeneratedUiError(RuntimeError):
     """A typed validation failure on the generated-UI surface."""
+
+
+class GeneratedUiHistoryRefusal(GeneratedUiError):
+    """A named local refusal: no history mutation request was sent."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
 
 
 # The exact declared value types the transport accepts for action parameters
@@ -295,6 +304,22 @@ def _decode_text_token(token: str, what: str, max_bytes: int = 4096) -> str:
     return value
 
 
+def encode_generated_text_token(value: str, max_bytes: int | None = None) -> str:
+    """Encode one bounded discovery token exactly like the producer.
+
+    Safe non-empty printable ASCII (no `=`) stays verbatim; everything else is
+    carried as `u8:<lowercase UTF-8 hex>`. An empty value is not a token.
+    """
+    if not value:
+        raise GeneratedUiError("text token is empty")
+    encoded = value.encode("utf-8")
+    if max_bytes is not None and len(encoded) > max_bytes:
+        raise GeneratedUiError("text token exceeds its byte budget")
+    safe = not value.startswith("u8:") and all(
+        0x21 <= ord(character) <= 0x7E and character != "=" for character in value)
+    return value if safe else "u8:" + encoded.hex()
+
+
 def _token_int(token: str, what: str) -> int:
     try:
         return int(token)
@@ -456,6 +481,46 @@ class GeneratedFieldSpec:
     label: str
 
 
+CHOICE_FORMAT_FIELDS_V1 = ("fieldId", "key", "value", "enabled", "reason", "label")
+
+
+@dataclass(frozen=True)
+class GeneratedChoiceFormat:
+    """The CHOICE_FORMAT declaration published beside the catalog.
+
+    `state` distinguishes a format this client understands (`supported`) from a
+    published format it must not guess (`unsupported_by_client`). The latter is
+    a client capability statement, never an endpoint capability claim.
+    """
+
+    version: int | None
+    encoding: str
+    fields: tuple[str, ...]
+    state: str
+    detail: str = ""
+
+    @property
+    def supported(self) -> bool:
+        return self.state == "supported"
+
+
+@dataclass(frozen=True)
+class GeneratedChoiceOption:
+    """One current option of one declared choice field.
+
+    `key` is the stable business key used for routing; `value` is the field's
+    business value; `label` is display text only. `disabled_reason` is empty
+    only for the reserved `reason=none` token.
+    """
+
+    field_id: str
+    key: str
+    value: str
+    enabled: bool
+    disabled_reason: str
+    label: str
+
+
 @dataclass(frozen=True)
 class GeneratedImageResource:
     """One image resource the APPLICATION registered.
@@ -565,6 +630,128 @@ class GeneratedDeliveryEvidence:
 
 
 @dataclass(frozen=True)
+class GeneratedCompositionBudget:
+    """One candidate's published composition capacity.
+
+    `definitions == 1` is the legacy endpoint that never advertised the fact:
+    such an endpoint cannot receive a multi-definition batch, so the client
+    keeps the old one-definition behaviour instead of optimistically splitting.
+    """
+
+    definitions: int = 1
+    elements: int = 24
+    template_nodes: int = 64
+    bytes: int = 262144
+
+
+@dataclass(frozen=True)
+class GeneratedUiHistorySupport:
+    version: int | None
+    supported: bool | None
+    stability: str
+    scope: str
+    extra: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class GeneratedUiHistoryState:
+    format_version: int | None = None
+    supported: bool | None = None
+    enabled: bool | None = None
+    surface_identity: int | None = None
+    accepted_version: int | None = None
+    accepted_digest: str | None = None
+    history_epoch: int | None = None
+    head_version: int | None = None
+    can_undo: bool | None = None
+    can_redo: bool | None = None
+    undo_depth: int | None = None
+    redo_depth: int | None = None
+    retained_serialized_bytes: int | None = None
+    maximum_transactions: int | None = None
+    maximum_serialized_bytes: int | None = None
+    pending_action: str | None = None
+    pending_token: int | None = None
+    undo_reason: str | None = None
+    redo_reason: str | None = None
+    boundary_reason: str | None = None
+    endpoint_identity: GeneratedEndpointIdentity | None = None
+    extra: tuple[tuple[str, str], ...] = ()
+
+
+def history_state_from_dict(value: Any) -> GeneratedUiHistoryState:
+    """A saved CAS observation, not persisted undo history or a fresh read."""
+    if not isinstance(value, dict):
+        raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+    names = GeneratedUiHistoryState.__dataclass_fields__
+    kwargs = {key: val for key, val in value.items() if key in names}
+    endpoint = kwargs.get("endpoint_identity")
+    if endpoint is not None:
+        if not isinstance(endpoint, dict) or set(endpoint) != {"instance", "bind_generation"}:
+            raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+        if (not isinstance(endpoint["instance"], str) or not endpoint["instance"] or
+                type(endpoint["bind_generation"]) is not int or endpoint["bind_generation"] <= 0):
+            raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+        kwargs["endpoint_identity"] = GeneratedEndpointIdentity(**endpoint)
+    extra = kwargs.get("extra", ())
+    if (not isinstance(extra, (list, tuple)) or any(
+            not isinstance(item, (list, tuple)) or len(item) != 2 or
+            not all(isinstance(part, str) for part in item) for item in extra)):
+        raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+    extra = list(extra)
+    for key, val in value.items():
+        if key not in names:
+            extra.append((key, json.dumps(val, ensure_ascii=False)))
+    kwargs["extra"] = tuple(tuple(item) for item in extra)
+    return GeneratedUiHistoryState(**kwargs)
+
+
+def parse_generated_history(response: SharedOperationResponse) -> GeneratedUiHistoryState:
+    values = _result_values(response, "GENERATED_UI_HISTORY")
+    endpoint = _endpoint_identity_from(values, "history reply")
+    raw: dict[str, str] = {}
+    for label, tokens in response.entries:
+        if label == "END":
+            continue
+        if label in raw:
+            raise GeneratedUiError("history reply repeats " + label)
+        raw[label] = " ".join(tokens)
+    version = _token_int(raw["UI_DOCUMENT_HISTORY"], "history format") if "UI_DOCUMENT_HISTORY" in raw else None
+    if version not in (None, 1):
+        return GeneratedUiHistoryState(format_version=version, endpoint_identity=endpoint,
+                                       extra=tuple(raw.items()))
+    names = {
+        "surface_identity": "SURFACE_ID", "accepted_version": "ACCEPTED_VERSION",
+        "history_epoch": "HISTORY_EPOCH", "head_version": "HEAD_VERSION",
+        "undo_depth": "UNDO_DEPTH", "redo_depth": "REDO_DEPTH",
+        "retained_serialized_bytes": "RETAINED_BYTES", "maximum_transactions": "TRANSACTION_LIMIT",
+        "maximum_serialized_bytes": "BYTE_LIMIT", "pending_token": "PENDING_TOKEN"}
+    facts = {name: _token_int(raw[key], "history " + key) if key in raw else None
+             for name, key in names.items()}
+    bool_names = {"supported": "SUPPORTED", "enabled": "ENABLED", "can_undo": "CAN_UNDO", "can_redo": "CAN_REDO"}
+    facts.update({name: _token_bool(raw[key], "history " + key) if key in raw else None
+                  for name, key in bool_names.items()})
+    reason_names = {"undo_reason": "UNDO_REASON_HEX", "redo_reason": "REDO_REASON_HEX",
+                    "boundary_reason": "BOUNDARY_REASON_HEX"}
+    facts.update({name: ("" if raw[key] == "-" else _hex_text(raw[key], "history " + key)) if key in raw else None
+                  for name, key in reason_names.items()})
+    digest = raw.get("ACCEPTED_DIGEST")
+    if digest == "-":
+        digest = None
+    if digest is not None and not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise GeneratedUiError("history accepted digest is malformed")
+    pending_action = raw.get("PENDING_ACTION")
+    if pending_action == "none":
+        pending_action = ""
+    ignored = {"PROTOCOL", "KIND", "PAYLOAD_LENGTH", "ENDPOINT_EPOCH", "ENDPOINT_INSTANCE",
+               "ENDPOINT_BIND_GENERATION", "UI_DOCUMENT_HISTORY", "ACCEPTED_DIGEST", "PENDING_ACTION"}
+    known = ignored | set(names.values()) | set(bool_names.values()) | set(reason_names.values())
+    return GeneratedUiHistoryState(format_version=version, accepted_digest=digest,
+        pending_action=pending_action, endpoint_identity=endpoint,
+        extra=tuple((key, value) for key, value in raw.items() if key not in known), **facts)
+
+
+@dataclass(frozen=True)
 class GeneratedCapabilities:
     max_depth: int
     max_nodes: int
@@ -581,6 +768,10 @@ class GeneratedCapabilities:
     surface: GeneratedSurface | None = None
     support: tuple[GeneratedSupportFact, ...] = ()
     evidence: tuple[GeneratedDeliveryEvidence, ...] = ()
+    choice_format: GeneratedChoiceFormat | None = None
+    choice_options: tuple[GeneratedChoiceOption, ...] = ()
+    composition_budget: GeneratedCompositionBudget = GeneratedCompositionBudget()
+    ui_document_history: GeneratedUiHistorySupport | None = None
 
     def support_for(self, kind: str, item: str) -> GeneratedSupportFact | None:
         for fact in self.support:
@@ -623,6 +814,18 @@ class GeneratedCapabilities:
 
     def elements_of(self, kind: str) -> tuple[GeneratedElementSpec, ...]:
         return tuple(element for element in self.elements if element.kind == kind)
+
+    def choice_fields(self) -> tuple[str, ...]:
+        """Distinct choice field ids in published option order."""
+        seen: list[str] = []
+        for option in self.choice_options:
+            if option.field_id not in seen:
+                seen.append(option.field_id)
+        return tuple(seen)
+
+    def choice_options_for(self, field_id: str) -> tuple[GeneratedChoiceOption, ...]:
+        """Current options for one field, in the published order; never labels."""
+        return tuple(option for option in self.choice_options if option.field_id == field_id)
 
 
 # The trailing `key=value` tokens a capability PROPERTY line may publish. The
@@ -698,8 +901,94 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
     evidence: list[GeneratedDeliveryEvidence] = []
     support_keys: set[tuple[str, str]] = set()
     evidence_items: set[str] = set()
+    choice_format: GeneratedChoiceFormat | None = None
+    choice_format_seen = False
+    choice_format_supported = False
+    choice_options: list[GeneratedChoiceOption] = []
+    choice_keys: set[tuple[str, str]] = set()
+    composition_budget: GeneratedCompositionBudget | None = None
+    ui_document_history: GeneratedUiHistorySupport | None = None
     max_depth = max_nodes = max_properties = max_string = 0
     for line in _payload_lines(response):
+        if line.startswith("UI_DOCUMENT_HISTORY "):
+            tokens = _key_value_tokens(line.split(" ")[1:], "UI_DOCUMENT_HISTORY")
+            if ui_document_history is not None or not {"version", "supported", "stability", "scope"} <= tokens.keys():
+                raise GeneratedUiError("capability UI_DOCUMENT_HISTORY is malformed")
+            version = _token_int(tokens["version"], "history capability version")
+            ui_document_history = GeneratedUiHistorySupport(version,
+                _token_bool(tokens["supported"], "history supported") if version == 1 else None,
+                tokens["stability"], tokens["scope"],
+                tuple((key, value) for key, value in tokens.items()
+                      if key not in {"version", "supported", "stability", "scope"}))
+            continue
+        if line.startswith("COMPOSITION_BUDGET "):
+            values = _key_value_tokens(line.split(" ")[1:], "capability COMPOSITION_BUDGET")
+            expected = {"version", "definitions", "elements", "template_nodes", "bytes"}
+            if composition_budget is not None or set(values) != expected or \
+                    values["version"] != "1":
+                raise GeneratedUiError("capability COMPOSITION_BUDGET line is malformed")
+            budget = GeneratedCompositionBudget(
+                _token_int(values["definitions"], "COMPOSITION_BUDGET definitions"),
+                _token_int(values["elements"], "COMPOSITION_BUDGET elements"),
+                _token_int(values["template_nodes"], "COMPOSITION_BUDGET template nodes"),
+                _token_int(values["bytes"], "COMPOSITION_BUDGET bytes"))
+            if budget.definitions < 1 or budget.elements < 1 or \
+                    budget.template_nodes < 1 or budget.bytes < 1:
+                raise GeneratedUiError("capability COMPOSITION_BUDGET bounds are malformed")
+            composition_budget = budget
+            continue
+        if line.startswith("CHOICE_FORMAT "):
+            if choice_format_seen:
+                raise GeneratedUiError("capability CHOICE_FORMAT appears more than once")
+            values = _key_value_tokens(line.split(" ")[1:], "capability CHOICE_FORMAT")
+            if not {"version", "encoding", "fields"} <= values.keys():
+                raise GeneratedUiError("capability CHOICE_FORMAT line is malformed")
+            raw_version = values["version"]
+            try:
+                version = int(raw_version)
+            except ValueError:
+                version = None
+            choice_field_names = tuple(values["fields"].split(",")) if values["fields"] else ()
+            supported = (set(values) == {"version", "encoding", "fields"} and
+                         version == 1 and values["encoding"] == "token" and
+                         choice_field_names == CHOICE_FORMAT_FIELDS_V1)
+            detail = "" if supported else (
+                f"version={raw_version!r} encoding={values['encoding']!r} "
+                f"fields={values['fields']!r}")
+            choice_format = GeneratedChoiceFormat(
+                version, values["encoding"], choice_field_names,
+                "supported" if supported else "unsupported_by_client", detail)
+            choice_format_seen = True
+            choice_format_supported = supported
+            continue
+        if line.startswith("CHOICE "):
+            if not choice_format_seen:
+                raise GeneratedUiError("capability CHOICE line appears before CHOICE_FORMAT")
+            if not choice_format_supported:
+                # An unknown format is not interpreted as an empty/partial
+                # option list; the format declaration carries that state.
+                continue
+            parts = line.split(" ")
+            if len(parts) != 7 or not IDENTIFIER.fullmatch(parts[1]):
+                raise GeneratedUiError("capability CHOICE line is malformed")
+            tokens = _key_value_tokens(parts[2:], "capability CHOICE")
+            if set(tokens) != {"key", "value", "enabled", "reason", "label"} or \
+                    tokens["enabled"] not in ("0", "1"):
+                raise GeneratedUiError("capability CHOICE line has an unknown or missing token")
+            option_key = _decode_text_token(tokens["key"], "CHOICE key", 256)
+            identity = (parts[1], option_key)
+            if identity in choice_keys:
+                raise GeneratedUiError(
+                    f"capability CHOICE repeats key {option_key!r} on field {parts[1]!r}")
+            choice_keys.add(identity)
+            reason = "" if tokens["reason"] == "none" else \
+                _decode_text_token(tokens["reason"], "CHOICE reason", 512)
+            choice_options.append(GeneratedChoiceOption(
+                parts[1], option_key,
+                _decode_text_token(tokens["value"], "CHOICE value", 256),
+                tokens["enabled"] == "1", reason,
+                _decode_text_token(tokens["label"], "CHOICE label", 1024)))
+            continue
         if line.startswith("SURFACE "):
             values = _key_value_tokens(line.split(" ")[1:], "capability SURFACE")
             required = {"version", "stability", "compatibility", "protocol", "subset"}
@@ -842,9 +1131,12 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
                 raise GeneratedUiError("capability FONT_RESOURCE identity is malformed")
             font_resources.append(GeneratedFontResource(parts[1], version, parts[3], resolved_family, name))
         elif line.startswith("IMAGE_RESOURCE "):
-            parts, label = _split_label(line)
-            if len(parts) != 5:
+            parts = line.split(" ")
+            if len(parts) < 4:
                 raise GeneratedUiError("capability IMAGE_RESOURCE line is malformed")
+            # The human label is the (possibly multi-word) tail; the protocol's
+            # identity fields are the fixed first four tokens.
+            label = " ".join(parts[4:]) if len(parts) > 4 else ""
             image_resources.append(GeneratedImageResource(
                 parts[1], parts[2], _token_int(parts[3], "IMAGE_RESOURCE version"), label))
         elif line.startswith("FIELD "):
@@ -871,10 +1163,20 @@ def parse_generated_capabilities(response: SharedOperationResponse) -> Generated
                   for kind in components)
     if surface is not None:
         _require_compatible_surface(surface)
+    published_fields = {field.field_id for field in fields}
+    unknown_choice_fields = sorted({option.field_id for option in choice_options}
+                                   - published_fields)
+    if unknown_choice_fields:
+        raise GeneratedUiError(
+            "capability CHOICE names an unpublished field: " + ",".join(unknown_choice_fields))
     return GeneratedCapabilities(max_depth, max_nodes, max_properties, max_string, built,
                                  tuple(composites), tuple(elements), tuple(actions), tuple(fields),
                                  tuple(image_resources), window_background, tuple(font_resources),
-                                 surface, tuple(support), tuple(evidence))
+                                 surface, tuple(support), tuple(evidence),
+                                 choice_format=choice_format,
+                                 choice_options=tuple(choice_options),
+                                 composition_budget=composition_budget or
+                                 GeneratedCompositionBudget(), ui_document_history=ui_document_history)
 
 
 # --- structure objects -------------------------------------------------------
@@ -1012,11 +1314,462 @@ class GeneratedNode:
 
 
 @dataclass(frozen=True)
+class GeneratedCompositionParameter:
+    name: str
+    value_type: str
+    required: bool
+    minimum: int
+    maximum: int
+    max_length: int
+    default: str
+
+
+@dataclass(frozen=True)
+class GeneratedCompositionElement:
+    key: str
+    role: str
+    field_id: str = ""
+    argument: str = ""
+    action: str = ""
+    source: str = ""
+    preset: str = ""
+    label: str = ""
+
+
+@dataclass(frozen=True)
+class GeneratedCompositionTemplateNode:
+    depth: int
+    key: str
+    kind: str
+    element_key: str = ""
+    compose_name: str = ""
+    presentation: str = ""
+    text: str = ""
+    style_name: str = ""
+    gap: int = -1
+    padding: int = -1
+    fixed_height: int = -1
+    grow: int = -1
+    axis: str = ""
+    first_size: int = 240
+    min_first: int = 120
+    min_second: int = 120
+    children: tuple["GeneratedCompositionTemplateNode", ...] = ()
+
+
+@dataclass(frozen=True)
+class GeneratedRuntimeComposition:
+    name: str
+    expanded_node_limit: int
+    expanded_depth_limit: int
+    parameters: tuple[GeneratedCompositionParameter, ...]
+    elements: tuple[GeneratedCompositionElement, ...]
+    template: GeneratedCompositionTemplateNode
+
+
+@dataclass(frozen=True)
+class GeneratedStructureDocument:
+    """One candidate structure: optional definitions plus instance nodes.
+
+    `lossless` is False when the source carried content this client did not
+    understand (unknown element/template tokens or declaration lines). Such a
+    document is readable for display but must not be re-encoded or treated as
+    the complete document; `source_text` preserves the original lines.
+    """
+
+    format_version: int
+    compositions: tuple[GeneratedRuntimeComposition, ...]
+    nodes: tuple[GeneratedNode, ...]
+    #: Explicit `COMPOSITION_REMOVE` names carried by ONE candidate document.
+    #: An accepted snapshot never carries removals: they are already applied.
+    removals: tuple[str, ...] = ()
+    source_text: str = field(default="", compare=False)
+    lossless: bool = True
+
+
+@dataclass(frozen=True)
 class GeneratedStructure:
     version: int
     candidate_version: int
     scene_state: str
     nodes: tuple[GeneratedNode, ...]
+    format_version: int = 1
+    compositions: tuple[GeneratedRuntimeComposition, ...] = ()
+    source_text: str = field(default="", compare=False)
+    lossless: bool = True
+
+
+_COMPOSITION_PREFIXES = ("COMPOSITION ", "CPARAM ", "CELEMENT ", "CTEMPLATE ",
+                         "COMPOSITION_END ", "COMPOSITION_REMOVE ")
+_COMPOSITION_MAX_PARAMETERS = 8
+_COMPOSITION_MAX_ELEMENTS = 24
+_COMPOSITION_MAX_TEMPLATE_NODES = 64
+_COMPOSITION_MAX_TEMPLATE_DEPTH = 8
+_COMPOSITION_TYPES = frozenset({"STRING", "INTEGER", "BOOLEAN"})
+_COMPOSITION_ROLES = frozenset({"field", "action", "preset", "projection"})
+_COMPOSITION_TEMPLATE_KINDS = frozenset({
+    "vertical", "horizontal", "wrap", "label", "spacer", "split", "element", "children",
+    "composition",
+})
+_COMPOSITION_PRESENTATIONS = frozenset({"text", "select", "radio", "segmented"})
+_COMPOSITION_ELEMENT_TOKENS = frozenset({
+    "field", "argument", "action", "source", "preset",
+})
+_COMPOSITION_TEMPLATE_TOKENS = frozenset({
+    "element", "presentation", "style", "gap", "padding", "height", "grow",
+    "axis", "first", "minfirst", "minsecond", "compose",
+})
+
+
+def _composition_token_value(value: str, what: str) -> str:
+    """One positional composition field that the line grammar cannot split.
+
+    Spaces (and other whitespace/control characters) terminate or corrupt the
+    token on the wire; the producer has no escape for this position, so the
+    client refuses instead of inventing one. `=` is allowed here because these
+    fields are positional and a later `name=value` partition keeps it intact.
+    """
+    if not value:
+        raise GeneratedUiError(f"composition_token_empty:{what}")
+    for character in value:
+        if character.isspace() or ord(character) < 0x20 or ord(character) == 0x7F:
+            raise GeneratedUiError(f"composition_token_not_single:{what}")
+    return value
+
+
+def _composition_trailing_value(value: str, what: str) -> str:
+    if "\n" in value or "\r" in value or "\0" in value:
+        raise GeneratedUiError(f"composition_trailing_value_invalid:{what}")
+    return value
+
+
+def _split_trailing_value(line: str, marker: str) -> tuple[list[str], str]:
+    token = " " + marker
+    index = line.find(token)
+    if index < 0:
+        return line.split(" "), ""
+    return line[:index].split(" "), line[index + len(token):]
+
+
+def _composition_token(parts: list[str], prefix: str, default: str = "") -> str:
+    for part in parts:
+        if part.startswith(prefix):
+            return part[len(prefix):]
+    return default
+
+
+def _composition_int(parts: list[str], prefix: str, default: int) -> int:
+    raw = _composition_token(parts, prefix, "")
+    return default if raw == "" else _token_int(raw, f"composition {prefix[:-1]}")
+
+
+def _composition_template_count(node: "GeneratedCompositionTemplateNode") -> int:
+    return 1 + sum(_composition_template_count(child) for child in node.children)
+
+
+def _validate_composition_template_shape(root: GeneratedCompositionTemplateNode,
+                                        elements: "Sequence[GeneratedCompositionElement]") -> None:
+    """The producer's structural rules that this client can check locally."""
+    element_roles = {element.key: element.role for element in elements}
+    seen: set[str] = set()
+    compose_targets: set[str] = set()
+
+    def walk(node: GeneratedCompositionTemplateNode, depth: int) -> None:
+        if node.depth != depth:
+            raise GeneratedUiError("composition template depth is malformed")
+        if node.key in seen:
+            raise GeneratedUiError(f"composition_duplicate_template:{node.key}")
+        seen.add(node.key)
+        if node.kind == "split" and len(node.children) != 2:
+            raise GeneratedUiError(f"composition_split_children:{node.key}")
+        if node.kind in ("label", "spacer", "element", "composition") and node.children:
+            raise GeneratedUiError(f"composition_leaf_children:{node.key}")
+        if node.kind == "composition":
+            if not node.compose_name:
+                raise GeneratedUiError(f"composition_compose_missing:{node.key}")
+            compose_targets.add(node.compose_name)
+        if node.kind == "element":
+            if not node.element_key:
+                raise GeneratedUiError(f"composition_element_missing:{node.key}")
+            if node.element_key not in element_roles:
+                raise GeneratedUiError(
+                    f"composition_unknown_element:{node.element_key}")
+            if node.presentation == "select" and element_roles[node.element_key] != "field":
+                raise GeneratedUiError(
+                    f"composition_select_needs_field:{node.element_key}")
+        for child in node.children:
+            walk(child, depth + 1)
+
+    walk(root, 0)
+
+
+def _parse_composition_lines(lines: "list[str]", *, allow_removals: bool) -> tuple[
+        tuple[GeneratedRuntimeComposition, ...], tuple[str, ...], tuple[str, ...]]:
+    compositions: list[GeneratedRuntimeComposition] = []
+    removals: list[str] = []
+    unknown: list[str] = []
+    seen_names: set[str] = set()
+    state: dict | None = None
+
+    def finish() -> None:
+        nonlocal state
+        assert state is not None
+        if not state["elements"]:
+            raise GeneratedUiError("composition definition has no elements")
+        if state["root_index"] is None:
+            raise GeneratedUiError("composition definition has no template root")
+        specs = state["specs"]
+        child_indices = state["child_indices"]
+
+        def build(index: int) -> GeneratedCompositionTemplateNode:
+            spec = specs[index]
+            return GeneratedCompositionTemplateNode(
+                spec["depth"], spec["key"], spec["kind"],
+                compose_name=spec["compose"],
+                element_key=spec["element"],
+                presentation=spec["presentation"], text=spec["text"],
+                style_name=spec["style"], gap=spec["gap"],
+                padding=spec["padding"], fixed_height=spec["height"],
+                grow=spec["grow"], axis=spec["axis"],
+                first_size=spec["first"], min_first=spec["minfirst"],
+                min_second=spec["minsecond"],
+                children=tuple(build(child) for child in child_indices[index]))
+
+        template = build(state["root_index"])
+        _validate_composition_template_shape(template, state["elements"])
+        header = state["header"]
+        name = header[0]
+        if name in seen_names:
+            raise GeneratedUiError(f"composition_duplicate:{name}")
+        seen_names.add(name)
+        compositions.append(GeneratedRuntimeComposition(
+            name, header[1], header[2], tuple(state["parameters"]),
+            tuple(state["elements"]), template))
+        state = None
+
+    for line in lines:
+        if line == "":
+            continue
+        parts = line.split(" ")
+        kind = parts[0]
+        if kind == "COMPOSITION":
+            if state is not None and not state["closed"]:
+                raise GeneratedUiError(
+                    f"composition_end_missing:{state['header'][0]}")
+            if state is not None and state["closed"]:
+                finish()
+            if len(parts) < 4 or not parts[1]:
+                raise GeneratedUiError("composition header is malformed")
+            _composition_token_value(parts[1], "composition name")
+            if len(parts) > 4:
+                unknown.append("COMPOSITION " + parts[1] + " " +
+                               ",".join(parts[4:]))
+            node_limit = _token_int(parts[2], "composition node limit")
+            depth_limit = _token_int(parts[3], "composition depth limit")
+            if node_limit <= 0 or depth_limit <= 0:
+                raise GeneratedUiError("composition limits must be positive")
+            state = {"header": (parts[1], node_limit, depth_limit),
+                     "parameters": [], "elements": [], "specs": [],
+                     "child_indices": [], "last_at_depth": {},
+                     "root_index": None, "closed": False}
+        elif kind in ("CPARAM", "CELEMENT", "CTEMPLATE"):
+            if state is None:
+                raise GeneratedUiError(
+                    f"composition {kind.lower()} appears before the header")
+            if state["closed"]:
+                raise GeneratedUiError(
+                    f"composition_content_after_end:{state['header'][0]}")
+            header = state["header"]
+            parameters = state["parameters"]
+            elements = state["elements"]
+            specs = state["specs"]
+            child_indices = state["child_indices"]
+            last_at_depth = state["last_at_depth"]
+            if kind == "CPARAM":
+                if len(parameters) >= _COMPOSITION_MAX_PARAMETERS or len(parts) < 8:
+                    raise GeneratedUiError("composition parameter is malformed or over budget")
+                _composition_token_value(parts[1], f"parameter name {parts[1]}")
+                if len(parts) > 8:
+                    extras = parts[8:]
+                    if any("=" in token for token in extras):
+                        unknown.append("CPARAM " + parts[1] + " " +
+                                       ",".join(extras))
+                    else:
+                        raise GeneratedUiError(
+                            f"composition_token_not_single:parameter default {parts[1]}")
+                if parts[2] not in _COMPOSITION_TYPES:
+                    raise GeneratedUiError(
+                        f"composition parameter type {parts[2]!r} is not supported")
+                minimum = _token_int(parts[4], "composition parameter minimum")
+                maximum = _token_int(parts[5], "composition parameter maximum")
+                max_length = _token_int(parts[6], "composition parameter max length")
+                if parts[3] not in ("0", "1") or minimum < 0 or maximum < minimum or max_length <= 0:
+                    raise GeneratedUiError("composition parameter bounds are malformed")
+                _composition_token_value(parts[7], f"parameter default {parts[1]}")
+                parameters.append(GeneratedCompositionParameter(
+                    parts[1], parts[2], parts[3] == "1", minimum, maximum, max_length,
+                    _decode_property_value(parts[7])))
+            elif kind == "CELEMENT":
+                if len(elements) >= _COMPOSITION_MAX_ELEMENTS:
+                    raise GeneratedUiError("composition element budget exceeded")
+                head, label = _split_label(line)
+                if len(head) < 3 or not head[1] or not head[2]:
+                    raise GeneratedUiError("composition element is malformed")
+                _composition_token_value(head[1], "element key")
+                if head[2] not in _COMPOSITION_ROLES:
+                    raise GeneratedUiError(
+                        f"composition element role {head[2]!r} is not supported")
+                tokens = _key_value_tokens(head[3:], "composition element")
+                unknown_fields = set(tokens) - _COMPOSITION_ELEMENT_TOKENS
+                if unknown_fields:
+                    unknown.append("CELEMENT " + head[1] + " " +
+                                   ",".join(sorted(unknown_fields)))
+                for name in _COMPOSITION_ELEMENT_TOKENS & set(tokens):
+                    _composition_token_value(tokens[name], f"element {name}")
+                _composition_trailing_value(label, "element label")
+                elements.append(GeneratedCompositionElement(
+                    head[1], head[2], tokens.get("field", ""), tokens.get("argument", ""),
+                    tokens.get("action", ""), tokens.get("source", ""),
+                    tokens.get("preset", ""), label))
+            else:
+                head, text = _split_trailing_value(line, "text=")
+                if len(head) < 4 or not head[2] or not head[3]:
+                    raise GeneratedUiError("composition template is malformed")
+                _composition_token_value(head[2], "template key")
+                if head[3] not in _COMPOSITION_TEMPLATE_KINDS:
+                    raise GeneratedUiError(
+                        f"composition template kind {head[3]!r} is not supported")
+                depth = _token_int(head[1], "composition template depth")
+                if depth < 0 or depth > _COMPOSITION_MAX_TEMPLATE_DEPTH:
+                    raise GeneratedUiError("composition template depth is out of range")
+                if len(specs) >= _COMPOSITION_MAX_TEMPLATE_NODES or \
+                        len(specs) >= header[1]:
+                    raise GeneratedUiError("composition template node budget exceeded")
+                tokens = _key_value_tokens(head[4:], "composition template")
+                unknown_fields = set(tokens) - _COMPOSITION_TEMPLATE_TOKENS
+                if unknown_fields:
+                    unknown.append("CTEMPLATE " + head[2] + " " +
+                                   ",".join(sorted(unknown_fields)))
+                for name in _COMPOSITION_TEMPLATE_TOKENS & set(tokens):
+                    _composition_token_value(tokens[name], f"template {name}")
+                if tokens.get("presentation", "") not in ("",) + tuple(_COMPOSITION_PRESENTATIONS):
+                    raise GeneratedUiError(
+                        f"composition presentation {tokens['presentation']!r} is not supported")
+                if tokens.get("axis", "") not in ("", "horizontal", "vertical"):
+                    raise GeneratedUiError(
+                        f"composition template axis {tokens.get('axis')!r} is not supported")
+                _composition_trailing_value(text, "template text")
+                index = len(specs)
+                if depth == 0:
+                    if state["root_index"] is not None:
+                        raise GeneratedUiError("composition template has multiple roots")
+                    state["root_index"] = index
+                else:
+                    parent = last_at_depth.get(depth - 1)
+                    if parent is None:
+                        raise GeneratedUiError("composition template has an orphan node")
+                    child_indices[parent].append(index)
+                compose = tokens.get("compose", "")
+                if head[3] == "composition" and not compose:
+                    compose = head[3]
+                if head[3] != "composition" and compose:
+                    raise GeneratedUiError(
+                        f"composition_compose_on_plain_node:{head[2]}")
+                if compose and head[3] == "composition" and tokens.get("element", ""):
+                    raise GeneratedUiError(
+                        f"composition_compose_and_element:{head[2]}")
+                specs.append({
+                    "depth": depth, "key": head[2], "kind": head[3],
+                    "compose": compose,
+                    "element": tokens.get("element", ""),
+                    "presentation": tokens.get("presentation", ""),
+                    "text": text, "style": tokens.get("style", ""),
+                    "gap": _composition_int(head[4:], "gap=", -1),
+                    "padding": _composition_int(head[4:], "padding=", -1),
+                    "height": _composition_int(head[4:], "height=", -1),
+                    "grow": _composition_int(head[4:], "grow=", -1),
+                    "axis": tokens.get("axis", ""),
+                    "first": _composition_int(head[4:], "first=", 240),
+                    "minfirst": _composition_int(head[4:], "minfirst=", 120),
+                    "minsecond": _composition_int(head[4:], "minsecond=", 120),
+                })
+                child_indices.append([])
+                last_at_depth[depth] = index
+                for closed in [item for item in last_at_depth if item > depth]:
+                    del last_at_depth[closed]
+        elif kind == "COMPOSITION_END":
+            if state is None:
+                raise GeneratedUiError("composition_end_without_header")
+            if state["closed"]:
+                raise GeneratedUiError(
+                    f"composition_end_duplicate:{state['header'][0]}")
+            if len(parts) != 2 or not parts[1]:
+                raise GeneratedUiError("composition end is malformed")
+            if parts[1] != state["header"][0]:
+                raise GeneratedUiError(
+                    f"composition_end_name_mismatch:{parts[1]}:{state['header'][0]}")
+            finish()
+        elif kind == "COMPOSITION_REMOVE":
+            if not allow_removals:
+                unknown.append(line)
+                continue
+            if state is not None and not state["closed"]:
+                raise GeneratedUiError(
+                    f"composition_end_missing:{state['header'][0]}")
+            if state is not None:
+                finish()
+            if len(parts) != 2 or not parts[1]:
+                raise GeneratedUiError("composition removal is malformed")
+            _composition_token_value(parts[1], "composition removal name")
+            if parts[1] in removals:
+                raise GeneratedUiError(f"composition_remove_duplicate:{parts[1]}")
+            removals.append(parts[1])
+        else:
+            unknown.append(line)
+    if state is not None:
+        # Legacy single-definition candidate/snapshot without COMPOSITION_END:
+        # the definition ends where its declaration lines stop. Once another
+        # section has been completed, an unclosed final section is ambiguous
+        # and is refused, matching the producer decoder.
+        if not state["closed"] and compositions:
+            raise GeneratedUiError(
+                f"composition_end_missing:{state['header'][0]}")
+        finish()
+    return tuple(compositions), tuple(removals), tuple(unknown)
+
+
+def _parse_node_lines(lines: "list[str]", nodes: list[GeneratedNode]) -> tuple[str, ...]:
+    unknown: list[str] = []
+    for line in lines:
+        if line.startswith("NODE "):
+            parts = line.split(" ")
+            if len(parts) < 4:
+                raise GeneratedUiError("structure NODE line is malformed")
+            tokens = _key_value_tokens(parts[4:], "structure NODE") if parts[4:] else {}
+            unknown_fields = set(tokens) - {"field", "action"}
+            if unknown_fields:
+                unknown.append("NODE " + parts[2] + " " +
+                               ",".join(sorted(unknown_fields)))
+            field_id = tokens.get("field") or None
+            action = tokens.get("action") or None
+            nodes.append(GeneratedNode(_token_int(parts[1], "NODE depth"), parts[2], parts[3],
+                                       field_id, action, ()))
+        elif line.startswith("PROPERTY "):
+            if not nodes:
+                raise GeneratedUiError("structure PROPERTY has no preceding NODE")
+            parts = line.split(" ", 4)
+            if len(parts) < 5:
+                raise GeneratedUiError("structure PROPERTY line is malformed")
+            depth = _token_int(parts[1], "PROPERTY depth")
+            key = parts[2]
+            name = parts[3]
+            value = _decode_property_value(parts[4])
+            if depth != nodes[-1].depth or key != nodes[-1].key:
+                raise GeneratedUiError("structure PROPERTY does not follow its NODE")
+            node = nodes[-1]
+            nodes[-1] = GeneratedNode(node.depth, node.key, node.kind, node.field_id, node.action,
+                                      node.properties + (GeneratedProperty(name, value),))
+    return tuple(unknown)
 
 
 def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStructure:
@@ -1025,7 +1778,16 @@ def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStr
     version = 0
     candidate = 0
     scene = "none"
+    format_version = 0
+    for line in lines:
+        if line.startswith("GENERATED_UI_STRUCTURE "):
+            parts = line.split(" ")
+            if len(parts) == 2:
+                format_version = _token_int(parts[1], "GENERATED_UI_STRUCTURE version")
+            break
     nodes: list[GeneratedNode] = []
+    composition_lines: list[str] = []
+    unknown_lines: list[str] = []
     started = False
     for line in lines:
         if line.startswith("STRUCTURE_VERSION "):
@@ -1036,54 +1798,97 @@ def parse_generated_structure(response: SharedOperationResponse) -> GeneratedStr
             scene = line.split(" ")[1]
         elif line.startswith("STRUCTURE_LENGTH "):
             started = True
-        elif started:
+        elif line.startswith("GENERATED_UI_STRUCTURE "):
+            started = True
+        else:
+            if not started:
+                if line.startswith(_COMPOSITION_PREFIXES) or \
+                        line.startswith(("NODE ", "PROPERTY ")):
+                    started = True
+                else:
+                    continue
             if line == "END":
                 break
             if line == "":
                 continue
-            if line.startswith("NODE "):
-                parts = line.split(" ")
-                if len(parts) < 4:
-                    raise GeneratedUiError("structure NODE line is malformed")
-                field_id = None
-                action = None
-                for token in parts[4:]:
-                    if token.startswith("field=") and len(token) > 6:
-                        field_id = token[6:]
-                    elif token.startswith("action=") and len(token) > 7:
-                        action = token[7:]
-                nodes.append(GeneratedNode(_token_int(parts[1], "NODE depth"), parts[2], parts[3],
-                                           field_id, action, ()))
-            elif line.startswith("PROPERTY "):
-                if not nodes:
-                    raise GeneratedUiError("structure PROPERTY has no preceding NODE")
-                parts = line.split(" ", 4)
-                if len(parts) < 5:
-                    raise GeneratedUiError("structure PROPERTY line is malformed")
-                depth = _token_int(parts[1], "PROPERTY depth")
-                key = parts[2]
-                name = parts[3]
-                # The application escapes an empty value as `\e` so the response
-                # stays a well-formed line; decode it back to the literal value.
-                value = _decode_property_value(parts[4])
-                if depth != nodes[-1].depth or key != nodes[-1].key:
-                    raise GeneratedUiError("structure PROPERTY does not follow its NODE")
-                node = nodes[-1]
-                nodes[-1] = GeneratedNode(node.depth, node.key, node.kind, node.field_id, node.action,
-                                          node.properties + (GeneratedProperty(name, value),))
-    return GeneratedStructure(version, candidate, scene, tuple(nodes))
+            if line.startswith(_COMPOSITION_PREFIXES):
+                composition_lines.append(line)
+            elif line.startswith(("NODE ", "PROPERTY ")):
+                unknown_lines.extend(_parse_node_lines([line], nodes))
+            else:
+                unknown_lines.append(line)
+    if format_version not in (0, 1, 2):
+        raise GeneratedUiError(f"structure format version {format_version} is not supported")
+    if format_version == 0:
+        format_version = 2 if composition_lines else 1
+    if format_version == 1 and composition_lines:
+        raise GeneratedUiError("structure format 1 cannot carry composition definitions")
+    if composition_lines:
+        compositions, _removals, unknown_fields = _parse_composition_lines(
+            composition_lines, allow_removals=False)
+    else:
+        compositions, unknown_fields = (), ()
+    unknown = tuple(unknown_lines) + unknown_fields
+    return GeneratedStructure(version, candidate, scene, tuple(nodes),
+                              format_version=format_version,
+                              compositions=compositions,
+                              source_text=response.raw,
+                              lossless=not unknown)
 
 
-def encode_generated_structure(nodes: "Sequence[GeneratedNode]") -> str:
-    """Encode typed nodes exactly the way the decoder reads them.
+def parse_generated_structure_document(text: str) -> GeneratedStructureDocument:
+    """Parse ONE candidate document, including definitions and removals.
 
-    A value that cannot be represented on one protocol line is rejected here
-    instead of being silently truncated: a newline breaks the framing, and a
-    leading/trailing space would produce an empty token the transport refuses.
-    The EMPTY value is representable through the shared `\\e` token, so the
-    "empty clears" contract still round-trips.
+    A candidate may declare several complete definition sections plus an
+    explicit removal list; the endpoint's published `COMPOSITION_BUDGET` decides
+    how many it will accept, and that check runs before submission. The parser
+    therefore keeps every section and never silently drops one. `COMPOSITION_END`
+    is optional only for a single legacy definition (the old no-END spelling);
+    two definitions, or content after an END, require the explicit boundary.
     """
-    lines = ["GENERATED_UI_STRUCTURE 1"]
+    lines = text.splitlines()
+    nonempty = [index for index, line in enumerate(lines) if line != ""]
+    if not nonempty or not lines[nonempty[0]].startswith("GENERATED_UI_STRUCTURE "):
+        raise GeneratedUiError("candidate document has no GENERATED_UI_STRUCTURE header")
+    header = lines[nonempty[0]].split(" ")
+    if len(header) != 2:
+        raise GeneratedUiError("candidate document header is malformed")
+    version = _token_int(header[1], "candidate structure version")
+    if version not in (1, 2):
+        raise GeneratedUiError(f"structure format version {version} is not supported")
+    first_end = next((index for index in nonempty if lines[index] == "END"), None)
+    if first_end is None or first_end != nonempty[-1]:
+        raise GeneratedUiError("candidate document must end at its first END")
+    composition_lines: list[str] = []
+    node_lines: list[str] = []
+    unknown_lines: list[str] = []
+    for line in lines[nonempty[0] + 1:first_end]:
+        if line == "":
+            continue
+        if line.startswith(_COMPOSITION_PREFIXES):
+            composition_lines.append(line)
+        elif line.startswith(("NODE ", "PROPERTY ")):
+            node_lines.append(line)
+        else:
+            unknown_lines.append(line)
+    compositions, removals, composition_unknown = _parse_composition_lines(
+        composition_lines, allow_removals=True)
+    if version == 1 and (compositions or removals):
+        raise GeneratedUiError("structure format 1 cannot carry composition definitions")
+    for name in removals:
+        if any(composition.name == name for composition in compositions):
+            raise GeneratedUiError(
+                f"composition_update_and_remove:{name}")
+    nodes: list[GeneratedNode] = []
+    node_unknown = _parse_node_lines(node_lines, nodes)
+    unknown = tuple(unknown_lines) + composition_unknown + node_unknown
+    format_version = 2 if (compositions or removals or version == 2) else 1
+    return GeneratedStructureDocument(format_version, compositions, tuple(nodes),
+                                      removals=removals, source_text=text,
+                                      lossless=not unknown)
+
+
+def _append_encoded_nodes(lines: list[str], nodes: "Sequence[GeneratedNode]") -> None:
     for node in nodes:
         if not IDENTIFIER.fullmatch(node.key) or not IDENTIFIER.fullmatch(node.kind):
             raise GeneratedUiError(f"node key/kind is not a protocol identifier: {node.key}/{node.kind}")
@@ -1105,6 +1910,164 @@ def encode_generated_structure(nodes: "Sequence[GeneratedNode]") -> str:
             if prop.value and (prop.value[0] == " " or prop.value[-1] == " "):
                 raise GeneratedUiError("property values cannot begin or end with a space")
             lines.append(f"PROPERTY {node.depth} {node.key} {prop.name} {_encode_property_value(prop.value)}")
+
+
+def encode_generated_structure(nodes: "Sequence[GeneratedNode]") -> str:
+    """Encode typed nodes exactly the way the decoder reads them.
+
+    A value that cannot be represented on one protocol line is rejected here
+    instead of being silently truncated: a newline breaks the framing, and a
+    leading/trailing space would produce an empty token the transport refuses.
+    The EMPTY value is representable through the shared `\\e` token, so the
+    "empty clears" contract still round-trips.
+    """
+    lines = ["GENERATED_UI_STRUCTURE 1"]
+    _append_encoded_nodes(lines, nodes)
+    lines.append("END")
+    return "\n".join(lines)
+
+
+def _append_composition(lines: list[str], composition: GeneratedRuntimeComposition) -> None:
+    _composition_token_value(composition.name, "composition name")
+    if not IDENTIFIER.fullmatch(composition.name):
+        raise GeneratedUiError("composition name is not a protocol identifier")
+    if composition.expanded_node_limit <= 0 or composition.expanded_depth_limit <= 0:
+        raise GeneratedUiError("composition limits must be positive")
+    if len(composition.parameters) > _COMPOSITION_MAX_PARAMETERS:
+        raise GeneratedUiError("composition parameter budget exceeded")
+    if not composition.elements:
+        raise GeneratedUiError("composition definition has no elements")
+    if len(composition.elements) > _COMPOSITION_MAX_ELEMENTS:
+        raise GeneratedUiError("composition element budget exceeded")
+    lines.append(f"COMPOSITION {composition.name} {composition.expanded_node_limit} "
+                 f"{composition.expanded_depth_limit}")
+    for parameter in composition.parameters:
+        _composition_token_value(parameter.name, f"parameter name {parameter.name}")
+        if parameter.value_type not in _COMPOSITION_TYPES:
+            raise GeneratedUiError(f"composition parameter type {parameter.value_type!r} is not supported")
+        if parameter.minimum < 0 or parameter.maximum < parameter.minimum or parameter.max_length <= 0:
+            raise GeneratedUiError("composition parameter bounds are malformed")
+        default = _encode_property_value(parameter.default)
+        # The default is one positional token.  A space here is not escaped by
+        # the official grammar (the producer would silently keep the first
+        # part), so refuse before any submission instead of inventing one.
+        _composition_token_value(default, f"parameter default {parameter.name}")
+        lines.append(f"CPARAM {parameter.name} {parameter.value_type} "
+                     f"{1 if parameter.required else 0} {parameter.minimum} "
+                     f"{parameter.maximum} {parameter.max_length} {default}")
+    for element in composition.elements:
+        _composition_token_value(element.key, "element key")
+        if element.role not in _COMPOSITION_ROLES:
+            raise GeneratedUiError(f"composition element role {element.role!r} is not supported")
+        line = f"CELEMENT {element.key} {element.role}"
+        for name, value in (("field", element.field_id), ("argument", element.argument),
+                            ("action", element.action), ("source", element.source),
+                            ("preset", element.preset)):
+            if value:
+                line += f" {name}={_composition_token_value(value, f'element {name}')}"
+        _composition_trailing_value(element.label, "element label")
+        if element.label:
+            line += " label=" + element.label
+        lines.append(line)
+
+    emitted = 0
+
+    def emit(node: GeneratedCompositionTemplateNode, depth: int) -> None:
+        nonlocal emitted
+        emitted += 1
+        if emitted > _COMPOSITION_MAX_TEMPLATE_NODES or emitted > composition.expanded_node_limit:
+            raise GeneratedUiError("composition template node budget exceeded")
+        if depth != node.depth or depth > _COMPOSITION_MAX_TEMPLATE_DEPTH:
+            raise GeneratedUiError("composition template depth is malformed")
+        _composition_token_value(node.key, "template key")
+        if node.kind not in _COMPOSITION_TEMPLATE_KINDS:
+            raise GeneratedUiError(f"composition template kind {node.kind!r} is not supported")
+        if node.presentation and node.presentation not in _COMPOSITION_PRESENTATIONS:
+            raise GeneratedUiError(f"composition presentation {node.presentation!r} is not supported")
+        line = f"CTEMPLATE {depth} {node.key} {node.kind}"
+        if node.kind == "composition":
+            if not node.compose_name:
+                raise GeneratedUiError(f"composition_compose_missing:{node.key}")
+            if node.element_key:
+                raise GeneratedUiError(f"composition_compose_and_element:{node.key}")
+            if node.children:
+                raise GeneratedUiError(f"composition_leaf_children:{node.key}")
+            line += f" compose={_composition_token_value(node.compose_name, 'template compose')}"
+        if node.element_key:
+            line += f" element={_composition_token_value(node.element_key, 'template element')}"
+        if node.presentation:
+            line += f" presentation={node.presentation}"
+        if node.style_name:
+            line += f" style={_composition_token_value(node.style_name, 'template style')}"
+        for name, value in (("gap", node.gap), ("padding", node.padding),
+                            ("height", node.fixed_height), ("grow", node.grow)):
+            if value >= 0:
+                line += f" {name}={value}"
+        if node.axis:
+            if node.axis not in ("horizontal", "vertical"):
+                raise GeneratedUiError(f"composition template axis {node.axis!r} is not supported")
+            line += f" axis={node.axis}"
+        if node.first_size != 240:
+            line += f" first={node.first_size}"
+        if node.min_first != 120:
+            line += f" minfirst={node.min_first}"
+        if node.min_second != 120:
+            line += f" minsecond={node.min_second}"
+        _composition_trailing_value(node.text, "template text")
+        if node.text:
+            line += " text=" + node.text
+        lines.append(line)
+        for child in node.children:
+            emit(child, depth + 1)
+
+    emit(composition.template, 0)
+    _validate_composition_template_shape(composition.template, composition.elements)
+
+
+def encode_generated_structure_document(document: GeneratedStructureDocument, *,
+                                        allow_multiple: bool = True) -> str:
+    """Encode one document with the handed-off v2 input grammar.
+
+    Several definition sections are legal in one candidate; the endpoint's
+    published budget and the editor preview enforce the actual count. The
+    aggregate budgets below mirror the producer's decoder so a document that
+    could not be decoded is refused before it reaches the wire.
+    """
+    if not document.lossless:
+        raise GeneratedUiError(
+            "composition_document_not_lossless: the source contains fields or lines "
+            "this client did not understand; refuse to emit a pruned document")
+    if document.format_version not in (1, 2):
+        raise GeneratedUiError(f"structure format version {document.format_version} is not supported")
+    if document.format_version == 1 and (document.compositions or document.removals):
+        raise GeneratedUiError("structure format 1 cannot carry composition definitions")
+    if len(document.compositions) > 1 and not allow_multiple:
+        raise GeneratedUiError("one candidate document may declare one composition")
+    if len(document.compositions) > 8:
+        raise GeneratedUiError("composition definition budget exceeded")
+    total_elements = sum(len(composition.elements) for composition in document.compositions)
+    if total_elements > 96:
+        raise GeneratedUiError("composition element budget exceeded")
+    total_nodes = sum(_composition_template_count(composition.template)
+                      for composition in document.compositions)
+    if total_nodes > 256:
+        raise GeneratedUiError("composition template node budget exceeded")
+    if len({composition.name for composition in document.compositions}) != \
+            len(document.compositions):
+        raise GeneratedUiError("composition definition appears more than once")
+    if len(set(document.removals)) != len(document.removals):
+        raise GeneratedUiError("composition removal appears more than once")
+    for name in document.removals:
+        _composition_token_value(name, "composition removal name")
+        if any(composition.name == name for composition in document.compositions):
+            raise GeneratedUiError(f"composition_update_and_remove:{name}")
+    lines = [f"GENERATED_UI_STRUCTURE {document.format_version}"]
+    for composition in document.compositions:
+        _append_composition(lines, composition)
+        lines.append(f"COMPOSITION_END {composition.name}")
+    for name in document.removals:
+        lines.append(f"COMPOSITION_REMOVE {name}")
+    _append_encoded_nodes(lines, document.nodes)
     lines.append("END")
     return "\n".join(lines)
 
@@ -1132,8 +2095,8 @@ def same_structure(left: "Sequence[GeneratedNode]", right: "Sequence[GeneratedNo
 class GeneratedFieldValue:
     field_id: str
     resource_id: int
-    draft: str
-    applied: str
+    draft: str | None
+    applied: str | None
     validation_error: str
     #: True/False when the producer could confirm the fact, None when it said the
     #: focus is UNKNOWN. A producer must not answer 0 or 1 for a fact it cannot
@@ -1142,7 +2105,7 @@ class GeneratedFieldValue:
     focused: bool | None
     selection_start: int | None
     selection_end: int | None
-    draft_version: int
+    draft_version: int | None
     #: CURRENT owner availability ("may this be edited right now"), from the same
     #: condition the owner enforces on write. None when the producer said the
     #: condition cannot be evaluated; never inferred from the draft value.
@@ -1151,7 +2114,7 @@ class GeneratedFieldValue:
     blocked_reason: str | None
     #: Owner/target the decision applies to and the revision it was evaluated at.
     owner_resource_id: int
-    state_version: int
+    state_version: int | None
     #: Validation is independent of edit availability. Legacy ERROR none does
     #: not establish a successful validation; an opt-in owner must confirm it.
     validation_state: str = "unknown"
@@ -1222,17 +2185,17 @@ def parse_generated_fields(response: SharedOperationResponse) -> tuple[Generated
         field_version = _token_int(tokens.get("FIELD_VERSION", ("-1",))[0], "FIELD input version")
         values.append(GeneratedFieldValue(
             parts[1], _token_int(parts[2], "FIELD resource"),
-            _hex_text(tokens.get("DRAFT_HEX", ("-",))[0], "FIELD DRAFT_HEX"),
-            _hex_text(tokens.get("APPLIED_HEX", ("-",))[0], "FIELD APPLIED_HEX"),
+            _hex_text(tokens["DRAFT_HEX"][0], "FIELD DRAFT_HEX") if "DRAFT_HEX" in tokens else None,
+            _hex_text(tokens["APPLIED_HEX"][0], "FIELD APPLIED_HEX") if "APPLIED_HEX" in tokens else None,
             message if validation != "unknown" else tokens.get("ERROR", ("none",))[0],
             _parse_field_focus(tokens.get("FOCUS")),
             None if selection is None else _token_int(selection[0], "FIELD selection start"),
             None if selection is None else _token_int(selection[1], "FIELD selection end"),
-            _token_int(tokens.get("VERSION", ("0",))[0], "FIELD draft version"),
+            _token_int(tokens["VERSION"][0], "FIELD draft version") if "VERSION" in tokens else None,
             available,
             blocked_reason,
             _token_int(tokens.get("TARGET", ("-1",))[0], "FIELD TARGET"),
-            _token_int(tokens.get("STATE_VERSION", ("0",))[0], "FIELD STATE_VERSION"),
+            _token_int(tokens["STATE_VERSION"][0], "FIELD STATE_VERSION") if "STATE_VERSION" in tokens else None,
             validation,
             None if validation_version < 0 else validation_version,
             None if field_version < 0 else field_version))
@@ -2244,6 +3207,50 @@ class GeneratedUiSession:
         return parse_action_signatures(
             self.client.get_context(deadline_monotonic=deadline_monotonic))
 
+    def history_state(self, *, deadline_monotonic: float | None = None) -> GeneratedUiHistoryState:
+        """Read optional history facts; absent versions and flags stay unknown."""
+        return parse_generated_history(self._read("GET_GENERATED_UI_HISTORY", "GENERATED_UI_HISTORY",
+                                                  deadline_monotonic))
+
+    def history_action(self, action: str, baseline: GeneratedUiHistoryState, *,
+                       deadline_monotonic: float | None = None) -> GeneratedSubmitResult:
+        """ONE CAS request; its real candidate ticket still needs settlement."""
+        action = {"undo": "UI_DOC_UNDO", "redo": "UI_DOC_REDO"}.get(action, action)
+        if action not in ("UI_DOC_UNDO", "UI_DOC_REDO"):
+            raise GeneratedUiHistoryRefusal("ui_document_history_unknown_action")
+        if not isinstance(baseline, GeneratedUiHistoryState):
+            raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+        if baseline.supported is False:
+            raise GeneratedUiHistoryRefusal("ui_document_history_unsupported")
+        if baseline.enabled is False:
+            raise GeneratedUiHistoryRefusal("ui_document_history_disabled")
+        if (type(baseline.format_version) is not int or baseline.format_version != 1 or
+                baseline.supported is not True or baseline.enabled is not True or
+                type(baseline.accepted_version) is not int or baseline.accepted_version < 0 or
+                not isinstance(baseline.accepted_digest, str) or
+                not re.fullmatch(r"[0-9a-f]{64}", baseline.accepted_digest) or
+                type(baseline.surface_identity) is not int or baseline.surface_identity <= 0 or
+                type(baseline.history_epoch) is not int or baseline.history_epoch <= 0 or baseline.endpoint_identity is None):
+            raise GeneratedUiHistoryRefusal("ui_document_history_baseline_incomplete")
+        endpoint = baseline.endpoint_identity
+        if (not isinstance(endpoint.instance, str) or not endpoint.instance or
+                any(ch.isspace() or ord(ch) < 32 for ch in endpoint.instance) or
+                type(endpoint.bind_generation) is not int or endpoint.bind_generation <= 0):
+            raise GeneratedUiHistoryRefusal("ui_document_history_baseline_invalid")
+        command = (f"APPLY_GENERATED_UI_HISTORY {action} {baseline.accepted_version} "
+                   f"{baseline.accepted_digest} {baseline.surface_identity} {baseline.history_epoch} "
+                   f"{endpoint.instance} {endpoint.bind_generation}")
+        response = self.client.request(self._query(command), deadline_monotonic=deadline_monotonic)
+        facts = _result_values(response, "GENERATED_UI_SUBMIT")
+        required = {"APPLIED", "REASON", "VERSION_BEFORE", "VERSION_AFTER", "CANDIDATE_ACCEPTED",
+                    "SCENE_ACCEPTED", "CANDIDATE_VERSION", "CANDIDATE_TOKEN"}
+        if not required <= facts.keys():
+            raise GeneratedUiError("history submit reply is incomplete")
+        result = parse_generated_submit(response)
+        if result.endpoint_identity != endpoint:
+            raise GeneratedUiEndpointError("endpoint_replaced", "history reply belongs to another endpoint")
+        return result
+
     def submit(self, nodes: "Sequence[GeneratedNode]", expected_version: int, *,
                deadline_monotonic: float | None = None) -> GeneratedSubmitResult:
         payload = encode_generated_structure(nodes)
@@ -2256,6 +3263,13 @@ class GeneratedUiSession:
         return parse_generated_submit(
             self.client.request(self._submit_payload(payload, expected_version),
                                 deadline_monotonic=deadline_monotonic))
+
+    def submit_document(self, document: GeneratedStructureDocument,
+                        expected_version: int, *,
+                        deadline_monotonic: float | None = None) -> GeneratedSubmitResult:
+        return self.submit_text(encode_generated_structure_document(document),
+                                 expected_version,
+                                 deadline_monotonic=deadline_monotonic)
 
     def wait_for_structure(self, expected_version: int, *, timeout_ms: int = 5_000,
                            poll_ms: int = 100) -> GeneratedStructureWait:

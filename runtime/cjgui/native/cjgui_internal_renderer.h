@@ -27,6 +27,11 @@
 #define CJGUI_INTERNAL_RENDERER_H
 
 #include <stdint.h>
+#define CJGUI_INTERNAL_RENDERER_WINDOW_STATE_VERSION 1
+// Private scalar transport, tied to a live renderer-session generation.
+// [fullscreen,transition,revision,minimized,visible,pointWidth,pointHeight,
+//  failure,generation,drawableWidth,drawableHeight]. Request success is not
+// an entered/exited receipt; only actual AppKit state is reported.
 #include <stddef.h>
 
 // Bumped whenever the node POD changes. The OHOS fork header carries the same
@@ -1192,6 +1197,56 @@ typedef struct {
     double scaleY;
 } CjguiInternalRendererComposableGeometry;
 
+// Positive-deadline declaration transport. Admit copies all borrowed bytes;
+// pending has no completed prefix. Poll consumes a completed nonce at most once.
+// Scalar arguments have 32 uint64 and 32 int64 words; node strings have nine
+// entries per node: the existing eight declaration strings, then semantic help.
+enum {
+    CJGUI_PREPARATION_OPERATION_BEGIN = 1,
+    CJGUI_PREPARATION_OPERATION_DECLARE = 2,
+    CJGUI_PREPARATION_OPERATION_REUSE = 3,
+    CJGUI_PREPARATION_OPERATION_RESIDENT = 4,
+    CJGUI_PREPARATION_OPERATION_CARET = 5,
+    CJGUI_PREPARATION_OPERATION_IMAGE = 6,
+    CJGUI_PREPARATION_OPERATION_COMMAND_BEGIN = 7,
+    CJGUI_PREPARATION_OPERATION_COMMAND_ITEM = 8,
+    // At most8 nodes; values32[0] bit n forces declaration. Other nodes try
+    // reuse and resolve only an explicit cache miss within this same packet.
+    CJGUI_PREPARATION_OPERATION_MIXED_NODES = 9,
+    CJGUI_PREPARATION_OPERATION_DRAWABLE = 10,
+    CJGUI_PREPARATION_OPERATION_PENDING = 1,
+    CJGUI_PREPARATION_OPERATION_COMPLETED = 2,
+    CJGUI_PREPARATION_OPERATION_CAPACITY = 3,
+    CJGUI_PREPARATION_OPERATION_STALE = 4,
+    CJGUI_PREPARATION_STOP_COMPLETE = 0,
+    CJGUI_PREPARATION_STOP_CACHE_MISS = 1,
+    CJGUI_PREPARATION_STOP_DEADLINE = 2,
+    CJGUI_PREPARATION_STOP_FAILED = 3
+};
+typedef struct CjguiInternalRendererPreparationOperation {
+    uint32_t kind, firstIndex, count, stringCount;
+    const uint64_t *values32;
+    const int64_t *signedValues32;
+    const CjguiInternalRendererComposableNode *nodes;
+    const CjguiInternalRendererComposableGeometry *geometry;
+    const char *const *strings;
+} CjguiInternalRendererPreparationOperation;
+typedef struct CjguiInternalRendererPreparationOperationResult {
+    uint32_t state, stop;
+    CjguiInternalRendererStatus status;
+    uint32_t prefix;
+    uint64_t nonce, requiredBytes, generation;
+} CjguiInternalRendererPreparationOperationResult;
+CjguiInternalRendererStatus cjgui_internal_renderer_preparation_operation_admit(
+    uint64_t session, uint64_t preparationId, uint64_t deadlineNs,
+    const CjguiInternalRendererPreparationOperation *operation,
+    CjguiInternalRendererPreparationOperationResult *outResult);
+CjguiInternalRendererStatus cjgui_internal_renderer_preparation_operation_poll(
+    uint64_t session, uint64_t preparationId, uint64_t nonce, uint8_t consume,
+    CjguiInternalRendererPreparationOperationResult *outResult);
+uint8_t cjgui_internal_renderer_preparation_operation_waiting(uint64_t session);
+void cjgui_internal_renderer_preparation_operation_retire(uint64_t session, uint64_t preparationId);
+
 // Private budgeted preparation. Handles own unpublished nodes and are never
 // present tickets or public object identities. Borrowed pointers are copied
 // before return; no live proxy or staged scene is changed until promote.
@@ -1201,6 +1256,9 @@ CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_node(uint
     uint32_t index, const CjguiInternalRendererComposableNode *node, const CjguiInternalRendererComposableGeometry *geometry,
     const char *label, const char *value, const char *semanticId, const char *bindingKey, const char *rowKey,
     const char *parentRowKey, const char *semanticLabel, const char *encodedRuns);
+// Ordinary image declaration belonging to the exact unpublished preparation.
+CjguiInternalRendererStatus cjgui_internal_renderer_prepare_composable_image_node_resource(
+    uint64_t session,uint64_t preparationId,uint32_t index,const char *path,const char *identity,uint64_t version);
 // Synchronous bounded upload, with the same per-node validator and ownership.
 // strings contains count*8 borrowed UTF-8 pointers in the scalar call's order.
 // outCopied is the actual successful prefix, including on validation failure.
@@ -1307,6 +1365,11 @@ CjguiInternalRendererStatus cjgui_internal_renderer_stage_modal_return(
     uint64_t session, const uint64_t *request, const char *body);
 CjguiInternalRendererStatus cjgui_internal_renderer_modal_return_receipt(
     uint64_t session, uint64_t scene, uint64_t request, uint64_t *receipt);
+// Private original-Escape dependency. Identity comes only from the dequeued
+// native interaction; decisions do not execute a command or write a value.
+CjguiInternalRendererStatus cjgui_internal_renderer_modal_exit_interaction(uint64_t session,uint64_t *identity);
+CjguiInternalRendererStatus cjgui_internal_renderer_settle_modal_exit(uint64_t session,uint64_t identity,
+    uint32_t decision,uint64_t request,const char *reason);
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_stage_window_background(uint64_t session,
@@ -3406,6 +3469,8 @@ CjguiInternalRendererStatus cjgui_internal_renderer_discard_pointer_capture_cont
     uint64_t session, uint64_t gestureEpoch, uint64_t candidateSceneVersion);
 
 // Internal owner-budget retirement continuation; quota unchanged.
+CjguiInternalRendererStatus cjgui_internal_renderer_window_state(uint64_t session, uint64_t *words);
+CjguiInternalRendererStatus cjgui_internal_renderer_request_full_screen(uint64_t session, uint32_t enabled);
 CjguiInternalRendererStatus cjgui_internal_renderer_drain_composable_retirement(
     uint64_t session, uint64_t ownerDeadline, uint8_t *outMayBegin);
 

@@ -177,7 +177,7 @@ def source_snapshot(app: Path) -> dict[str, str]:
     return result
 
 
-def prepare(app: Path, runtime: Path, native: Path, cache: Path) -> Path:
+def prepare(app: Path, runtime: Path, native: Path, cache: Path, *, testing: bool = False) -> Path:
     app, runtime, native, cache = (path.resolve() for path in (app, runtime, native, cache))
     original = read_manifest(app)
     dependency = original.get("dependencies", {}).get("cjgui", {})
@@ -195,8 +195,15 @@ def prepare(app: Path, runtime: Path, native: Path, cache: Path) -> Path:
     application = relocate(copy.deepcopy(original), app)
     application_source = resolve(app, original["package"].get("src-dir", "src"))
     prepared_sources.update(snapshot_sources(application_source, cache / "application/src", include_tests=True))
-    (app / "target").mkdir(exist_ok=True)
-    directory_alias(cache / "application/target", app / "target")
+    if not testing:
+        (app / "target").mkdir(exist_ok=True)
+        directory_alias(cache / "application/target", app / "target")
+    else:
+        (cache / "application/target").mkdir(parents=True, exist_ok=True)
+        # The process-owning AppKit launcher is for program main, not the
+        # Cangjie unittest runner. Stopping one fixture must not return native
+        # main while the managed runner still renders an assertion/stack.
+        application.get("ffi", {}).get("c", {}).pop("cjgui_macos_application_launcher", None)
     application["package"]["src-dir"] = "src"
     application["package"]["target-dir"] = "target"
     application["package"]["link-option"] = application["package"].get("link-option", "") + " -t -map " + MAP_NAME
@@ -209,7 +216,8 @@ def prepare(app: Path, runtime: Path, native: Path, cache: Path) -> Path:
     renderer = native / "libcjgui_internal_renderer.a"
     record = {"format": FORMAT, "application_manifest": str(application_path),
               "framework_manifest": str(framework_path), "application_source": str(application_source),
-              "framework_source": str(framework_source), "source_application": str(app), "target": str(app / "target"),
+              "framework_source": str(framework_source), "source_application": str(app), "target": str(cache / "application/target" if testing else app / "target"),
+              "testing": testing,
               "renderer_archive": str(renderer), "renderer_sha256": digest(renderer),
               "link_map": str(application_path.parent / MAP_NAME),
               "source_files": source_snapshot(app),
@@ -217,7 +225,7 @@ def prepare(app: Path, runtime: Path, native: Path, cache: Path) -> Path:
               "generated_manifests": {str(path): digest(path) for path in (application_path, framework_path)}}
     libraries = [renderer]
     launcher = native / "libcjgui_macos_application_launcher.a"
-    if launcher.exists():
+    if not testing and launcher.exists():
         libraries.append(launcher)
     record["native_libraries"] = {str(path): digest(path) for path in libraries}
     fingerprint = native / "cjgui_macos_application_host.fingerprint"

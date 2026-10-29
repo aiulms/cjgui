@@ -477,7 +477,10 @@ public class CjguiComposableUiTableSource <: CjguiComposableUiVariableHeightList
                 growX: if (columnWidth > 0) { 0 } else { 1 },
                 minWidth: if (columnWidth > 0) { 0 } else { column.minWidth },
                 padding: tableStyle.cellPadding,
-                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER, clipsContent: true)
+                // The header row already clips; a second nested clip here
+                // pushed a table inside a scroll region past the four-clip
+                // native capacity. Text still ellipsizes inside the cell.
+                alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
             let cell = cjguiComposableHorizontal(-1, "${instanceKey}-header-cell-${column.key}",
                 cellStyle, identity: Some(headerCellIdentityFor(column.key)))
             let contentStyle = CjguiComposableUiStyle(growX: 1, fontSize: tableStyle.fontSize,

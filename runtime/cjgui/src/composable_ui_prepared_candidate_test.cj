@@ -306,8 +306,8 @@ func testPacedCandidateAcceptedNativeInputCancelsPreparationWithoutFreezingFifo(
         budget.end()
         let token = window.testSessionToken()
         @Assert(unsafe { cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(
-            token, 9883u64) }, 0)
-        @Assert(unsafe { cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(token) }, 0)
+            token, 9883u64) }, 0i32)
+        @Assert(unsafe { cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(token) }, 0i32)
         @Assert(budget.begin(), true)
         let turn = window.pump(0u32)
         budget.end()

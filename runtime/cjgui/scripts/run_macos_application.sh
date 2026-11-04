@@ -315,13 +315,22 @@ for resource in "${CJGUI_MACOS_APP_RESOURCES[@]}"; do
     echo "cjgui macOS application host: missing configured resource $resource" >&2
     exit 2
   fi
-  destination="$(basename "$resource")"
+  # App-local files keep their path relative to the application root so a
+  # declared `assets/icon.png` resolves under bundle Resources/assets. Shared
+  # runtime resources retain the historic flat-basename destination.
+  destination="$(python3 -c 'import os, sys; root = os.path.realpath(sys.argv[1]); source = os.path.realpath(sys.argv[2]); relative = os.path.relpath(source, root); print(relative if relative != os.pardir and not relative.startswith(os.pardir + os.sep) else os.path.basename(sys.argv[2]))' "$APP_DIR" "$resource")"
+  if [[ "$destination" == /* || "$destination" == . || "$destination" == .. || "$destination" == ../* || "$destination" == */../* || "$destination" == */.. ]]; then
+    echo "cjgui macOS application host: invalid resource destination $destination" >&2
+    exit 2
+  fi
   if [[ -n "${RESOURCE_DESTINATIONS[$destination]:-}" ]]; then
-    echo "cjgui macOS application host: duplicate configured resource basename $destination" >&2
+    echo "cjgui macOS application host: duplicate configured resource destination $destination" >&2
     exit 2
   fi
   RESOURCE_DESTINATIONS[$destination]=1
-  cp "$resource" "$BUNDLE_STAGING_DIR/Contents/Resources/$destination"
+  resource_destination="$BUNDLE_STAGING_DIR/Contents/Resources/$destination"
+  mkdir -p "${resource_destination:h}"
+  cp "$resource" "$resource_destination"
 done
 
 cp "$APP_EXECUTABLE" "$BUNDLE_STAGING_DIR/Contents/MacOS/$CJGUI_MACOS_APP_EXECUTABLE_NAME"

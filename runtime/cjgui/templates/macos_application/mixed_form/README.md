@@ -33,7 +33,7 @@ python3 framework/cjgui/native/scripts/verify_cjpm_mac_testing_link.py \
 完整公共契约见框架 `FONT_RESOURCES.md`，实际支持仍为 experimental macOS；不承诺旁白或其他平台。
 
 
-Experimental，当前交付 macOS / Cangjie 1.1.3。此模板是内存中的打印预设示例；退出后重新初始化，不是生产数据库。独立客户端是真实公共调用，没有使用模型服务。
+Experimental，当前交付 macOS / Cangjie 1.1.3。不带 `--work-session` 时，打印预设示例只保存在内存中并在退出后重新初始化；显式启用业务工作会话时，仅卡片A/B的草稿与已应用值可保存。此功能不是生产数据库。独立客户端是真实公共调用，没有使用模型服务。
 
 可选公共组合模式：`./run.sh --commands`。这仍默认离线；原手写字段可直接编辑。
 工具栏、⌘P 操作面板、操作按钮的右键菜单与原生菜单投影同一组命令，Apply／Reset 的标签、
@@ -49,6 +49,39 @@ session 和界面文件，关闭前由同一保护检查全部工作区的未保
 点击“开启本地协作”后，`client.py generate` 再按实际目录创建同字段的生成编辑器、滑块及图片；
 `client.py reorder` 保留 key 调整真实结构。手写／生成区都不存第二份业务草稿。
 `--commands --collaboration` 可以显式组合启动；两个选项均非默认。
+
+协作连接启用时，应用显式授权只读 `GET_WINDOW_TARGETS`、`GET_WINDOW_PROGRESS` 和
+`GET_WINDOW_INTERACTION`，并把当前 `CjguiMacosApplication` 注册为窗口目标目录与定向进度提供者。
+这不是框架默认权限，也不授予 `GET_WINDOW_CONTEXT`。先用 `window-targets` 读取本连接当前的
+opaque 窗口标识，再把该值显式传给进度或交互读取；已关闭、过期或不属于此连接的 target
+由应用以 `unknown_window_target` 拒绝，格式错误的 target 由客户端在发送前拒绝；两者都不回退
+到其他仍打开的窗口：
+
+```sh
+python3 client.py "$DESCRIPTOR" window-targets
+python3 client.py "$DESCRIPTOR" window-progress --window-target "$WINDOW_TARGET"
+python3 client.py "$DESCRIPTOR" window-interaction --window-target "$WINDOW_TARGET"
+```
+
+每个结果保留原始响应和 typed entries；窗口进度至多含四条视口摘要，交互读取只投影焦点、
+选择与活动层。它们是同一 target 的只读状态，既不选择业务卡片，也不执行 Apply。
+权限未授予时返回 `unauthorized_action`，target 不再存活时返回 `unknown_window_target`。
+
+可选业务工作会话：`./run.sh --work-session "/你的目录/print-presets.session"`。该选项在
+新进程创建 endpoint 前读取并校验应用 schema，再恢复 cardA/cardB 两个稳定 owner 的 draft、applied
+基线、字段/业务版本和 A/B 选择；不会 Apply 草稿，也不会恢复旧窗口、endpoint 或 ticket。当前界面显示五张卡，
+但业务会话只保存卡片A/B，其他卡片不纳入保存并在新进程中重新初始化。工作区按钮和 File 菜单的
+“保存卡片A/B工作会话”都会显式保存。关闭时若卡片A/B业务会话有未保存改动，会显示保存卡片A/B并继续关闭、
+放弃卡片A/B未保存会话并关闭、取消关闭三项；关闭说明和状态也标明保存范围。保存失败会留在窗口并保留原文件。
+路径不存在时按新会话启动，不显示 `file_read_failed`；路径已存在但读取或校验失败时明确显示未载入且不采用文件内容，
+旧文件保持不变。无参数时此功能完全关闭，原有关闭流程不变。会话文件最大 32 MiB，并与主/摘要界面文档分别保存。
+
+启用后可从另一终端用 `python3 client.py DESCRIPTOR work-session-readback` 一次命令逐 owner 读取两个 owner 的
+applied/draft、dirty、版本、Apply/Cancel 可用性及当前新 endpoint identity。继续操作仍走公共 owner：
+`card-set --instance cardA|cardB --field jobName --value "新草稿"`、`card-apply --instance cardA`
+或 `card-cancel --instance cardA`。截断/长度不匹配、无效 UTF-8、错 schema、业务 owner/schema
+不匹配及尺寸超限都会拒绝载入且不部分改写已有内存状态；载入后若文件被外部改写，保存会拒绝覆盖。
+envelope 提供版本、长度和严格应用校验，没有 checksum 或 tamper-authentication 保证。
 
 `python3 client.py DESCRIPTOR check-refusal` 用错误 capability 做一次真实拒绝读取，
 typed client 必须具名报错，并核对原 owner 未变化；不打印连接凭据。
@@ -108,6 +141,12 @@ session；应用无需复制启动观察者。同步启动预算结束后仍由�
 
 字段 TEXT / INTEGER / BOOLEAN、标签、必填、长度、数字范围和动作签名供手写、生成和外部发现共同消费。只读文本可用 `textMaxLines` / `textOverflow`，完整业务值不截断。此模板不承诺其他平台宿主、任意并行业务数据库、真实模型生成或完整 IME 验收。
 
+单行 TEXT/INTEGER 字段的 Return 由框架系统输入代理消费，不写入换行，也不结束编辑；需要换行的正文用
+`cjguiComposableMultilineTextInput`，它的 Return 仍由 TextKit 插入换行。系统组字进行中的
+Enter/Esc 继续归文本服务，不当作普通单行回车。业务草稿/已应用值和版本归应用 domain；焦点、
+UTF-16 选区、候选与组合态归窗口和系统输入代理；外部 `set`/`apply` 走同一个 owner。旧 draft、
+旧绑定或旧选择请求按具名拒绝返回，不改正文也不污染另一个 owner。
+
 同字段多视图连续编辑也使用上述入口：保持当前 TEXT 聚焦时运行
 `client.py DESCRIPTOR set --field jobName --value Package`，正常刷新会把同一 owner
 的值投影到两区和原生输入代理，下一笔系统输入直接以该值为基线。无需换焦点、
@@ -155,6 +194,41 @@ AX 状态都为不可编辑，工厂若把被 block 的字段仍挂成可编辑�
 `composite_element_availability_mismatch` 拒绝；只读副本（普通文本）不受影响。
 每张卡的业务 owner（6301/6302，换绑后 6303）与手写区共用同一字段/动作声明和同一 owner 事实。
 
+### 虚拟集合的共享视口与稳定 key
+
+本模板的 `presetCards` 集合仍由一份业务集合、过滤器和选择对象提供数据。已接受的
+`CjguiGeneratedCollectionView` mount 持有同一 `CjguiComposableUiScrollViewport`；列表行、
+滚动区和定向显露不能各自维护偏移。框架的 fixed/variable list viewport overload 与
+定向 reveal 是 experimental，完整签名和进度边界见
+[`LAYOUT_PRIMITIVES.md`](../../../LAYOUT_PRIMITIVES.md)。
+
+外部客户端可在当前 domain version 上请求显露稳定 key `card30`：
+
+```sh
+python3 framework/cjgui/shared_operation_core/client.py "$DESCRIPTOR" --json invoke "$DOMAIN_VERSION" REVEAL_CARD_KEY \
+  --target 6200 --arg cardKey=card30
+```
+
+本应用先在当前活动集合中解析 key，再将请求交给已接受的
+`preset-business-collection` mount。回执中的 `reveal_requested_card30_view_data_card30_viewport_preset-business-collection`
+只证明显露请求获接受；它不选择 `card30`，不 Apply、不改草稿/已应用值，也不推进
+owner/domain 业务版本。客户端要先用上面的 `window-progress` 等待同一窗口的 accepted scene，再读取最多四条
+`WINDOW_VIEWPORT` 的 requested/accepted/pending 摘要；这份摘要不带目标 key。随后仍须从
+同次已接受树/可见 AX 行身份和有效几何确认 `data:card30` 已可见，最后才由人选择。
+仅有 `APPLIED=true`、请求 offset 或 viewport accepted offset 都不能替代该行可见证明。
+
+普通键盘导航从列表的已接受 scroll-area 事件进入。应用先按事件携带的 viewport 与当前
+accepted mount 取对应 `CjguiGeneratedCollectionView`，再调用框架的 accepted-view 重载；它按
+当前排序/筛选后的稳定 key 导航并请求该 mount 显露。仅当事件被该视图接收且选择键语义需要
+业务选中时，应用才走现有 `SELECT_CARD` owner 动作。旧 mount、别的 viewport 或退役目标不
+改变业务选择；字段内键盘输入仍沿原字段/range 路由，不会被集合导航分支消费。键盘焦点/显露
+请求被接受也不等于目标已显示，仍要独立读取 accepted scene 和目标行的真实几何。
+
+若目标 key 不在当前过滤/排序后的集合中，或 mount/viewport 身份不匹配、已退役，动作应
+返回明确拒绝并保留业务选择和 owner。过滤到 `30` 后再清空是一次真实 source 更新；每次
+显露都重新读取 domain version 和当前活动顺序。客户端不得用旧版本重试，也不得把 AX
+可见性当成业务选择授权。该短链的正常应用验证仍单独记录，不由此文档宣称已通过。
+
 此接口及字段均为 experimental；旧 binding 默认 `formFeedback() = None`，旧协议
 即使含 `ERROR none` 也只得到 `validation_state=unknown`，不能推断校验通过。
 原 `fields()` 及 FIELD 前缀/既有 token 保留，新 token 为增量扩展；未接入原子表单快照的
@@ -185,3 +259,17 @@ python3 client.py DESCRIPTOR ui-undo --history-baseline observed.json
 ```
 
 客户端只把这三项转交公共 `cjgui_generated_edit`，不暗中刷新旧观察或重投。撤销后有新接受修改会裁掉 redo；错过外部版本、条目超限和文件/会话切换有明确边界。保存不持久化历史；正常关闭会断开旧 workspace，重新打开从新会话开始。完整能力事实、拒绝、限制与公共 Python 用法见框架 `shared_operation_core/GENERATED_EDITING.md` 的 Optional UI-document undo/redo。
+
+### 同时有业务与界面未保存时
+
+关闭先检查可选 A/B 工作会话，再检查界面文档。逐步放弃只适用于本次关闭及当时的内容；取消、相关内容/版本变化或保存失败会撤销旧决定，下一次关闭重新检查。放弃不写文件、不 Apply；保存业务不等于保存界面。⌘Q 的参与窗口在全部检查通过前保留各自决定，任一窗口取消或保存失败会撤销这次退出的决定。各文件沿已有独立保护保存，不提供跨业务/多界面文件的原子事务；前面已成功保存的文件不会因后面失败而隐式回滚。
+
+## 有界资源消费检查
+
+`./run.sh --resource-cycles` 在正常应用中执行固定十轮自有窗口、生成区、图片／文字／效果替换与滚动，然后正常关闭。它显式开启资源诊断，不代表默认 OFF 的性能样本，也不模拟键盘或真实模型调用。
+
+每轮检查实际接受的生成节点、已提交效果 pass、完成帧、图片缓存及引用；关闭后的排空同时检查全应用的已观测效果在途目标，不能用主窗的零值替代已关副窗。全应用效果数字只覆盖启用观测后的提交；缓存允许按声明预算驻留。原始报告含 initial、十组 active/drained 和 final，任何中途失败保留已采样本并输出失败终态。
+
+可将完整输出交给 `python3 scripts/verify_resource_cycle_report.py LOG` 独立检查。必须同时核对报告终态与进程状态；单独的退出码、RSS、GPU 完成或这些资源数字均不证明 drawable 已实际呈现，也不证明无限期运行无泄漏。
+
+标准 Cangjie 测试执行目录没有 `.app` 的资源目录。通过 `verify_cjpm_mac_testing_link.py` 运行这两个资源测试时，使用三次 `--test-resource` 显式提供框架 `resources` 下的 `preview-swatch.png`、`preview-swatch.jpg` 和 `preview-swatch-v2.jpg`；驱动记录原件哈希并放入其自有测试目录，拒绝覆盖不同内容的执行产物。普通 App 继续由原 `CJGUI_MACOS_APP_RESOURCES` 声明装入相同资产。

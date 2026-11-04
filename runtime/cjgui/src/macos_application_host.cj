@@ -158,6 +158,12 @@ private class CjguiMacosApplicationLoopReferenceRegistry {
         }
     }
 
+    public static func isEmpty(): Bool {
+        return synchronized(CjguiMacosApplicationLoopReferenceRegistry.referenceLock) {
+            CjguiMacosApplicationLoopReferenceRegistry.activeApplicationIdentifiers.size == 0
+        }
+    }
+
     /// A process-level standard Quit without a key window has no focus
     /// routing information. Only the sole live application lifecycle owner
     /// may consume that intent; more than one owner deliberately remains
@@ -241,11 +247,30 @@ private class CjguiMacosApplicationWindowEntry {
     }
 }
 
+private class CjguiMacosApplicationExitBasis {
+    let identifier: CjguiMacosApplicationWindowIdentifier
+    let scene: Int64
+    let owner: Int64
+    init(identifier: CjguiMacosApplicationWindowIdentifier, scene: Int64, owner: Int64) {
+        this.identifier = identifier; this.scene = scene; this.owner = owner
+    }
+}
+
 /// The application owns final process exit, while its consumer owns the
 /// business decision to allow it. A `false` result must leave every live
 /// window and the shared endpoint usable.
 public interface CjguiMacosApplicationExitDecisionProvider {
     func requestApplicationExit(): Bool
+}
+
+/// Optional lifecycle for a decision that retains per-window permissions
+/// until the application has actually committed the exit. After native commit
+/// all participating windows are logically closed and the application rejects
+/// new work before invoking `applicationExitDidCommit`. Callback exceptions
+/// are reported by name and cannot stop post-commit resource retirement.
+public interface CjguiMacosApplicationExitDecisionLifecycle {
+    func applicationExitDidCommit(): Unit
+    func applicationExitDidCancel(): Unit
 }
 
 /// Application-owned same-process multi-window lifecycle. It is deliberately
@@ -268,6 +293,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private let applicationIdentity: String
     private var windows: ArrayList<CjguiMacosApplicationWindowEntry>
     private var externalConnection: ?CjguiSharedOperationExternalConnection
+    // Additional already-started endpoints owned by an opt-in single Host.
+    private let hostExitConnections = ArrayList<CjguiSharedOperationExternalConnection>()
+    private var hostExitManaged = false
+    private var hostExitNativeCommitted = false
     private let exitDecisionProvider: ?CjguiMacosApplicationExitDecisionProvider
     private var closed: Bool
     private var nextGeneration: Int64
@@ -289,6 +318,17 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     private var isPumpingTurn: Bool
     private var deferredCloseIdentifiers: ArrayList<CjguiMacosApplicationWindowIdentifier>
     private var deferredAuthorizedClose: Bool
+    private var deferredApplicationExit: Bool
+    // Set only after native atomic commit. Public reentry cannot add work to
+    // the participant set whose native sessions have already been destroyed.
+    private var applicationExitCommitInProgress = false
+    private var applicationExitDecisionInProgress = false
+    private let closeLifecycleTraceEnabled = getVariable("CJGUI_CLOSE_LIFECYCLE_TRACE") == Some("1")
+    private var closeLifecycleTraceLast = ""
+    private var closeLifecycleTraceRows: Int64 = 0
+    private var applicationExitApproved: Bool
+    private var applicationExitLifecycleFinalized: Bool
+    private let applicationExitBasis: ArrayList<CjguiMacosApplicationExitBasis>
     private var ownsProcessLoopReference: Bool
     private var ownsApplicationExitLifecycleReference: Bool
     private var testPostRefreshObserver: ?CjguiMacosApplicationPostRefreshObserver
@@ -320,6 +360,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         this.isPumpingTurn = false
         this.deferredCloseIdentifiers = ArrayList<CjguiMacosApplicationWindowIdentifier>()
         this.deferredAuthorizedClose = false
+        this.deferredApplicationExit = false
+        this.applicationExitApproved = false
+        this.applicationExitLifecycleFinalized = false
+        this.applicationExitBasis = ArrayList<CjguiMacosApplicationExitBasis>()
         this.ownsProcessLoopReference = false
         this.ownsApplicationExitLifecycleReference = false
         this.testPostRefreshObserver = None
@@ -335,6 +379,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// C：应用选择的主题策略（token 形式）。固定浅色/深色优先于系统跟随；
     /// 未知 token 被拒并保持当前选择，不做静默归一化。
     public func setThemePreference(token: String): Bool {
+        if (closed || applicationExitCommitInProgress) { return false }
         if (let Some(preference) <- CjguiComposableUiPlatformStateCodec.themePreferenceFromToken(token)) {
             selectedThemePreference = preference
             return true
@@ -348,6 +393,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     }
 
     public func setAccentPreference(token: String): Bool {
+        if (closed || applicationExitCommitInProgress) { return false }
         if (CjguiComposableUiAccentPreference.fromToken(token).isNone()) { return false }
         selectedAccentPreferenceToken = token
         for (entry in windows) { let _ = entry.composableWindow.selectAccentPreference(token) }
@@ -360,7 +406,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         controller: CjguiComposableUiController,
         configuration!: CjguiMacosApplicationWindowConfiguration = CjguiMacosApplicationWindowConfiguration.standard()
     ): CjguiMacosApplicationWindowOpenResult {
-        if (closed) {
+        if (closed || applicationExitCommitInProgress) {
             return CjguiMacosApplicationWindowOpenResult(false, None, "application_closed")
         }
         // Starting an AppKit session from a controller callback would mutate
@@ -429,6 +475,60 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         return CjguiMacosApplicationWindowOpenResult(true, Some(identifier), "opened")
     }
 
+    // A Host-owned engine must never report application-exit commit for a
+    // failed startup or an ordinary local close.
+    func configureForHostExit(): Unit { hostExitManaged = true }
+
+    // A single-window Host already exposed this same window for controller and
+    // connection binding before start. Adopt it into the existing application
+    // exit engine without constructing a second window or changing its budget.
+    func adoptStartedHostWindow(window: CjguiComposableUiWindow): Bool {
+        if (closed || windows.size != 0 || !window.isOpen() || applicationIdentity.size == 0) { return false }
+        let identifier = CjguiMacosApplicationWindowIdentifier(applicationIdentity,
+            "${applicationIdentity}_window_1", 1)
+        if (!CjguiMacosApplicationLoopReferenceRegistry.retain(applicationIdentity)) { return false }
+        ownsProcessLoopReference = true
+        internalRendererRetainApplicationExitLifecycleOwner()
+        ownsApplicationExitLifecycleReference = true
+        hostExitManaged = true
+        windows.add(CjguiMacosApplicationWindowEntry(identifier, window))
+        nextGeneration = 2
+        return true
+    }
+
+    // The Host owns startup/pumping, while this engine owns these endpoints'
+    // application-exit reservations and terminal cleanup. They are never
+    // started or pumped a second time here.
+    func adoptHostExitConnection(connection: CjguiSharedOperationExternalConnection): Bool {
+        if (closed || applicationExitCommitInProgress) { return false }
+        if (let Some(primary) <- externalConnection) { if (refEq(primary, connection)) { return false } }
+        for (existing in hostExitConnections) { if (refEq(existing, connection)) { return false } }
+        hostExitConnections.add(connection)
+        // An added endpoint changes the set whose outstanding requests must be
+        // settled; a prior approval cannot authorize the changed basis.
+        applicationExitApproved = false
+        return true
+    }
+
+    // Host turns use the same reentry guard as Application turns. In
+    // particular, a provider cannot recursively commit while its first
+    // decision callback is still on the stack.
+    func beginHostExitTurn(): Bool {
+        if (closed || isPumpingTurn || applicationExitCommitInProgress) { return false }
+        isPumpingTurn = true
+        return true
+    }
+
+    func endHostExitTurn(): Unit { isPumpingTurn = false }
+
+    // Called after the Host has drained its actual scheduler turn. The normal
+    // application exit machinery remains the sole owner of the decision.
+    func serviceHostExitAfterTurn(handledInput: Bool, externalActions: Int64): Unit {
+        if (applicationExitApproved && (handledInput || externalActions > 0)) { applicationExitApproved = false }
+        consumeNativeApplicationExitIntent()
+        applyDeferredMutations()
+    }
+
     /// Public owner identity used only to bind scalar window identifiers. It
     /// is not a native session token and has no authority on its own.
     public func applicationIdentifier(): String {
@@ -438,7 +538,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// Attach at most one process-level connection. Its owner/authorization is
     /// supplied by the application; closing a single window never closes it.
     public func attachExternalConnection(connection: CjguiSharedOperationExternalConnection): Bool {
-        if (closed) {
+        if (closed || applicationExitCommitInProgress) {
             return false
         }
         if (let Some(_) <- externalConnection) {
@@ -553,7 +653,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// local to that window and leaves all siblings, the connection and the
     /// application loop alive.
     public func requestClose(identifier: CjguiMacosApplicationWindowIdentifier): Bool {
-        if (closed || !identifier.isValid()) {
+        if (closed || applicationExitCommitInProgress || !identifier.isValid()) {
             return false
         }
         if (let None <- entryFor(identifier)) {
@@ -573,21 +673,35 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// forceful `close()` remains for an already-authorized shutdown such as
     /// startup rollback or a caller that has separately completed this step.
     public func requestApplicationExit(): Bool {
-        if (closed) {
-            return false
-        }
-        if (let Some(provider) <- exitDecisionProvider) {
-            if (!provider.requestApplicationExit()) {
-                return false
+        if (closed || applicationExitCommitInProgress || exitDecisionProvider.isNone()) { return false }
+        if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=request_exit pumping=${isPumpingTurn}") }
+        deferredApplicationExit = true
+        cjguiNotifySchedulingWork()
+        if (isPumpingTurn || applicationExitDecisionInProgress) { return true }
+        return processApplicationExit()
+    }
+
+    private func traceCloseLifecycle(state: String): Unit {
+        if (!closeLifecycleTraceEnabled || closeLifecycleTraceRows >= 64 || state == closeLifecycleTraceLast) { return }
+        closeLifecycleTraceLast = state; closeLifecycleTraceRows += 1
+        println("CJGUI_CLOSE_LIFECYCLE scope=host ${state}")
+        getStdOut().flush()
+    }
+
+    /// Cancel a queued ordinary application-exit request. Forceful `close()`
+    /// is a separate operation and is not revoked by this method.
+    public func cancelPendingApplicationExit(notifyProvider!: Bool = true): Unit {
+        if (applicationExitCommitInProgress && notifyProvider) { return }
+        deferredApplicationExit = false
+        applicationExitApproved = false
+        applicationExitBasis.clear()
+        if (notifyProvider) {
+            if (let Some(provider) <- exitDecisionProvider) {
+                if (let Some(lifecycle) <- (provider as CjguiMacosApplicationExitDecisionLifecycle)) {
+                    lifecycle.applicationExitDidCancel()
+                }
             }
-            if (isPumpingTurn) {
-                deferredAuthorizedClose = true
-            } else {
-                closeImmediately()
-            }
-            return true
         }
-        return false
     }
 
     /// One shared turn: external work is admitted once, all live windows get
@@ -625,6 +739,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     }
 
     private func pumpTurn(turnBudgetMs: UInt32, maximumIdleWaitMs: UInt32): CjguiMacosApplicationTurnResult {
+        if (applicationExitCommitInProgress) {
+            return CjguiMacosApplicationTurnResult(false, 0, 0, 0u32, 0, None)
+        }
         // A controller may synchronously re-enter the application while an
         // event is being delivered. It gets no second event drain or wait;
         // structural close requests are queued and applied by the outer turn.
@@ -811,6 +928,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             }
         }
         consumeNativeApplicationExitIntent()
+        if (applicationExitApproved && (handledInput || externalActionCount > 0)) {
+            applicationExitApproved = false
+        }
         applyDeferredMutations()
         reapClosedEntries()
         if (!isOpen()) {
@@ -858,6 +978,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         schedulingWaitBudget = waitBudget
         let pumpWait = if (cjguiCommonSchedulingEnabled()) { 0u32 } else { min(waitBudget, 16u32) }
+        var tailHandledInput = false
         if (!hasPostRefreshObserver && waitBudget > 0u32) {
             // A shared resource wake belongs to any live window. Drain all
             // accepted FIFOs first; then consume those windows' retained visual
@@ -869,6 +990,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
                 if (let Some(liveWindow) <- window(identifier)) {
                     let drained = liveWindow.pumpEventsWithoutRefresh(
                         if (identifier.value == waitedIdentifier.value) { pumpWait } else { 0u32 })
+                    handledInput = handledInput || drained.didApplyHumanAction
+                    tailHandledInput = tailHandledInput || drained.didApplyHumanAction
                     if (liveWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                         return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
                             0u32, elapsedMs(started), None)
@@ -886,6 +1009,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         } else if (let Some(waitedWindow) <- window(waitedIdentifier)) {
             let waited = if (hasPostRefreshObserver) { waitedWindow.pump(pumpWait) }
                 else { waitedWindow.pumpEventsWithoutRefresh(pumpWait) }
+            handledInput = handledInput || waited.didApplyHumanAction
+            tailHandledInput = tailHandledInput || waited.didApplyHumanAction
             if (waitedWindow.nativeStatus() == CJGUI_INTERNAL_RENDERER_NOT_MAIN_THREAD) {
                 return CjguiMacosApplicationTurnResult(isOpen(), liveWindowCount(), externalActionCount,
                     0u32, elapsedMs(started), None)
@@ -896,6 +1021,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             }
         }
         consumeNativeApplicationExitIntent()
+        if (applicationExitApproved && tailHandledInput) {
+            applicationExitApproved = false
+        }
         applyDeferredMutations()
         reapClosedEntries()
         let result = CjguiMacosApplicationTurnResult(
@@ -939,6 +1067,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         // fail closed instead of selecting an arbitrary sibling window.
         if (ownsApplicationExitLifecycleReference && CjguiMacosApplicationLoopReferenceRegistry.isExclusiveOwner(
             applicationIdentity) && internalRendererHasUnkeyedApplicationExitRequest()) {
+            if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=consume_unkeyed") }
             internalRendererCompleteApplicationExitRequest()
             testExitIntentTraceValue = "unkeyed_exit_intent_consumed"
             let _ = requestApplicationExit()
@@ -947,6 +1076,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         for (identifier in windowIdentifiers()) {
             if (let Some(composableWindow) <- window(identifier)) {
                 if (composableWindow.consumeApplicationExitRequest()) {
+                    if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=consume_42 window=${identifier.value}") }
                     testExitIntentTraceValue = "window_exit_intent_consumed window=${identifier.value}"
                     let _ = requestApplicationExit()
                     return
@@ -960,7 +1090,7 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
     /// decision or a startup failure. It is idempotent and owns connection
     /// cleanup plus the single AppKit stop.
     public func close(): Unit {
-        if (closed) {
+        if (closed || applicationExitCommitInProgress) {
             return
         }
         if (isPumpingTurn) {
@@ -988,6 +1118,10 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         }
         deferredAuthorizedClose = false
         closed = true
+        if (!hostExitManaged || hostExitNativeCommitted) { finalizeApplicationExitLifecycle() }
+        var hostIndex = hostExitConnections.size - 1
+        while (hostIndex >= 0) { hostExitConnections[hostIndex].close(); hostIndex -= 1 }
+        hostExitConnections.clear()
         if (let Some(connection) <- externalConnection) {
             connection.close()
         }
@@ -1000,6 +1134,9 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
             ownsProcessLoopReference = false
             if (CjguiMacosApplicationLoopReferenceRegistry.release(applicationIdentity)) {
                 CjguiMacosApplicationHost.stopApplicationLoop()
+            } else {
+                // An unkeyed Quit may now have exactly one owner.
+                cjguiNotifySchedulingWork()
             }
         }
     }
@@ -1065,6 +1202,161 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         return false
     }
 
+    private func applicationExitBasisMatches(): Bool {
+        if (!applicationExitApproved || applicationExitBasis.size != windows.size) { return false }
+        for (index in 0..windows.size) {
+            let entry = windows[index]
+            let basis = applicationExitBasis[index]
+            let (scene, owner) = entry.composableWindow.applicationExitDecisionVersion()
+            if (entry.identifier.value != basis.identifier.value ||
+                entry.identifier.generation != basis.identifier.generation ||
+                scene != basis.scene || owner != basis.owner) { return false }
+        }
+        return true
+    }
+
+    private func finalizeApplicationExitLifecycle(): Unit {
+        if (applicationExitLifecycleFinalized) { return }
+        applicationExitLifecycleFinalized = true
+        if (let Some(provider) <- exitDecisionProvider) {
+            if (let Some(lifecycle) <- (provider as CjguiMacosApplicationExitDecisionLifecycle)) {
+                try {
+                    lifecycle.applicationExitDidCommit()
+                } catch (error: Exception) {
+                    testCloseTraceValue = "application_exit_lifecycle_exception"
+                    getStdOut().writeln("CJGUI_APPLICATION_EXIT_LIFECYCLE_ERROR reason=application_exit_lifecycle_exception")
+                    getStdOut().flush()
+                }
+            }
+        }
+    }
+
+    // The consumer's Bool decision is made at most once per unchanged owner
+    // basis. A native busy result keeps the intention and the bound decision;
+    // ordinary work can continue and invalidates it before another attempt.
+    private func processApplicationExit(): Bool {
+        if (!deferredApplicationExit || closed) { return false }
+        let sessions = ArrayList<UInt64>()
+        let generations = ArrayList<UInt64>()
+        let participants = ArrayList<CjguiMacosApplicationWindowEntry>()
+        for (entry in windows) {
+            let (token, generation) = match (entry.composableWindow.applicationExitPreflight()) {
+                case Some(value) => value
+                case None =>
+                    if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=preflight_blocked window=${entry.identifier.value}") }
+                    return true
+            }
+            sessions.add(token); generations.add(generation); participants.add(entry)
+        }
+        if (sessions.size == 0) { deferredApplicationExit = false; return false }
+        if (!applicationExitBasisMatches()) {
+            applicationExitApproved = false
+            applicationExitBasis.clear()
+            // Capture the actual participant/owner basis before consulting
+            // the consumer. A callback that changes it cannot authorize a
+            // different set or newer owner state.
+            for (entry in windows) {
+                let (scene, owner) = entry.composableWindow.applicationExitDecisionVersion()
+                applicationExitBasis.add(CjguiMacosApplicationExitBasis(entry.identifier, scene, owner))
+            }
+            applicationExitApproved = true
+            let provider = match (exitDecisionProvider) {
+                case Some(value) => value
+                case None =>
+                    deferredApplicationExit = false
+                    return false
+            }
+            if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=provider_enter windows=${windows.size}") }
+            applicationExitDecisionInProgress = true
+            var allowed = false
+            try {
+                allowed = provider.requestApplicationExit()
+            } catch (error: Exception) {
+                applicationExitApproved = false
+                applicationExitBasis.clear()
+                deferredApplicationExit = false
+                throw error
+            } finally {
+                applicationExitDecisionInProgress = false
+            }
+            if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=provider_return allowed=${allowed}") }
+            if (!allowed) {
+                deferredApplicationExit = false
+                applicationExitApproved = false
+                applicationExitBasis.clear()
+                return false
+            }
+            if (!deferredApplicationExit || closed) { return false }
+            if (!applicationExitBasisMatches()) {
+                applicationExitApproved = false
+                applicationExitBasis.clear()
+                return true
+            }
+        }
+        if (!applicationExitBasisMatches() || sessions.size != windows.size) { return true }
+        for (index in 0..windows.size) {
+            let (token, generation) = match (windows[index].composableWindow.applicationExitPreflight()) {
+                case Some(value) => value
+                case None => return true
+            }
+            if (token != sessions[index] || generation != generations[index]) { return true }
+        }
+        let reservedConnections = ArrayList<CjguiSharedOperationExternalConnection>()
+        if (let Some(connection) <- externalConnection) {
+            if (!connection.tryReserveApplicationExit()) {
+                if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=external_reservation_blocked") }
+                return true
+            }
+            reservedConnections.add(connection)
+        }
+        for (connection in hostExitConnections) {
+            if (!connection.tryReserveApplicationExit()) {
+                var index = reservedConnections.size - 1
+                while (index >= 0) { reservedConnections[index].releaseApplicationExitReservation(); index -= 1 }
+                if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=external_reservation_blocked") }
+                return true
+            }
+            reservedConnections.add(connection)
+        }
+        let status = internalRendererExitCommit(sessions.toArray(), generations.toArray())
+        if (closeLifecycleTraceEnabled) { traceCloseLifecycle("stage=batch_commit status=${status}") }
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            var index = reservedConnections.size - 1
+            while (index >= 0) { reservedConnections[index].releaseApplicationExitReservation(); index -= 1 }
+            return true
+        }
+        deferredApplicationExit = false
+        applicationExitCommitInProgress = true
+        if (hostExitManaged) { hostExitNativeCommitted = true }
+        // Close admission and mark every exact committed participant before
+        // any public lifecycle callback can re-enter this application.
+        deferredAuthorizedClose = true
+        var retirementFailed = false
+        for (index in 0..participants.size) {
+            if (!participants[index].composableWindow.markCommittedApplicationExit(sessions[index])) {
+                retirementFailed = true
+                testCloseTraceValue = "application_exit_committed_retirement_identity_mismatch token=${sessions[index]}"
+            }
+        }
+        finalizeApplicationExitLifecycle()
+        for (index in 0..participants.size) {
+            if (!participants[index].composableWindow.finishCommittedApplicationExit(sessions[index])) {
+                retirementFailed = true
+                testCloseTraceValue = "application_exit_committed_retirement_identity_mismatch token=${sessions[index]}"
+            }
+        }
+        reapClosedEntries()
+        for (connection in reservedConnections) { connection.finishCommittedApplicationExitReservation() }
+        if (retirementFailed) {
+            deferredAuthorizedClose = false
+            applicationExitCommitInProgress = false
+            return false
+        }
+        closeImmediately()
+        applicationExitCommitInProgress = false
+        return true
+    }
+
     private func applyDeferredMutations() {
         let requestedCloses = deferredCloseIdentifiers
         deferredCloseIdentifiers = ArrayList<CjguiMacosApplicationWindowIdentifier>()
@@ -1076,6 +1368,8 @@ public class CjguiMacosApplication <: CjguiSharedOperationWindowProjectionTarget
         if (deferredAuthorizedClose) {
             deferredAuthorizedClose = false
             closeImmediately()
+        } else if (deferredApplicationExit) {
+            let _ = processApplicationExit()
         }
     }
 
@@ -1181,6 +1475,11 @@ public class CjguiMacosApplicationHost {
     private let configuration: CjguiMacosApplicationWindowConfiguration
     private let composableWindow: CjguiComposableUiWindow
     private let defaultOwnerTurnBudget = CjguiOwnerTurnBudget()
+    private let legacyLoopIdentity: String
+    private var ownsLegacyLoopReference = false
+    private let exitApplication: ?CjguiMacosApplication
+    private var exitWindowAdopted = false
+    private var hostPumpingTurn = false
     private var externalConnection: ?CjguiSharedOperationExternalConnection
     // Additional endpoints keep their own pump and authorization. The Host
     // owns their final close before the AppKit loop is stopped.
@@ -1193,9 +1492,16 @@ public class CjguiMacosApplicationHost {
     private var selectedAccentPreferenceToken: String = "system"
 
     public init(controller: CjguiComposableUiController,
-        configuration!: CjguiMacosApplicationWindowConfiguration = CjguiMacosApplicationWindowConfiguration.standard()) {
+        configuration!: CjguiMacosApplicationWindowConfiguration = CjguiMacosApplicationWindowConfiguration.standard(),
+        exitDecisionProvider!: ?CjguiMacosApplicationExitDecisionProvider = None) {
         this.configuration = configuration
         this.composableWindow = CjguiComposableUiWindow(controller, configuration: configuration)
+        this.legacyLoopIdentity = CjguiMacosApplicationIdentityAllocator.allocate()
+        this.exitApplication = match (exitDecisionProvider) {
+            case Some(provider) => Some(CjguiMacosApplication(maximumWindowCount: 1, exitDecisionProvider: Some(provider)))
+            case None => None
+        }
+        if (exitDecisionProvider.isSome()) { this.composableWindow.enableDeferredHostCloseDecision() }
         this.composableWindow.installDefaultOwnerTurnBudget(defaultOwnerTurnBudget)
         this.externalConnection = None
         this.adoptedExternalConnections = ArrayList<CjguiSharedOperationExternalConnection>()
@@ -1203,6 +1509,7 @@ public class CjguiMacosApplicationHost {
         this.closed = false
         this.platformStateTracker = CjguiComposableUiPlatformStateTracker()
         this.selectedThemePreference = CjguiComposableUiThemePreference.SystemFollow
+        if (let Some(application) <- this.exitApplication) { application.configureForHostExit() }
     }
 
     /// The framework window remains a Cangjie projection surface. Returning it
@@ -1277,6 +1584,9 @@ public class CjguiMacosApplicationHost {
         for (adopted in adoptedExternalConnections) {
             if (refEq(adopted, connection)) { return false }
         }
+        if (let Some(application) <- exitApplication) {
+            if (started && !application.adoptHostExitConnection(connection)) { return false }
+        }
         adoptedExternalConnections.add(connection)
         return true
     }
@@ -1305,10 +1615,22 @@ public class CjguiMacosApplicationHost {
             close()
             return false
         }
+        if (let Some(application) <- exitApplication) {
+            if (!application.adoptStartedHostWindow(composableWindow)) { close(); return false }
+            exitWindowAdopted = true
+        } else {
+            if (!CjguiMacosApplicationLoopReferenceRegistry.retain(legacyLoopIdentity)) { close(); return false }
+            ownsLegacyLoopReference = true
+        }
         if (let Some(connection) <- externalConnection) {
-            if (!connection.start()) {
-                close()
-                return false
+            if (!connection.start()) { close(); return false }
+            if (let Some(application) <- exitApplication) {
+                if (!application.adoptHostExitConnection(connection)) { close(); return false }
+            }
+        }
+        if (let Some(application) <- exitApplication) {
+            for (connection in adoptedExternalConnections) {
+                if (!application.adoptHostExitConnection(connection)) { close(); return false }
             }
         }
         started = true
@@ -1378,9 +1700,17 @@ public class CjguiMacosApplicationHost {
             close()
             return false
         }
+        if (exitApplication.isSome() && hostPumpingTurn) { return isOpen() }
         let budget = composableWindow.attachedOwnerTurnBudget().getOrThrow()
         let ownsTurn = !budget.isActive()
         if (ownsTurn && !budget.begin()) { throw Exception("owner_turn_unavailable") }
+        if (let Some(application) <- exitApplication) {
+            if (!application.beginHostExitTurn()) {
+                if (ownsTurn) { budget.end() }
+                return isOpen()
+            }
+            hostPumpingTurn = true
+        }
         if (ownsTurn) { cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),144u32,0u32,0u32,0u64,UInt64.Max) }
         try {
         // C：先采集本窗最小平台状态，只有事实变化时才重发动效策略；随后推进
@@ -1390,22 +1720,33 @@ public class CjguiMacosApplicationHost {
         cjguiOwnerTraceBoundary(0u64, 0u64, 312u32, 0u32, 0u32, 0u64, UInt64.Max)
         let _ = composableWindow.advanceAnimations(atTime: MonoTime.now())
         cjguiOwnerTraceBoundary(0u64, 0u64, 313u32, 0u32, 0u32, 0u64, UInt64.Max)
-        if (let Some(connection) <- externalConnection) {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithExternalInRound(composableWindow, connection,
+        let turn = if (let Some(connection) <- externalConnection) {
+            CjguiComposableUiWindowTurnScheduler.pumpWithExternalInRound(composableWindow, connection,
                 16u32, 16u32, maximumIdleWaitMs, ownsTurn)
         } else {
-            let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternalInRound(composableWindow,
+            CjguiComposableUiWindowTurnScheduler.pumpWithoutExternalInRound(composableWindow,
                 16u32, maximumIdleWaitMs, ownsTurn)
+        }
+        if (let Some(application) <- exitApplication) {
+            application.serviceHostExitAfterTurn(turn.windowPumpResult.didApplyHumanAction, turn.externalActionCount)
+            let _ = composableWindow.serviceDeferredHostCloseDecision()
         }
         cjguiOwnerTraceBoundary(0u64, 0u64, 314u32, 0u32, 0u32, 0u64, UInt64.Max)
         cjguiOwnerTraceBoundary(0u64, 0u64, 315u32, 0u32, 0u32, 0u64, UInt64.Max)
         if (!composableWindow.isOpen()) {
-            close()
+            // An opt-in engine is still inside its guarded turn; its final
+            // Host cleanup runs after that guard is released in finally.
+            if (exitApplication.isNone()) { close() }
             return false
         }
         cjguiOwnerTraceBoundary(0u64, 0u64, 316u32, 0u32, 0u32, 0u64, UInt64.Max)
         return true
         } finally {
+            if (let Some(application) <- exitApplication) {
+                application.endHostExitTurn()
+                hostPumpingTurn = false
+                if (!composableWindow.isOpen() && !closed) { close() }
+            }
             if (ownsTurn) {
                 budget.end()
                 cjguiOwnerTraceBoundary(0u64,UInt64(budget.turnIdentity()),145u32,0u32,0u32,0u64,UInt64.Max)
@@ -1417,9 +1758,10 @@ public class CjguiMacosApplicationHost {
         return started && !closed && composableWindow.isOpen()
     }
 
-    /// Request the application-owned close decision without reaching into
-    /// AppKit. Rejection leaves this Host usable; acceptance uses normal,
-    /// idempotent Host cleanup.
+    /// Request the application-owned local close decision without reaching
+    /// into AppKit. With an exit provider, true means admitted for processing
+    /// after the original input settles, not that the window has closed.
+    /// Without a provider the legacy synchronous result is unchanged.
     public func requestClose(): Bool {
         if (!isOpen()) {
             return false
@@ -1427,8 +1769,30 @@ public class CjguiMacosApplicationHost {
         if (!composableWindow.requestCloseFromApplication()) {
             return false
         }
+        // Opt-in local close is settled by the original Host pump before its
+        // controller policy; legacy hosts keep the synchronous contract.
+        if (exitApplication.isSome()) { return true }
         close()
         return true
+    }
+
+    /// Request an application-level exit through the explicitly supplied
+    /// provider. A true result means accepted for processing, not committed.
+    public func requestApplicationExit(): Bool {
+        if (!isOpen()) { return false }
+        return match (exitApplication) {
+            case Some(application) => application.requestApplicationExit()
+            case None => false
+        }
+    }
+
+    /// Revoke a pending application-level request; local window-close requests
+    /// remain independent. A consumer may suppress its own cancellation hook
+    /// when it has already cleared the corresponding business approval.
+    public func cancelPendingApplicationExit(notifyProvider!: Bool = true): Unit {
+        if (let Some(application) <- exitApplication) {
+            application.cancelPendingApplicationExit(notifyProvider: notifyProvider)
+        }
     }
 
     /// Use for an argument/configuration failure before a host instance can
@@ -1442,7 +1806,10 @@ public class CjguiMacosApplicationHost {
         if (closed) {
             return
         }
-        composableWindow.close()
+        if (let Some(application) <- exitApplication) {
+            application.close()
+            if (!exitWindowAdopted) { composableWindow.close() }
+        } else { composableWindow.close() }
         if (composableWindow.isOpen()) {
             // The native session still owns its scene and may be waiting for
             // an original present ticket or a legal owner thread. Keep both
@@ -1463,7 +1830,17 @@ public class CjguiMacosApplicationHost {
             connection.close()
         }
         externalConnection = None
+        let partialStart = !started
         started = false
-        CjguiMacosApplicationHost.stopApplicationLoop()
+        if (ownsLegacyLoopReference) {
+            ownsLegacyLoopReference = false
+            if (CjguiMacosApplicationLoopReferenceRegistry.release(legacyLoopIdentity)) {
+                CjguiMacosApplicationHost.stopApplicationLoop()
+            } else {
+                cjguiNotifySchedulingWork()
+            }
+        } else if (partialStart && CjguiMacosApplicationLoopReferenceRegistry.isEmpty()) {
+            CjguiMacosApplicationHost.stopApplicationLoop()
+        }
     }
 }

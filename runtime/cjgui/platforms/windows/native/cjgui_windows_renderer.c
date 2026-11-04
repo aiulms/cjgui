@@ -22,12 +22,35 @@
 #include <math.h>
 #include <winreg.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cjgui_internal_renderer.h"
 #include "cjgui_windows_wic.h"
+
+/* CJGUI_WIN_INPUT_TRACE=<path>：窄桥输入链路一次性诊断，默认关闭。
+   只记录到达/丢弃/入队/清空与 owned 会话声明，不改变任何生产判定。 */
+static FILE *g_winInputTrace;
+static int g_winInputTraceInit;
+static void win_input_trace(const char *fmt, ...) {
+    va_list ap;
+    if (!g_winInputTraceInit) {
+        const char *path;
+        g_winInputTraceInit = 1;
+        path = getenv("CJGUI_WIN_INPUT_TRACE");
+        if (path && path[0]) g_winInputTrace = fopen(path, "ab");
+    }
+    if (!g_winInputTrace) return;
+    fprintf(g_winInputTrace, "T=%llu TH=%lu ",
+        (unsigned long long)GetTickCount64(), (unsigned long)GetCurrentThreadId());
+    va_start(ap, fmt);
+    vfprintf(g_winInputTrace, fmt, ap);
+    va_end(ap);
+    fputc('\n', g_winInputTrace);
+    fflush(g_winInputTrace);
+}
 
 #define CJGUI_WINDOWS_SESSION_CAPACITY 2
 #define CJGUI_WINDOWS_EVENT_CAPACITY 256
@@ -724,6 +747,16 @@ struct CjguiWindowsRendererSession {
     uint32_t focusedNodeKind;
     uint32_t selectionStart16;
     uint32_t selectionEnd16;
+    /* 手写整值编辑器的本地光标/锚点（UTF-16）；selectionStart/End 是它们的
+       有序投影，整值插入/删除仍只读这一对既有字段。 */
+    uint32_t plainCaret16;
+    uint32_t plainAnchor16;
+    uint32_t plainCaretValid;
+    /* A Tab consumed as focus traversal suppresses its own WM_CHAR echo; the
+       echo would otherwise insert a literal tab into the editor just left. */
+    uint32_t suppressNextTabChar;
+    /* 最近一次 FOCUS 事件的目标；Tab/Shift+Tab 从它继续。 */
+    uint64_t focusTraversalNodeId;
     uint8_t *proxyValueUtf8;
     /* Pure paint state: no owner transaction, input ticket or binding mutation. */
     uint64_t selectionPaintDesiredKey;
@@ -1597,6 +1630,9 @@ static int64_t freeze_ime_composition(CjguiWindowsRendererSession *s,
         frozen->compositionId = s->activeCompositionId;
         frozen->bindingEpoch = s->ownedTextSessionBindingEpoch;
         s->imeFrozenCount += 1u;
+        win_input_trace("ime_freeze flags=%llx res=%u mark=%u cursor=%ld en=%u slot=%u",
+            (unsigned long long)flags, resultBytes, markedBytes, (long)cursorValue,
+            s->ownedTextSessionEnabled, i);
         return (int64_t)i;
     }
     free(resultText);
@@ -2789,6 +2825,8 @@ static int windows_push_node_event(CjguiWindowsRendererSession *s, uint32_t inde
     uint32_t selectionStart, uint32_t selectionEnd, double x, double y,
     uint64_t bindingEpoch, const char *payload) {
     if (!s || !entry || !entry->hasNode) return 0;
+    if (kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS && entry->node.nodeId)
+        s->focusTraversalNodeId = entry->node.nodeId;
     int pointer = kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_BEGIN ||
         kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_UPDATE ||
         kind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_POINTER_END ||
@@ -2879,6 +2917,26 @@ static int windows_is_pressable_node(uint32_t kind) {
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT ||
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE;
 }
+
+#define CJGUI_WINDOWS_PLAIN_TEXT_INSERT_UNITS 4096u
+static int windows_plain_text_insert(CjguiWindowsRendererSession *s, const WCHAR *units,
+    uint32_t count);
+static int windows_plain_text_composition(CjguiWindowsRendererSession *s, int64_t imeSlot);
+static int windows_plain_text_delete(CjguiWindowsRendererSession *s, int forward);
+static int windows_plain_text_key(CjguiWindowsRendererSession *s, WPARAM key,
+    int64_t frozenModifiers);
+static int windows_clipboard_write_utf8(HWND owner, const char *utf8, uint32_t length);
+static char *windows_clipboard_read_utf8(HWND owner, uint32_t *outLength);
+static void windows_plain_text_refresh(CjguiWindowsRendererSession *s);
+static int windows_focus_move(CjguiWindowsRendererSession *s, int backwards);
+static int windows_activate_focused(CjguiWindowsRendererSession *s, int64_t frozenModifiers);
+static int windows_layer_escape(CjguiWindowsRendererSession *s, WPARAM key, int64_t frozenModifiers);
+static int windows_focus_scene_entry_index(CjguiWindowsRendererSession *s, uint32_t *outIndex);
+static int windows_focus_tab_inserts(CjguiWindowsRendererSession *s);
+static int windows_next_cell_intent(CjguiWindowsRendererSession *s);
+static int windows_enter_activate(CjguiWindowsRendererSession *s, int64_t frozenModifiers);
+static int windows_text_control_char(CjguiWindowsRendererSession *s, WCHAR unit,
+    int64_t frozenModifiers, uint32_t repeatCount);
 
 static void windows_free_mouse_target(CjguiWindowsRendererSession *s) {
     if (!s) return;
@@ -3112,6 +3170,8 @@ static int windows_focus_and_select_at(CjguiWindowsRendererSession *s, uint32_t 
     if (status != CJGUI_INTERNAL_RENDERER_OK) return 0;
     uint32_t caret = (uint32_t)meta[6];
     s->selectionStart16 = s->selectionEnd16 = caret;
+    s->plainCaret16 = s->plainAnchor16 = caret;
+    s->plainCaretValid = 1u;
     const char *value = s->proxyValueUtf8 ? (const char *)s->proxyValueUtf8 : "";
     int focusPushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
         CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, caret, caret,
@@ -3127,6 +3187,10 @@ static int windows_focus_and_select_at(CjguiWindowsRendererSession *s, uint32_t 
     s->contractMouseDiag[14] = selectionPushed;
     s->contractMouseDiag[15] = (int64_t)s->eventCount;
 #endif
+    win_input_trace("focus_push node=%llu kind=%u res=%lld caret=%u focus=%llu hp=%d sp=%d",
+        (unsigned long long)entry->node.nodeId, (unsigned)entry->node.nodeKind,
+        (long long)entry->node.resourceId, caret, (unsigned long long)s->focusedNodeId,
+        focusPushed, selectionPushed);
     if (!selectionPushed) return 0;
     *outUtf16 = caret;
     return 1;
@@ -3157,6 +3221,9 @@ static void windows_cancel_mouse_gesture(CjguiWindowsRendererSession *s) {
 }
 
 static void windows_handle_mouse_down(CjguiWindowsRendererSession *s, LPARAM lParam) {
+    if (s) win_input_trace("mouse_down pt=%d,%d en=%u node=%llu focus=%p hwnd=%p",
+        (int)(SHORT)LOWORD(lParam), (int)(SHORT)HIWORD(lParam), s->ownedTextSessionEnabled,
+        (unsigned long long)s->ownedTextSessionNodeId, (void *)GetFocus(), (void *)s->hwnd);
     if (!s || !s->hwnd) return;
 #ifdef CJGUI_WINDOWS_SCENE_CONTRACT_TEST
     s->contractMouseDiag[1] += 1;
@@ -3193,6 +3260,12 @@ static void windows_handle_mouse_down(CjguiWindowsRendererSession *s, LPARAM lPa
 #endif
     uint32_t index = UINT32_MAX;
     CjguiWindowsSceneNode *entry = windows_node_at_accepted_point(s, x, y, &index);
+    win_input_trace("hit pt=%.1f,%.1f node=%llu kind=%u res=%lld index=%u focused=%llu fkind=%u fres=%lld",
+        x, y, entry ? (unsigned long long)entry->node.nodeId : 0ull,
+        entry ? (unsigned)entry->node.nodeKind : 0u,
+        entry ? (long long)entry->node.resourceId : -1ll, index,
+        (unsigned long long)s->focusedNodeId, (unsigned)s->focusedNodeKind,
+        (long long)s->focusedResourceId);
 #ifdef CJGUI_WINDOWS_SCENE_CONTRACT_TEST
     s->contractMouseDiag[2] = 3;
     s->contractMouseDiag[5] = entry ? (int64_t)index : -1;
@@ -3827,15 +3900,74 @@ static void dispatch_raw_message(CjguiWindowsRendererSession *s, uint32_t messag
         case WM_CANCELMODE:
             windows_cancel_mouse_on_coordinate_change(s);
             break;
-        case WM_KEYDOWN:
-            (void)handle_windows_key_down(s, (WPARAM)wParam, frozenModifiers);
+        case WM_KEYDOWN: {
+            win_input_trace("key vk=%u lp=%llx mods=%llx en=%u comp=%u:%u field=%llu kind=%u fres=%lld focus=%p hwnd=%p",
+                (unsigned)wParam, (unsigned long long)lParam,
+                (unsigned long long)frozenModifiers, s->ownedTextSessionEnabled,
+                (unsigned)s->compositionState, (unsigned)s->compositionActive,
+                (unsigned long long)s->focusedNodeId, (unsigned)s->focusedNodeKind,
+                (long long)s->focusedResourceId, (void *)GetFocus(), (void *)hwnd);
+            /* Tab/Shift+Tab 在系统组合之外走接受场景的焦点遍历；Space 激活
+               已聚焦的按钮/开关/页签，文本输入仍落到整值编辑器。 */
+            if (wParam == VK_TAB &&
+                (frozenModifiers & (0x040000u | 0x080000u | 0x100000u)) == 0 &&
+                s->compositionState == WINDOWS_COMPOSITION_IDLE && !s->compositionActive) {
+                /* 无修饰 Tab 在展示文本节点上是产品 nextCell；其余（含 Shift+Tab）
+                   走窗口焦点遍历。声明 tabInsertsText 的输入由 WM_CHAR 插入。
+                   被遍历消费的 Tab 只吞掉它自己的 WM_CHAR 回显，否则 Shift+Tab
+                   刚离开的正文还会收到一个字面 Tab。 */
+                s->suppressNextTabChar = 0u;
+                if ((frozenModifiers & 0x020000u) == 0 && windows_next_cell_intent(s)) {
+                    s->suppressNextTabChar = 1u;
+                    break;
+                }
+                if (windows_focus_move(s, (frozenModifiers & 0x020000u) != 0)) {
+                    s->suppressNextTabChar = 1u;
+                    break;
+                }
+            }
+            if (wParam == VK_RETURN &&
+                s->compositionState == WINDOWS_COMPOSITION_IDLE && !s->compositionActive &&
+                windows_enter_activate(s, frozenModifiers)) break;
+            if (wParam == VK_SPACE &&
+                s->compositionState == WINDOWS_COMPOSITION_IDLE && !s->compositionActive &&
+                windows_activate_focused(s, frozenModifiers)) break;
+            /* 层内焦点上的 Escape 关闭该层（kind 36）；无层时保持原路由。 */
+            if (windows_layer_escape(s, (WPARAM)wParam, frozenModifiers)) break;
+            /* 光标/选区/Ctrl+A/C/X/V 由手写整值编辑器先行消费；其余按键进入
+               同一 kind 34 窗口命令路由，未被消费的 Backspace/Delete 再回退整值删除。 */
+            if (windows_plain_text_key(s, (WPARAM)wParam, frozenModifiers)) break;
+            int handled = handle_windows_key_down(s, (WPARAM)wParam, frozenModifiers);
+            if (!handled && !s->ownedTextSessionEnabled && !s->compositionActive &&
+                s->compositionState == WINDOWS_COMPOSITION_IDLE) {
+                if (wParam == VK_BACK) {
+                    (void)windows_plain_text_delete(s, 0);
+                } else if (wParam == VK_DELETE) {
+                    (void)windows_plain_text_delete(s, 1);
+                }
+            }
             break;
+        }
         case WM_CHAR: {
             WCHAR unit = (WCHAR)wParam;
+            if (unit != L'\t') s->suppressNextTabChar = 0u;
+            win_input_trace("char en=%u node=%llu res=%lld epoch=%llu field=%llu kind=%u fres=%lld "
+                "focus=%p hwnd=%p comp=%u:%u unit=%04x", s->ownedTextSessionEnabled,
+                (unsigned long long)s->ownedTextSessionNodeId, (long long)s->ownedTextSessionResourceId,
+                (unsigned long long)s->ownedTextSessionBindingEpoch,
+                (unsigned long long)s->focusedNodeId, (unsigned)s->focusedNodeKind,
+                (long long)s->focusedResourceId, (void *)GetFocus(), (void *)hwnd,
+                (unsigned)s->compositionState, (unsigned)s->compositionActive, (unsigned)unit);
             if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive)
                 break; // IMM32 RESULTSTR is the single commit source while composing.
-            (void)handle_windows_text_character(s, &unit, 1u, frozenModifiers,
-                (uint32_t)((uint64_t)lParam & 0xffffu));
+            if (windows_text_control_char(s, unit, frozenModifiers,
+                (uint32_t)((uint64_t)lParam & 0xffffu))) break;
+            if (s->ownedTextSessionEnabled) {
+                (void)handle_windows_text_character(s, &unit, 1u, frozenModifiers,
+                    (uint32_t)((uint64_t)lParam & 0xffffu));
+            } else {
+                (void)windows_plain_text_insert(s, &unit, 1u);
+            }
             break;
         }
         case WM_UNICHAR: {
@@ -3855,19 +3987,37 @@ static void dispatch_raw_message(CjguiWindowsRendererSession *s, uint32_t messag
             }
             if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive)
                 break;
-            (void)handle_windows_text_character(s, units, count, frozenModifiers, 1u);
+            if (s->ownedTextSessionEnabled) {
+                (void)handle_windows_text_character(s, units, count, frozenModifiers, 1u);
+            } else {
+                (void)windows_plain_text_insert(s, units, count);
+            }
             break;
         }
         case WM_IME_STARTCOMPOSITION:
+            win_input_trace("ime_start en=%u field=%llu kind=%u comp=%u:%u focus=%p hwnd=%p",
+                s->ownedTextSessionEnabled, (unsigned long long)s->focusedNodeId,
+                (unsigned)s->focusedNodeKind, (unsigned)s->compositionState,
+                (unsigned)s->compositionActive, (void *)GetFocus(), (void *)hwnd);
             s->compositionActive = 1;
             break;
         case WM_IME_ENDCOMPOSITION:
+            win_input_trace("ime_end en=%u field=%llu comp=%u:%u focus=%p hwnd=%p",
+                s->ownedTextSessionEnabled, (unsigned long long)s->focusedNodeId,
+                (unsigned)s->compositionState, (unsigned)s->compositionActive,
+                (void *)GetFocus(), (void *)hwnd);
             s->compositionActive = 0;
             end_windows_ime_composition(s);
             break;
         case WM_IME_COMPOSITION:
+            win_input_trace("ime_comp flags=%llx slot=%lld en=%u field=%llu comp=%u:%u",
+                (unsigned long long)lParam, (long long)imeSlot, s->ownedTextSessionEnabled,
+                (unsigned long long)s->focusedNodeId, (unsigned)s->compositionState,
+                (unsigned)s->compositionActive);
             if (s->ownedTextSessionEnabled) {
                 (void)handle_windows_ime_composition(s, (LPARAM)lParam, imeSlot);
+            } else {
+                (void)windows_plain_text_composition(s, imeSlot);
             }
             break;
         default:
@@ -7488,6 +7638,7 @@ static CjguiInternalRendererStatus present_composable_scene_impl(
     s->acceptedScene = s->candidateScene;
     memset(&s->candidateScene, 0, sizeof(s->candidateScene));
     s->sceneVersion = s->acceptedScene.version;
+    windows_plain_text_refresh(s);
     ++s->frameIndex;
     ++s->presentationAcceptedCount;
     if (windows_owner_trace_enabled()) {
@@ -15816,7 +15967,9 @@ uint64_t cjgui_internal_renderer_create(const CjguiInternalRendererConfig *confi
     if (s->token == 0) s->token = (uint64_t)InterlockedIncrement64(&g_nextSessionToken);
     s->sessionGeneration = next_positive_counter(&g_nextSessionGeneration);
     s->coordinateEpoch = next_positive_counter(&g_nextCoordinateEpoch);
-    s->focusedNodeId = UINT64_MAX;
+    /* 0 is this bridge's only "no native focus" value. UINT64_MAX is the
+       Cangjie wire's -1 and must never be stored as a node id or forwarded. */
+    s->focusedNodeId = 0u;
     s->focusedResourceId = -1;
     s->ownedTextSessionResourceId = -1;
     s->clearRed = config->clearColorRed;
@@ -16567,6 +16720,10 @@ static char *duplicate_utf8_bytes(const char *text, size_t length) {
 
 static void clear_pending_owned_input(CjguiWindowsRendererSession *s) {
     if (!s) return;
+    win_input_trace("pending_clear count=%u epoch=%llu node=%llu value=%.24s",
+        s->pendingOwnedInputEventCount, (unsigned long long)s->pendingOwnedInputBindingEpoch,
+        (unsigned long long)s->pendingOwnedInputNodeId,
+        s->pendingOwnedInputValue ? s->pendingOwnedInputValue : "");
     free(s->pendingOwnedInputBase);
     free(s->pendingOwnedInputValue);
     s->pendingOwnedInputBase = NULL;
@@ -16630,11 +16787,17 @@ static CjguiWindowsSceneNode *windows_find_accepted_text(CjguiWindowsRendererSes
 
 static void qorr_debug_log(const char *tag, CjguiWindowsRendererSession *s,
     const char *detail, int status) {
-    /* 终版不写盘：诊断已收敛，保留空函数避免触碰 10 处调用点。 */
-    (void)tag;
-    (void)s;
-    (void)detail;
-    (void)status;
+    if (!s) {
+        win_input_trace("qorr tag=%s status=%d session=null", tag ? tag : "-", status);
+        return;
+    }
+    win_input_trace("qorr tag=%s status=%d en=%u node=%llu res=%lld epoch=%llu "
+        "focus=%p hwnd=%p pend=%u sel=%u:%u bytes=%u detail=%.48s",
+        tag ? tag : "-", status, s->ownedTextSessionEnabled,
+        (unsigned long long)s->ownedTextSessionNodeId, (long long)s->ownedTextSessionResourceId,
+        (unsigned long long)s->ownedTextSessionBindingEpoch, (void *)GetFocus(), (void *)s->hwnd,
+        s->pendingOwnedInputEventCount, s->selectionStart16, s->selectionEnd16,
+        detail ? (unsigned)strlen(detail) : 0u, detail ? detail : "");
 }
 
 static void range_claims_clear(CjguiWindowsRendererSession *s) {
@@ -17105,10 +17268,682 @@ static int queue_owned_range_replace(CjguiWindowsRendererSession *s,
     return 1;
 }
 
+/* A framework-focused whole-value editor without an owned range session still
+   edits its accepted body here; TEXT_CHANGED carries the complete new body so
+   the shared window can route it through the ordinary writer. */
+static CjguiWindowsSceneNode *windows_plain_text_entry(CjguiWindowsRendererSession *s,
+    uint32_t *outIndex) {
+    if (outIndex) *outIndex = UINT32_MAX;
+    if (!s || s->ownedTextSessionEnabled || !s->focusedNodeId) {
+        win_input_trace("plain_entry skip en=%u field=%llu",
+            s ? s->ownedTextSessionEnabled : 0u,
+            s ? (unsigned long long)s->focusedNodeId : 0ull);
+        return NULL;
+    }
+    if (!windows_is_text_input_node(s->focusedNodeKind)) {
+        win_input_trace("plain_entry skip kind=%u field=%llu",
+            (unsigned)s->focusedNodeKind, (unsigned long long)s->focusedNodeId);
+        return NULL;
+    }
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        CjguiWindowsSceneNode *entry = &s->acceptedScene.nodes[i];
+        if (!entry->hasNode || entry->node.nodeId != s->focusedNodeId ||
+            entry->node.resourceId != s->focusedResourceId ||
+            entry->node.nodeKind != s->focusedNodeKind) continue;
+        if (entry->node.isReadOnly) {
+            win_input_trace("plain_entry skip readonly field=%llu",
+                (unsigned long long)s->focusedNodeId);
+            return NULL;
+        }
+        if (outIndex) *outIndex = i;
+        return entry;
+    }
+    win_input_trace("plain_entry skip scene field=%llu fres=%lld kind=%u",
+        (unsigned long long)s->focusedNodeId, (long long)s->focusedResourceId,
+        (unsigned)s->focusedNodeKind);
+    return NULL;
+}
+
+static WCHAR *windows_plain_text_wide(const uint8_t *value, uint32_t *outUnits) {
+    const char *text = value ? (const char *)value : "";
+    if (outUnits) *outUnits = 0u;
+    int units = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+    if (units <= 0) return NULL;
+    WCHAR *wide = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)units);
+    if (!wide) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, units) != units) {
+        free(wide);
+        return NULL;
+    }
+    if (outUnits) *outUnits = (uint32_t)(units - 1);
+    return wide;
+}
+
+static int windows_plain_text_commit(CjguiWindowsRendererSession *s, uint32_t index,
+    CjguiWindowsSceneNode *entry, uint32_t caret, const WCHAR *wide, int wideUnits) {
+    if (!s || !entry || !wide || wideUnits < 0) return 0;
+    int utf8Bytes = WideCharToMultiByte(CP_UTF8, 0, wide, wideUnits, NULL, 0, NULL, NULL);
+    if (utf8Bytes < 0 || !windows_event_room(s, 1u, (uint32_t)utf8Bytes)) return 0;
+    uint8_t *next = (uint8_t *)malloc((size_t)utf8Bytes + 1u);
+    if (!next) return 0;
+    if (utf8Bytes > 0 && WideCharToMultiByte(CP_UTF8, 0, wide, wideUnits,
+            (char *)next, utf8Bytes, NULL, NULL) != utf8Bytes) {
+        free(next);
+        return 0;
+    }
+    next[utf8Bytes] = 0;
+    free(s->proxyValueUtf8);
+    s->proxyValueUtf8 = next;
+    s->selectionStart16 = s->selectionEnd16 = caret;
+    s->plainCaret16 = s->plainAnchor16 = caret;
+    s->plainCaretValid = 1u;
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_TEXT_CHANGED, caret, caret,
+        0.0, 0.0, 0u, (const char *)next);
+    win_input_trace("plain_commit node=%llu caret=%u bytes=%d pushed=%d",
+        (unsigned long long)entry->node.nodeId, caret, utf8Bytes, pushed);
+    return pushed;
+}
+
+static int windows_plain_text_insert(CjguiWindowsRendererSession *s, const WCHAR *units,
+    uint32_t count) {
+    uint32_t index = UINT32_MAX;
+    CjguiWindowsSceneNode *entry = windows_plain_text_entry(s, &index);
+    if (!entry || !units || count == 0u ||
+        count > CJGUI_WINDOWS_PLAIN_TEXT_INSERT_UNITS) {
+        win_input_trace("plain_insert skip entry=%d units=%u count=%u",
+            entry ? 1 : 0, units ? 1u : 0u, count);
+        return 0;
+    }
+    /* Ctrl+A/C/X/V are routed by windows_plain_text_key, but the system still
+       posts their WM_CHAR echoes (0x01/0x16/0x03/0x18). A tab is a character
+       only for the editor that declares tabInsertsText, and a line break only
+       enters a multiline body (the character hook normalizes it); every other
+       control unit never enters the value. */
+    if (count == 1u && units[0] < 0x20u) {
+        int declared_tab = units[0] == L'\t' && windows_focus_tab_inserts(s);
+        int multiline_break = units[0] == L'\n';
+        if (!declared_tab && !multiline_break) {
+            win_input_trace("plain_insert skip_control unit=%u", (unsigned)units[0]);
+            return 1;
+        }
+    }
+    uint32_t length = 0u;
+    WCHAR *wide = windows_plain_text_wide(s->proxyValueUtf8, &length);
+    if (!wide && length) return 0;
+    uint32_t caret = s->selectionStart16;
+    uint32_t anchor = s->selectionEnd16;
+    if (caret > length) caret = length;
+    if (anchor > length) anchor = length;
+    uint32_t start = caret < anchor ? caret : anchor;
+    uint32_t end = caret < anchor ? anchor : caret;
+    uint32_t nextUnits = length - (end - start) + count;
+    WCHAR *next = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)(nextUnits + 1u));
+    if (!next) { free(wide); return 0; }
+    if (start > 0u) memcpy(next, wide, sizeof(WCHAR) * (size_t)start);
+    for (uint32_t i = 0; i < count; ++i) next[start + i] = units[i];
+    if (length > end)
+        memcpy(next + start + count, wide + end, sizeof(WCHAR) * (size_t)(length - end));
+    int ok = windows_plain_text_commit(s, index, entry, start + count, next, (int)nextUnits);
+    free(next);
+    free(wide);
+    return ok;
+}
+
+static int windows_plain_text_insert_utf8(CjguiWindowsRendererSession *s,
+    const char *text, uint32_t bytes) {
+    if (!s || !text || !bytes) return 0;
+    int units = MultiByteToWideChar(CP_UTF8, 0, text, (int)bytes, NULL, 0);
+    if (units <= 0) return 0;
+    WCHAR *wide = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)units);
+    if (!wide) return 0;
+    int converted = MultiByteToWideChar(CP_UTF8, 0, text, (int)bytes, wide, units);
+    int ok = converted == units ? windows_plain_text_insert(s, wide, (uint32_t)units) : 0;
+    free(wide);
+    return ok;
+}
+
+/* The system IME translates hardware keys before WM_CHAR, so a plain
+   whole-value editor only receives its committed RESULTSTR. Marked text has no
+   inline presentation in this bridge and is not invented as owner text; the
+   slot is released either way, and a full event queue keeps it for retry. */
+static int windows_plain_text_composition(CjguiWindowsRendererSession *s, int64_t imeSlot) {
+    if (!s || s->ownedTextSessionEnabled) return 0;
+    if (imeSlot < 0 || imeSlot >= (int64_t)CJGUI_WINDOWS_IME_FROZEN_CAPACITY) {
+        win_input_trace("plain_comp skip slot=%lld", (long long)imeSlot);
+        return 0;
+    }
+    CjguiWindowsImeFrozen *frozen = &s->imeFrozen[(uint32_t)imeSlot];
+    if (!frozen->used) {
+        win_input_trace("plain_comp unused slot=%lld", (long long)imeSlot);
+        return 0;
+    }
+    if (!(frozen->flags & GCS_RESULTSTR) || !frozen->resultText || !frozen->resultBytes) {
+        win_input_trace("plain_comp preedit flags=%llx mark=%u cursor=%u slot=%lld",
+            (unsigned long long)frozen->flags, frozen->markedBytes, frozen->cursor16,
+            (long long)imeSlot);
+        frozen->readyForRetry = 0u;
+        ime_frozen_free_slot(s, imeSlot);
+        return 0;
+    }
+    int inserted = windows_plain_text_insert_utf8(s, frozen->resultText, frozen->resultBytes);
+    win_input_trace("plain_comp result bytes=%u inserted=%d slot=%lld",
+        frozen->resultBytes, inserted, (long long)imeSlot);
+    if (!inserted) {
+        frozen->readyForRetry = 1u;
+        s->eventQueueFull = 1u;
+        return 0;
+    }
+    frozen->readyForRetry = 0u;
+    ime_frozen_free_slot(s, imeSlot);
+    return 1;
+}
+
+static int windows_plain_text_delete(CjguiWindowsRendererSession *s, int forward) {
+    uint32_t index = UINT32_MAX;
+    CjguiWindowsSceneNode *entry = windows_plain_text_entry(s, &index);
+    if (!entry) return 0;
+    uint32_t length = 0u;
+    WCHAR *wide = windows_plain_text_wide(s->proxyValueUtf8, &length);
+    if (!wide && length) return 0;
+    uint32_t caret = s->selectionStart16;
+    uint32_t anchor = s->selectionEnd16;
+    if (caret > length) caret = length;
+    if (anchor > length) anchor = length;
+    uint32_t start = caret < anchor ? caret : anchor;
+    uint32_t end = caret < anchor ? anchor : caret;
+    if (start == end) {
+        if (forward) {
+            if (end >= length) { free(wide); return 0; }
+            end += 1u;
+            if (end < length && wide[end - 1u] >= 0xd800u && wide[end - 1u] <= 0xdbffu &&
+                wide[end] >= 0xdc00u && wide[end] <= 0xdfffu) end += 1u;
+        } else {
+            if (start == 0u) { free(wide); return 0; }
+            start -= 1u;
+            if (start > 0u && wide[start] >= 0xdc00u && wide[start] <= 0xdfffu &&
+                wide[start - 1u] >= 0xd800u && wide[start - 1u] <= 0xdbffu) start -= 1u;
+        }
+    }
+    uint32_t nextUnits = length - (end - start);
+    WCHAR *next = (WCHAR *)malloc(sizeof(WCHAR) * (size_t)(nextUnits + 1u));
+    if (!next) { free(wide); return 0; }
+    if (start > 0u) memcpy(next, wide, sizeof(WCHAR) * (size_t)start);
+    if (length > end) memcpy(next + start, wide + end, sizeof(WCHAR) * (size_t)(length - end));
+    int ok = windows_plain_text_commit(s, index, entry, start, next, (int)nextUnits);
+    free(next);
+    free(wide);
+    return ok;
+}
+
+static uint32_t windows_plain_text_clamp(const WCHAR *wide, uint32_t length, uint32_t pos) {
+    if (pos > length) pos = length;
+    if (wide && pos > 0u && pos < length && wide[pos] >= 0xdc00u && wide[pos] <= 0xdfffu &&
+        wide[pos - 1u] >= 0xd800u && wide[pos - 1u] <= 0xdbffu) pos -= 1u;
+    return pos;
+}
+
+/* 一个字符按 UTF-16 单位移动：代理对在左右两个方向都算一个字符，方向键因此
+   不会从代理对前“右移一格”又退回原地，也不会把光标停在代理对中间。 */
+static uint32_t windows_plain_text_step(const WCHAR *wide, uint32_t length, uint32_t pos, int forward) {
+    if (pos > length) pos = length;
+    if (!wide) return pos;
+    if (forward) {
+        if (pos >= length) return length;
+        if (wide[pos] >= 0xd800u && wide[pos] <= 0xdbffu && pos + 1u < length &&
+            wide[pos + 1u] >= 0xdc00u && wide[pos + 1u] <= 0xdfffu) return pos + 2u;
+        return pos + 1u;
+    }
+    if (pos == 0u) return 0u;
+    if (wide[pos - 1u] >= 0xdc00u && wide[pos - 1u] <= 0xdfffu && pos >= 2u &&
+        wide[pos - 2u] >= 0xd800u && wide[pos - 2u] <= 0xdbffu) return pos - 2u;
+    return pos - 1u;
+}
+
+/* 手写整值编辑器的选区：光标/锚点用 UTF-16 单位，selectionStart/End 是有序
+   投影；kind 33 只报告位置，不改正文、不建立 owner 或绑定。 */
+static int windows_plain_text_select(CjguiWindowsRendererSession *s, uint32_t index,
+    CjguiWindowsSceneNode *entry, uint32_t caret, uint32_t anchor) {
+    if (!s || !entry) return 0;
+    s->plainCaret16 = caret;
+    s->plainAnchor16 = anchor;
+    s->plainCaretValid = 1u;
+    s->selectionStart16 = caret < anchor ? caret : anchor;
+    s->selectionEnd16 = caret < anchor ? anchor : caret;
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SELECTION_CHANGED, caret, anchor,
+        0.0, 0.0, 0u, NULL);
+    win_input_trace("plain_select caret=%u anchor=%u pushed=%d", caret, anchor, pushed);
+    return pushed;
+}
+
+/* 只有整值编辑器消费的按键才返回 1；其余（Escape/Enter/Up/Down、窗口快捷键）
+   仍交给窗口级 kind 34 路由。组合态中的按键属系统 IME，不在这里截获。 */
+static int windows_plain_text_key(CjguiWindowsRendererSession *s, WPARAM key,
+    int64_t frozenModifiers) {
+    if (!s || s->ownedTextSessionEnabled) return 0;
+    if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) return 0;
+    int ctrl = (frozenModifiers & 0x040000) != 0;
+    int alt = (frozenModifiers & 0x080000) != 0;
+    int winKey = (frozenModifiers & 0x100000) != 0;
+    int shift = (frozenModifiers & 0x020000) != 0;
+    if (alt || winKey) return 0;
+    uint32_t index = UINT32_MAX;
+    CjguiWindowsSceneNode *entry = windows_plain_text_entry(s, &index);
+    if (!entry) return 0;
+    uint32_t length = 0u;
+    WCHAR *wide = windows_plain_text_wide(s->proxyValueUtf8, &length);
+    if (!wide && length) return 0;
+    uint32_t caret = s->plainCaretValid ? s->plainCaret16 : s->selectionStart16;
+    uint32_t anchor = s->plainCaretValid ? s->plainAnchor16 : s->selectionEnd16;
+    if (caret > length) caret = length;
+    if (anchor > length) anchor = length;
+    if (ctrl) {
+        if (key == 'A') {
+            int ok = windows_plain_text_select(s, index, entry, length, 0u);
+            win_input_trace("plain_key ctrl+a len=%u ok=%d", length, ok);
+            free(wide);
+            return ok;
+        }
+        if (key == 'C' || key == 'X' || key == 'V') {
+            uint32_t start = caret < anchor ? caret : anchor;
+            uint32_t end = caret < anchor ? anchor : caret;
+            const char *body = s->proxyValueUtf8 ? (const char *)s->proxyValueUtf8 : "";
+            uint64_t totalBytes = (uint64_t)strlen(body);
+            uint64_t startByte = 0u, endByte = 0u;
+            if (!windows_utf8_offset_for_utf16(body, start, &startByte) ||
+                !windows_utf8_offset_for_utf16(body, end, &endByte) ||
+                startByte > endByte || endByte > totalBytes) {
+                win_input_trace("plain_clip offset_fail key=%u sel=%u..%u", (unsigned)key, start, end);
+                free(wide);
+                return 0;
+            }
+            if (key == 'C' || key == 'X') {
+                if (endByte <= startByte) { free(wide); return 0; }
+                int copied = windows_clipboard_write_utf8(s->hwnd, body + startByte,
+                    (uint32_t)(endByte - startByte));
+                win_input_trace("plain_clip key=%u copy=%d bytes=%llu", (unsigned)key, copied,
+                    (unsigned long long)(endByte - startByte));
+                if (!copied || key == 'C') { free(wide); return copied; }
+                int cut = windows_plain_text_delete(s, 0);
+                free(wide);
+                return cut;
+            }
+            uint32_t pasteBytes = 0u;
+            char *paste = windows_clipboard_read_utf8(s->hwnd, &pasteBytes);
+            int pasted = 0;
+            if (paste && pasteBytes > 0u)
+                pasted = windows_plain_text_insert_utf8(s, paste, pasteBytes);
+            free(paste);
+            win_input_trace("plain_clip key=V paste=%d bytes=%u sel=%u..%u", pasted,
+                pasteBytes, start, end);
+            free(wide);
+            return pasted;
+        }
+        free(wide);
+        return 0;
+    }
+    if (key == VK_LEFT || key == VK_RIGHT || key == VK_HOME || key == VK_END) {
+        uint32_t next = caret;
+        if (key == VK_LEFT) {
+            next = windows_plain_text_step(wide, length, caret, 0);
+        } else if (key == VK_RIGHT) {
+            next = windows_plain_text_step(wide, length, caret, 1);
+        } else if (key == VK_HOME) {
+            next = 0u;
+        } else {
+            next = length;
+        }
+        next = windows_plain_text_clamp(wide, length, next);
+        int ok = windows_plain_text_select(s, index, entry, next, shift ? anchor : next);
+        free(wide);
+        return ok;
+    }
+    if (key == VK_BACK || key == VK_DELETE) {
+        s->selectionStart16 = caret < anchor ? caret : anchor;
+        s->selectionEnd16 = caret < anchor ? anchor : caret;
+        int ok = windows_plain_text_delete(s, key == VK_DELETE);
+        free(wide);
+        return ok;
+    }
+    free(wide);
+    return 0;
+}
+
+/* An accepted scene is the authority for the body the bridge edits next. */
+static void windows_plain_text_refresh(CjguiWindowsRendererSession *s) {
+    if (!s || s->ownedTextSessionEnabled || !s->focusedNodeId) return;
+    CjguiWindowsSceneNode *entry = NULL;
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        if (s->acceptedScene.nodes[i].hasNode &&
+            s->acceptedScene.nodes[i].node.nodeId == s->focusedNodeId) {
+            entry = &s->acceptedScene.nodes[i];
+            break;
+        }
+    }
+    if (!entry || entry->node.resourceId != s->focusedResourceId ||
+        entry->node.nodeKind != s->focusedNodeKind) return;
+    const char *value = entry->value ? entry->value : "";
+    CjguiInternalRendererStatus copyStatus = CJGUI_INTERNAL_RENDERER_OK;
+    uint8_t *next = (uint8_t *)copy_valid_utf8(value, strlen(value), NULL, &copyStatus);
+    if (!next) return;
+    if (s->proxyValueUtf8 && strcmp((const char *)s->proxyValueUtf8, (const char *)next) == 0) {
+        free(next);
+    } else {
+        free(s->proxyValueUtf8);
+        s->proxyValueUtf8 = next;
+    }
+    uint32_t length16 = 0u;
+    if (windows_utf16_length(value, &length16)) {
+        if (s->selectionStart16 > length16) s->selectionStart16 = length16;
+        if (s->selectionEnd16 > length16) s->selectionEnd16 = length16;
+        if (s->plainCaret16 > length16) s->plainCaret16 = length16;
+        if (s->plainAnchor16 > length16) s->plainAnchor16 = length16;
+    }
+}
+
+/* Tab traversal follows the same accepted-scene rule the macOS bridge uses:
+   one stop per interactive control in the current input scope, one stop per
+   tab group, wraparound, and Tab keeps inserting text for nodes that opt in.
+   The bridge only moves focus; the shared window still decides the owner. */
+static int windows_focus_kind_eligible(uint32_t kind) {
+    return kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SPLIT_DIVIDER ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER;
+}
+
+static int windows_focus_is_text_kind(uint32_t kind) {
+    return kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+}
+
+/* Direct focus also accepts a pointer-interactive presentation TEXT node: it
+   owns a caret and product key intents (nextCell/selection). It stays out of
+   windows_focus_kind_eligible so display labels never become tab stops. */
+static int windows_focus_is_direct_text_kind(uint32_t kind) {
+    return windows_focus_is_text_kind(kind) ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT;
+}
+
+static void windows_drop_plain_text_adapter(CjguiWindowsRendererSession *s) {
+    if (!s || s->ownedTextSessionEnabled) return;
+    if (s->proxyValueUtf8) { free(s->proxyValueUtf8); s->proxyValueUtf8 = NULL; }
+    s->focusedNodeId = 0u;
+    s->focusedResourceId = -1;
+    s->focusedNodeKind = 0u;
+    s->plainCaretValid = 0u;
+    s->selectionStart16 = 0u;
+    s->selectionEnd16 = 0u;
+    s->plainCaret16 = 0u;
+    s->plainAnchor16 = 0u;
+}
+
+static int windows_focus_apply(CjguiWindowsRendererSession *s, uint32_t index,
+    CjguiWindowsSceneNode *entry) {
+    if (!windows_event_room(s, 1u, 0u)) return 0;
+    uint32_t kind = entry->node.nodeKind;
+    if (windows_focus_is_text_kind(kind)) {
+        CjguiInternalRendererStatus status = cjgui_internal_renderer_focus_composable_node(
+            s->token, entry->node.nodeId);
+        if (status != CJGUI_INTERNAL_RENDERER_OK) {
+            win_input_trace("focus_move text_arm status=%lld node=%llu", (long long)status,
+                (unsigned long long)entry->node.nodeId);
+            return 0;
+        }
+        const char *value = s->proxyValueUtf8 ? (const char *)s->proxyValueUtf8 : "";
+        int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+            CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS,
+            s->selectionStart16, s->selectionEnd16, 0.0, 0.0, 0u, value);
+        win_input_trace("focus_move text node=%llu caret=%u pushed=%d",
+            (unsigned long long)entry->node.nodeId, s->selectionStart16, pushed);
+        return pushed;
+    }
+    windows_drop_plain_text_adapter(s);
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_FOCUS, 0u, 0u, 0.0, 0.0, 0u, NULL);
+    win_input_trace("focus_move node=%llu kind=%u pushed=%d",
+        (unsigned long long)entry->node.nodeId, (unsigned)kind, pushed);
+    return pushed;
+}
+
+static int windows_focus_move(CjguiWindowsRendererSession *s, int backwards) {
+    if (!s || s->acceptedScene.count == 0u) return 0;
+    uint32_t count = s->acceptedScene.count;
+    int64_t start = -1;
+    uint64_t activeScope = 0u;
+    uint64_t activeTabGroup = 0u;
+    for (uint32_t i = 0; i < count; ++i) {
+        CjguiWindowsSceneNode *entry = &s->acceptedScene.nodes[i];
+        if (!entry->hasNode || !entry->node.nodeId || entry->node.nodeId != s->focusTraversalNodeId)
+            continue;
+        start = (int64_t)i;
+        activeScope = entry->node.inputScope;
+        if (entry->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE)
+            activeTabGroup = entry->node.tabGroupId;
+        if (entry->node.tabInsertsText != 0u && !backwards) {
+            win_input_trace("focus_move tab_inserts_text node=%llu",
+                (unsigned long long)entry->node.nodeId);
+            return 0;
+        }
+        break;
+    }
+    int64_t cursor = start >= 0 ? start + (backwards ? -1 : 1)
+        : (backwards ? (int64_t)count - 1 : 0);
+    for (uint32_t attempts = 0; attempts < count; ++attempts) {
+        if (cursor < 0) cursor = (int64_t)count - 1;
+        if (cursor >= (int64_t)count) cursor = 0;
+        CjguiWindowsSceneNode *candidate = &s->acceptedScene.nodes[(uint32_t)cursor];
+        if (candidate->hasNode) {
+            uint32_t kind = candidate->node.nodeKind;
+            int tabStop = 1;
+            if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE &&
+                candidate->node.tabGroupId != 0u) {
+                if (candidate->node.tabGroupId == activeTabGroup) {
+                    tabStop = 0; // Tab leaves the group even after arrow focus.
+                } else {
+                    CjguiWindowsSceneNode *first = NULL;
+                    CjguiWindowsSceneNode *selected = NULL;
+                    for (uint32_t k = 0; k < count; ++k) {
+                        CjguiWindowsSceneNode *peer = &s->acceptedScene.nodes[k];
+                        if (!peer->hasNode ||
+                            peer->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE ||
+                            peer->node.tabGroupId != candidate->node.tabGroupId ||
+                            peer->node.inputScope != activeScope || peer->node.isInteractive == 0u ||
+                            peer->node.width <= 0 || peer->node.height <= 0 ||
+                            peer->node.clipWidth <= 0 || peer->node.clipHeight <= 0) continue;
+                        if (!first) first = peer;
+                        if (peer->node.tabSelected != 0u) selected = peer;
+                    }
+                    tabStop = candidate == (selected ? selected : first);
+                }
+            }
+            if (tabStop && candidate->node.inputScope == activeScope &&
+                candidate->node.isInteractive != 0u && candidate->node.width > 0 &&
+                candidate->node.height > 0 && windows_focus_kind_eligible(kind))
+                return windows_focus_apply(s, (uint32_t)cursor, candidate);
+        }
+        cursor += backwards ? -1 : 1;
+    }
+    return 0;
+}
+
+/* Space on the focused non-text control uses the same ACTIVATE/BOOLEAN event
+   a click-up emits; no press lease is invented for a keyboard activation. */
+static int windows_activate_focused(CjguiWindowsRendererSession *s, int64_t frozenModifiers) {
+    if (!s || (frozenModifiers & (0x020000u | 0x040000u | 0x080000u | 0x100000u)) != 0 ||
+        !s->focusTraversalNodeId) return 0;
+    uint32_t index = UINT32_MAX;
+    CjguiWindowsSceneNode *entry = NULL;
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        CjguiWindowsSceneNode *candidate = &s->acceptedScene.nodes[i];
+        if (candidate->hasNode && candidate->node.nodeId == s->focusTraversalNodeId) {
+            entry = candidate;
+            index = i;
+            break;
+        }
+    }
+    if (!entry || entry->node.isInteractive == 0u || entry->node.isReadOnly != 0u) return 0;
+    uint32_t kind = entry->node.nodeKind;
+    if (kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT &&
+        kind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE) return 0;
+    if (!windows_event_room(s, 1u, 0u)) return 0;
+    uint32_t activationKind = kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BOOLEAN_INPUT
+        ? CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED
+        : CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_ACTIVATE;
+    const char *nextValue = NULL;
+    if (activationKind == CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_BOOLEAN_CHANGED)
+        nextValue = entry->value && strcmp(entry->value, "true") == 0 ? "false" : "true";
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        activationKind, 0u, 0u, 0.0, 0.0, 0u, nextValue);
+    win_input_trace("focus_activate node=%llu kind=%u pushed=%d",
+        (unsigned long long)entry->node.nodeId, (unsigned)kind, pushed);
+    return pushed;
+}
+
+/* Escape closes the layer that owns the focus, using the same DISMISS_LAYER
+   wire the macOS bridge emits (kind 36, text "escape"). Cangjie projects a
+   layer's id onto its nodes' inputScope, so a non-zero scope means this focus
+   belongs to a modal/menu layer; an ordinary focus keeps the previous command
+   and navigation routes. A marked composition belongs to the input method and
+   is never dismissed here. Modifier chords are not bare Escape. */
+static int windows_layer_escape(CjguiWindowsRendererSession *s, WPARAM key, int64_t frozenModifiers) {
+    if (!s || key != VK_ESCAPE) return 0;
+    if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) return 0;
+    if ((frozenModifiers & (0x020000u | 0x040000u | 0x080000u | 0x100000u)) != 0) return 0;
+    uint64_t targetId = s->focusedNodeId ? s->focusedNodeId : s->focusTraversalNodeId;
+    if (!targetId) return 0;
+    uint32_t index = UINT32_MAX;
+    CjguiWindowsSceneNode *entry = NULL;
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        CjguiWindowsSceneNode *candidate = &s->acceptedScene.nodes[i];
+        if (candidate->hasNode && candidate->node.nodeId == targetId) {
+            entry = candidate;
+            index = i;
+            break;
+        }
+    }
+    if (!entry || entry->node.inputScope == 0u) return 0;
+    if (!windows_event_room(s, 1u, 6u)) return 0;
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_DISMISS_LAYER,
+        0u, 0u, 0.0, 0.0, 0u, "escape");
+    win_input_trace("layer_escape node=%llu scope=%llu pushed=%d",
+        (unsigned long long)entry->node.nodeId, (unsigned long long)entry->node.inputScope, pushed);
+    return pushed;
+}
+
+/* 接受场景中当前焦点节点；outIndex 返回其记录下标。focusedNodeId 是原生焦点，
+   focusTraversalNodeId 是最近一次 FOCUS 目标，二者都只来自接受场景。 */
+static int windows_focus_scene_entry_index(CjguiWindowsRendererSession *s, uint32_t *outIndex) {
+    if (outIndex) *outIndex = UINT32_MAX;
+    if (!s) return 0;
+    uint64_t target = s->focusedNodeId ? s->focusedNodeId : s->focusTraversalNodeId;
+    if (!target) return 0;
+    for (uint32_t i = 0; i < s->acceptedScene.count; ++i) {
+        CjguiWindowsSceneNode *candidate = &s->acceptedScene.nodes[i];
+        if (candidate->hasNode && candidate->node.nodeId == target) {
+            if (outIndex) *outIndex = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* 共同投影只允许多行输入声明 tabInsertsText：这里据此保留编辑器自己的
+   Tab 字符语义，其余焦点仍按窗口遍历。 */
+static int windows_focus_tab_inserts(CjguiWindowsRendererSession *s) {
+    uint32_t index = UINT32_MAX;
+    if (!windows_focus_scene_entry_index(s, &index)) return 0;
+    CjguiWindowsSceneNode *entry = &s->acceptedScene.nodes[index];
+    return entry->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT &&
+        entry->node.tabInsertsText != 0u && entry->node.isReadOnly == 0u;
+}
+
+/* 可交互的展示文本节点把 Tab 当作产品自己的意图（如表格单元），沿用 macOS
+   的 nextCell NAVIGATE wire；普通文本输入/按钮仍走焦点遍历。 */
+static int windows_next_cell_intent(CjguiWindowsRendererSession *s) {
+    uint32_t index = UINT32_MAX;
+    if (!windows_focus_scene_entry_index(s, &index)) return 0;
+    CjguiWindowsSceneNode *entry = &s->acceptedScene.nodes[index];
+    if (entry->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT ||
+        entry->node.isInteractive == 0u || entry->node.isReadOnly != 0u) return 0;
+    if (!windows_event_room(s, 1u, 9u)) return 0;
+    int pushed = windows_push_node_event(s, index, entry, s->acceptedScene.version,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE, 0u, 0u, 0.0, 0.0, 0u, "nextCell");
+    win_input_trace("focus_next_cell node=%llu pushed=%d",
+        (unsigned long long)entry->node.nodeId, pushed);
+    return pushed;
+}
+
+/* 非文本焦点上的 Enter 与 Space 同一激活 wire（macOS Return 相同）；文本
+   编辑器保留自己的命令/换行路线，不在这里激活按钮。 */
+static int windows_enter_activate(CjguiWindowsRendererSession *s, int64_t frozenModifiers) {
+    if (!s || (frozenModifiers & (0x020000u | 0x040000u | 0x080000u | 0x100000u)) != 0) return 0;
+    uint32_t index = UINT32_MAX;
+    if (!windows_focus_scene_entry_index(s, &index)) return 0;
+    uint32_t kind = s->acceptedScene.nodes[index].node.nodeKind;
+    if (kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT ||
+        kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT) return 0;
+    return windows_activate_focused(s, frozenModifiers);
+}
+
+/* Tab/CR/LF 只在编辑器确实声明时成为正文：Tab 仅限 tabInsertsText 的多行输入，
+   换行仅限多行输入；其余控制字符（含 Ctrl+A/C/X/V 的 WM_CHAR 回显）在此丢弃。
+   返回 1 表示该字符已裁决，不再进入 owned/整值正文路径。 */
+static int windows_text_control_char(CjguiWindowsRendererSession *s, WCHAR unit,
+    int64_t frozenModifiers, uint32_t repeatCount) {
+    if (!s || (unit != L'\t' && unit != L'\r' && unit != L'\n')) return 0;
+    if (unit == L'\t') {
+        if (s->suppressNextTabChar) {
+            s->suppressNextTabChar = 0u;
+            win_input_trace("char_tab suppressed traversal=1");
+            return 1;
+        }
+        if (!windows_focus_tab_inserts(s)) return 1;
+        if (s->ownedTextSessionEnabled) {
+            (void)queue_owned_range_replace(s, "\t", 1u, frozenModifiers, repeatCount);
+        } else {
+            WCHAR tab = L'\t';
+            (void)windows_plain_text_insert(s, &tab, 1u);
+        }
+        win_input_trace("char_tab inserted owned=%u", s->ownedTextSessionEnabled);
+        return 1;
+    }
+    uint32_t index = UINT32_MAX;
+    int multiline = 0;
+    if (windows_focus_scene_entry_index(s, &index)) {
+        CjguiWindowsSceneNode *entry = &s->acceptedScene.nodes[index];
+        multiline = entry->node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT &&
+            entry->node.isReadOnly == 0u;
+    }
+    if (!multiline) {
+        win_input_trace("char_drop break unit=%u", (unsigned)unit);
+        return 1;
+    }
+    if (s->ownedTextSessionEnabled) {
+        (void)queue_owned_range_replace(s, "\n", 1u, frozenModifiers, repeatCount);
+    } else {
+        WCHAR nl = L'\n';
+        (void)windows_plain_text_insert(s, &nl, 1u);
+    }
+    win_input_trace("char_break inserted owned=%u", s->ownedTextSessionEnabled);
+    return 1;
+}
+
 static int handle_windows_text_character(CjguiWindowsRendererSession *s,
     const WCHAR *text, uint32_t units, int64_t frozenModifiers,
     uint32_t repeatCount) {
     if (!s || !text || units == 0u || units > 2u || !s->ownedTextSessionEnabled) {
+        win_input_trace("hwtc_drop text=%p units=%u en=%u", (const void *)text, units,
+            s ? s->ownedTextSessionEnabled : 0u);
         return 0;
     }
     WCHAR combined[2];
@@ -17166,6 +18001,130 @@ static int handle_windows_text_character(CjguiWindowsRendererSession *s,
         repeatCount);
 }
 
+/* 文本剪贴板属于窄平台桥：macOS 在桥内处理 Cmd+C/X/V，共同核心不定义文本剪贴板
+   契约。Windows 直接读写 CF_UNICODETEXT，写回仍走既有 range-replace 输入链，
+   选区、版本和绑定沿用核心回传的 owner 状态。 */
+static int windows_clipboard_open(HWND owner) {
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (attempt) Sleep(4u);
+        if (OpenClipboard(owner)) return 1;
+    }
+    return 0;
+}
+
+static int windows_clipboard_write_utf8(HWND owner, const char *utf8, uint32_t length) {
+    if (!utf8 || length == 0u || length > CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY) return 0;
+    int units = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, (int)length, NULL, 0);
+    if (units <= 0) return 0;
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, ((SIZE_T)units + 1u) * sizeof(WCHAR));
+    if (!memory) return 0;
+    WCHAR *wide = (WCHAR *)GlobalLock(memory);
+    if (!wide) { GlobalFree(memory); return 0; }
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, (int)length,
+        wide, units) != units) {
+        GlobalUnlock(memory);
+        GlobalFree(memory);
+        return 0;
+    }
+    wide[units] = L'\0';
+    GlobalUnlock(memory);
+    if (!windows_clipboard_open(owner)) { GlobalFree(memory); return 0; }
+    int written = 0;
+    if (EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, memory)) {
+        written = 1;
+        memory = NULL;
+    }
+    CloseClipboard();
+    if (memory) GlobalFree(memory);
+    return written;
+}
+
+static char *windows_clipboard_read_utf8(HWND owner, uint32_t *outLength) {
+    if (!outLength) return NULL;
+    *outLength = 0u;
+    if (!windows_clipboard_open(owner)) return NULL;
+    HANDLE handle = GetClipboardData(CF_UNICODETEXT);
+    const WCHAR *wide = handle ? (const WCHAR *)GlobalLock(handle) : NULL;
+    char *utf8 = NULL;
+    if (wide) {
+        SIZE_T maxUnits = GlobalSize(handle) / sizeof(WCHAR);
+        SIZE_T units = 0u;
+        while (units < maxUnits && wide[units]) units += 1u;
+        if (units <= CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY && units <= INT_MAX) {
+            int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                (int)units, NULL, 0, NULL, NULL);
+            if (bytes >= 0 && (uint32_t)bytes <= CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY) {
+                utf8 = (char *)malloc((size_t)bytes + 1u);
+                if (utf8) {
+                    if (bytes && WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, wide,
+                        (int)units, utf8, bytes, NULL, NULL) != bytes) {
+                        free(utf8);
+                        utf8 = NULL;
+                    } else {
+                        utf8[bytes] = '\0';
+                        *outLength = (uint32_t)bytes;
+                    }
+                }
+            }
+        }
+        GlobalUnlock(handle);
+    }
+    CloseClipboard();
+    return utf8;
+}
+
+/* 选区基准与 queue_owned_range_replace 一致：range 链体优先，其次是尚未
+   ack 的本地输入值，最后是已受理场景里的 owner 正文。 */
+static const char *owned_text_current_base(CjguiWindowsRendererSession *s) {
+    if (s->rangeArmed && s->rangeChainBody &&
+        s->rangeNodeId == s->ownedTextSessionNodeId &&
+        s->rangeResourceId == s->ownedTextSessionResourceId &&
+        s->rangeBindingEpoch == s->ownedTextSessionBindingEpoch) {
+        return s->rangeChainBody;
+    }
+    if (s->pendingOwnedInputEventCount &&
+        s->pendingOwnedInputBindingEpoch == s->ownedTextSessionBindingEpoch &&
+        s->pendingOwnedInputNodeId == s->ownedTextSessionNodeId &&
+        s->pendingOwnedInputResourceId == s->ownedTextSessionResourceId &&
+        s->pendingOwnedInputValue) {
+        return s->pendingOwnedInputValue;
+    }
+    CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, s->ownedTextSessionNodeId);
+    if (node && node->node.resourceId == s->ownedTextSessionResourceId &&
+        node->node.nodeKind == s->ownedTextSessionNodeKind)
+        return node->value ? node->value : "";
+    return NULL;
+}
+
+static int windows_handle_text_clipboard_key(CjguiWindowsRendererSession *s, WPARAM key,
+    int64_t frozenModifiers) {
+    const char *base = owned_text_current_base(s);
+    if (!base) return 0;
+    uint32_t baseLength16 = 0u;
+    if (!windows_utf16_length(base, &baseLength16)) return 0;
+    if (s->selectionEnd16 < s->selectionStart16 || s->selectionEnd16 > baseLength16) return 0;
+    uint64_t startByte = 0u, endByte = 0u;
+    uint64_t baseBytes = strlen(base);
+    if (!windows_utf8_offset_for_utf16(base, s->selectionStart16, &startByte) ||
+        !windows_utf8_offset_for_utf16(base, s->selectionEnd16, &endByte) ||
+        startByte > endByte || endByte > baseBytes) return 0;
+    if (key == 'V') {
+        uint32_t pasteLength = 0u;
+        char *paste = windows_clipboard_read_utf8(s->hwnd, &pasteLength);
+        int consumed = 1;
+        if (paste && pasteLength > 0u)
+            consumed = queue_owned_range_replace(s, paste, pasteLength,
+                frozenModifiers, 1u) ? 1 : 0;
+        free(paste);
+        return consumed;
+    }
+    if (endByte <= startByte) return 0; /* 无选区：交回既有窗口快捷键路由 */
+    if (!windows_clipboard_write_utf8(s->hwnd, base + startByte, (uint32_t)(endByte - startByte)))
+        return 0;
+    if (key == 'C') return 1;
+    return queue_owned_range_replace(s, "", 0u, frozenModifiers, 1u) ? 1 : 0;
+}
+
 static int64_t windows_keyboard_modifiers(void) {
     /* 在 UI WndProc 冻结本消息的队列状态。连续 SendInput 可在处理 Home/Left
        前就释放 Ctrl/Shift；Async 此时只见最后物理状态，会篡改旧消息的意图。
@@ -17212,15 +18171,78 @@ static int enqueue_windows_navigation(CjguiWindowsRendererSession *s, const char
     return 1;
 }
 
+/* Window-level normalized command while no text session owns the keyboard.
+   The wire is the one the macOS bridge already emits for Escape/Enter/arrows
+   and Command chords; Cangjie still resolves the declaration, availability,
+   target and focus scope from the accepted scene, so an undeclared or
+   unavailable chord stays a no-op instead of becoming a native action. */
+static int enqueue_windows_window_command(CjguiWindowsRendererSession *s, const char *command,
+    int64_t frozenModifiers) {
+    if (!s || !command || GetFocus() != s->hwnd) return 0;
+    /* UINT64_MAX is the native "no focus" sentinel. The shared layer resolves
+       every event node id as a signed value, so the sentinel must not cross the
+       wire: a window command carries only its normalized text, and 0 is the
+       value the shared contract already uses for an absent node. */
+    uint64_t targetNodeId = s->focusedNodeId == UINT64_MAX ? 0u : s->focusedNodeId;
+    CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, targetNodeId);
+    CjguiInternalRendererEvent event;
+    memset(&event, 0, sizeof(event));
+    event.kind = 34u;
+    event.nodeId = targetNodeId;
+    event.projectionVersion = s->sceneVersion;
+    if (node) {
+        event.resourceId = node->node.resourceId;
+        event.nodeKind = node->node.nodeKind;
+    }
+    event.modifierFlags = frozenModifiers;
+    return push_event_payload(s, &event, command, (uint32_t)strlen(command));
+}
+
 static int handle_windows_key_down(CjguiWindowsRendererSession *s, WPARAM key,
     int64_t frozenModifiers) {
-    if (!s || !s->ownedTextSessionEnabled || GetFocus() != s->hwnd) return 0;
+    if (!s || GetFocus() != s->hwnd) return 0;
+    if (!s->ownedTextSessionEnabled) {
+        /* 系统组合进行中，按键属于 IME（候选上下移、Esc 取消），不是窗口命令。 */
+        if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) {
+            if (key == VK_ESCAPE) {
+                HIMC context = ImmGetContext(s->hwnd);
+                if (context) {
+                    (void)ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0u);
+                    ImmReleaseContext(s->hwnd, context);
+                }
+                return 1;
+            }
+            return 0;
+        }
+        char shortcut[40];
+        const char *windowCommand = NULL;
+        if ((frozenModifiers & 0x040000) != 0 &&
+            (frozenModifiers & (0x080000 | 0x100000)) == 0 && key >= 'A' && key <= 'Z') {
+            snprintf(shortcut, sizeof(shortcut), "shortcut:%scommand+%c",
+                (frozenModifiers & 0x020000) != 0 ? "shift+" : "", (char)(key - 'A' + 'a'));
+            windowCommand = shortcut;
+        } else if ((frozenModifiers & (0x020000 | 0x040000 | 0x080000 | 0x100000)) == 0) {
+            switch (key) {
+                case VK_ESCAPE: windowCommand = "shortcut:escape"; break;
+                case VK_RETURN: windowCommand = "shortcut:enter"; break;
+                case VK_UP: windowCommand = "shortcut:up"; break;
+                case VK_DOWN: windowCommand = "shortcut:down"; break;
+                default: break;
+            }
+        }
+        return windowCommand ? enqueue_windows_window_command(s, windowCommand, frozenModifiers) : 0;
+    }
     if (s->compositionState != WINDOWS_COMPOSITION_IDLE || s->compositionActive) {
         if (key == VK_ESCAPE) {
             end_windows_ime_composition(s);
             return 1;
         }
         return 0;
+    }
+    if ((frozenModifiers & 0x040000) != 0 &&
+        (frozenModifiers & (0x080000 | 0x100000 | 0x020000)) == 0 &&
+        (key == 'C' || key == 'X' || key == 'V')) {
+        if (windows_handle_text_clipboard_key(s, key, frozenModifiers)) return 1;
     }
     if ((frozenModifiers & 0x040000) != 0 &&
         (frozenModifiers & (0x080000 | 0x100000)) == 0 && key >= 'A' && key <= 'Z') {
@@ -17619,6 +18641,10 @@ static void retry_kept_ime_frozen(CjguiWindowsRendererSession *s) {
     for (uint32_t i = 0u; i < CJGUI_WINDOWS_IME_FROZEN_CAPACITY; ++i) {
         CjguiWindowsImeFrozen *frozen = &s->imeFrozen[i];
         if (!frozen->used || !frozen->readyForRetry) continue;
+        if (!s->ownedTextSessionEnabled) {
+            if (!windows_plain_text_composition(s, (int64_t)i)) break;
+            continue;
+        }
         if (frozen->bindingEpoch != s->ownedTextSessionBindingEpoch) {
             s->imeFreezeMisses += 1u;
             /* 旧来源走恢复接收方，转移失败仍保原件，不给新绑定重放。 */
@@ -17754,6 +18780,8 @@ static void synchronize_owned_proxy_after_presentation(CjguiWindowsRendererSessi
             node->node.nodeKind != s->pendingOwnedInputNodeKind ||
             strcmp(accepted, s->pendingOwnedInputValue ? s->pendingOwnedInputValue : "") != 0)
             s->selectionStart16 = s->selectionEnd16 = acceptedLength16;
+        win_input_trace("proxy_sync accepted=%.24s pending=%.24s",
+            accepted, s->pendingOwnedInputValue ? s->pendingOwnedInputValue : "");
         clear_pending_owned_input(s);
     }
     if (!s->proxyValueUtf8 || strcmp((const char *)s->proxyValueUtf8, accepted) != 0) {
@@ -17817,12 +18845,26 @@ static CjguiInternalRendererStatus focus_composable_node_impl(
     if (owner != CJGUI_INTERNAL_RENDERER_OK) return owner;
     CjguiWindowsSceneNode *node = scene_node_by_id(&s->acceptedScene, nodeId);
     if (!node) return CJGUI_INTERNAL_RENDERER_NODE_NOT_FOUND;
-    if (node->node.isReadOnly || !node->node.isInteractive ||
-        (node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT &&
-         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT &&
-         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT &&
-         node->node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT))
+    /* The shared window re-arms focus after a layer closes; keep traversal there. */
+    s->focusTraversalNodeId = nodeId;
+    if (node->node.isReadOnly || !node->node.isInteractive)
         return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+    /* 共享层经同一入口安装层的 initialFocus 并恢复层锚点。文本编辑器与
+       可交互展示 TEXT 拥有原生适配器；其余 tab-stop 与 Tab 路径一致，
+       只安装遍历焦点，这样 initialFocus 是按钮的对话框也能获得真实焦点，
+       Esc 才能看到该层的 inputScope。 */
+    if (!windows_focus_is_direct_text_kind(node->node.nodeKind)) {
+        if (!windows_focus_kind_eligible(node->node.nodeKind))
+            return CJGUI_INTERNAL_RENDERER_TEXT_SERVICE_UNSUPPORTED;
+        windows_drop_plain_text_adapter(s);
+        s->focusTraversalNodeId = nodeId;
+        SetFocus(s->hwnd);
+        win_input_trace("focus_install node=%llu kind=%u focused=%d",
+            (unsigned long long)nodeId, (unsigned)node->node.nodeKind,
+            GetFocus() == s->hwnd ? 1 : 0);
+        return GetFocus() == s->hwnd ? CJGUI_INTERNAL_RENDERER_OK :
+            CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+    }
     CjguiInternalRendererStatus copyStatus = CJGUI_INTERNAL_RENDERER_OK;
     uint8_t *next = (uint8_t *)copy_valid_utf8(node->value ? node->value : "",
         CJGUI_WINDOWS_ONE_STRING_BYTE_CAPACITY, NULL, &copyStatus);
@@ -17847,6 +18889,8 @@ static CjguiInternalRendererStatus focus_composable_node_impl(
     s->focusedResourceId = node->node.resourceId;
     s->focusedNodeKind = node->node.nodeKind;
     s->selectionStart16 = s->selectionEnd16 = length16;
+    s->plainCaret16 = s->plainAnchor16 = length16;
+    s->plainCaretValid = 1u;
     SetFocus(s->hwnd);
     return GetFocus() == s->hwnd ? CJGUI_INTERNAL_RENDERER_OK : CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
 }
@@ -18096,6 +19140,9 @@ static CjguiInternalRendererStatus set_composable_owned_text_session_impl(
         s->ownedTextSessionEnabled = 1u; s->ownedTextSessionNodeId = nodeId;
         s->ownedTextSessionResourceId = resourceId; s->ownedTextSessionNodeKind = nodeKind;
         s->ownedTextSessionBindingEpoch = bindingEpoch;
+        win_input_trace("session_enable node=%llu res=%lld kind=%u epoch=%llu thread=%lu",
+            (unsigned long long)nodeId, (long long)resourceId, nodeKind,
+            (unsigned long long)bindingEpoch, (unsigned long)GetCurrentThreadId());
         return CJGUI_INTERNAL_RENDERER_OK;
     }
     // 撤回：同代次或更新的声明生效；旧代次撤回不触碰当前绑定。
@@ -18106,6 +19153,9 @@ static CjguiInternalRendererStatus set_composable_owned_text_session_impl(
     clear_pending_owned_input(s);
     s->pendingHighSurrogate = 0u;
     s->pendingHighSurrogateBindingEpoch = 0u;
+    win_input_trace("session_disable epoch=%llu thread=%lu pend=%u",
+        (unsigned long long)bindingEpoch, (unsigned long)GetCurrentThreadId(),
+        s->pendingOwnedInputEventCount);
     s->ownedTextSessionEnabled = 0u; s->ownedTextSessionNodeId = 0u;
     s->ownedTextSessionResourceId = -1; s->ownedTextSessionNodeKind = 0u;
     return CJGUI_INTERNAL_RENDERER_OK;
@@ -18718,4 +19768,74 @@ uint32_t cjgui_internal_renderer_debug_source_install_state(uint64_t token,
     if (outProvisional) *outProvisional = s->sourceInstallProvisional;
     if (outOutcome) *outOutcome = s->sourceInstallOutcome;
     return s->sourceInstallPending;
+}
+
+/* 冻结共同核心新增的 macOS 桥观察符号在 Windows 侧的回答。
+ *
+ * 这些函数只报告“平台桥事实”，没有行为消费者，也不改变渲染路径。Windows
+ * 没有 AppKit 单例访问器与 Metal 着色器库，因此：
+ *   - AppKit 访问器/副作用类限制：在 Windows 同样不允许（返回 1）；
+ *   - 线程/有界循环约束：Windows 渲染会话同样只由主线程有界泵驱动（返回 1）；
+ *   - 仅属 AppKit 生命周期的义务（自动关闭、先销毁后可见、非用户可见）：
+ *     在 Windows 不适用（返回 0）；
+ *   - 着色器源契约不可用、管线状态创建仍受阻：如实报告（0 / 1）。
+ * 不返回任何伪装成功的值。 */
+#define CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE 1
+#define CJGUI_WINDOWS_BRIDGE_NOT_APPLICABLE 0
+
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_accessor_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_no_singleton_accessor_call(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_singleton_creation_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_main_thread_required(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_bounded_run_loop_required(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_auto_close_required(void) {
+    return CJGUI_WINDOWS_BRIDGE_NOT_APPLICABLE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_teardown_before_visible_required(void) {
+    return CJGUI_WINDOWS_BRIDGE_NOT_APPLICABLE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_non_user_visible_required(void) {
+    return CJGUI_WINDOWS_BRIDGE_NOT_APPLICABLE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_application_side_effect_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_activation_policy_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_activation_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_event_loop_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_visible_order_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_drawable_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_render_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+int32_t cjgui_native_bridge_nsapplication_shared_application_accessor_call_containment_backend_ready_truth_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
+}
+
+/* D3D11 后端没有 Metal 着色器源契约，也没有可用的管线状态创建路径。 */
+int32_t cjgui_native_bridge_shader_source_contract_available(void) {
+    return CJGUI_WINDOWS_BRIDGE_NOT_APPLICABLE;
+}
+int32_t cjgui_native_bridge_shader_pipeline_state_creation_still_blocked(void) {
+    return CJGUI_WINDOWS_BRIDGE_LIMIT_ACTIVE;
 }

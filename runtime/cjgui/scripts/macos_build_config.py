@@ -177,6 +177,57 @@ def source_snapshot(app: Path) -> dict[str, str]:
     return result
 
 
+def compiler_configuration(source_files: dict[str, str]) -> dict:
+    # cjpm's top-level override applies to dependencies, but its incremental
+    # cache can retain dependency objects from the previous override. Include
+    # per-package options and profiles as well as options under target tables.
+    def options(value):
+        if not isinstance(value, dict):
+            return {}
+        selected = {}
+        for key, item in value.items():
+            if "compile-option" in key or key == "profile":
+                selected[key] = item
+            elif isinstance(item, dict):
+                nested = options(item)
+                if nested:
+                    selected[key] = nested
+        return selected
+
+    result = {}
+    for name in source_files:
+        path = Path(name)
+        if path.name == "cjpm.toml":
+            result[name] = options(read_manifest(path.parent))
+    return result
+
+
+def require_compatible_target(cache: Path, target: Path, configuration: dict,
+                              *, testing: bool) -> None:
+    if not target.exists() or not any(p.is_file() or p.is_symlink() for p in target.rglob("*")):
+        return
+    # A failed build may leave objects after prepared.json was changed. Both
+    # the last verified configuration and the latest attempt must agree with
+    # the requested one; neither receipt alone can establish target identity.
+    # The isolated testing driver does not publish build-provenance.json.
+    def read_record(name):
+        path = cache / name
+        return json.loads(path.read_text()) if path.is_file() else {}
+
+    def compatible(record):
+        # Matching legacy manifest hashes do not identify dependency objects:
+        # an older incremental build could have verified a mixed O0/O2 target.
+        return (record.get("target") == str(target) and
+                record.get("compiler_configuration") == configuration)
+
+    prepared = read_record("prepared.json")
+    verified = read_record("build-provenance.json") if not testing else {}
+    if (not compatible(prepared) or
+            (not testing and (not verified.get("verified") or not compatible(verified)))):
+        raise ValueError("compiler configuration changed or is unknown for a nonempty target; "
+                         "use a separate application target or retire this application's own target")
+
+
 def prepare(app: Path, runtime: Path, native: Path, cache: Path, *, testing: bool = False) -> Path:
     app, runtime, native, cache = (path.resolve() for path in (app, runtime, native, cache))
     original = read_manifest(app)
@@ -185,6 +236,10 @@ def prepare(app: Path, runtime: Path, native: Path, cache: Path, *, testing: boo
         raise ValueError("application cjgui dependency must match the runner's framework directory")
     if resolve(app, original["package"].get("target-dir", "target")) != app / "target":
         raise ValueError("macOS runner requires the application's target directory")
+    source_files = source_snapshot(app)
+    configuration = compiler_configuration(source_files)
+    target = cache / "application/target" if testing else app / "target"
+    require_compatible_target(cache, target, configuration, testing=testing)
     framework = relocate(read_manifest(runtime), runtime)
     framework_source = resolve(runtime, framework["package"].get("src-dir", "src"))
     prepared_sources = snapshot_sources(framework_source, cache / "framework/src")
@@ -220,7 +275,7 @@ def prepare(app: Path, runtime: Path, native: Path, cache: Path, *, testing: boo
               "testing": testing,
               "renderer_archive": str(renderer), "renderer_sha256": digest(renderer),
               "link_map": str(application_path.parent / MAP_NAME),
-              "source_files": source_snapshot(app),
+              "source_files": source_files, "compiler_configuration": configuration,
               "prepared_sources": prepared_sources,
               "generated_manifests": {str(path): digest(path) for path in (application_path, framework_path)}}
     libraries = [renderer]

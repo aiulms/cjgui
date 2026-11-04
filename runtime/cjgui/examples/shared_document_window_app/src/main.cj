@@ -22,7 +22,7 @@ private let READ_ONLY_ARCHIVE_ID: Int64 = 7199
 private class CjguiSharedDocumentVirtualListSource <: CjguiComposableUiVariableHeightListSource {
     private let workspace: CjguiTextDocumentWorkspace
     private let theme: CjguiComposableUiTheme
-    private let documentIds: ArrayList<Int64>
+    private let reversedOrder: Bool
     private let cardScope: CjguiComposableUiIdentityScope
 
     init(workspace: CjguiTextDocumentWorkspace, theme: CjguiComposableUiTheme, reversed!: Bool = false,
@@ -30,25 +30,35 @@ private class CjguiSharedDocumentVirtualListSource <: CjguiComposableUiVariableH
         this.workspace = workspace
         this.theme = theme
         this.cardScope = cardScope
-        this.documentIds = if (reversed) {
-            ArrayList<Int64>([NOTES_DOCUMENT_ID, DESCRIPTION_DOCUMENT_ID])
+        this.reversedOrder = reversed
+    }
+    private func visibleSummaries(): ArrayList<CjguiTextDocumentSummary> {
+        let visible = ArrayList<CjguiTextDocumentSummary>()
+        let summaries = workspace.openDocumentSummaries()
+        if (reversedOrder) {
+            var index = summaries.size - 1
+            while (index >= 0) {
+                if (summaries[index].documentId != READ_ONLY_ARCHIVE_ID) { visible.add(summaries[index]) }
+                index -= 1
+            }
         } else {
-            ArrayList<Int64>([DESCRIPTION_DOCUMENT_ID, NOTES_DOCUMENT_ID])
+            for (summary in summaries) {
+                if (summary.documentId != READ_ONLY_ARCHIVE_ID) { visible.add(summary) }
+            }
         }
+        return visible
     }
     public func itemCount(): Int64 {
-        return documentIds.size
+        return visibleSummaries().size
     }
     public func itemAt(index: Int64): CjguiComposableUiVariableHeightListItem {
-        if (index < 0 || index >= documentIds.size) {
+        let summaries = visibleSummaries()
+        if (index < 0 || index >= summaries.size) {
             return CjguiComposableUiVariableHeightListItem.missing()
         }
-        let documentId = documentIds[index]
-        if (let Some(snapshot) <- workspace.documentSnapshot(documentId)) {
-            return CjguiComposableUiVariableHeightListItem("document_${documentId}", documentId, snapshot.title,
-                snapshot.version, estimatedHeight: 96)
-        }
-        return CjguiComposableUiVariableHeightListItem.missing()
+        let summary = summaries[index]
+        return CjguiComposableUiVariableHeightListItem("document_${summary.documentId}", summary.documentId,
+            summary.title, summary.version, estimatedHeight: 96)
     }
     public func indexForKey(key: String): Int64 {
         var index: Int64 = 0
@@ -136,12 +146,14 @@ private class CjguiSharedDocumentVirtualListSource <: CjguiComposableUiVariableH
 /// This consumer repeats the same scoped document card for every visible
 /// document. Keyboard/menu declarations still participate in the same scene
 /// acceptance transaction as its editor and virtual list.
-private class CjguiSharedDocumentController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider {
+private class CjguiSharedDocumentController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant & CjguiComposableUiPointerCaptureVersionProvider & CjguiComposableUiDataTransferProvider & CjguiMacosApplicationExitDecisionProvider & CjguiMacosApplicationExitDecisionLifecycle & CjguiTextDocumentLifecycleDomain {
     private let workspace: CjguiTextDocumentWorkspace
     private let fileBinding: CjguiTextDocumentFileBinding
     private let savePath: String
+    private let exitGuardEnabled: Bool
     private var localRevision: Int64
     private var status: String
+    private var lastDocumentSaveReason: String
     // `status` is a consumer-local explanation of the last action.  Keep its
     // owner version separately so an external workspace mutation cannot leave
     // a success message that claims an older document revision.
@@ -160,19 +172,38 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
     private var transferRejectedCount: Int64
     private var transferPeakPayloadBytes: Int64
     private var transferLastApplyNanoseconds: Int64
+    private var pendingLocalCloseRequest: Bool
+    private var closeIntentKind: String
+    private var closeGuardActive: Bool
+    private var closeGuardDocumentId: Int64
+    private var closeGuardNotice: String
+    private var discardedDescriptionVersion: Int64
+    private var discardedNotesVersion: Int64
+    private let discardedVersionsByDocumentId: HashMap<Int64, Int64>
+    private let queuedOpenPaths: ArrayList<String>
+    private var lastClosedPath: String
+    private var documentOpenedObserver: ?((Int64) -> Unit)
+    private var documentClosedObserver: ?((Int64) -> Unit)
+    private var retryApplicationExit: ?(() -> Bool)
+    private var cancelApplicationExit: ?(() -> Unit)
+    private var retryWindowClose: ?(() -> Bool)
 
     init(
         workspace: CjguiTextDocumentWorkspace,
         fileBinding: CjguiTextDocumentFileBinding,
         savePath: String,
-        status: String
+        status: String,
+        exitGuardEnabled!: Bool = false,
+        openPaths!: ArrayList<String> = ArrayList<String>()
     ) {
         this.workspace = workspace
         this.fileBinding = fileBinding
         this.savePath = savePath
+        this.exitGuardEnabled = exitGuardEnabled
         let initialSelection = workspace.selection()
         this.localRevision = 1
         this.status = status
+        this.lastDocumentSaveReason = ""
         this.statusDocumentVersion = if (initialSelection.isAvailable) {
             initialSelection.documentVersion
         } else {
@@ -190,6 +221,41 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         this.transferRejectedCount = 0
         this.transferPeakPayloadBytes = 0
         this.transferLastApplyNanoseconds = 0
+        this.pendingLocalCloseRequest = false
+        this.closeIntentKind = ""
+        this.closeGuardActive = false
+        this.closeGuardDocumentId = -1
+        this.closeGuardNotice = ""
+        this.discardedDescriptionVersion = -1
+        this.discardedNotesVersion = -1
+        this.discardedVersionsByDocumentId = HashMap<Int64, Int64>()
+        this.queuedOpenPaths = ArrayList<String>(openPaths)
+        this.lastClosedPath = ""
+        this.documentOpenedObserver = None
+        this.documentClosedObserver = None
+        this.retryApplicationExit = None
+        this.cancelApplicationExit = None
+        this.retryWindowClose = None
+    }
+
+    func bindDocumentOpenedObserver(observer: (Int64) -> Unit): Unit {
+        documentOpenedObserver = Some(observer)
+    }
+
+    func bindDocumentClosedObserver(observer: (Int64) -> Unit): Unit {
+        documentClosedObserver = Some(observer)
+    }
+
+    func bindHostContinuations(applicationExit: () -> Bool, cancelExit: () -> Unit, windowClose: () -> Bool): Unit {
+        retryApplicationExit = Some(applicationExit)
+        cancelApplicationExit = Some(cancelExit)
+        retryWindowClose = Some(windowClose)
+    }
+
+    func takePendingLocalCloseRequest(): Bool {
+        let pending = pendingLocalCloseRequest
+        pendingLocalCloseRequest = false
+        return pending
     }
 
     public func uiSceneVersion(): Int64 {
@@ -288,12 +354,12 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         let selectedDocumentId = if (selection.isAvailable) {
             selection.documentId
         } else {
-            DESCRIPTION_DOCUMENT_ID
+            -1
         }
         let snapshot = if (let Some(value) <- workspace.documentSnapshot(selectedDocumentId)) {
             value
         } else {
-            CjguiTextDocumentSnapshot(selectedDocumentId, "已关闭文档", "", 0)
+            CjguiTextDocumentSnapshot(selectedDocumentId, "没有打开的文档", "", 0)
         }
         let previewLimit = workspace.previewLimitForDocument(selectedDocumentId)
         let host = cjguiComposableLayerHost(1, "shared-document-layer-host", theme.page)
@@ -380,6 +446,21 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             CjguiComposableUiStyle(fixedHeight: 36, gap: 10)
         )
         root.add(actions)
+        root.add(
+            cjguiComposableScopedActionRow(
+                actionScope.child("lifecycle"),
+                "shared-document-lifecycle-actions",
+                ArrayList<CjguiComposableUiActionItem>(
+                    [
+                        CjguiComposableUiActionItem("open", "打开", "OPEN_QUEUED_DOCUMENT", -1, secondary,
+                            semanticId: "shared-document-open"),
+                        CjguiComposableUiActionItem("close-document", "关闭文档", "CLOSE_DOCUMENT",
+                            selectedDocumentId, secondary, semanticId: "shared-document-close-document")
+                    ]
+                ),
+                CjguiComposableUiStyle(fixedHeight: 36, gap: 10)
+            )
+        )
         let previewSlider = cjguiComposableSlider(36, "shared-document-preview-limit", previewLimit, 128, 512, 32,
             CjguiComposableUiStyle(minWidth: 180, idealWidth: 220, fixedHeight: 28),
             operationActionName: "SET_PREVIEW_LIMIT", operationResourceId: selectedDocumentId)
@@ -478,6 +559,43 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             dialog.add(
                 cjguiComposableButton(66, "shared-document-card-edit-close", "完成", "CLOSE_LAYER", activeDocumentId,
                     secondary))
+            host.add(dialog)
+        }
+        if (closeGuardActive) {
+            let intentLabel = if (closeIntentKind == "application") {
+                "退出"
+            } else {
+                "关闭"
+            }
+            let guardReturnAnchor = if (layerMode == "document-card-edit" && activeDocumentId >= 0) {
+                let editorScope = this.cardScope.child("document_${activeDocumentId}").child("editor")
+                CjguiComposableUiNodeReference.scoped(editorScope, "editor-content")
+            } else {
+                CjguiComposableUiNodeReference.manual(20)
+            }
+            let dialog = cjguiComposableDialogLayerWithReference(70, "shared-document-exit-guard",
+                "shared-document-exit-guard", "shared-document-root", guardReturnAnchor,
+                CjguiComposableUiStyle(fixedWidth: 500, fixedHeight: 220,
+                    background: CjguiComposableUiColor(0.035, 0.06, 0.11, 1.0),
+                    border: CjguiComposableUiColor(0.45, 0.72, 1.0, 1.0), padding: 12, gap: 8),
+                initialFocus: Some(CjguiComposableUiNodeReference.manual(75)))
+            dialog.add(
+                cjguiComposableText(71, "shared-document-exit-guard-title", "${intentLabel}前处理未保存内容",
+                    theme.heading))
+            dialog.add(
+                cjguiComposableText(72, "shared-document-exit-guard-reason", closeGuardNotice,
+                    CjguiComposableUiStyle(fontSize: 12.5, textColor: theme.body.textColor)))
+            if (closeGuardCanSave()) {
+                dialog.add(
+                    cjguiComposableButton(73, "shared-document-exit-guard-save", "保存后继续${intentLabel}",
+                        "EXIT_GUARD_SAVE", closeGuardDocumentId, theme.primaryAction))
+            }
+            dialog.add(
+                cjguiComposableButton(74, "shared-document-exit-guard-discard", "明确放弃并继续${intentLabel}",
+                    "EXIT_GUARD_DISCARD", closeGuardDocumentId, secondary))
+            dialog.add(
+                cjguiComposableButton(75, "shared-document-exit-guard-cancel", "取消${intentLabel}并继续编辑",
+                    "EXIT_GUARD_CANCEL", closeGuardDocumentId, secondary))
             host.add(dialog)
         }
         return host
@@ -616,6 +734,50 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
         if (event.eventKind != 27) {
             return CjguiComposableUiDispatchResult(false)
         }
+        if (event.node.actionName == "EXIT_GUARD_SAVE") {
+            let target = closeGuardDocumentId
+            let documentIntent = closeIntentKind == "document"
+            let saved = saveDocumentFromHuman(target)
+            if (saved) {
+                if (documentIntent) {
+                    let _ = finishDocumentClose(target)
+                } else {
+                    continuePendingCloseIntent()
+                }
+            }
+            return CjguiComposableUiDispatchResult(saved)
+        }
+        if (event.node.actionName == "EXIT_GUARD_DISCARD") {
+            if (let Some(snapshot) <- workspace.documentSnapshot(closeGuardDocumentId)) {
+                let _ = discardedVersionsByDocumentId.add(closeGuardDocumentId, snapshot.version)
+                if (closeGuardDocumentId == DESCRIPTION_DOCUMENT_ID) {
+                    discardedDescriptionVersion = snapshot.version
+                } else if (closeGuardDocumentId == NOTES_DOCUMENT_ID) {
+                    discardedNotesVersion = snapshot.version
+                }
+                if (closeIntentKind == "document") {
+                    let _ = finishDocumentClose(closeGuardDocumentId)
+                } else {
+                    continuePendingCloseIntent()
+                }
+                return CjguiComposableUiDispatchResult(true)
+            }
+            status = "未关闭：document_closed"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(false)
+        }
+        if (event.node.actionName == "EXIT_GUARD_CANCEL") {
+            if (closeIntentKind == "application") {
+                if (let Some(cancel) <- cancelApplicationExit) {
+                    cancel()
+                } else {
+                    clearCloseIntent("已取消退出，文档仍可继续编辑")
+                }
+            } else {
+                clearCloseIntent("已取消关闭，文档仍可继续编辑")
+            }
+            return CjguiComposableUiDispatchResult(true)
+        }
         if (event.node.actionName == "OPEN_DOCUMENT_MENU") {
             layerMode = "menu"
             localRevision += 1
@@ -638,6 +800,12 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             activeDocumentId = -1
             localRevision += 1
             return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.node.actionName == "OPEN_QUEUED_DOCUMENT") {
+            return CjguiComposableUiDispatchResult(openNextDocument())
+        }
+        if (event.node.actionName == "CLOSE_DOCUMENT") {
+            return CjguiComposableUiDispatchResult(closeDocumentById(event.node.resourceId))
         }
         if (event.node.actionName == "SELECT_DOCUMENT") {
             let result = workspace.selectDocumentFromHuman(event.node.resourceId)
@@ -686,32 +854,400 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
             return CjguiComposableUiDispatchResult(result.applied)
         }
         if (event.node.actionName == "SAVE") {
-            if (savePath.size == 0) {
-                status = "未保存：用 --file PATH 指定受控文本文件"
-                localRevision += 1
-                return CjguiComposableUiDispatchResult(false)
-            }
-            if (let Some(snapshot) <- workspace.documentSnapshot(event.node.resourceId)) {
-                let result = fileBinding.saveFromHuman(snapshot, savePath)
-                status = if (result.applied) {
-                    "已原子保存到 ${result.path}"
-                } else {
-                    "未保存：${result.reason}"
-                }
-                if (result.applied) {
-                    statusDocumentVersion = snapshot.version
-                }
-                localRevision += 1
-                return CjguiComposableUiDispatchResult(result.applied)
-            }
-            status = "未保存：document_closed"
-            localRevision += 1
-            return CjguiComposableUiDispatchResult(false)
+            return CjguiComposableUiDispatchResult(saveDocumentFromHuman(event.node.resourceId))
         }
         if (event.node.actionName == "CLOSE") {
+            if (exitGuardEnabled) {
+                pendingLocalCloseRequest = true
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(true)
+            }
             return CjguiComposableUiDispatchResult(true, shouldClose: true)
         }
         return CjguiComposableUiDispatchResult(false)
+    }
+
+    /// The one explicit save route for both the ordinary Save action and the
+    /// application-exit decision. This file binding belongs only to the
+    /// description document; selecting the unbound notes document must never
+    /// redirect its contents into the description file.
+    private func controllerBindingFor(documentId: Int64): ?CjguiTextDocumentFileBinding {
+        if (let Some(binding) <- workspace.fileBindingForDocument(documentId)) { return Some(binding) }
+        if (documentId == DESCRIPTION_DOCUMENT_ID) { return Some(fileBinding) }
+        return None
+    }
+
+    private func controllerPathFor(documentId: Int64): String {
+        let path = workspace.filePathForDocument(documentId)
+        if (path.size > 0) { return path }
+        if (documentId == DESCRIPTION_DOCUMENT_ID) { return savePath }
+        return ""
+    }
+
+    private func saveDocumentFromHuman(documentId: Int64): Bool {
+        let binding = match (controllerBindingFor(documentId)) {
+            case Some(value) => value
+            case None =>
+                lastDocumentSaveReason = "no_file_binding"
+                status = "未保存：当前文档未绑定文件"
+                localRevision += 1
+                return false
+        }
+        let path = controllerPathFor(documentId)
+        if (path.size == 0) {
+            lastDocumentSaveReason = "no_file_path"
+            status = "未保存：当前文档没有可写路径"
+            localRevision += 1
+            return false
+        }
+        if (let Some(snapshot) <- workspace.documentSnapshot(documentId)) {
+            let bindingState = binding.persistedState(snapshot, path)
+            if (bindingState == "different_document" || bindingState == "different_path" || (bindingState != "clean" &&
+                bindingState != "dirty" && bindingState != "unbound")) {
+                lastDocumentSaveReason = "binding_mismatch"
+                status = "未保存：当前文档与文件绑定不匹配（${bindingState}）"
+                localRevision += 1
+                return false
+            }
+            let result = binding.saveFromHuman(snapshot, path)
+            lastDocumentSaveReason = result.reason
+            status = if (result.applied) {
+                "已原子保存到 ${result.path}"
+            } else {
+                "未保存：${result.reason}"
+            }
+            // Both success and rejection report this actual owner snapshot.
+            // Otherwise the generic external-update acknowledgement masks a
+            // local save failure at the very revision it is explaining.
+            statusDocumentVersion = snapshot.version
+            if (!result.applied && closeGuardActive) {
+                closeGuardNotice = status
+            }
+            localRevision += 1
+            return result.applied
+        }
+        lastDocumentSaveReason = "document_closed"
+        status = "未保存：document_closed"
+        localRevision += 1
+        return false
+    }
+
+    private func documentNeedsCloseDecision(documentId: Int64): Bool {
+        if (let Some(snapshot) <- workspace.documentSnapshot(documentId)) {
+            if (let Some(discardedVersion) <- discardedVersionsByDocumentId.get(documentId)) {
+                if (discardedVersion == snapshot.version) { return false }
+            }
+            if (documentId == DESCRIPTION_DOCUMENT_ID && workspace.fileBindingForDocument(documentId).isNone()) {
+                let state = fileBinding.persistedState(snapshot, savePath)
+                if (state == "clean") {
+                    return false
+                }
+                if (snapshot.version == 0 && savePath.size == 0 && state == "no_file_path") {
+                    return false
+                }
+                return discardedDescriptionVersion != snapshot.version
+            }
+            if (documentId == NOTES_DOCUMENT_ID && workspace.fileBindingForDocument(documentId).isNone()) {
+                if (snapshot.version == 0) {
+                    return false
+                }
+                return discardedNotesVersion != snapshot.version
+            }
+            if (let Some(binding) <- controllerBindingFor(documentId)) {
+                let path = controllerPathFor(documentId)
+                let state = binding.persistedState(snapshot, path)
+                if (state == "clean") { return false }
+                if (state == "different_document" || state == "different_path") { return true }
+                if (snapshot.version == 0 && path.size == 0 && state == "no_file_path") { return false }
+                return true
+            }
+            return snapshot.version != 0
+        }
+        return false
+    }
+
+    private func firstUndecidedDocument(): Int64 {
+        for (summary in workspace.openDocumentSummaries()) {
+            if (documentNeedsCloseDecision(summary.documentId)) { return summary.documentId }
+        }
+        return -1
+    }
+
+    private func closeGuardCanSave(): Bool {
+        if (let Some(binding) <- controllerBindingFor(closeGuardDocumentId)) {
+            let path = controllerPathFor(closeGuardDocumentId)
+            if (path.size == 0) { return false }
+            if (let Some(snapshot) <- workspace.documentSnapshot(closeGuardDocumentId)) {
+                let state = binding.persistedState(snapshot, path)
+                return state == "clean" || state == "dirty" || state == "unbound"
+            }
+        }
+        return false
+    }
+
+    private func requestCloseDecision(): Bool {
+        let blocker = firstUndecidedDocument()
+        if (blocker < 0) {
+            let hadGuard = closeGuardActive
+            closeGuardActive = false
+            closeGuardDocumentId = -1
+            closeGuardNotice = ""
+            if (hadGuard) {
+                localRevision += 1
+            }
+            return true
+        }
+        return showCloseDecision(blocker)
+    }
+
+    private func showCloseDecision(blocker: Int64): Bool {
+        closeGuardActive = true
+        closeGuardDocumentId = blocker
+        let snapshot = match (workspace.documentSnapshot(blocker)) {
+            case Some(value) => value
+            case None =>
+                closeGuardActive = false
+                closeGuardDocumentId = -1
+                closeGuardNotice = ""
+                status = "未关闭：文档已关闭"
+                localRevision += 1
+                return false
+        }
+        let intentLabel = if (closeIntentKind == "application") {
+            "退出"
+        } else {
+            "关闭"
+        }
+        if (blocker == DESCRIPTION_DOCUMENT_ID && workspace.fileBindingForDocument(blocker).isNone()) {
+            let state = fileBinding.persistedState(snapshot, savePath)
+            closeGuardNotice = if (savePath.size == 0) {
+                "${snapshot.title} v${snapshot.version} 有未保存内容，但没有 --file 路径。只能明确放弃或取消${intentLabel}。"
+            } else if (state == "different_document" || state == "different_path") {
+                "${snapshot.title} 的文件绑定身份不匹配（${state}）；不能安全保存，只能明确放弃或取消${intentLabel}。"
+            } else if (state == "unbound") {
+                "${snapshot.title} v${snapshot.version} 尚未绑定文件。保存只会创建不存在的目标；已有文件仍受冲突保护。也可明确放弃或取消${intentLabel}。"
+            } else {
+                "${snapshot.title} v${snapshot.version} 尚未保存。可保存到原文件、明确放弃或取消${intentLabel}。"
+            }
+        } else if (blocker == NOTES_DOCUMENT_ID && workspace.fileBindingForDocument(blocker).isNone()) {
+            closeGuardNotice = "${snapshot.title} v${snapshot.version} 是未绑定文件的笔记；不能写入说明文档文件。只能明确放弃或取消${intentLabel}。"
+        } else {
+            let path = controllerPathFor(blocker)
+            let state = if (let Some(binding) <- controllerBindingFor(blocker)) {
+                binding.persistedState(snapshot, path)
+            } else {
+                "unbound"
+            }
+            closeGuardNotice = if (path.size == 0) {
+                "${snapshot.title} v${snapshot.version} 有未保存内容，但没有可写路径。只能明确放弃或取消${intentLabel}。"
+            } else if (state == "different_document" || state == "different_path") {
+                "${snapshot.title} 的文件绑定身份不匹配（${state}）；不能安全保存，只能明确放弃或取消${intentLabel}。"
+            } else if (state == "unbound") {
+                "${snapshot.title} v${snapshot.version} 尚未绑定文件。保存只会创建不存在的目标；已有文件仍受冲突保护。也可明确放弃或取消${intentLabel}。"
+            } else {
+                "${snapshot.title} v${snapshot.version} 尚未保存。可保存到原文件、明确放弃或取消${intentLabel}。"
+            }
+        }
+        localRevision += 1
+        return false
+    }
+
+    private func performOpen(path: String): CjguiTextDocumentOpenResult {
+        let result = if (path.size > 0) {
+            workspace.openDocumentFromFileFromHuman(sharedDocumentTitleForPath(path),
+                CjguiTextDocumentFileBinding(), path, createIfMissing: true)
+        } else {
+            workspace.openDocumentFromHuman("新文档 ${workspace.openDocumentCount() + 1}", "")
+        }
+        if (result.applied) {
+            if (let Some(observer) <- documentOpenedObserver) {
+                observer(result.resourceId)
+            }
+            documentListState.setSelectedKey("document_${result.resourceId}")
+            documentListState.setFocusedKey("document_${result.resourceId}")
+            status = "已打开文档 v0（${result.resourceId}）"
+            getStdOut().writeln(
+                "CJGUI_DOCUMENT_LIFECYCLE action=opened resource_id=${result.resourceId} path=${path}")
+            getStdOut().flush()
+        } else {
+            status = "未打开：${result.reason}"
+        }
+        localRevision += 1
+        return result
+    }
+
+    private func openNextDocument(): Bool {
+        var path = ""
+        if (queuedOpenPaths.size > 0) {
+            path = queuedOpenPaths.remove(at: 0)
+        } else if (lastClosedPath.size > 0) {
+            path = lastClosedPath
+        }
+        return performOpen(path).applied
+    }
+
+    /// Public lifecycle open: only a path the application already queued is
+    /// eligible. The external request carries no arbitrary filesystem path.
+    public func openAuthorizedDocumentFromExternal(): CjguiSharedOperationActionResult {
+        let before = workspace.contextSnapshot().version
+        if (queuedOpenPaths.size == 0) {
+            status = "未打开：没有应用授权的待打开路径"
+            localRevision += 1
+            return CjguiSharedOperationActionResult(false, false, before, before, "no_authorized_document")
+        }
+        let path = queuedOpenPaths.remove(at: 0)
+        let result = performOpen(path)
+        let after = workspace.contextSnapshot().version
+        return CjguiSharedOperationActionResult(result.applied, false, before, after, result.reason)
+    }
+
+    private func closeDocumentById(documentId: Int64): Bool {
+        if (workspace.documentSnapshot(documentId).isNone()) {
+            status = "未关闭：${workspace.documentLiveness(documentId)}"
+            localRevision += 1
+            return false
+        }
+        if (documentNeedsCloseDecision(documentId)) {
+            closeIntentKind = "document"
+            return showCloseDecision(documentId)
+        }
+        return finishDocumentClose(documentId)
+    }
+
+    private func closeSelectedDocument(): Bool {
+        let selection = workspace.selection()
+        if (!selection.isAvailable) {
+            status = "未关闭：当前没有打开的文档"
+            localRevision += 1
+            return false
+        }
+        return closeDocumentById(selection.documentId)
+    }
+
+    /// Public lifecycle close: the target and its expected document version
+    /// are explicit. A dirty target without `save`/`discard` is retained; an
+    /// unknown, retired or unauthorized target never falls back to selection.
+    public func closeDocumentFromExternal(
+        documentId: Int64,
+        expectedVersion: Int64,
+        decision: String
+    ): CjguiSharedOperationActionResult {
+        let before = workspace.contextSnapshot().version
+        let snapshot = match (workspace.documentSnapshot(documentId)) {
+            case Some(value) => value
+            case None =>
+                let reason = workspace.documentLiveness(documentId)
+                status = "未关闭：${reason}"
+                localRevision += 1
+                return CjguiSharedOperationActionResult(false, false, before, before, reason)
+        }
+        if (snapshot.version != expectedVersion) {
+            status = "未关闭：版本冲突"
+            localRevision += 1
+            return CjguiSharedOperationActionResult(false, true, before, before, "version_conflict")
+        }
+        if (decision != "" && decision != "close" && decision != "save" && decision != "discard" && decision != "cancel") {
+            status = "未关闭：无效的未保存决定"
+            localRevision += 1
+            return CjguiSharedOperationActionResult(false, false, before, before, "invalid_decision")
+        }
+        if (decision == "cancel") {
+            status = "已取消关闭，文档仍可继续编辑"
+            localRevision += 1
+            return CjguiSharedOperationActionResult(false, false, before, before, "close_cancelled")
+        }
+        if (documentNeedsCloseDecision(documentId)) {
+            if (decision == "" || decision == "close") {
+                status = "未关闭：需要保存或明确放弃未保存内容"
+                localRevision += 1
+                return CjguiSharedOperationActionResult(false, false, before, before, "unsaved_decision_required")
+            }
+            if (decision == "save") {
+                if (!saveDocumentFromHuman(documentId)) {
+                    let reason = if (lastDocumentSaveReason.size > 0) { lastDocumentSaveReason } else { "save_failed" }
+                    return CjguiSharedOperationActionResult(false, false, before,
+                        workspace.contextSnapshot().version, reason)
+                }
+            } else if (decision == "discard") {
+                let _ = discardedVersionsByDocumentId.add(documentId, snapshot.version)
+                if (documentId == DESCRIPTION_DOCUMENT_ID) {
+                    discardedDescriptionVersion = snapshot.version
+                } else if (documentId == NOTES_DOCUMENT_ID) {
+                    discardedNotesVersion = snapshot.version
+                }
+            }
+        }
+        let closed = finishDocumentClose(documentId)
+        let after = workspace.contextSnapshot().version
+        return CjguiSharedOperationActionResult(closed, false, before, after,
+            if (closed) { "document_closed" } else { "close_refused" })
+    }
+
+    private func finishDocumentClose(documentId: Int64): Bool {
+        let path = workspace.filePathForDocument(documentId)
+        let result = workspace.closeDocumentFromHuman(documentId)
+        if (result.applied) {
+            if (path.size > 0) { lastClosedPath = path }
+            if (let Some(observer) <- documentClosedObserver) {
+                observer(documentId)
+            }
+            resetCloseIntent()
+            status = "已关闭文档（${documentId}）"
+            getStdOut().writeln(
+                "CJGUI_DOCUMENT_LIFECYCLE action=closed resource_id=${documentId} path=${path}")
+            getStdOut().flush()
+            localRevision += 1
+            return true
+        }
+        status = "未关闭：${result.reason}"
+        localRevision += 1
+        return false
+    }
+
+    private func continuePendingCloseIntent(): Unit {
+        if (closeIntentKind == "application") {
+            if (let Some(retry) <- retryApplicationExit) {
+                let _ = retry()
+            }
+        } else if (closeIntentKind == "window") {
+            if (let Some(retry) <- retryWindowClose) {
+                let _ = retry()
+            }
+        }
+    }
+
+    private func clearCloseIntent(message: String): Unit {
+        resetCloseIntent()
+        status = message
+        localRevision += 1
+    }
+
+    private func resetCloseIntent(): Unit {
+        closeIntentKind = ""
+        closeGuardActive = false
+        closeGuardDocumentId = -1
+        closeGuardNotice = ""
+        discardedDescriptionVersion = -1
+        discardedNotesVersion = -1
+        discardedVersionsByDocumentId.clear()
+    }
+
+    func reportLocalCloseRequestRejected(): Unit {
+        status = "未关闭：窗口关闭请求未被宿主接收"
+        localRevision += 1
+    }
+
+    public func requestApplicationExit(): Bool {
+        closeIntentKind = "application"
+        return requestCloseDecision()
+    }
+
+    public func applicationExitDidCommit(): Unit {
+        resetCloseIntent()
+    }
+
+    public func applicationExitDidCancel(): Unit {
+        clearCloseIntent("已取消退出，文档仍可继续编辑")
     }
 
     public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
@@ -725,7 +1261,15 @@ private class CjguiSharedDocumentController <: CjguiComposableUiController & Cjg
     }
 
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
-        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+        if (!exitGuardEnabled) {
+            return CjguiComposableUiDispatchResult(true, shouldClose: true)
+        }
+        closeIntentKind = "window"
+        if (requestCloseDecision()) {
+            resetCloseIntent()
+            return CjguiComposableUiDispatchResult(true, shouldClose: true)
+        }
+        return CjguiComposableUiDispatchResult(true, shouldClose: false)
     }
 
     public func beginSceneRefresh(): Bool {
@@ -972,6 +1516,463 @@ func commandMenuRouteKeepsDocumentOwnerAndLayerInSync(): Unit {
     }
     window.close()
     @Assert(!window.invokeCommand("shared-document.undo"), true)
+}
+
+@Test
+func documentSaveActionCannotWriteUnboundNotesToDescriptionFile(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    try {
+        File.writeTo(Path(path), "bound description".toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "独立笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试")
+        let notesSave = cjguiComposableButton(117105, "shared-document-save-notes", "保存", "SAVE", NOTES_DOCUMENT_ID,
+            CjguiComposableUiStyle(fixedHeight: 26))
+        let rejected = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(notesSave, CjguiComposableUiRect(0, 0, 80, 26),
+                    CjguiComposableUiRect(0, 0, 80, 26)), 27, "", 0, 0, 1))
+        @Assert(rejected.didApply, false)
+        @Assert(String.fromUtf8(File.readFrom(path)), "bound description")
+        @Assert(binding.persistedState(primary.snapshot(), path), "clean")
+        if (let Some(notes) <- workspace.documentSnapshot(NOTES_DOCUMENT_ID)) {
+            @Assert(notes.content, "独立笔记")
+        } else {
+            @Assert(false, true)
+        }
+
+        @Assert(workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "updated description").applied,
+            true)
+        let descriptionSave = cjguiComposableButton(117106, "shared-document-save-description", "保存", "SAVE",
+            DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 26))
+        let saved = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(descriptionSave, CjguiComposableUiRect(0, 0, 80, 26),
+                    CjguiComposableUiRect(0, 0, 80, 26)), 27, "", 0, 0, 1))
+        @Assert(saved.didApply, true)
+        @Assert(String.fromUtf8(File.readFrom(path)), "updated description")
+        if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+            @Assert(binding.persistedState(snapshot, path), "clean")
+        } else {
+            @Assert(false, true)
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
+}
+
+@Test
+func dirtyDocumentCloseIsCanceledWithoutLosingTheOriginalOwner(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    try {
+        File.writeTo(Path(path), "saved baseline".toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "模板笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试", exitGuardEnabled: true)
+        let edit = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "edited before close")
+        @Assert(edit.applied, true)
+
+        let closeRequest = controller.requestWindowClose()
+        @Assert(closeRequest.shouldClose, false)
+
+        let cancel = cjguiComposableButton(117107, "shared-document-exit-guard-cancel", "取消关闭并继续编辑",
+            "EXIT_GUARD_CANCEL", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+        let canceled = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(cancel, CjguiComposableUiRect(0, 0, 180, 30),
+                    CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+        @Assert(canceled.didApply, true)
+        if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+            @Assert(snapshot.content, "edited before close")
+            @Assert(snapshot.version, 1)
+            @Assert(binding.persistedState(snapshot, path), "dirty")
+        } else {
+            @Assert(false, true)
+        }
+        @Assert(String.fromUtf8(File.readFrom(path)), "saved baseline")
+
+        let continued = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "continued after cancel")
+        @Assert(continued.applied, true)
+        @Assert(continued.versionAfter, 2)
+        if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+            @Assert(snapshot.content, "continued after cancel")
+            @Assert(binding.persistedState(snapshot, path), "dirty")
+        } else {
+            @Assert(false, true)
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
+}
+
+private class SharedDocumentExitContinuationProbe {
+    var accepted: Bool = false
+    var calls: Int64 = 0
+}
+
+@Test
+func dirtyUnboundNotesRequireDiscardAndCannotBorrowDescriptionSave(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    try {
+        File.writeTo(Path(path), "bound description".toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "模板笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试", exitGuardEnabled: true)
+        let edit = workspace.replaceProjectionTextFromHuman(NOTES_DOCUMENT_ID, "edited unbound notes")
+        @Assert(edit.applied, true)
+        let probe = SharedDocumentExitContinuationProbe()
+        controller.bindHostContinuations(
+            {=> false},
+            {=> ()},
+            {
+                =>
+                    let retried = controller.requestWindowClose()
+                    probe.accepted = retried.shouldClose
+                    return retried.shouldClose
+            }
+        )
+
+        let closeRequest = controller.requestWindowClose()
+        @Assert(closeRequest.shouldClose, false)
+        let notesSave = cjguiComposableButton(117108, "shared-document-exit-guard-save-notes", "保存", "EXIT_GUARD_SAVE",
+            NOTES_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+        let rejectedSave = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(notesSave, CjguiComposableUiRect(0, 0, 80, 30),
+                    CjguiComposableUiRect(0, 0, 80, 30)), 27, "", 0, 0, 1))
+        @Assert(rejectedSave.didApply, false)
+        @Assert(String.fromUtf8(File.readFrom(path)), "bound description")
+
+        let discard = cjguiComposableButton(117109, "shared-document-exit-guard-discard-notes", "明确放弃并继续关闭",
+            "EXIT_GUARD_DISCARD", NOTES_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+        let discarded = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(discard, CjguiComposableUiRect(0, 0, 180, 30),
+                    CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+        @Assert(discarded.didApply, true)
+        @Assert(probe.accepted, true)
+        @Assert(String.fromUtf8(File.readFrom(path)), "bound description")
+        if (let Some(snapshot) <- workspace.documentSnapshot(NOTES_DOCUMENT_ID)) {
+            @Assert(snapshot.content, "edited unbound notes")
+            @Assert(snapshot.version, 1)
+        } else {
+            @Assert(false, true)
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
+}
+
+@Test
+func dirtyDescriptionSaveClosesOnlyAfterTheBoundOwnerIsClean(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    try {
+        File.writeTo(Path(path), "original description".toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "模板笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试", exitGuardEnabled: true)
+        @Assert(workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "edited description").applied, true)
+        let probe = SharedDocumentExitContinuationProbe()
+        controller.bindHostContinuations(
+            {=> false},
+            {=> ()},
+            {
+                =>
+                    let retried = controller.requestWindowClose()
+                    probe.accepted = retried.shouldClose
+                    return retried.shouldClose
+            }
+        )
+
+        @Assert(controller.requestWindowClose().shouldClose, false)
+        let save = cjguiComposableButton(117110, "shared-document-exit-guard-save-description", "保存后继续关闭",
+            "EXIT_GUARD_SAVE", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+        let saved = controller.applyUiEvent(
+            CjguiComposableUiEvent(
+                CjguiComposableUiLayoutNode(save, CjguiComposableUiRect(0, 0, 180, 30),
+                    CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+        @Assert(saved.didApply, true)
+        @Assert(probe.accepted, true)
+        @Assert(String.fromUtf8(File.readFrom(path)), "edited description")
+        if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+            @Assert(snapshot.content, "edited description")
+            @Assert(binding.persistedState(snapshot, path), "clean")
+        } else {
+            @Assert(false, true)
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
+}
+
+private func awaitSharedDocumentGuardProjection(host: CjguiMacosApplicationHost,
+    window: CjguiComposableUiWindow, controller: CjguiSharedDocumentController, expectedVisible: Bool,
+    requireSaveFailureNotice!: Bool = false): Bool {
+    let started = MonoTime.now()
+    while (host.isOpen() && (MonoTime.now() - started).toMilliseconds() < 3000) {
+        pumpSharedDocumentTurn(host, controller)
+        if (!window.refreshIfNeeded()) { continue }
+        let projection = window.windowProjection()
+        if (projection.acceptedSceneVersion != projection.sceneVersion) { continue }
+        let visible = sharedDocumentProjectionNode(projection, "shared-document-exit-guard").nodeId > 0
+        let cancelVisible = sharedDocumentProjectionNode(projection, "shared-document-exit-guard-cancel").nodeId > 0
+        var saveFailureNoticeVisible = !requireSaveFailureNotice
+        if (requireSaveFailureNotice) {
+            for (node in window.acceptedSceneNodes()) {
+                if (node.semanticId == "shared-document-status" && node.value.startsWith("未保存：")) {
+                    saveFailureNoticeVisible = true
+                }
+            }
+        }
+        if (visible == expectedVisible && (!expectedVisible || cancelVisible) && saveFailureNoticeVisible) {
+            return true
+        }
+    }
+    return false
+}
+
+func failedGuardSavePreservesExternalDiskAndDirtyOwnerForCancelBody(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    let diskBaseline = "已保存基线 café 🙂\n第二行。\n"
+    let ownerDraft = "A 的未保存正文：owner🙂\n继续。\n"
+    let externalDisk = "外部进程新内容 Ω\nrevision 2\n"
+    try {
+        File.writeTo(Path(path), diskBaseline.toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "模板笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试", exitGuardEnabled: true)
+        let edit = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, ownerDraft)
+        @Assert(edit.applied, true)
+        @Assert(edit.versionAfter, 1)
+        let probe = SharedDocumentExitContinuationProbe()
+        let host = CjguiMacosApplicationHost(
+            controller,
+            configuration: CjguiMacosApplicationWindowConfiguration("Shared document failed save test", 700u32, 460u32),
+            exitDecisionProvider: Some(controller)
+        )
+        controller.bindHostContinuations(
+            {=> host.requestApplicationExit()},
+            {=> host.cancelPendingApplicationExit()},
+            {
+                =>
+                    probe.calls += 1
+                    return host.requestClose()
+            }
+        )
+        let window = host.window()
+        try {
+            @Assert(host.start(), true)
+            @Assert(awaitInitialFrame(host, window, controller), true)
+            @Assert(controller.requestWindowClose().shouldClose, false)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, true), true)
+            @Assert(sharedDocumentProjectionNode(window.windowProjection(), "shared-document-exit-guard").nodeId > 0,
+                true)
+            File.writeTo(Path(path), externalDisk.toArray())
+            let save = cjguiComposableButton(117111, "shared-document-exit-guard-save-description", "保存后继续关闭",
+                "EXIT_GUARD_SAVE", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+            let rejectedSave = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(save, CjguiComposableUiRect(0, 0, 180, 30),
+                        CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+            @Assert(rejectedSave.didApply, false)
+            @Assert(probe.calls, 0)
+            @Assert(String.fromUtf8(File.readFrom(path)), externalDisk)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, true,
+                requireSaveFailureNotice: true), true)
+            @Assert(sharedDocumentProjectionNode(window.windowProjection(), "shared-document-exit-guard-cancel").nodeId > 0,
+                true)
+            if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+                @Assert(snapshot.content, ownerDraft)
+                @Assert(snapshot.version, 1)
+                @Assert(binding.persistedState(snapshot, path), "dirty")
+            } else {
+                @Assert(false, true)
+            }
+
+            let cancel = cjguiComposableButton(117112, "shared-document-exit-guard-cancel", "取消关闭并继续编辑",
+                "EXIT_GUARD_CANCEL", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+            let canceled = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(cancel, CjguiComposableUiRect(0, 0, 180, 30),
+                        CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+            @Assert(canceled.didApply, true)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, false), true)
+            @Assert(sharedDocumentProjectionNode(window.windowProjection(), "shared-document-exit-guard").nodeId, -1)
+            let continued = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, "取消后继续编辑🙂\n")
+            @Assert(continued.applied, true)
+            @Assert(continued.versionAfter, 2)
+            @Assert(String.fromUtf8(File.readFrom(path)), externalDisk)
+            if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+                @Assert(snapshot.content, "取消后继续编辑🙂\n")
+                @Assert(snapshot.version, 2)
+                @Assert(binding.persistedState(snapshot, path), "dirty")
+            } else {
+                @Assert(false, true)
+            }
+        } finally {
+            if (host.isOpen()) { host.close() }
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
+}
+
+func canceledWindowCloseRetainsCardEditorOwnerAcrossDifferentSelectionBody(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("description.txt").toString()
+    let ownerDraft = "说明卡片的未保存正文🙂\n"
+    try {
+        File.writeTo(Path(path), "已保存基线\n".toArray())
+        let binding = CjguiTextDocumentFileBinding()
+        let primary = initialPrimaryDocument(binding, path)
+        let workspace = CjguiTextDocumentWorkspace(
+            ArrayList<CjguiTextDocument>(
+                [
+                    primary,
+                    CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档", "模板笔记")
+                ]
+            )
+        )
+        let controller = CjguiSharedDocumentController(workspace, binding, path, "测试", exitGuardEnabled: true)
+        let edit = workspace.replaceProjectionTextFromHuman(DESCRIPTION_DOCUMENT_ID, ownerDraft)
+        @Assert(edit.applied, true)
+        @Assert(edit.versionAfter, 1)
+        let host = CjguiMacosApplicationHost(
+            controller,
+            configuration: CjguiMacosApplicationWindowConfiguration("Shared document cancel focus test", 700u32, 460u32),
+            exitDecisionProvider: Some(controller)
+        )
+        controller.bindHostContinuations(
+            {=> host.requestApplicationExit()},
+            {=> host.cancelPendingApplicationExit()},
+            {=> host.requestClose()}
+        )
+        let window = host.window()
+        try {
+            @Assert(host.start(), true)
+            @Assert(awaitInitialFrame(host, window, controller), true)
+
+            let selectNotes = cjguiComposableButton(117113, "shared-document-select-notes-for-card-cancel", "选择笔记",
+                "SELECT_DOCUMENT", NOTES_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 26))
+            let selected = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(selectNotes, CjguiComposableUiRect(0, 0, 100, 26),
+                        CjguiComposableUiRect(0, 0, 100, 26)), 27, "", 0, 0, 1))
+            @Assert(selected.didApply, true)
+            @Assert(workspace.selection().documentId, NOTES_DOCUMENT_ID)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, false), true)
+
+            let openCard = cjguiComposableButton(117114, "shared-document-open-description-card-for-cancel", "编辑说明卡片",
+                "OPEN_DOCUMENT_CARD_EDIT", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 26))
+            let opened = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(openCard, CjguiComposableUiRect(0, 0, 120, 26),
+                        CjguiComposableUiRect(0, 0, 120, 26)), 27, "", 0, 0, 1))
+            @Assert(opened.didApply, true)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, false), true)
+            let projectionBefore = window.windowProjection()
+            let cardDialogBefore = sharedDocumentProjectionNode(projectionBefore,
+                "shared-document-card-edit-dialog-${DESCRIPTION_DOCUMENT_ID}")
+            let cardEditorBefore = sharedDocumentProjectionNode(projectionBefore, "shared-document-card-editor-content")
+            @Assert(cardDialogBefore.nodeId > 0, true)
+            @Assert(cardEditorBefore.nodeId > 0, true)
+            @Assert(firstResourceId(cardEditorBefore), DESCRIPTION_DOCUMENT_ID)
+            let editorNodeId = cardEditorBefore.nodeId
+            @Assert(workspace.selection().documentId, NOTES_DOCUMENT_ID)
+
+            @Assert(controller.requestWindowClose().shouldClose, false)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, true), true)
+            let guarded = window.windowProjection()
+            let editorUnderGuard = sharedDocumentProjectionNode(guarded, "shared-document-card-editor-content")
+            @Assert(sharedDocumentProjectionNode(guarded, "shared-document-exit-guard").nodeId > 0, true)
+            @Assert(editorUnderGuard.nodeId, editorNodeId)
+            @Assert(firstResourceId(editorUnderGuard), DESCRIPTION_DOCUMENT_ID)
+            @Assert(workspace.selection().documentId, NOTES_DOCUMENT_ID)
+
+            let cancel = cjguiComposableButton(117115, "shared-document-exit-guard-cancel", "取消关闭并继续编辑",
+                "EXIT_GUARD_CANCEL", DESCRIPTION_DOCUMENT_ID, CjguiComposableUiStyle(fixedHeight: 30))
+            let canceled = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(cancel, CjguiComposableUiRect(0, 0, 180, 30),
+                        CjguiComposableUiRect(0, 0, 180, 30)), 27, "", 0, 0, 1))
+            @Assert(canceled.didApply, true)
+            @Assert(awaitSharedDocumentGuardProjection(host, window, controller, false), true)
+            let restored = window.windowProjection()
+            let restoredDialog = sharedDocumentProjectionNode(restored,
+                "shared-document-card-edit-dialog-${DESCRIPTION_DOCUMENT_ID}")
+            let restoredEditor = sharedDocumentProjectionNode(restored, "shared-document-card-editor-content")
+            @Assert(sharedDocumentProjectionNode(restored, "shared-document-exit-guard").nodeId, -1)
+            @Assert(restoredDialog.nodeId, cardDialogBefore.nodeId)
+            @Assert(restoredEditor.nodeId, editorNodeId)
+            @Assert(firstResourceId(restoredEditor), DESCRIPTION_DOCUMENT_ID)
+            @Assert(workspace.selection().documentId, NOTES_DOCUMENT_ID)
+
+            let cardContent = cjguiComposableMultilineTextInput(65, "shared-document-card-editor-content", "内容",
+                "取消后仍在说明卡片继续编辑🙂\n", DESCRIPTION_DOCUMENT_ID,
+                CjguiComposableUiStyle(fixedHeight: 80))
+            let continued = controller.applyUiEvent(
+                CjguiComposableUiEvent(
+                    CjguiComposableUiLayoutNode(cardContent, CjguiComposableUiRect(0, 0, 200, 80),
+                        CjguiComposableUiRect(0, 0, 200, 80)), 28, "取消后仍在说明卡片继续编辑🙂\n", 0, 0, 1))
+            @Assert(continued.didApply, true)
+            if (let Some(snapshot) <- workspace.documentSnapshot(DESCRIPTION_DOCUMENT_ID)) {
+                @Assert(snapshot.content, "取消后仍在说明卡片继续编辑🙂\n")
+                @Assert(snapshot.version, 2)
+            } else {
+                @Assert(false, true)
+            }
+            @Assert(workspace.selection().documentId, NOTES_DOCUMENT_ID)
+        } finally {
+            if (host.isOpen()) { host.close() }
+        }
+    } finally {
+        let _ = removeIfExists(directory, recursive: true)
+    }
 }
 
 @Test
@@ -1397,9 +2398,16 @@ private class CjguiSharedDocumentMultiWindowController <: CjguiComposableUiContr
 
 private func authorization(
     includeSingleWindowReads!: Bool = true,
-    includeTargetedWindowReads!: Bool = false
+    includeTargetedWindowReads!: Bool = false,
+    staticallyEditable!: Bool = true
 ): CjguiSharedOperationExternalAuthorization {
-    let editableTargets = ArrayList<Int64>([DESCRIPTION_DOCUMENT_ID, NOTES_DOCUMENT_ID])
+    let editableTargets = if (staticallyEditable) {
+        ArrayList<Int64>([DESCRIPTION_DOCUMENT_ID, NOTES_DOCUMENT_ID])
+    } else {
+        // The single-window lifecycle grants editable actions per live
+        // document so closing one document can retire exactly its grants.
+        ArrayList<Int64>()
+    }
     let scopes = ArrayList<CjguiSharedOperationExternalActionScope>(
         [
             CjguiSharedOperationExternalActionScope("GET_CONTEXT", ArrayList<Int64>(), true),
@@ -1422,6 +2430,10 @@ private func authorization(
     }
     scopes.add(CjguiSharedOperationExternalActionScope("READ_RANGE", editableTargets, false))
     scopes.add(CjguiSharedOperationExternalActionScope("SELECT_DOCUMENT", ArrayList<Int64>(), true))
+    // Lifecycle open consumes only application-queued paths; close is granted
+    // per exact live document and revoked when that document retires.
+    scopes.add(CjguiSharedOperationExternalActionScope("OPEN_DOCUMENT", ArrayList<Int64>(), false))
+    scopes.add(CjguiSharedOperationExternalActionScope("CLOSE_DOCUMENT", ArrayList<Int64>(), false))
     scopes.add(CjguiSharedOperationExternalActionScope("INSERT_TEXT", editableTargets, false))
     scopes.add(CjguiSharedOperationExternalActionScope("DELETE_RANGE", editableTargets, false))
     scopes.add(CjguiSharedOperationExternalActionScope("REPLACE_RANGE", editableTargets, false))
@@ -1432,6 +2444,15 @@ private func authorization(
         "cjgui-shared-document-window-agent-20260912",
         scopes
     )
+}
+
+private func sharedDocumentTitleForPath(path: String): String {
+    let parts = path.split("/")
+    var title = path
+    if (parts.size > 0 && parts[parts.size - 1].size > 0) {
+        title = parts[parts.size - 1]
+    }
+    return title
 }
 
 private class CjguiSharedDocumentLaunchOptions {
@@ -1451,12 +2472,13 @@ private class CjguiSharedDocumentLaunchOptions {
     let responseEffectMode: String
     let responseInputIntervalTurns: Int64
     let responsePublicClientOnly: Bool
+    let extraOpenPaths: ArrayList<String>
 
     init(filePath: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
         opensMultipleWindows: Bool, measurementDurationMs: Int64, measurementWarmupMs: Int64,
         closeFirstWindowAfterMs: Int64, recordsTurnObservations: Bool, reopensFirstWindowAfterClose: Bool,
         recordsResponseWorkload: Bool, responseEffectMode: String, responseInputIntervalTurns: Int64,
-        responsePublicClientOnly: Bool) {
+        responsePublicClientOnly: Bool, extraOpenPaths: ArrayList<String>) {
         this.filePath = filePath
         this.enablesExternalConnection = enablesExternalConnection
         this.expectsConnectionStartFailure = expectsConnectionStartFailure
@@ -1470,6 +2492,7 @@ private class CjguiSharedDocumentLaunchOptions {
         this.responseEffectMode = responseEffectMode
         this.responseInputIntervalTurns = responseInputIntervalTurns
         this.responsePublicClientOnly = responsePublicClientOnly
+        this.extraOpenPaths = ArrayList<String>(extraOpenPaths)
     }
 }
 
@@ -1486,6 +2509,7 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
     var recordsResponseWorkload = false
     var responsePublicClientOnly = false
     var responseEffectMode = "active"
+    var extraOpenPaths = ArrayList<String>()
     var responseInputIntervalTurns: Int64 = 2
     var hasResponseInputInterval = false
     var hasMeasurementWarmup = false;
@@ -1507,6 +2531,9 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
             index += 1
         } else if (args[index] == "--file" && index + 1 < args.size && filePath.size == 0 && args[index + 1].size > 0) {
             filePath = args[index + 1]
+            index += 2
+        } else if (args[index] == "--open-extra" && index + 1 < args.size && args[index + 1].size > 0) {
+            extraOpenPaths.add(args[index + 1])
             index += 2
         } else if (args[index] == "--measurement-duration-ms" && index + 1 < args.size && measurementDurationMs == 0) {
             if (let Some(value) <- Int64.tryParse(args[index + 1])) {
@@ -1579,14 +2606,15 @@ private func launchOptionsFromArgs(args: Array<String>): ?CjguiSharedDocumentLau
         (!opensMultipleWindows || !hasCloseFirstWindowAfter)) || (hasCloseFirstWindowAfter &&
         expectsConnectionStartFailure) || (recordsResponseWorkload && !opensMultipleWindows) ||
         (responseEffectMode != "active" && !recordsResponseWorkload) ||
-        (hasResponseInputInterval && !recordsResponseWorkload)) {
+        (hasResponseInputInterval && !recordsResponseWorkload) ||
+        (extraOpenPaths.size > 0 && opensMultipleWindows)) {
         return None
     }
     return Some(
         CjguiSharedDocumentLaunchOptions(filePath, enablesExternalConnection, expectsConnectionStartFailure,
             opensMultipleWindows, measurementDurationMs, measurementWarmupMs, closeFirstWindowAfterMs,
             recordsTurnObservations, reopensFirstWindowAfterClose, recordsResponseWorkload, responseEffectMode,
-            responseInputIntervalTurns, responsePublicClientOnly))
+            responseInputIntervalTurns, responsePublicClientOnly, extraOpenPaths))
 }
 
 private func initialPrimaryDocument(binding: CjguiTextDocumentFileBinding, path: String): CjguiTextDocument {
@@ -1994,26 +3022,36 @@ private func runMultiWindow(path: String, enablesExternalConnection: Bool, expec
 
 // Host start accepts Preparing as well as Ready. Progress through its normal
 // pump instead of treating an unsubmitted first frame as a closed window.
-private func awaitInitialFrame(host: CjguiMacosApplicationHost, window: CjguiComposableUiWindow): Bool {
+private func pumpSharedDocumentTurn(host: CjguiMacosApplicationHost, controller: CjguiSharedDocumentController): Unit {
+    let _ = host.pumpOneTurn()
+    if (controller.takePendingLocalCloseRequest() && !host.requestClose()) {
+        controller.reportLocalCloseRequestRejected()
+    }
+}
+
+private func awaitInitialFrame(host: CjguiMacosApplicationHost, window: CjguiComposableUiWindow,
+    controller: CjguiSharedDocumentController): Bool {
     let started = MonoTime.now()
     while (host.isOpen() && (MonoTime.now() - started).toMilliseconds() < 5000) {
         let projection = window.windowProjection()
         if (projection.isActive && projection.sessionIdentity.size > 0 && projection.submittedFrameIndex > 0) {
             return true
         }
-        let _ = host.pumpOneTurn()
+        pumpSharedDocumentTurn(host, controller)
     }
     return false
 }
 
 private func runWindow(path: String, enablesExternalConnection: Bool, expectsConnectionStartFailure: Bool,
-    measurementDurationMs: Int64, measurementWarmupMs: Int64): Int32 {
+    measurementDurationMs: Int64, measurementWarmupMs: Int64,
+    extraOpenPaths: ArrayList<String>): Int32 {
     let fileBinding = CjguiTextDocumentFileBinding()
     let primary = initialPrimaryDocument(fileBinding, path)
     let notes = CjguiTextDocument(NOTES_DOCUMENT_ID, "笔记文档",
         "这是一份独立文档；切换、撤销和外部版本校验均不串到说明。")
     let archive = CjguiTextDocument(READ_ONLY_ARCHIVE_ID, "只读归档诱饵", "可发现，但不授予远程内容范围读取或替换。")
     let workspace = CjguiTextDocumentWorkspace(ArrayList<CjguiTextDocument>([primary, notes, archive]))
+    let _ = workspace.attachFileBindingFromHuman(DESCRIPTION_DOCUMENT_ID, fileBinding, path)
     let startupStatus = if (path.size == 0) {
         "编辑后可用 --file PATH 启动受控保存"
     } else if (exists(path)) {
@@ -2021,10 +3059,18 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
     } else {
         "新文档将保存到 ${path}"
     }
-    let controller = CjguiSharedDocumentController(workspace, fileBinding, path, startupStatus)
+    let controller = CjguiSharedDocumentController(workspace, fileBinding, path, startupStatus,
+        exitGuardEnabled: true, openPaths: extraOpenPaths)
+    let _ = workspace.attachLifecycleDomainFromHuman(controller)
     let host = CjguiMacosApplicationHost(
         controller,
-        configuration: CjguiMacosApplicationWindowConfiguration("CJGUI Shared Document", 980u32, 620u32)
+        configuration: CjguiMacosApplicationWindowConfiguration("CJGUI Shared Document", 980u32, 620u32),
+        exitDecisionProvider: Some(controller)
+    )
+    controller.bindHostContinuations(
+        {=> host.requestApplicationExit()},
+        {=> host.cancelPendingApplicationExit()},
+        {=> host.requestClose()}
     )
     let window = host.window()
     // The controller's participant supplies these semantic commands with the
@@ -2034,7 +3080,28 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
         let connectionAuthorization = if (expectsConnectionStartFailure) {
             CjguiSharedOperationExternalAuthorization("", "", ArrayList<CjguiSharedOperationExternalActionScope>())
         } else {
-            authorization()
+            authorization(staticallyEditable: false)
+        }
+        controller.bindDocumentOpenedObserver { documentId =>
+            for (action in ["READ_RANGE", "INSERT_TEXT", "DELETE_RANGE", "REPLACE_RANGE",
+                "REPLACE_RANGES", "SET_PREVIEW_LIMIT", "CLOSE_DOCUMENT"]) {
+                let _ = connectionAuthorization.grantResource(action, documentId)
+            }
+        }
+        controller.bindDocumentClosedObserver { documentId =>
+            for (action in ["READ_RANGE", "INSERT_TEXT", "DELETE_RANGE", "REPLACE_RANGE",
+                "REPLACE_RANGES", "SET_PREVIEW_LIMIT", "CLOSE_DOCUMENT"]) {
+                let _ = connectionAuthorization.revokeResource(action, documentId)
+            }
+        }
+        for (summary in workspace.openDocumentSummaries()) {
+            if (summary.documentId != READ_ONLY_ARCHIVE_ID) {
+                for (action in ["READ_RANGE", "INSERT_TEXT", "DELETE_RANGE", "REPLACE_RANGE",
+                    "REPLACE_RANGES", "SET_PREVIEW_LIMIT"]) {
+                    let _ = connectionAuthorization.grantResource(action, summary.documentId)
+                }
+            }
+            let _ = connectionAuthorization.grantResource("CLOSE_DOCUMENT", summary.documentId)
         }
         let connection = CjguiSharedOperationExternalConnection(workspace, connectionAuthorization, workspace, window)
         if (!connection.enableTargetedContextReads(workspace) || !connection.enableWindowProgressReads(window) ||
@@ -2067,7 +3134,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
             output.writeln("CJGUI_SHARED_DOCUMENT_READY DESCRIPTOR_PATH ${info.descriptorPath}")
             output.writeln("CJGUI_SHARED_DOCUMENT_READY PROTOCOL ${info.protocol}")
             output.writeln("CJGUI_SHARED_DOCUMENT_READY ACTION_COUNT ${info.actions.size}")
-            if (!awaitInitialFrame(host, window)) {
+            if (!awaitInitialFrame(host, window, controller)) {
                 output.flush();
                 host.close();
                 return 1
@@ -2079,7 +3146,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
         }
         let warmupStarted = MonoTime.now()
         while (host.isOpen() && (MonoTime.now() - warmupStarted).toMilliseconds() < measurementWarmupMs) {
-            let _ = host.pumpOneTurn()
+            pumpSharedDocumentTurn(host, controller)
         }
         if (host.isOpen()) {
             let output = getStdOut();
@@ -2090,7 +3157,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
         let measurementStarted = MonoTime.now()
         while (host.isOpen() && (measurementDurationMs <= 0 || (MonoTime.now() - measurementStarted).toMilliseconds() <
                 measurementDurationMs)) {
-            let _ = host.pumpOneTurn()
+            pumpSharedDocumentTurn(host, controller)
         }
     } else {
         if (!host.start()) {
@@ -2098,7 +3165,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
             return 1
         }
         let output = getStdOut();
-        if (!awaitInitialFrame(host, window)) {
+        if (!awaitInitialFrame(host, window, controller)) {
             output.flush();
             host.close();
             return 1
@@ -2109,7 +3176,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
         output.flush()
         let warmupStarted = MonoTime.now()
         while (host.isOpen() && (MonoTime.now() - warmupStarted).toMilliseconds() < measurementWarmupMs) {
-            let _ = host.pumpOneTurn()
+            pumpSharedDocumentTurn(host, controller)
         }
         if (host.isOpen()) {
             let projection = window.windowProjection()
@@ -2119,7 +3186,7 @@ private func runWindow(path: String, enablesExternalConnection: Bool, expectsCon
         let measurementStarted = MonoTime.now()
         while (host.isOpen() && (measurementDurationMs <= 0 || (MonoTime.now() - measurementStarted).toMilliseconds() <
                 measurementDurationMs)) {
-            let _ = host.pumpOneTurn()
+            pumpSharedDocumentTurn(host, controller)
         }
     }
     getStdOut().writeln("CJGUI_DOCUMENT_TRANSFER_METRICS ${controller.transferMetricsSummary()}")
@@ -2191,10 +3258,11 @@ main(args: Array<String>): Int64 {
                 options.responsePublicClientOnly))
         }
         return Int64(runWindow(options.filePath, options.enablesExternalConnection,
-            options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs))
+            options.expectsConnectionStartFailure, options.measurementDurationMs, options.measurementWarmupMs,
+            options.extraOpenPaths))
     }
     getStdErr().writeln(
-        "usage: CJGUISharedDocument [--file PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--verify-transfer-cost] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations] [--multi-window-response] [--response-input-interval-turns 1..120]")
+        "usage: CJGUISharedDocument [--file PATH] [--open-extra PATH] [--multi-window] [--with-connection] [--verify-connection-start-failure] [--verify-transfer-cost] [--measurement-warmup-ms 0..60000] [--measurement-duration-ms 1..900000] [--close-first-window-after-ms 1..60000] [--reopen-first-window-after-close] [--record-turn-observations] [--multi-window-response] [--response-input-interval-turns 1..120]")
     CjguiMacosApplicationHost.stopApplicationLoop()
     return 2
 }

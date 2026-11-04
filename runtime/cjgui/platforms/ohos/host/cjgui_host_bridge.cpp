@@ -2412,6 +2412,13 @@ static napi_value StartHost(napi_env env, napi_callback_info info) {
             napi_throw_error(env, nullptr, "failed to publish image filesDir");
             return nullptr;
         }
+        // Application business state uses the same private sandbox directory.
+        // Published separately so a missing image fixture directory never
+        // silently redirects persistence somewhere else.
+        if (setenv("CJGUI_APP_FILES_DIR", imageDir.c_str(), 1) != 0) {
+            napi_throw_error(env, nullptr, "failed to publish app filesDir");
+            return nullptr;
+        }
         HLOGI("image asset directory bound: %{public}s", imageDir.c_str());
         restartFromSettledStop = phase == kHostStopped;
         previousAppInstance = g_appInstance.load();

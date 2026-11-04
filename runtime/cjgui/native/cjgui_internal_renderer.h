@@ -1474,6 +1474,21 @@ cjgui_internal_renderer_diagnostic_node_geometry(
 CjguiInternalRendererStatus
 cjgui_internal_renderer_diagnostic_resources(
     uint64_t session, CjguiInternalRendererDiagnosticResources *outResources);
+// Private macOS workload observation: availability, unique in-flight effect
+// bytes, and committed offscreen group passes, for this session only.
+CjguiInternalRendererStatus cjgui_internal_renderer_set_effect_observation(uint64_t session, uint32_t enabled);
+CjguiInternalRendererStatus cjgui_internal_renderer_effect_observation(
+    uint64_t session, uint64_t scene, uint64_t frame, uint64_t *values, uint32_t capacity);
+// Private diagnostic ABI, schema 1, fourteen UInt64 slots. Main-thread read
+// only: schema, live sessions, cache entries/bytes/byte budget, in-flight,
+// pending, committed image-node refs, valid subscribers, resource records,
+// cumulative decode starts, raw subscribers, live allocation count/bytes.
+// Weak allocation-ledger enumeration holds objects only for this call. This
+// neither prunes stale subscribers nor refreshes/waits for a frame. A caller
+// with capacity 16 also receives observed in-flight effect target count and
+// unique bytes, including targets from closed sessions, in slots 14 and 15.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_application_image_lifecycle_snapshot(uint64_t *values, uint32_t capacity);
 CjguiInternalRendererStatus
 cjgui_internal_renderer_diagnostic_workload(
     uint64_t session, CjguiInternalRendererDiagnosticWorkload *outWorkload);
@@ -2472,6 +2487,18 @@ CjguiInternalRendererStatus
 cjgui_internal_renderer_test_set_composable_selection_body_preparation_mode(uint64_t session, uint8_t mode);
 
 #ifdef CJGUI_INTERNAL_TESTING
+// Bounded, read-only observations of actual mixed-packet admission/service.
+// Rows: preparation, nonce, count, event(1 rejected/2 serviced), status,
+// prefix, original deadline, generation, reserved bytes (zero if rejected).
+CjguiInternalRendererStatus cjgui_internal_renderer_test_mixed_packet_records(
+    uint64_t session, int64_t *outRows, uint32_t capacityRows, uint32_t *outCount);
+// Pause the genuinely admitted kind-7 replacement for a captured A -> B selection.
+// Opening schedules that same mailbox ticket; it never invents completion.
+CjguiInternalRendererStatus cjgui_internal_renderer_test_menu_preparation_gate(
+    uint64_t session, uint8_t held);
+CjguiInternalRendererStatus cjgui_internal_renderer_test_menu_preparation_order(
+    uint64_t session, uint64_t *outMenuConsumed, uint64_t *outDrawableAdmitted,
+    uint64_t *outPreparation);
 // Selects the complete replacement algorithm for exactly one projection;
 // content, style and viewport remain unchanged for a paired A/B probe.
 CjguiInternalRendererStatus
@@ -2801,6 +2828,13 @@ void cjgui_internal_renderer_owner_trace_dispatch_event(uint32_t kind, uint64_t 
     uint64_t turn, uint64_t request, uint64_t dispatch, uint64_t generation,
     uint32_t phase, uint64_t span);
 void cjgui_internal_renderer_owner_trace_export(void);
+// Private, opt-in diagnostics; these do not confer input or renderer authority.
+void cjgui_internal_renderer_owner_trace_target_begin(uint64_t session, uint64_t generation,
+    uint64_t raw, uint64_t receipt_ns);
+void cjgui_internal_renderer_owner_trace_target_bind(uint64_t session, uint64_t generation, uint64_t request);
+void cjgui_internal_renderer_owner_trace_target_accepted(uint64_t session, uint64_t generation,
+    uint64_t request, uint64_t scene, uint64_t frame);
+uint64_t cjgui_internal_renderer_owner_trace_target_selected_raw(uint64_t session, uint64_t generation);
 // Explicit final cleanup only. Stops sampling, checks final export/flush and
 // returns 2=completed or 3=named failure; never used by an ordinary owner turn.
 uint8_t cjgui_internal_renderer_finalize_owner_trace(void);
@@ -2811,6 +2845,13 @@ uint8_t cjgui_internal_renderer_complete_application_cleanup(uint64_t ticket);
 uint64_t cjgui_internal_renderer_owner_trace_ns(void);
 // Scheduling clock is always available and is independent of diagnostics.
 uint64_t cjgui_internal_renderer_owner_clock_ns(void);
+// Opt-in trace correlation only; returns zero for an absent/retired session.
+uint64_t cjgui_internal_renderer_trace_session_generation(uint64_t session);
+// Private bounded diagnostics; scalar identities are observations, not handles.
+void cjgui_internal_renderer_fallback_trace(uint64_t session,uint64_t generation,uint64_t handoff,
+    uint64_t preparation,uint32_t stage,int32_t status,uint64_t base,uint64_t target,
+    uint64_t request,uint64_t binding,uint64_t transfer,int64_t owner,int64_t context,
+    uint64_t nonce,uint64_t sequence,uint64_t sourceStart,uint64_t sourceEnd,uint64_t flags);
 // Internal observation only. CPU is reported separately, never credited as idle.
 uint64_t cjgui_internal_renderer_owner_thread_cpu_ns(void);
 // Internal correlation only: actual calling OS thread, unknown on failure.
@@ -3155,6 +3196,18 @@ CjguiInternalRendererStatus cjgui_internal_renderer_ack_installed_range(
 CjguiInternalRendererStatus cjgui_internal_renderer_release_installed_range(
     uint64_t session, uint64_t windowInstanceToken, uint64_t bindingEpoch);
 
+// Private macOS diagnostic sideband; zero means unknown. pumpPath is set only
+// on a successful event return: 1 main-thread direct, 2 READY before request,
+// 3 READY after request/progress. It is not the input-origin field.
+typedef struct CjguiInternalInputTrace {
+    uint64_t rawId, receivedNs, dequeueSerial, origin, dequeueNs, sourceSession, sourceGeneration, pumpPath;
+} CjguiInternalInputTrace;
+_Static_assert(sizeof(CjguiInternalInputTrace) == 64,
+               "CjguiInternalInputTrace private sideband layout drifted");
+CjguiInternalRendererStatus cjgui_internal_renderer_pump_event_with_input_trace(
+    uint64_t session, uint32_t timeoutMs, CjguiInternalRendererEvent *outEvent,
+    uint64_t *outIdleWaitNs, CjguiInternalInputTrace *outTrace);
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs,
     CjguiInternalRendererEvent *outEvent, uint64_t *outIdleWaitNs);
@@ -3400,6 +3453,24 @@ cjgui_internal_renderer_request_close(uint64_t session);
 // session slot. Double destroy returns CJGUI_INTERNAL_RENDERER_INVALID_SESSION.
 CjguiInternalRendererStatus
 cjgui_internal_renderer_destroy(uint64_t session);
+
+// Internal application exit: pure per-session preflight records generation;
+// the batch rechecks every member and commits all logical closes on main
+// before any AppKit close notification. Arrays are borrowed for this call.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_exit_preflight(uint64_t session, uint64_t *generation);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_exit_commit(const uint64_t *sessions, const uint64_t *generations,
+                                     uint32_t count);
+
+#ifdef CJGUI_INTERNAL_TESTING
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_arm_exit_close_reentry(uint64_t first, uint64_t sibling,
+                                                    uint32_t siblingNodeIndex);
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_read_exit_close_reentry(uint32_t *observed, uint32_t *allTerminal,
+                                                      uint32_t *accepted);
+#endif
 
 // occupiedSessionCount() -> number of currently occupied session slots.
 uint32_t cjgui_internal_renderer_occupied_session_count(void);

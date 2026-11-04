@@ -136,6 +136,11 @@ public class CjguiGeneratedCollectionView {
         let copy = CjguiGeneratedCollectionView(instanceKey, incarnation, pathValue, mountKey,
             holderIdentityValue, presentation, mountScopeValue, copiedViewport)
         copy.stateValue = stateValue.preparedLayoutCopy()
+        // First consume any newer request on the accepted viewport (such as a
+        // wheel after reveal). Then carry that exact state onto the candidate's
+        // private viewport without interpreting the copy's identity as input.
+        copy.stateValue.adoptSharedViewportRequest(viewport)
+        copy.stateValue.completeRevealViewportRequest(copiedViewport)
         return copy
     }
 
@@ -161,8 +166,9 @@ public class CjguiGeneratedCollectionView {
         // Already at the target offset is a successful reveal, not a refusal:
         // requestOffset's false means "no change", not "target missing".
         let target = stateValue.scrollOffset()
-        if (viewport.offset() == target) { return true }
-        return viewport.requestOffset(target)
+        let _ = viewport.requestOffset(target)
+        stateValue.completeRevealViewportRequest(viewport)
+        return true
     }
 
     public func scrollOffset(): Int64 {
@@ -694,8 +700,9 @@ public class CjguiGeneratedUiCollection <: CjguiCompositeComponentFactory &
         let rows = lastRowsSource.getOrThrow()
         if (!legacyState.revealKey(rows, "data:${key}")) { return false }
         let target = legacyState.scrollOffset()
-        if (viewport.offset() == target) { return true }
-        return viewport.requestOffset(target)
+        let _ = viewport.requestOffset(target)
+        legacyState.completeRevealViewportRequest(viewport)
+        return true
     }
 }
 

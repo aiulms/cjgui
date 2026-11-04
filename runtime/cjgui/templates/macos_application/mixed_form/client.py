@@ -121,6 +121,129 @@ def styled_nodes(capabilities):
     return result
 
 
+def work_session_owner_readback(session, owner_instances=("cardA", "cardB")):
+    """Read each persisted business owner from the current public endpoint.
+
+    The session file does not contain endpoint identity. This readback ties the
+    restored business values to the NEW endpoint and refuses incomplete owner
+    facts instead of inferring a clean/applied state from missing data.
+    """
+    descriptor = session.client.descriptor
+    endpoint_instance = descriptor.get("endpoint_instance")
+    endpoint_generation = descriptor.get("endpoint_bind_generation")
+    if not endpoint_instance or endpoint_generation is None:
+        endpoint = session.snapshot().endpoint
+        endpoint_instance = endpoint.instance
+        endpoint_generation = endpoint.bind_generation
+
+    owners = {}
+    for instance in owner_instances:
+        state = session.form_state(instance_key=instance)
+        if not state.known or not state.consistent or state.owner_resource_id < 0:
+            raise AssertionError(f"{instance} did not return one consistent business owner state")
+        if state.draft_version is None or state.applied_version is None or not state.fields:
+            raise AssertionError(f"{instance} omitted draft/applied versions or field values")
+        if any(field.owner_resource_id != state.owner_resource_id
+               or field.state_version != state.state_version
+               or field.draft is None or field.applied is None for field in state.fields):
+            raise AssertionError(f"{instance} fields do not belong to the reported owner baseline")
+        actions = {action.name: action for action in state.actions}
+        if "APPLY_DRAFT" not in actions or "CANCEL_DRAFT" not in actions:
+            raise AssertionError(f"{instance} omitted Apply/Cancel availability")
+        # Only these two commands mutate this card's business owner. Collection
+        # actions (and future actions we do not yet classify) retain their own
+        # owner scope exactly as the endpoint reports it; never pin owner=-1 to
+        # a particular card merely because it appeared beside card actions.
+        owner_actions = ("APPLY_DRAFT", "CANCEL_DRAFT")
+        if any(action.owner_resource_id != state.owner_resource_id
+               or action.state_version != state.state_version
+               for action in state.actions if action.name in owner_actions):
+            raise AssertionError(f"{instance} actions do not belong to the reported owner baseline")
+        fields = [asdict(field) for field in state.fields]
+        owners[instance] = {
+            "owner_resource_id": state.owner_resource_id,
+            "state_version": state.state_version,
+            "draft_version": state.draft_version,
+            "applied_version": state.applied_version,
+            "dirty": any(field.draft != field.applied for field in state.fields),
+            "fields": fields,
+            "actions": [asdict(action) for action in state.actions],
+        }
+    return {
+        "endpoint": {
+            "instance": endpoint_instance,
+            "bind_generation": endpoint_generation,
+        },
+        "owners": owners,
+    }
+
+
+def read_window_observation(descriptor, operation, target=None):
+    """Use the shipped typed shared-operation client for explicitly granted reads.
+
+    Window targets are opaque endpoint values. Progress and interaction reads
+    require one exact target; this helper never retries without a target or
+    falls back to another live window.
+    """
+    client = SharedOperationClient.from_descriptor(descriptor)
+    if operation == "window-targets":
+        response = client.get_window_targets()
+        expected_kind = "WINDOW_TARGETS"
+    elif operation == "window-progress":
+        response = client.get_window_progress(target)
+        expected_kind = "WINDOW_PROGRESS"
+    elif operation == "window-interaction":
+        response = client.get_window_interaction(target)
+        expected_kind = "WINDOW_INTERACTION"
+    else:
+        raise AssertionError(f"unsupported window observation operation: {operation}")
+
+    payload = response.as_json()
+    payload["raw"] = response.raw
+    result = {"operation": operation, "response": payload}
+    if operation == "window-targets" and response.kind == expected_kind:
+        result["targets"] = [values[0] for name, values in response.entries
+                             if name == "WINDOW_TARGET" and len(values) == 1]
+    if target is not None:
+        result["requested_window_target"] = target
+    if response.kind not in (expected_kind, "ERROR"):
+        result["error"] = {"type": "protocol_response", "message":
+                            f"expected {expected_kind}, got {response.kind}"}
+    return result, 1 if response.kind == "ERROR" or "error" in result else 0
+
+
+def execute_work_session_card_action(session, capabilities, instance, operation, *, field_id=None,
+                                     value=None, expected_draft_version=None,
+                                     expected_version=None):
+    """Continue with one legal write against the restored named owner."""
+    state = session.form_state(instance_key=instance)
+    if not state.known or not state.consistent or state.owner_resource_id < 0:
+        raise AssertionError(f"{instance} did not return one consistent business owner state")
+    if state.state_version is None or state.draft_version is None:
+        raise AssertionError(f"{instance} omitted the owner version needed for a write")
+    if operation not in ("card-set", "card-apply", "card-cancel"):
+        raise AssertionError(f"unsupported work-session card operation {operation!r}")
+
+    action = "APPLY_DRAFT" if operation == "card-apply" else "CANCEL_DRAFT"
+    arguments = [Argument.integer("expectedDraftVersion", state.draft_version if expected_draft_version is None
+                                  else expected_draft_version)]
+    if operation == "card-set":
+        spec = next((item for item in capabilities.fields if item.field_id == field_id), None)
+        if spec is None or value is None:
+            raise AssertionError("card-set requires a published field and a value")
+        action = spec.writer
+        arguments.append(Argument.string("fieldId", spec.field_id))
+        if spec.editor_kind == "BOOLEAN":
+            if value not in ("true", "false"):
+                raise AssertionError("boolean card-set value must be true or false")
+            arguments.append(Argument.boolean(spec.argument, value == "true"))
+        else:
+            arguments.append(Argument.string(spec.argument, value))
+    return session.invoke_action(
+        action, [state.owner_resource_id], arguments,
+        expected_version=state.state_version if expected_version is None else expected_version)
+
+
 def update_styled_nodes(nodes, capabilities, operation):
     result = []
     for node in nodes:
@@ -162,9 +285,9 @@ def reorder(nodes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("descriptor")
-    parser.add_argument("operation", choices=("ui-history", "ui-undo", "ui-redo", "inspect", "generate", "reorder", "read", "set", "apply", "cancel", "check-refusal", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current", "card-read", "card-set", "card-apply", "card-cancel", "card-rebind", "stale-write", "lock", "unlock",
+    parser.add_argument("operation", choices=("ui-history", "ui-undo", "ui-redo", "inspect", "generate", "reorder", "read", "set", "apply", "cancel", "check-refusal", "font-switch", "styled-generate", "styled-color", "styled-size", "styled-font-current", "card-read", "card-set", "card-apply", "card-cancel", "card-rebind", "stale-write", "lock", "unlock", "work-session-readback",
                         "select-card", "add-card", "delete-card", "filter-cards", "sort-cards",
-                        "collection-edit"))
+                        "collection-edit", "window-targets", "window-progress", "window-interaction"))
     parser.add_argument("--instance")
     parser.add_argument("--owner", type=int)
     parser.add_argument("--new-owner", type=int)
@@ -177,6 +300,8 @@ def main():
                         help="explicit domain CAS; defaults to the public client's current version")
     parser.add_argument("--cards", default=None,
                         help="comma-separated card keys to render details for")
+    parser.add_argument("--window-target", default=None,
+                        help="opaque target returned by window-targets; required for exact window reads")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--history-baseline", type=Path, help="exact saved UI-history CAS observation")
     args = parser.parse_args()
@@ -188,6 +313,21 @@ def main():
                 parser.error("ui-undo/ui-redo requires --history-baseline; no implicit refresh/replay")
             command.append(str(args.history_baseline))
         return run_cli(command + ["--json"])
+    if args.operation in ("window-targets", "window-progress", "window-interaction"):
+        if args.operation != "window-targets" and args.window_target is None:
+            parser.error(f"{args.operation} requires --window-target from window-targets")
+        try:
+            result, status = read_window_observation(
+                args.descriptor, args.operation, args.window_target)
+        except (OSError, ValueError) as error:
+            result = {"operation": args.operation,
+                      "error": {"type": type(error).__name__, "message": str(error)}}
+            status = 1
+        rendered = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(rendered)
+        print(rendered)
+        return status
     card_keys = args.cards.split(",") if args.cards else None
     result = {"operation": args.operation, "request": {
         "instance": args.instance, "owner": args.owner,
@@ -197,7 +337,9 @@ def main():
     try:
         session = GeneratedUiSession.connect(args.descriptor)
         capabilities = session.capabilities()
-        if args.operation == "inspect":
+        if args.operation == "work-session-readback":
+            result["work_session"] = work_session_owner_readback(session)
+        elif args.operation == "inspect":
             result["capabilities"] = asdict(capabilities)
         elif args.operation == "check-refusal":
             # An actual refused READ against this endpoint. No capability/token is
@@ -337,25 +479,15 @@ def main():
             result["card_fields"] = [asdict(field) for field in card.fields]
             result["card_actions"] = [asdict(action) for action in card.actions]
             if args.operation != "card-read":
-                action = "APPLY_DRAFT" if args.operation == "card-apply" else "CANCEL_DRAFT"
-                expected_draft = (card.draft_version if args.expected_draft_version is None
-                                  else args.expected_draft_version)
-                arguments = [Argument.integer("expectedDraftVersion", expected_draft)]
-                if args.operation == "card-set":
-                    spec = next((item for item in capabilities.fields if item.field_id == args.field), None)
-                    if spec is None or args.value is None:
-                        parser.error("card-set requires a published --field and --value")
-                    action = spec.writer
-                    arguments.append(Argument.string("fieldId", spec.field_id))
-                    if spec.editor_kind == "BOOLEAN":
-                        if args.value not in ("true", "false"):
-                            parser.error("boolean --value must be true or false")
-                        arguments.append(Argument.boolean(spec.argument, args.value == "true"))
-                    else:
-                        arguments.append(Argument.string(spec.argument, args.value))
-                result["card_action"] = asdict(session.invoke_action(
-                    action, [card.owner_resource_id], arguments,
-                    expected_version=card.state_version if args.expected_version is None else args.expected_version))
+                try:
+                    action_result = execute_work_session_card_action(
+                        session, capabilities, args.instance, args.operation,
+                        field_id=args.field, value=args.value,
+                        expected_draft_version=args.expected_draft_version,
+                        expected_version=args.expected_version)
+                except AssertionError as error:
+                    parser.error(str(error))
+                result["card_action"] = asdict(action_result)
                 result["card_after"] = [asdict(field) for field in session.form_state(
                     instance_key=args.instance).fields]
         elif args.operation in ("select-card", "add-card", "delete-card", "filter-cards",

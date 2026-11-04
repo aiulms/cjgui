@@ -167,6 +167,16 @@ public class CjguiComposableUiTreeProjection <: CjguiComposableUiCollectionOrder
         }
     }
 
+    /// Preview: records the source context version actually used to build the
+    /// caller's complete index. Unlike the no-argument overload, this never
+    /// reads a newer live provider version after that snapshot was captured.
+    /// The caller must use the attached provider's context/version space, not
+    /// an applied collection revision. A negative version leaves the content
+    /// fast path unarmed. Existing no-argument callers retain their behavior.
+    public func markSourceIndexCurrent(sourceVersion: Int64): Unit {
+        appliedSourceVersion = sourceVersion
+    }
+
     /// Refreshes in place when the attached provider can PROVE that only content
     /// changed and every changed key is an existing row. Returns false when the
     /// caller must refresh its own index and rebuild; it never patches a partial

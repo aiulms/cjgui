@@ -757,10 +757,16 @@ typedef struct CjguiInternalRendererComposableNode {
     double iconTintGreen;
     double iconTintBlue;
     double iconTintAlpha;
+    // Accepted declaration facts for AX range readback. Changes still travel
+    // as NAVIGATE; native neither owns the slider value nor applies its step.
+    int64_t pointerControlMinimum;
+    int64_t pointerControlMaximum;
 } CjguiInternalRendererComposableNode;
-_Static_assert(offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 ==
+_Static_assert(offsetof(CjguiInternalRendererComposableNode, pointerControlMinimum) ==
+               offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 &&
+               offsetof(CjguiInternalRendererComposableNode, pointerControlMaximum) + 8 ==
                sizeof(CjguiInternalRendererComposableNode),
-               "CjguiInternalRendererComposableNode iconTintAlpha tail drifted");
+               "CjguiInternalRendererComposableNode slider range tail drifted");
 
 typedef struct CjguiInternalRendererViewport {
     uint32_t width;

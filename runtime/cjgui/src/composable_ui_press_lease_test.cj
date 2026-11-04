@@ -17,9 +17,6 @@ foreign {
     func cjgui_internal_renderer_test_send_composable_key(
         session: UInt64, keyCode: UInt16, modifiers: UInt64, outFocusedNodeId: CPointer<UInt64>
     ): Int32
-    func cjgui_internal_renderer_test_set_composable_present_failures(
-        session: UInt64, failureCount: UInt32
-    ): Int32
 }
 
 private class PressLeaseBooleanController <: CjguiComposableUiController {

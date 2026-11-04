@@ -179,6 +179,8 @@ for source in sorted((runtime / 'shared_operation_core').glob('*.py')):
 # documentation: ship it beside the API it documents.
 add(runtime / 'shared_operation_core/GENERATED_EDITING.md',
     framework / 'shared_operation_core/GENERATED_EDITING.md')
+add(runtime / 'shared_operation_core/DOCUMENT_CLIENT.md',
+    framework / 'shared_operation_core/DOCUMENT_CLIENT.md')
 tree(runtime / 'resources', framework / 'resources')
 tree(runtime / 'templates/macos_application', framework / 'templates/macos_application', require_application_sources=True)
 # Mixed template tests call this framework-owned AppKit fixture. Ship a
@@ -231,6 +233,7 @@ add(client_readme if client_readme.exists() else runtime / 'README.md',
     framework / 'shared_operation_core/README.md',
     '# Shared operation clients\n\n[本包快速开始](../../../README.md)。'
     '`client.py` 是通用 descriptor 客户端；`cjgui_generated_client.py` 是同一协议的 typed generated-UI 层。'
+    '固定绑定文档 workspace 的显式版本 client 见 [DOCUMENT_CLIENT.md](DOCUMENT_CLIENT.md)。'
     '生成界面的保存计划、跨进程应用与拒绝/恢复见 [GENERATED_EDITING.md](GENERATED_EDITING.md)。'
     '运行应用显式启用连接后才有 descriptor；动作、参数与授权从实际应用发现。'
     '不包含模型服务，不保有第二份业务状态。\n')
@@ -249,13 +252,13 @@ if profile in ['full', 'macos-dev']:
                 value = rewrite_dependencies(path.read_text(),
                     {'cjgui': '../cjgui', 'cjgui_shared_operation_core': '../cjgui/shared_operation_core'})
             add(path, Path('framework/rule_set_application') / relative, value)
-    consumers = ['generated_collection', 'rule_set_window_app']
+    consumers = ['generated_collection', 'rule_set_window_app', 'shared_document_window_app']
     if profile == 'full':
         consumers += ['tree_outline_consumer', 'generated_panel_consumer', 'adaptive_layout_public_consumer']
     for name in consumers:
         source = runtime / 'examples' / name
         if not source.exists():
-            if name in ['generated_collection', 'rule_set_window_app']:
+            if name in ['generated_collection', 'rule_set_window_app', 'shared_document_window_app']:
                 raise ValueError(f'required consumer is missing: {name}')
             continue  # Preserve full profile's older optional consumers.
         target = Path('consumers') / name
@@ -318,9 +321,12 @@ original = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source, 
 # (source, native/ABI, build.cj, scripts, config, templates, assets, license),
 # keyed by its raw source path and SHA-256. Documentation is deliberately out of
 # the closure: it is relocated/rewritten on export and is not an input contract.
-# The generated-UI editing guide is the one exception: it is the usage contract
-# for the public client, so consumer code and its usage text are pinned together.
-essential_closure_docs = {runtime / 'shared_operation_core/GENERATED_EDITING.md'}
+# These public client guides are exceptions: consumer code and its usage
+# contract are pinned together.
+essential_closure_docs = {
+    runtime / 'shared_operation_core/GENERATED_EDITING.md',
+    runtime / 'shared_operation_core/DOCUMENT_CLIENT.md',
+}
 closure = {}
 closure_categories = {}
 # A source is one input even when the package ships it at several destinations

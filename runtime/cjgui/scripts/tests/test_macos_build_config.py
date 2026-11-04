@@ -114,6 +114,148 @@ class MacosBuildConfigTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "identical verified executable"):
                 BUILD.verify(self.cache, executable)
 
+    def test_changed_compiler_options_refuse_existing_incremental_objects(self):
+        self.prepare()
+        old_record = (self.cache / "prepared.json").read_bytes()
+        verified = json.loads(old_record)
+        verified["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(verified))
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"old compiled dependency")
+        manifest = self.app / "cjpm.toml"
+        manifest.write_text(manifest.read_text().replace('name="fixture"',
+                            'name="fixture"\noverride-compile-option="-O2"'))
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(stale.read_bytes(), b"old compiled dependency")
+        self.assertEqual((self.cache / "prepared.json").read_bytes(), old_record)
+        stale.unlink()
+        self.prepare()
+        self.assertEqual(BUILD.read_manifest(self.cache / "application")["package"]["override-compile-option"], "-O2")
+        verified = json.loads((self.cache / "prepared.json").read_text())
+        verified["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(verified))
+        stale.write_bytes(b"optimized dependency")
+        manifest.write_text(manifest.read_text().replace('\noverride-compile-option="-O2"', ''))
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(stale.read_bytes(), b"optimized dependency")
+
+    def test_unchanged_compiler_options_allow_source_edits_with_existing_objects(self):
+        self.prepare()
+        verified = json.loads((self.cache / "prepared.json").read_text())
+        verified["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(verified))
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"previous dependency")
+        self.app_source.write_text("package fixture\nmain(): Unit { println(1) }\n")
+        self.prepare()
+        self.assertEqual(stale.read_bytes(), b"previous dependency")
+
+    def test_unknown_existing_target_rejects_new_configuration(self):
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"unidentified dependency")
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(stale.read_bytes(), b"unidentified dependency")
+
+    def test_unverified_preparation_cannot_replace_verified_options(self):
+        self.prepare()
+        old = json.loads((self.cache / "prepared.json").read_text())
+        old["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(old))
+        manifest = self.app / "cjpm.toml"
+        manifest.write_text(manifest.read_text().replace('name="fixture"',
+                            'name="fixture"\noverride-compile-option="-O2"'))
+        self.prepare()  # empty target can start a new configuration
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"old object survives a failed build")
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+
+    def test_failed_new_configuration_cannot_return_to_old_verified_target(self):
+        self.prepare()
+        old = json.loads((self.cache / "prepared.json").read_text())
+        old["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(old))
+        manifest = self.app / "cjpm.toml"
+        original = manifest.read_text()
+        manifest.write_text(original.replace('name="fixture"',
+                            'name="fixture"\noverride-compile-option="-O2"'))
+        self.prepare()  # clean target, then the new build fails after one dependency
+        partial = self.app / "target/release/cjgui/libcjgui.a"
+        partial.parent.mkdir(parents=True)
+        partial.write_bytes(b"partial O2 dependency")
+        prepared = (self.cache / "prepared.json").read_bytes()
+        manifest.write_text(original)
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(partial.read_bytes(), b"partial O2 dependency")
+        self.assertEqual((self.cache / "prepared.json").read_bytes(), prepared)
+        partial.unlink()
+        self.prepare()
+
+    def test_legacy_unchanged_manifests_do_not_prove_dependency_flags(self):
+        manifest = self.app / "cjpm.toml"
+        manifest.write_text(manifest.read_text().replace('name="fixture"',
+                            'name="fixture"\noverride-compile-option="-O2"'))
+        self.prepare()
+        old = json.loads((self.cache / "prepared.json").read_text())
+        old.pop("compiler_configuration", None)
+        old["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(old))
+        old.pop("verified")
+        (self.cache / "prepared.json").write_text(json.dumps(old))
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"legacy O0 dependency under verified O2 manifest")
+        before = (self.cache / "prepared.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(stale.read_bytes(), b"legacy O0 dependency under verified O2 manifest")
+        self.assertEqual((self.cache / "prepared.json").read_bytes(), before)
+        stale.unlink()
+        self.prepare()
+
+    def test_dependency_compiler_options_are_part_of_configuration(self):
+        self.prepare()
+        verified = json.loads((self.cache / "prepared.json").read_text())
+        verified["verified"] = True
+        (self.cache / "build-provenance.json").write_text(json.dumps(verified))
+        stale = self.app / "target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"old dependency")
+        framework_manifest = self.framework / "cjpm.toml"
+        framework_manifest.write_text(framework_manifest.read_text().replace(
+            'name="cjgui"', 'name="cjgui"\ncompile-option="-O2"'))
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            self.prepare()
+        self.assertEqual(stale.read_bytes(), b"old dependency")
+
+    def test_isolated_testing_graph_keeps_existing_preparation_compatibility(self):
+        BUILD.prepare(self.app, self.framework, self.native, self.cache, testing=True)
+        stale = self.cache / "application/target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"test dependency")
+        BUILD.prepare(self.app, self.framework, self.native, self.cache, testing=True)
+        self.assertEqual(stale.read_bytes(), b"test dependency")
+
+    def test_legacy_testing_graph_with_unknown_compiler_flags_is_refused(self):
+        BUILD.prepare(self.app, self.framework, self.native, self.cache, testing=True)
+        prepared = json.loads((self.cache / "prepared.json").read_text())
+        prepared.pop("compiler_configuration", None)
+        (self.cache / "prepared.json").write_text(json.dumps(prepared))
+        stale = self.cache / "application/target/release/cjgui/libcjgui.a"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"unknown testing dependency")
+        with self.assertRaisesRegex(ValueError, "compiler configuration.*target"):
+            BUILD.prepare(self.app, self.framework, self.native, self.cache, testing=True)
+        self.assertEqual(stale.read_bytes(), b"unknown testing dependency")
+
 
 if __name__ == "__main__":
     unittest.main()

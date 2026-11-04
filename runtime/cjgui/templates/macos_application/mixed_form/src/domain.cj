@@ -5,6 +5,13 @@ import std.collection.*
 import std.convert.*
 import std.unicode.*
 
+/// A narrow presentation callback for the application's one manual collection
+/// mount. It can request a keyed viewport reveal, but cannot select a card or
+/// mutate any card/form owner.
+public interface CjguiPrintPresetCollectionViewportActionHost {
+    func revealCardKey(key: String): Bool
+}
+
 /// Application-owned, in-memory print preset. Replace this business class and
 /// its declarations for a real app; the GUI/transport do not own another draft.
 class PrintPresetDomain <: CjguiSharedEditableFormDomain {
@@ -35,6 +42,7 @@ class PrintPresetDomain <: CjguiSharedEditableFormDomain {
     private var appliedVersion: Int64 = 0
     private var baseVersion: Int64 = 0
     private var status: String = "编辑打印预设，提交后更新已应用值"
+    private var collectionViewportActionHost: ?CjguiPrintPresetCollectionViewportActionHost = None
     /// Two live cards over the SAME declarations. The shared action protocol
     /// reaches them through their own owner ids; no second domain is created.
     public let cards: PresetCardCollection
@@ -53,6 +61,14 @@ class PrintPresetDomain <: CjguiSharedEditableFormDomain {
             draft.add(value.displayText())
             fieldVersions.add(0)
         }
+    }
+
+    /// The controller owns the accepted UI and supplies only this view action.
+    /// Reattachment replaces the callback; no viewport or selection state is
+    /// copied into the business domain.
+    public func attachCollectionViewportActionHost(
+        host: CjguiPrintPresetCollectionViewportActionHost): Unit {
+        collectionViewportActionHost = Some(host)
     }
 
     public func lockReason(): String {
@@ -172,6 +188,11 @@ class PrintPresetDomain <: CjguiSharedEditableFormDomain {
                     [CjguiSharedOperationParameterDescriptor("cardKey", "STRING", true)]
                 ), 1, 1))
         result.add(
+            CjguiSharedOperationActionDescriptor("REVEAL_CARD_KEY", "显示预设卡片",
+                ArrayList<CjguiSharedOperationParameterDescriptor>(
+                    [CjguiSharedOperationParameterDescriptor("cardKey", "STRING", true)]
+                ), 1, 1))
+        result.add(
             CjguiSharedOperationActionDescriptor("ADD_CARD", "新增预设卡片",
                 ArrayList<CjguiSharedOperationParameterDescriptor>(
                     [CjguiSharedOperationParameterDescriptor("title", "STRING", true)]
@@ -236,6 +257,26 @@ class PrintPresetDomain <: CjguiSharedEditableFormDomain {
     /// client uses (no UI-only side channel).
     private func executeCollection(call: CjguiSharedOperationActionInvocation,
         before: Int64): CjguiSharedOperationActionResult {
+        if (call.actionName == "REVEAL_CARD_KEY") {
+            let key = stringArgument(call, "cardKey")
+            if (key.isNone() || key.getOrThrow().isEmpty()) {
+                return result(false, "unknown_argument", before)
+            }
+            let cardKey = key.getOrThrow()
+            if (!cards.containsKey(cardKey)) {
+                return result(false, "unknown_target", before)
+            }
+            if (let Some(host) <- collectionViewportActionHost) {
+                let accepted = host.revealCardKey(cardKey)
+                return result(accepted,
+                    if (accepted) {
+                        "reveal_requested_${cardKey}_view_data_${cardKey}_viewport_preset-business-collection"
+                    } else {
+                        "reveal_refused_${cardKey}_view_data_${cardKey}_viewport_preset-business-collection"
+                    }, before)
+            }
+            return result(false, "collection_view_unavailable", before)
+        }
         if (call.actionName == "SELECT_CARD") {
             let key = stringArgument(call, "cardKey")
             if (key.isNone()) {
@@ -307,7 +348,7 @@ class PrintPresetDomain <: CjguiSharedEditableFormDomain {
             return result(false, "stale_version", before, conflict: true)
         }
         if (call.targetResourceIds.size == 1 && call.targetResourceIds[0] == ownerId &&
-            (call.actionName == "SELECT_CARD" || call.actionName == "ADD_CARD" ||
+            (call.actionName == "REVEAL_CARD_KEY" || call.actionName == "SELECT_CARD" || call.actionName == "ADD_CARD" ||
              call.actionName == "DELETE_CARD" || call.actionName == "FILTER_CARDS" ||
              call.actionName == "SORT_CARDS")) {
             return executeCollection(call, before)

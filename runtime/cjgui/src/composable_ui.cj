@@ -3267,6 +3267,9 @@ public class CjguiComposableUiVirtualListState {
     private var materializedEndValue: Int64
     private var lastViewportHeight: Int64
     private var lastRowStride: Int64
+    // The last solved range belongs to the same staged/accepted layout state.
+    // -1 means no layout has established a range yet.
+    private var lastMaximumScrollOffset: Int64 = -1
     private var anchorIntraRowOffsetValue: Int64
     // One framework capture lease, never an unbounded keep-alive cache.
     private var variableCaptureSerial: Int64 = 0
@@ -3308,6 +3311,7 @@ public class CjguiComposableUiVirtualListState {
         this.materializedEndValue = source.materializedEndValue
         this.lastViewportHeight = source.lastViewportHeight
         this.lastRowStride = source.lastRowStride
+        this.lastMaximumScrollOffset = source.lastMaximumScrollOffset
         this.anchorIntraRowOffsetValue = source.anchorIntraRowOffsetValue
         this.variableCaptureSerial = source.variableCaptureSerial
         this.variableCaptureToken = source.variableCaptureToken
@@ -3343,6 +3347,7 @@ public class CjguiComposableUiVirtualListState {
         if (materializedEndValue != other.materializedEndValue) { return false }
         if (lastViewportHeight != other.lastViewportHeight) { return false }
         if (lastRowStride != other.lastRowStride) { return false }
+        if (lastMaximumScrollOffset != other.lastMaximumScrollOffset) { return false }
         if (anchorIntraRowOffsetValue != other.anchorIntraRowOffsetValue) { return false }
         if (variableCaptureSerial != other.variableCaptureSerial) { return false }
         if (variableCaptureToken != other.variableCaptureToken) { return false }
@@ -3422,8 +3427,23 @@ public class CjguiComposableUiVirtualListState {
         hasPendingUserScroll = true
     }
 
+    // A successful key reveal owns the viewport request it just issued. Keep
+    // its semantic anchor even if the previous accepted extent clamped that
+    // request; a later wheel/request generation still follows the user path.
+    func completeRevealViewportRequest(viewport: CjguiComposableUiScrollViewport): Unit {
+        sharedViewportIdentityValue = viewport.viewStateIdentity()
+        sharedViewportRequestGenerationValue = viewport.requestGeneration()
+    }
+
     public func scrollOffset(): Int64 {
         return scrollOffsetValue
+    }
+    // Compare actual movement using the last solved range, without committing
+    // the candidate or turning an out-of-range request into accepted geometry.
+    func boundedWheelOffset(): Int64 {
+        if (lastMaximumScrollOffset < 0) { return scrollOffsetValue }
+        let nonnegative = maxValue(0, scrollOffsetValue)
+        return if (nonnegative > lastMaximumScrollOffset) { lastMaximumScrollOffset } else { nonnegative }
     }
     public func selectedKey(): String {
         return selectedKeyValue
@@ -3493,9 +3513,18 @@ public class CjguiComposableUiVirtualListState {
         hasPendingUserScroll = true
     }
 
+    // A rejected reveal must not retire the window's unrelated prepared
+    // candidate. Resolve against the current live source before cancellation.
+    func hasRevealKey(source: CjguiComposableUiVirtualListSource, key: String): Bool {
+        return liveIndexForKey(source, normalizedCount(source.itemCount()), key) >= 0
+    }
+    func hasRevealKey(source: CjguiComposableUiVariableHeightListSource, key: String): Bool {
+        return liveVariableIndexForKey(source, normalizedCount(source.itemCount()), key) >= 0
+    }
+
     public func revealKey(source: CjguiComposableUiVirtualListSource, key: String): Bool {
-        let index = source.indexForKey(key)
-        if (index < 0 || index >= normalizedCount(source.itemCount())) {
+        let index = liveIndexForKey(source, normalizedCount(source.itemCount()), key)
+        if (index < 0) {
             return false
         }
         anchorKeyValue = key
@@ -3605,6 +3634,7 @@ public class CjguiComposableUiVirtualListState {
         } else {
             0
         }
+        lastMaximumScrollOffset = maximumOffset
         if (scrollOffsetValue > maximumOffset) {
             scrollOffsetValue = maximumOffset
         }
@@ -3851,6 +3881,7 @@ public class CjguiComposableUiVirtualListState {
         } else {
             0
         }
+        lastMaximumScrollOffset = maximumOffset
         if (!hasPendingUserScroll && anchorKeyValue.size > 0) {
             let anchorIndex = liveVariableIndexForKey(source, count, anchorKeyValue)
             if (anchorIndex >= 0) {
@@ -6348,6 +6379,19 @@ public func cjguiComposableVirtualList(nodeId: Int64, semanticId: String, conten
         semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
+/// Compose an experimental fixed-row list bound to the caller's shared viewport. Requests
+/// stay pending until a scene using that viewport is accepted.
+public func cjguiComposableVirtualList(nodeId: Int64, semanticId: String, contentNodeId: Int64,
+    viewport: CjguiComposableUiScrollViewport, source: CjguiComposableUiVirtualListSource,
+    state: CjguiComposableUiVirtualListState, rowHeight: Int64, rowGap: Int64, overscan: Int64,
+    style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
+    return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
+        scrollOffset: state.scrollOffset(), scrollViewport: Some(viewport), enabled: enabled,
+        virtualListSource: Some(source), virtualListState: Some(state), virtualListContentNodeId: contentNodeId,
+        virtualListRowHeight: rowHeight, virtualListRowGap: rowGap, virtualListOverscan: overscan,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
+}
+
 /// Compose an experimental variable-height list. The height argument is an
 /// unseen-row estimate only: every revealed row is an ordinary Cangjie
 /// subtree measured by the normal layout path before it is rendered, hit
@@ -6358,6 +6402,20 @@ public func cjguiComposableVariableHeightList(nodeId: Int64, semanticId: String,
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
         scrollOffset: state.scrollOffset(), enabled: enabled, variableHeightListSource: Some(source),
         virtualListState: Some(state), virtualListContentNodeId: contentNodeId, virtualListRowHeight: estimatedRowHeight,
+        virtualListRowGap: rowGap, virtualListOverscan: overscan,
+        semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
+}
+
+/// Compose an experimental variable-height list on the caller's shared
+/// viewport; the accepted scene remains the authority for its accepted offset.
+public func cjguiComposableVariableHeightList(nodeId: Int64, semanticId: String, contentNodeId: Int64,
+    viewport: CjguiComposableUiScrollViewport, source: CjguiComposableUiVariableHeightListSource,
+    state: CjguiComposableUiVirtualListState, estimatedRowHeight: Int64, rowGap: Int64, overscan: Int64,
+    style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
+    return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
+        scrollOffset: state.scrollOffset(), scrollViewport: Some(viewport), enabled: enabled,
+        variableHeightListSource: Some(source), virtualListState: Some(state),
+        virtualListContentNodeId: contentNodeId, virtualListRowHeight: estimatedRowHeight,
         virtualListRowGap: rowGap, virtualListOverscan: overscan,
         semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
@@ -7760,6 +7818,7 @@ public class CjguiComposableUiLayoutReuseCache {
         for (constraint in parentClipConstraints) {
             appendRect(builder, byteCount, cacheable, constraint.rect)
             appendInt(builder, byteCount, cacheable, constraint.cornerRadius)
+            appendString(builder, byteCount, cacheable, constraint.ownerIdentity)
         }
         // Opt-in keys are only accepted for ordinary regions. The caller
         // must include every relevant descendant input in the key; bounds,
@@ -7770,16 +7829,11 @@ public class CjguiComposableUiLayoutReuseCache {
             CJGUI_COMPOSABLE_UI_LAYER_HOST && node.layerId().size == 0 && node.layerKind().size == 0 &&
             !containsNonCacheableDescendant(node, nodeCount)) {
             appendString(builder, byteCount, cacheable, "layout-region-key-v1")
-            appendInt(builder, byteCount, cacheable, node.nodeId)
-            appendInt(builder, byteCount, cacheable, node.nodeKind)
-            appendString(builder, byteCount, cacheable, node.semanticId)
             appendString(builder, byteCount, cacheable, explicitReuseKey)
-            // The caller's key covers the CONTENT of the region; the region
-            // root's own declaration is engine-owned and must invalidate the
-            // replay on its own. Using the ONE declaration encoding keeps this
-            // list from drifting again (B, 2026-09-28).
-            appendStyle(builder, byteCount, cacheable, node.style)
-        for (run in node.textStyleRuns) { appendString(builder, byteCount, cacheable, run.encoded()) }
+            // The key owns descendant CONTENT; the root declaration itself
+            // remains engine-owned and must be encoded without a second walk.
+            let rootCount = ArrayList<Int64>([0])
+            appendNode(builder, byteCount, rootCount, cacheable, node, includeChildren: false)
         } else {
             if (!permitsStructuralSignatures) {
                 // An explicit key may still have required a descendant scan
@@ -7937,7 +7991,7 @@ public class CjguiComposableUiLayoutReuseCache {
     }
 
     private func appendNode(builder: StringBuilder, byteCount: ArrayList<Int64>, nodeCount: ArrayList<Int64>,
-        cacheable: ArrayList<Bool>, node: CjguiComposableUiNode): Unit {
+        cacheable: ArrayList<Bool>, node: CjguiComposableUiNode, includeChildren!: Bool = true): Unit {
         if (!cacheable[0]) {
             return
         }
@@ -7953,6 +8007,7 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, node.nodeId)
         appendInt(builder, byteCount, cacheable, node.nodeKind)
         appendString(builder, byteCount, cacheable, node.semanticId)
+        appendString(builder, byteCount, cacheable, CjguiComposableUiLayoutNode.identityKeyFor(node))
         appendString(builder, byteCount, cacheable, node.label)
         appendString(builder, byteCount, cacheable, node.value)
         appendString(builder, byteCount, cacheable, node.actionName)
@@ -7975,9 +8030,25 @@ public class CjguiComposableUiLayoutReuseCache {
         appendString(builder, byteCount, cacheable, node.imageResourceId)
         appendInt(builder, byteCount, cacheable, node.imageResourceVersion)
         appendInt(builder, byteCount, cacheable, node.imageContentMode)
+        if (let Some(offer) <- node.imageTransferOffer) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendInt(builder, byteCount, cacheable, offer.offerIdentity)
+        } else { appendInt(builder, byteCount, cacheable, 0) }
         appendBool(builder, byteCount, cacheable, node.isEnabled)
         appendBool(builder, byteCount, cacheable, node.isReadOnly)
         appendBool(builder, byteCount, cacheable, node.tabInsertsText)
+        appendString(builder, byteCount, cacheable, node.pointerControlRole)
+        appendInt(builder, byteCount, cacheable, node.pointerControlAxis)
+        appendInt(builder, byteCount, cacheable, node.pointerControlMinimum)
+        appendInt(builder, byteCount, cacheable, node.pointerControlMaximum)
+        appendInt(builder, byteCount, cacheable, node.pointerControlStep)
+        appendInt(builder, byteCount, cacheable, node.pointerControlHandleThickness)
+        appendInt(builder, byteCount, cacheable, node.pointerControlFirstSize)
+        appendInt(builder, byteCount, cacheable, node.pointerControlSecondMinimum)
+        appendInt(builder, byteCount, cacheable, node.ownerInteractionState)
+        appendInteractionStyle(builder, byteCount, cacheable, node.interactionStyle)
+        appendInt(builder, byteCount, cacheable, node.textStyleRuns.size)
+        for (run in node.textStyleRuns) { appendString(builder, byteCount, cacheable, run.encoded()) }
         appendInt(builder, byteCount, cacheable, node.scrollOffset)
         // A split's current first-pane size lives in its shared view state, not
         // in the declaration, so a divider size change must invalidate a cached
@@ -8002,10 +8073,33 @@ public class CjguiComposableUiLayoutReuseCache {
         }
         appendString(builder, byteCount, cacheable, node.explicitInputScopeId())
         appendStyle(builder, byteCount, cacheable, node.style)
-        let children = node.children()
-        appendInt(builder, byteCount, cacheable, children.size)
-        for (child in children) {
-            appendNode(builder, byteCount, nodeCount, cacheable, child)
+        if (includeChildren) {
+            let children = node.children()
+            appendInt(builder, byteCount, cacheable, children.size)
+            for (child in children) {
+                appendNode(builder, byteCount, nodeCount, cacheable, child)
+            }
+        }
+    }
+
+    private func appendInteractionPaint(builder: StringBuilder, byteCount: ArrayList<Int64>,
+        cacheable: ArrayList<Bool>, paint: CjguiComposableUiPaintStyle): Unit {
+        for (color in [paint.background, paint.border, paint.textColor]) {
+            if (let Some(value) <- color) {
+                appendInt(builder, byteCount, cacheable, 1)
+                appendColor(builder, byteCount, cacheable, value)
+            } else { appendInt(builder, byteCount, cacheable, 0) }
+        }
+        if (let Some(width) <- paint.borderWidth) {
+            appendInt(builder, byteCount, cacheable, 1)
+            appendInt(builder, byteCount, cacheable, width)
+        } else { appendInt(builder, byteCount, cacheable, 0) }
+    }
+
+    private func appendInteractionStyle(builder: StringBuilder, byteCount: ArrayList<Int64>,
+        cacheable: ArrayList<Bool>, style: CjguiComposableUiInteractionStyle): Unit {
+        for (paint in [style.normal, style.hover, style.pressed, style.focused, style.disabled, style.selected, style.checked]) {
+            appendInteractionPaint(builder, byteCount, cacheable, paint)
         }
     }
 
@@ -8796,7 +8890,8 @@ public class CjguiComposableUiLayoutEngine {
                 0
             }
             var originOffset: Int64 = 0
-            var offset = if (node.layoutVariableHeightListSource().isSome() && node.layoutVirtualListState().isSome()) {
+            var offset = if (node.layoutVirtualListState().isSome() &&
+                (node.layoutVariableHeightListSource().isSome() || node.layoutVirtualListSource().isSome())) {
                 node.scrollOffset
             } else if (let Some(viewport) <- node.scrollViewport) {
                 // A viewport-bound scroll area takes its offset from the PUBLIC
@@ -9185,6 +9280,13 @@ public class CjguiComposableUiLayoutEngine {
         }
         if (let Some(source) <- node.layoutVirtualListSource()) {
             if (let Some(state) <- node.layoutVirtualListState()) {
+                if (let Some(viewport) <- node.scrollViewport) {
+                    if (let Some(inputs) <- node.preparedLayoutInputs) {
+                        state.adoptPreparedViewport(inputs.viewportIdentity, inputs.viewportGeneration, inputs.viewportOffset)
+                    } else {
+                        state.adoptSharedViewportRequest(viewport)
+                    }
+                }
                 let totalHeight = state.updateMaterializedRange(source, node.virtualListRowHeight(),
                     node.virtualListRowGap(), inner.height, node.virtualListOverscan())
                 node.scrollOffset = state.scrollOffset()

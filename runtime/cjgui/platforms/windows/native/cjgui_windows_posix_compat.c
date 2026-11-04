@@ -315,3 +315,26 @@ int pharos_capture_candidate_discard(const char *candidate) {
     if (!ok && error != ERROR_FILE_NOT_FOUND) { windows_capture_reason(error, NULL); return -1; }
     return 0;
 }
+
+/* mach 单调时钟：Windows 没有 mach，用 QPC 实现同一契约。
+   timebase 固定 1/1，mach_absolute_time 直接返回纳秒，保持消费方
+   ticks*numer/(denom*1000) 的换算精度与溢出检查语义。 */
+unsigned long long mach_absolute_time(void) {
+    LARGE_INTEGER counter, freq;
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) return 0ull;
+    QueryPerformanceCounter(&counter);
+    unsigned long long ticks = (unsigned long long)counter.QuadPart;
+    unsigned long long hz = (unsigned long long)freq.QuadPart;
+    unsigned long long seconds = ticks / hz;
+    unsigned long long remainder = ticks % hz;
+    return seconds * 1000000000ull + remainder * 1000000000ull / hz;
+}
+
+int mach_timebase_info(void *info) {
+    struct mach_timebase { unsigned int numer; unsigned int denom; };
+    struct mach_timebase *out = (struct mach_timebase *)info;
+    if (!out) return -1;
+    out->numer = 1u;
+    out->denom = 1u;
+    return 0;
+}

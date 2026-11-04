@@ -306,6 +306,7 @@ private class CjguiSharedOperationBoundedTextBuilder {
 /// obtain a second domain or UI owner.
 internal class CjguiSharedOperationPendingClientRequest {
     let payload: String
+    var exitReservationRejected: Bool = false
     var leaseId: Int64 = 0
     var diagnostic: ?CjguiSharedRequestDiagnostic = None
     func diagnosticMark(phase: Int64, pump!: Int64 = 0, terminal!: Int64 = 0): Unit {
@@ -538,6 +539,9 @@ internal class CjguiSharedOperationIoState {
     private let changed: Condition
     private var ownerWorkNotifier: ?(() -> Unit) = None
     private var ownerNotificationPending: Bool = false
+    private var exitReservation: Bool = false
+    private var exitReservationClosing: Bool = false
+    private var exitReservationRejections: Int64 = 0
     let diagnostic: ?CjguiSharedRequestDiagnostic
     let readBudget: CjguiDetachedReadBudget
     let bindGeneration: Int64
@@ -694,6 +698,13 @@ internal class CjguiSharedOperationIoState {
 
     func tryQueueRequest(request: CjguiSharedOperationPendingClientRequest): ?Int64 {
         let queued: ?Int64 = synchronized(lock) {
+            if (running && exitReservation) {
+                if (!exitReservationClosing) {
+                    request.exitReservationRejected = true
+                    exitReservationRejections += 1
+                }
+                return None
+            }
             if (!running || readyRequestCount >= CJGUI_SHARED_OPERATION_MAX_READY_REQUESTS ||
                 request.payload.size > CJGUI_SHARED_OPERATION_MAX_READY_REQUEST_BYTES ||
                 queuedRequestBytes > CJGUI_SHARED_OPERATION_MAX_READY_REQUEST_BYTES - request.payload.size) {
@@ -725,6 +736,47 @@ internal class CjguiSharedOperationIoState {
         }
         if (queued.isSome()) { notifyOwnerWork() }
         return queued
+    }
+
+    // Reservation covers just one synchronous final commit attempt. Leases
+    // include both ready and already-claimed requests until their I/O owner
+    // releases them; the queue's ready counter alone is not sufficient.
+    func tryReserveExit(): Bool {
+        return synchronized(lock) {
+            if (!running || exitReservation || pendingRequests.size > 0) { return false }
+            exitReservation = true
+            exitReservationClosing = false
+            return true
+        }
+    }
+
+    func releaseExitReservation(): Unit {
+        synchronized(lock) { exitReservation = false; exitReservationClosing = false; changed.notifyAll() }
+    }
+
+    func sealCommittedExitReservation(): Unit {
+        synchronized(lock) { exitReservationClosing = true }
+    }
+
+    func finishExitRejection(request: CjguiSharedOperationPendingClientRequest): Unit {
+        synchronized(lock) {
+            if (request.exitReservationRejected) {
+                request.exitReservationRejected = false
+                exitReservationRejections -= 1
+                changed.notifyAll()
+            }
+        }
+    }
+
+    func waitForExitRejections(timeoutMs: Int64): Unit {
+        let started = MonoTime.now()
+        synchronized(lock) {
+            while (exitReservationRejections > 0) {
+                let remaining = timeoutMs - (MonoTime.now() - started).toMilliseconds()
+                if (remaining <= 0) { return }
+                let _ = changed.wait(timeout: Duration.millisecond * remaining)
+            }
+        }
     }
 
     // Pending leases stay charged while the UI owner prepares the predecessor.
@@ -780,21 +832,26 @@ internal class CjguiSharedOperationIoState {
     }
 
     func finishPendingRequest(leaseId: Int64): Unit {
-        synchronized(lock) {
+        let removed: Bool = synchronized(lock) {
             var index = 0
+            var found = false
             while (index < pendingRequests.size) {
                 if (pendingRequests[index].leaseId == leaseId) {
                     let pending = pendingRequests[index]
                     // A cancelled queue tombstone still retains its payload.
                     // The owner drain (or stop) releases that original charge.
-                    if (pending.charged) { return }
-                    let _ = pendingRequests.remove(at: index)
-                    changed.notifyAll()
-                    return
+                    if (!pending.charged) {
+                        let _ = pendingRequests.remove(at: index)
+                        changed.notifyAll()
+                        found = true
+                    }
+                    break
                 }
                 index += 1
             }
+            found
         }
+        if (removed) { notifyOwnerWork() }
     }
 
     func diagnostics(): CjguiSharedOperationTransportDiagnostics {
@@ -991,6 +1048,9 @@ public class CjguiSharedOperationExternalConnection {
     private var readyRequestSequence: Int64
     private var server: ?ServerSocket
     private var ioState: ?CjguiSharedOperationIoState
+    private var applicationExitReservationActive: Bool = false
+    private var applicationExitReservationCommitted: Bool = false
+    private var closeDuringExitReservation: Bool = false
     private var ownerWorkNotifier: ?(() -> Unit) = None
     private var privateDirectory: ?Path
     private var descriptorPath: String
@@ -1183,6 +1243,7 @@ public class CjguiSharedOperationExternalConnection {
 
     public func start(): Bool {
         return synchronized(transportLock) {
+            if (applicationExitReservationActive) { return false }
             startUnlocked()
         }
     }
@@ -1742,13 +1803,70 @@ public class CjguiSharedOperationExternalConnection {
         if (let Some(active) <- state) { active.setOwnerWorkNotifier(Some(notify)) }
     }
 
+    /// Reserve only an empty endpoint generation for one synchronous batch
+    /// close attempt. No transport lock remains held after this method returns.
+    public func tryReserveApplicationExit(): Bool {
+        return synchronized(transportLock) {
+            if (applicationExitReservationActive) { return false }
+            if (let Some(active) <- ioState) {
+                if (!active.tryReserveExit()) { return false }
+            }
+            applicationExitReservationActive = true
+            applicationExitReservationCommitted = false
+            true
+        }
+    }
+
+    public func releaseApplicationExitReservation(): Unit {
+        let shouldClose = synchronized(transportLock) {
+            if (let Some(active) <- ioState) { active.releaseExitReservation() }
+            applicationExitReservationActive = false
+            applicationExitReservationCommitted = false
+            let pending = closeDuringExitReservation
+            closeDuringExitReservation = false
+            pending
+        }
+        if (shouldClose) { close() }
+    }
+
+    /// After native logical commit, stop accepting new sockets and give any
+    /// already-complete request refused during the reservation its actual
+    /// bounded server_busy write. The wait holds neither transportLock nor an
+    /// owner/provider lock. Incomplete frames do not hold final exit open.
+    public func finishCommittedApplicationExitReservation(): Unit {
+        let state = synchronized(transportLock) {
+            applicationExitReservationCommitted = true
+            if (let Some(active) <- ioState) { active.sealCommittedExitReservation() }
+            if (let Some(listener) <- server) {
+                try { listener.close() } catch (_: Exception) { }
+            }
+            ioState
+        }
+        if (let Some(active) <- state) {
+            active.waitForExitRejections(CJGUI_SHARED_OPERATION_WRITE_DEADLINE_MS)
+        }
+    }
+
     public func close() {
+        let closeSnapshot: (Bool, ?CjguiSharedOperationIoState) = synchronized(transportLock) {
+            if (applicationExitReservationActive && !applicationExitReservationCommitted) {
+                closeDuringExitReservation = true
+                (true, None)
+            } else {
+                (false, ioState)
+            }
+        }
+        let (deferred, responseState) = closeSnapshot
+        if (deferred) { return }
+        if (let Some(activeIoState) <- responseState) {
+            activeIoState.waitForPublishedResponses(CJGUI_SHARED_OPERATION_CLOSE_RESPONSE_GRACE_MS)
+        }
         let wake = synchronized(transportLock) {
             let notify = ownerWorkNotifier
             ownerWorkNotifier = None
-            if (let Some(activeIoState) <- ioState) {
-                activeIoState.waitForPublishedResponses(CJGUI_SHARED_OPERATION_CLOSE_RESPONSE_GRACE_MS)
-            }
+            applicationExitReservationActive = false
+            applicationExitReservationCommitted = false
+            closeDuringExitReservation = false
             cleanupOwnedTransport()
             // E1: after the transport is down there is no owner pump any more,
             // so THIS is the last owner-safe point. Bounded drain of deferred
@@ -2187,11 +2305,13 @@ public class CjguiSharedOperationExternalConnection {
                     }
                     request.diagnosticMark(21, terminal: if (request.isCancelled()) { 3 } else { 1 })
                 } else {
-                    let _ = writeFrameWithDeadline(
-                        client,
-                        CjguiSharedOperationFrame.encode(errorPayload("server_busy")),
-                        state
-                    )
+                    try {
+                        let _ = writeFrameWithDeadline(
+                            client,
+                            CjguiSharedOperationFrame.encode(errorPayload("server_busy")),
+                            state
+                        )
+                    } finally { state.finishExitRejection(request) }
                 }
             } else if (read.reason.size > 0 && state.isRunning()) {
                 let _ = writeFrameWithDeadline(

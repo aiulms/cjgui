@@ -24,7 +24,8 @@ try:
     command = ['clang', '-fobjc-arc', '-fno-objc-msgsend-selector-stubs', '-fmodules',
                '-fstack-protector-strong', '-isysroot', sdk, '-mmacosx-version-min=12.0',
                str(runtime / 'native/tests/composable_control_ax_semantics_test.m'),
-               str(runtime / 'native/cjgui_native_bridge.m'), '-framework', 'AppKit',
+               str(runtime / 'native/cjgui_native_bridge.m'),
+               str(runtime / 'native/cjgui_async_multiline_measure.m'), '-framework', 'AppKit',
                '-framework', 'Metal', '-framework', 'MetalKit', '-framework', 'QuartzCore',
                '-lobjc', '-o', str(binary)]
     with (output / 'build.log').open('w') as log:

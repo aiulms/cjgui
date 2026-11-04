@@ -75,7 +75,8 @@ class MixedApplicationExitRetryAction <: MixedApplicationExitRetry {
 
 class MixedFormController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant &
     CjguiComposableUiContextMenuRequestHandler & CjguiComposableUiPointerCaptureVersionProvider &
-    CjguiComposableUiSliderCaptureProvider {
+    CjguiComposableUiSliderCaptureProvider & CjguiComposableUiWindowCloseLifecycle &
+    CjguiComposableUiCurrentCommandAvailabilityProvider & CjguiPrintPresetCollectionViewportActionHost {
     private let domain: PrintPresetDomain
     private let form: CjguiGeneratedUiFormBinding
     /// Two live preset cards over the SAME field declarations; the generated
@@ -84,6 +85,23 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     public let region: CjguiGeneratedUiWindowRegion
     private var window: ?CjguiComposableUiWindow = None
     private var revision: Int64 = 0
+
+    public func currentCommandAvailability(commandId: String, target: CjguiComposableUiLayoutNode): ?Bool {
+        let action = if (commandId == "preset.APPLY_DRAFT") {
+            "APPLY_DRAFT"
+        } else if (commandId == "preset.CANCEL_DRAFT") {
+            "CANCEL_DRAFT"
+        } else { return None }
+        let expectedNode = if (action == "APPLY_DRAFT") { 905 } else { 906 }
+        if (uiWorkspaceVisible || helpVisible || target.nodeId != expectedNode || target.actionName != action) {
+            return Some(false)
+        }
+        let card = match (domain.cards.card(domain.cards.selectedKey())) {
+            case Some(value) => value
+            case None => return Some(false)
+        }
+        return Some(target.resourceId == card.ownerId && card.actionAvailability(action).isAvailable)
+    }
     private var collaborationRequested = false
     private var collaborationEnabled = false
     private var connectionStatus = "仅本地编辑；协作默认关闭"
@@ -123,6 +141,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     /// outlives the refusal it was created for.
     private var applicationExitIntent: Bool = false
     private var applicationExitRetry: ?MixedApplicationExitRetry = None
+    private var applicationExitCancel: ?(() -> Unit) = None
     private let fontCatalog: CjguiGeneratedUiCapabilityCatalog
     private var appearance: MixedAppearance
     private let commandScope = CjguiComposableUiIdentityScope("print-preset-commands")
@@ -183,6 +202,11 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     private let summaryRegion: CjguiGeneratedUiWindowRegion
     private let summarySession: CjguiGeneratedUiDocumentSession
     private let summaryWorkspace: CjguiUiDocumentWorkspace
+    /// Optional application business session, independent of both UI documents.
+    private var workSession: ?CjguiComposableUiWorkSession = None
+    private var workSessionNotice: String = ""
+    private var workSessionCloseGuardActive: Bool = false
+    private var discardWorkSessionForClose: ?String = None
     /// Ordinary path entry for opening or saving another interface file. The
     /// application owns this small string; the workspace owns the operation.
     private var uiDocumentPathInput: String
@@ -204,7 +228,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
 
     init(domain: PrintPresetDomain, commandSurfaces!: Bool = false, fontResources!: Bool = false,
         styledText!: Bool = false, sharedFonts!: ?PrintPresetFontResources = None,
-        uiDocument!: String = "") {
+        uiDocument!: String = "", workSessionPath!: String = "") {
         this.domain = domain
         this.documentSession = CjguiGeneratedUiDocumentSession(path: uiDocument,
             historyPolicy: Some(CjguiUiDocumentHistoryPolicy()))
@@ -238,12 +262,14 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             let _ = fontOwner.close(); throw Exception(workspaceIssue)
         }
         // The object COLLECTION's own public vocabulary. The form catalog only
-        // publishes field writers plus Apply/Cancel; these four are application
+        // publishes field writers plus Apply/Cancel; these are application
         // operations on the collection, so the application registers them (the
         // description may then place an action node and external clients may
         // invoke them by name).
         for (spec in [
             CjguiGeneratedUiActionSpec("SELECT_CARD", "选择预设卡片",
+                parameterNames: ArrayList<String>(["cardKey"])),
+            CjguiGeneratedUiActionSpec("REVEAL_CARD_KEY", "显示预设卡片",
                 parameterNames: ArrayList<String>(["cardKey"])),
             CjguiGeneratedUiActionSpec("ADD_CARD", "新增预设卡片",
                 parameterNames: ArrayList<String>(["title"])),
@@ -279,6 +305,31 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         }
         this.cards = domain.cards
         let cardObjects = cards
+        if (workSessionPath.size > 0) {
+            let session = CjguiComposableUiWorkSession(workSessionPath, "mixed.print-presets.v1",
+                32 * 1024 * 1024, { payload => cardObjects.isValidWorkSessionPayload(payload) })
+            workSession = Some(session)
+            let sessionFileExisted = exists(Path(workSessionPath))
+            let loaded = session.load()
+            if (loaded.ok) {
+                if (!cardObjects.restoreWorkSessionPayload(loaded.payload)) {
+                    workSessionNotice = "卡片A/B工作会话拒绝载入：payload_owner_mismatch；未使用文件内容"
+                } else {
+                    workSessionNotice = "已恢复卡片A/B草稿与已应用值；没有自动应用"
+                }
+            } else if (!sessionFileExisted && loaded.reason == "file_read_failed") {
+                workSessionNotice = "新建卡片A/B工作会话；尚无保存文件，当前使用默认状态"
+            } else {
+                workSessionNotice = "卡片A/B工作会话未载入：${loaded.reason}；未使用文件内容，当前使用默认状态"
+            }
+            let loadReason = if (!sessionFileExisted && loaded.reason == "file_read_failed") {
+                "new_session"
+            } else {
+                loaded.reason
+            }
+            getStdOut().writeln("PRESET_WORK_SESSION_LOAD ok=${loaded.ok} reason=${loadReason} path=${workSessionPath}")
+            getStdOut().flush()
+        }
         // Card row paint reads the SAME live appearance as the handwritten
         // page, at build time. The object becomes the controller member below.
         let appearance = MixedAppearance()
@@ -372,9 +423,31 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         region.attachWindow(value)
         summaryRegion.attachWindow(value)
     }
+    /// Resolves one key in the current manual collection projection, then asks
+    /// that collection's existing single-mount reveal API to move only its
+    /// viewport. The domain owns the action/CAS; this controller owns the live
+    /// presentation. Selection, card drafts and business versions are untouched.
+    public func revealCardKey(key: String): Bool {
+        if (key.isEmpty() || !domain.cards.containsKey(key) ||
+            cardList.collection.order().indexOfKey(key) < 0) {
+            return false
+        }
+        if (let Some(value) <- window) {
+            let progress = value.windowProgress()
+            if (!progress.isActive || progress.sceneVersion != progress.acceptedSceneVersion ||
+                progress.submittedSceneVersion != progress.acceptedSceneVersion ||
+                progress.pendingRefreshReason != "none") {
+                return false
+            }
+            if (!cardList.collection.revealItem(key)) { return false }
+            value.requestRefresh()
+            return true
+        }
+        return false
+    }
     public func uiSceneVersion(): Int64 {
         return revision + fontOwner.revision + domain.formSnapshot().contextVersion +
-            region.revision() + summaryRegion.revision() + palette.revision()
+            cards.revision() + region.revision() + summaryRegion.revision() + palette.revision()
     }
     public func pointerCaptureVersion(node: CjguiComposableUiLayoutNode): Int64 {
         return if (node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER) { region.sliderCaptureVersion() }
@@ -460,6 +533,9 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         // visible without a second window or a hidden bottom section.
         if (uiCloseGuardActive) {
             root.add(buildUiCloseGuardPanel(theme))
+        }
+        if (workSessionCloseGuardActive) {
+            root.add(buildWorkSessionCloseGuardPanel(theme))
         }
         if (commandSurfaces) {
             let presentation = commandPresentation()
@@ -565,6 +641,14 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             if (uiWorkspaceVisible) { "CLOSE_UI_WORKSPACE" } else { "OPEN_UI_WORKSPACE" },
             PrintPresetDomain.ownerId, theme.primaryAction,
             interactionStyle: theme.primaryActionInteraction))
+        if (workSession.isSome()) {
+            uiEntry.add(cjguiComposableButton(1906, "preset-work-session-save", "保存卡片A/B工作会话",
+                "SAVE_WORK_SESSION", PrintPresetDomain.ownerId, theme.secondaryAction,
+                interactionStyle: theme.secondaryActionInteraction))
+            uiEntry.add(cjguiComposableText(1907, "preset-work-session-status", workSessionStatus(),
+                CjguiComposableUiStyle(fontSize: 12.0, textColor: theme.body.textColor,
+                    textMaxLines: 2, textOverflow: "ellipsis")))
+        }
         if (uiWorkspaceVisible) {
             // The area selector's ACTIVE side reads as the primary choice; the
             // inactive side is the same command in the secondary role, not a
@@ -915,8 +999,12 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
                     background: theme.card.background, border: theme.card.border),
                 initialFocus: Some(CjguiComposableUiNodeReference.manual(84)))
             dialog.add(cjguiComposableText(82, "preset-help-title", "编辑与应用", theme.heading))
-            dialog.add(cjguiComposableText(83, "preset-help-body",
-                "编辑先进入同一份草稿；点击应用或⌘S后更新已应用值。\nEsc返回原字段及选区。示例数据只保存在内存中。", theme.body))
+            let helpBody = if (workSession.isSome()) {
+                "编辑先进入同一份草稿；点击应用或⌘S后更新已应用值。\n仅卡片A/B的草稿与已应用值可显式保存；其他卡片数据仍只在内存中。\n界面布局文档单独保存，不会自动应用草稿。Esc返回原字段及选区。"
+            } else {
+                "编辑先进入同一份草稿；点击应用或⌘S后更新已应用值。\nEsc返回原字段及选区。示例数据只保存在内存中。"
+            }
+            dialog.add(cjguiComposableText(83, "preset-help-body", helpBody, theme.body))
             dialog.add(cjguiComposableButton(84, "preset-help-close", "返回编辑", "CLOSE_HELP",
                 PrintPresetDomain.ownerId, theme.primaryAction))
             layers.add(dialog)
@@ -983,6 +1071,25 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         return false
     }
 
+    private func applyCollectionNavigation(event: CjguiComposableUiEvent,
+        navigation: CjguiGeneratedCollectionKeyboardResult, offset: Int64): Bool {
+        if (!navigation.isHandled) {
+            return false
+        }
+        let plain = (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) == 0 &&
+            event.text != "select_all"
+        var ownerApplied = false
+        if (plain && navigation.focus.size > 0) {
+            ownerApplied = selectCardFromKeyboard(navigation.focus)
+        }
+        getStdOut().writeln("PRESET_COLLECTION_KEYBOARD key=${event.text} " +
+            "focus=${navigation.focus} changed=${navigation.didChange} " +
+            "reveal=${navigation.didAcceptViewFocus} owner=${ownerApplied} offset=${offset}")
+        getStdOut().flush()
+        revision += 1
+        return true
+    }
+
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
         // §13 B bounded probe: what shape does a focused collection key event
         // have? kind/node kind/semantic/viewport presence only, no values.
@@ -1004,20 +1111,21 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             if (let Some(activeView) <- cardList.acceptedViewForEvent(event)) {
                 let navigation = cjguiNavigateGeneratedCollection(cardList.collection, activeView,
                     event, window)
-                if (navigation.isHandled) {
-                    let plain = (event.modifierFlags & CJGUI_UI_MODIFIER_SHIFT) == 0 &&
-                        event.text != "select_all"
-                    var ownerApplied = false
-                    if (plain && navigation.focus.size > 0) {
-                        ownerApplied = selectCardFromKeyboard(navigation.focus)
-                    }
-                    getStdOut().writeln("PRESET_COLLECTION_KEYBOARD key=${event.text} " +
-                        "focus=${navigation.focus} changed=${navigation.didChange} " +
-                        "reveal=${navigation.didAcceptViewFocus} owner=${ownerApplied} " +
-                        "offset=${activeView.scrollOffset()}")
-                    getStdOut().flush()
-                    revision += 1
+                if (applyCollectionNavigation(event, navigation, activeView.scrollOffset())) {
                     return CjguiComposableUiDispatchResult(true)
+                }
+            } else if (event.node.semanticId == "preset-business-collection") {
+                // This hand-built collection still uses its legacy viewport. Route
+                // only its exact scroll-area event to the matching legacy overload;
+                // foreign/stale mount events must not fall back to another viewport.
+                if (let Some(viewport) <- event.node.scrollViewport) {
+                    if (refEq(viewport, cardList.collection.viewport)) {
+                        let navigation = cjguiNavigateGeneratedCollection(cardList.collection,
+                            event, window)
+                        if (applyCollectionNavigation(event, navigation, viewport.offset())) {
+                            return CjguiComposableUiDispatchResult(true)
+                        }
+                    }
                 }
             }
         }
@@ -1165,6 +1273,35 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            event.node.actionName == "SAVE_WORK_SESSION") {
+            return saveWorkSession()
+        }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            event.node.actionName == "WORK_SESSION_CLOSE_SAVE") {
+            let saved = saveWorkSession()
+            if (!saved.didApply) { cancelCloseIntent(); return saved }
+            workSessionCloseGuardActive = false
+            revision += 1
+            closeCurrentOrRetryApplicationExit()
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            event.node.actionName == "WORK_SESSION_CLOSE_DISCARD") {
+            workSessionCloseGuardActive = false
+            discardWorkSessionForClose = Some(cards.workSessionPayload())
+            revision += 1
+            closeCurrentOrRetryApplicationExit()
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
+            event.node.actionName == "WORK_SESSION_CLOSE_CANCEL") {
+            cancelCloseIntent()
+            workSessionCloseGuardActive = false
+            workSessionNotice = "已取消关闭；卡片A/B工作仍在当前进程中"
+            revision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
             event.node.actionName == "SWAP_DOCUMENT_WORKSPACES") {
             workspacesSwapped = !workspacesSwapped
             revision += 1
@@ -1180,6 +1317,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
                 else { uiDocumentSummaryPathInput }
             })
             if (issue.size > 0) {
+                cancelCloseIntent()
                 uiCloseGuardNotice = "保存界面被拒：${issue}；可换路径另存，或取消关闭继续编辑"
                 revision += 1
                 getStdOut().writeln("PRESET_UI_CLOSE save_all refused=${issue}")
@@ -1193,6 +1331,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             // a workspace that changed while the panel was open still blocks.
             let remaining = uiCloseGuard.settleAndReport()
             if (remaining.size > 0) {
+                cancelCloseIntent()
                 uiCloseGuardActive = true
                 uiCloseGuardNotice = remaining
                 revision += 1
@@ -1221,7 +1360,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         }
         if (event.eventKind == CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE &&
             event.node.actionName == "UI_CLOSE_CANCEL") {
-            applicationExitIntent = false
+            cancelCloseIntent()
             uiCloseGuardActive = false
             uiCloseGuardNotice = ""
             revision += 1
@@ -1629,11 +1768,24 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         applicationExitRetry = Some(MixedApplicationExitRetryAction(retry))
     }
 
+    func bindApplicationExitCancel(cancel: () -> Unit): Unit { applicationExitCancel = Some(cancel) }
+
+    func clearCloseApprovals(): Unit {
+        discardWorkSessionForClose = None
+        uiCloseGuard.cancelDiscard()
+        applicationExitIntent = false
+    }
+
+    private func cancelCloseIntent(): Unit {
+        if (let Some(cancel) <- applicationExitCancel) { cancel() }
+        clearCloseApprovals()
+    }
+
     /// Provider-side probe: a refused decision leaves the application-exit
     /// intent on THIS window so the existing save/discard panel can hand the
     /// decision back to the application instead of closing only this window.
     public func requestApplicationExitDecision(): Bool {
-        let decision = requestWindowClose()
+        let decision = requestWindowCloseDecision(applicationExit: true)
         if (!decision.shouldClose) { applicationExitIntent = true }
         return decision.shouldClose
     }
@@ -1666,12 +1818,43 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     }
 
     public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        // A separate window close cancels any unfinished application-wide
+        // close. The provider's callback is a no-op when no exit is active.
+        if (let Some(cancel) <- applicationExitCancel) { cancel() }
+        return requestWindowCloseDecision(applicationExit: false)
+    }
+
+    private func requestWindowCloseDecision(applicationExit!: Bool): CjguiComposableUiDispatchResult {
+        let payload = cards.workSessionPayload()
+        let discardBusiness = if (let Some(discarded) <- discardWorkSessionForClose) {
+            if (discarded == payload) { true } else {
+                clearCloseApprovals()
+                false
+            }
+        } else { false }
+        if (!discardBusiness) {
+            if (let Some(session) <- workSession) {
+                if (session.isDirty(payload)) {
+                    uiCloseGuardActive = false
+                    workSessionCloseGuardActive = true
+                    workSessionNotice = "卡片A/B工作会话有未保存改动；请选择保存、放弃或取消关闭"
+                    let _ = viewport.requestOffset(0)
+                    revision += 1
+                    if (let Some(value) <- window) { value.requestRefresh() }
+                    getStdOut().writeln("PRESET_WORK_SESSION_CLOSE blocked=unsaved")
+                    getStdOut().flush()
+                    return CjguiComposableUiDispatchResult(false, shouldClose: false)
+                }
+            }
+        }
         // UI-document facts settle first and are visible in the ordinary
         // refresh; the business close policy (this app has no extra business
         // gate) follows only when every workspace is clean. The system close
         // button, ⌘W and ⌘Q all arrive here.
-        let blocking = uiCloseGuard.settleAndReport()
+        let _ = applicationExit
+        let blocking = uiCloseGuard.inspectAndReport()
         if (blocking.size > 0) {
+            workSessionCloseGuardActive = false
             uiCloseGuardActive = true
             uiCloseGuardNotice = blocking
             // The panel is at the top of the scroll page; bring it into view
@@ -1687,6 +1870,7 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         }
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
+    public func windowCloseDidCommit(): Unit { clearCloseApprovals() }
     public func beginSceneRefresh(): Bool {
         // Both regions open their transactions in the same scene commit, so a
         // candidate is either accepted everywhere or rolled back everywhere.
@@ -1918,6 +2102,57 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
         return panel
     }
 
+    private func workSessionStatus(): String {
+        if (let Some(session) <- workSession) {
+            return if (session.isDirty(cards.workSessionPayload())) {
+                "卡片A/B工作会话有未保存改动 · ${workSessionNotice}"
+            } else {
+                workSessionNotice
+            }
+        }
+        return ""
+    }
+
+    private func saveWorkSession(): CjguiComposableUiDispatchResult {
+        if (let Some(session) <- workSession) {
+            let result = session.save(cards.workSessionPayload())
+            if (!result.ok) { cancelCloseIntent() }
+            workSessionNotice = if (result.ok) { "卡片A/B工作会话已保存" } else {
+                "卡片A/B工作会话保存被拒：${result.reason}"
+            }
+            revision += 1
+            if (let Some(value) <- window) { value.requestRefresh() }
+            getStdOut().writeln("PRESET_WORK_SESSION_SAVE ok=${result.ok} reason=${result.reason}")
+            getStdOut().flush()
+            return CjguiComposableUiDispatchResult(result.ok)
+        }
+        return CjguiComposableUiDispatchResult(false)
+    }
+
+    private func buildWorkSessionCloseGuardPanel(theme: CjguiComposableUiTheme): CjguiComposableUiNode {
+        let panel = cjguiComposableVertical(440, "preset-work-session-close-guard",
+            CjguiComposableUiStyle(gap: 8, padding: 12, growX: 1, border: theme.card.border,
+                borderWidth: 1, cornerRadius: theme.card.cornerRadius))
+        panel.add(cjguiComposableText(441, "preset-work-session-close-title", "关闭前的卡片A/B业务会话检查",
+            theme.heading))
+        panel.add(cjguiComposableText(442, "preset-work-session-close-reason",
+            "${workSessionNotice}\n会话只保存卡片A/B的草稿与已应用值，不会自动应用；其他卡片不纳入保存。界面布局文档另行保存。",
+            CjguiComposableUiStyle(fontSize: 12.5, textColor: theme.body.textColor, lineHeight: 18.0)))
+        let bar = cjguiComposableWrap(443, "preset-work-session-close-actions",
+            CjguiComposableUiStyle(gap: 6), rowGap: 4)
+        bar.add(cjguiComposableButton(444, "preset-work-session-close-save", "保存卡片A/B并继续关闭",
+            "WORK_SESSION_CLOSE_SAVE", PrintPresetDomain.ownerId, theme.primaryAction,
+            interactionStyle: theme.primaryActionInteraction))
+        bar.add(cjguiComposableButton(445, "preset-work-session-close-discard", "放弃卡片A/B未保存会话并关闭",
+            "WORK_SESSION_CLOSE_DISCARD", PrintPresetDomain.ownerId, theme.secondaryAction,
+            interactionStyle: theme.secondaryActionInteraction))
+        bar.add(cjguiComposableButton(446, "preset-work-session-close-cancel", "取消关闭",
+            "WORK_SESSION_CLOSE_CANCEL", PrintPresetDomain.ownerId, theme.secondaryAction,
+            interactionStyle: theme.secondaryActionInteraction))
+        panel.add(bar)
+        return panel
+    }
+
     /// Executes one document command in ITS owning workspace. Open/save-as
     /// consume this workspace's current path string; the five stateful
     /// actions run through the same handleCommand the palette/menu use.
@@ -1935,6 +2170,10 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     private func finishDocumentCommandEvent(channel: String, commandId: String,
         done: CjguiUiDocumentSessionResult,
         workspace: CjguiUiDocumentWorkspace): CjguiComposableUiDispatchResult {
+        if (!done.applied && (commandId == workspace.commandId(CJGUI_UI_DOCUMENT_ACTION_SAVE) ||
+            commandId == workspace.commandId(CJGUI_UI_DOCUMENT_ACTION_SAVE_AS))) {
+            cancelCloseIntent()
+        }
         stepNotice = done.detail
         stepKind = if (done.applied) { CJGUI_STATUS_SUCCESS } else { CJGUI_STATUS_ERROR }
         getStdOut().writeln("PRESET_UI_DOCUMENT channel=${channel} command=${commandId} " +
@@ -2005,6 +2244,13 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
             "浅色外观", CjguiComposableUiShortcut("t"), "View", 0, true, appearance.light, presentationOnly: true))
         metadata.add(CjguiCommandToolbarMetadata("preset.theme", "TOGGLE_THEME", PrintPresetDomain.ownerId,
             detail: "切换显示外观"))
+        if (workSession.isSome()) {
+            commands.add(CjguiComposableUiCommand("preset.work-session-save",
+                CjguiComposableUiNodeReference.manual(1906), "保存卡片A/B工作会话",
+                CjguiComposableUiShortcut("s", usesShift: true), "File", 0, true, false))
+            metadata.add(CjguiCommandToolbarMetadata("preset.work-session-save", "SAVE_WORK_SESSION",
+                currentOwner, detail: "仅保存卡片A/B草稿与已应用基线"))
+        }
         commands.add(CjguiComposableUiCommand("preset.help", CjguiComposableUiNodeReference.manual(73),
             "编辑说明", CjguiComposableUiShortcut("k"), "Help", 0, true, false))
         metadata.add(CjguiCommandToolbarMetadata("preset.help", "OPEN_HELP", PrintPresetDomain.ownerId))
@@ -2160,9 +2406,15 @@ class MixedFormController <: CjguiComposableUiController & CjguiComposableUiScen
     }
 }
 
-private func localAuthorization(): CjguiSharedOperationExternalAuthorization {
+// Package-internal so the consumer contract test can pin the exact local
+// grants. This is an application capability declaration, not a framework
+// default: window reads are opt-in and limited to the read-only endpoints.
+func mixedFormLocalAuthorization(): CjguiSharedOperationExternalAuthorization {
     let scopes = ArrayList<CjguiSharedOperationExternalActionScope>()
     for (action in ["GET_CONTEXT", "GET_GENERATED_UI", "SUBMIT_GENERATED_UI"]) {
+        scopes.add(CjguiSharedOperationExternalActionScope(action, ArrayList<Int64>(), true))
+    }
+    for (action in ["GET_WINDOW_TARGETS", "GET_WINDOW_PROGRESS", "GET_WINDOW_INTERACTION"]) {
         scopes.add(CjguiSharedOperationExternalActionScope(action, ArrayList<Int64>(), true))
     }
     // The SAME declared vocabulary is authorized for the handwritten preset and
@@ -2192,6 +2444,8 @@ private func localAuthorization(): CjguiSharedOperationExternalAuthorization {
         scopes.add(CjguiSharedOperationExternalActionScope(action,
             ArrayList<Int64>([PrintPresetDomain.ownerId]), false))
     }
+    scopes.add(CjguiSharedOperationExternalActionScope("REVEAL_CARD_KEY",
+        ArrayList<Int64>([PrintPresetDomain.ownerId]), false))
     // A local example capability, carried by the existing private descriptor.
     return CjguiSharedOperationExternalAuthorization("mixed-form-local-client", "mixed-form-demo-capability", scopes)
 }
@@ -2205,6 +2459,7 @@ private func localAuthorization(): CjguiSharedOperationExternalAuthorization {
 interface MixedExitWindowDecision {
     func isOpen(): Bool
     func requestCloseDecision(): Bool
+    func clearCloseDecision(): Unit
 }
 
 class MixedControllerExitWindow <: MixedExitWindowDecision {
@@ -2214,10 +2469,16 @@ class MixedControllerExitWindow <: MixedExitWindowDecision {
     public func requestCloseDecision(): Bool {
         return controller.requestApplicationExitDecision()
     }
+    public func clearCloseDecision(): Unit { controller.clearCloseApprovals() }
 }
 
-class MixedApplicationExitDecision <: CjguiMacosApplicationExitDecisionProvider {
+class MixedApplicationExitDecision <: CjguiMacosApplicationExitDecisionProvider &
+    CjguiMacosApplicationExitDecisionLifecycle {
     private let windows = ArrayList<MixedExitWindowDecision>()
+    private var intentActive = false
+    private var cancelPending: ?(() -> Unit) = None
+
+    func bindPendingCancellation(cancel: () -> Unit): Unit { cancelPending = Some(cancel) }
 
     /// Closed controllers retire here; the set remains bounded by the actual
     /// live participants, not by every companion reopen ever attached.
@@ -2232,6 +2493,7 @@ class MixedApplicationExitDecision <: CjguiMacosApplicationExitDecisionProvider 
     public func attach(controller: MixedFormController): Unit {
         pruneClosed()
         windows.add(MixedControllerExitWindow(controller))
+        controller.bindApplicationExitCancel({ => cancelIntent() })
     }
 
     /// Test-only injection at the exact decision list: production never calls
@@ -2241,8 +2503,18 @@ class MixedApplicationExitDecision <: CjguiMacosApplicationExitDecisionProvider 
         windows.add(window)
     }
 
+    /// An explicit cancellation or failed save revokes every participant's
+    /// approval for this application-exit intention.
+    func cancelIntent(): Unit {
+        if (let Some(cancel) <- cancelPending) { cancel() }
+        if (!intentActive) { return }
+        intentActive = false
+        for (window in windows) { window.clearCloseDecision() }
+    }
+
     public func requestApplicationExit(): Bool {
         pruneClosed()
+        intentActive = true
         var consulted: Int64 = 0
         var index: Int64 = 0
         for (window in windows) {
@@ -2258,6 +2530,9 @@ class MixedApplicationExitDecision <: CjguiMacosApplicationExitDecisionProvider 
         getStdOut().flush()
         return true
     }
+
+    public func applicationExitDidCommit(): Unit { cancelIntent() }
+    public func applicationExitDidCancel(): Unit { cancelIntent() }
 }
 
 main(args: Array<String>): Int64 {
@@ -2267,7 +2542,9 @@ main(args: Array<String>): Int64 {
     var commands = false
     var fontResources = false
     var styledText = false
+    var resourceCycles = false
     var uiDocumentPath = ""
+    var workSessionPath = ""
     var index: Int64 = 0
     while (index < args.size) {
         let arg = args[index]
@@ -2275,20 +2552,26 @@ main(args: Array<String>): Int64 {
         else if (arg == "--commands" && !commands) { commands = true; index += 1 }
         else if (arg == "--fonts" && !fontResources) { fontResources = true; index += 1 }
         else if (arg == "--styled-text" && !styledText) { styledText = true; index += 1 }
+        else if (arg == "--resource-cycles" && !resourceCycles) { resourceCycles = true; index += 1 }
         else if (arg == "--ui-document" && index + 1 < args.size && uiDocumentPath.size == 0) {
             uiDocumentPath = args[index + 1]
+            index += 2
+        } else if (arg == "--work-session" && index + 1 < args.size && workSessionPath.size == 0) {
+            workSessionPath = args[index + 1]
             index += 2
         } else { return 2 }
     }
     let domain = PrintPresetDomain()
     fontResources = fontResources || styledText
-    commands = commands || fontResources
+    commands = commands || fontResources || resourceCycles || workSessionPath.size > 0
     let sharedFonts = PrintPresetFontResources(fontResources, styled: styledText)
     let controller = MixedFormController(domain, commandSurfaces: commands, fontResources: fontResources,
-        styledText: styledText, sharedFonts: Some(sharedFonts), uiDocument: uiDocumentPath)
+        styledText: styledText, sharedFonts: Some(sharedFonts), uiDocument: uiDocumentPath,
+        workSessionPath: workSessionPath)
     let exitDecision = MixedApplicationExitDecision()
     let application = CjguiMacosApplication(maximumWindowCount: if (styledText) { 3 } else { 2 },
         exitDecisionProvider: exitDecision)
+    exitDecision.bindPendingCancellation({ => application.cancelPendingApplicationExit(notifyProvider: false) })
     let opened = application.openWindow(controller,
         configuration: CjguiMacosApplicationWindowConfiguration(
             if (styledText) { "打印预设 · 公共样式" } else if (fontResources) { "打印预设 · 公共字体" } else if (commands) { "打印预设 · 公共组合" } else { "打印预设 · 混合表单" }, 1000u32, 680u32,
@@ -2300,13 +2583,34 @@ main(args: Array<String>): Int64 {
     let businessId = opened.identifier.getOrThrow()
     let business = application.window(businessId).getOrThrow()
     controller.attachWindow(business)
+    domain.attachCollectionViewportActionHost(controller)
     exitDecision.attach(controller)
     controller.bindApplicationExitRetry({ => application.requestApplicationExit() })
+    if (resourceCycles) {
+        try {
+            let (ok, report) = mixedRunResourceCycleWorkload(application, domain, businessId, controller)
+            getStdOut().writeln(report)
+            getStdOut().flush()
+            let (closed, closeReason) = mixedResourceCycleDiscardUiAndClose(application, controller, businessId)
+            if (!closed) {
+                getStdErr().writeln("CJGUI_RESOURCE_CYCLE_FAILED reason=${closeReason}")
+                getStdErr().flush()
+                return 4
+            }
+            if (!ok) { return 4 }
+            getStdOut().writeln("CJGUI_MIXED_FORM_CLOSED endpoint=cleared")
+            getStdOut().flush()
+            return 0
+        } finally {
+            application.close()
+            controller.closeResources()
+        }
+    }
     // Off until the explicit development button is used; no sampling loop.
     let inspector = CjguiMacosInspector(application, businessId)
     // A saved interface document needs the public generated region; request the
     // same collaboration connection the button would open.
-    if (collaboration || uiDocumentPath.size > 0) {
+    if (collaboration || uiDocumentPath.size > 0 || workSessionPath.size > 0) {
         controller.requestCollaboration()
     }
     var pendingUiDocument = uiDocumentPath
@@ -2392,8 +2696,10 @@ main(args: Array<String>): Int64 {
             if (controller.takeInspectorRequest()) { let _ = inspector.open() }
             inspector.synchronizeLifetime()
             if (connection.isNone() && controller.takeCollaborationRequest()) {
-                let candidate = CjguiSharedOperationExternalConnection(domain, localAuthorization(), business)
+                let candidate = CjguiSharedOperationExternalConnection(domain, mixedFormLocalAuthorization(), business)
                 let enabled = candidate.enableGeneratedUiProvider(controller.region) &&
+                    candidate.enableWindowProjectionTargetReads(application) &&
+                    candidate.enableWindowProgressTargetReads(application) &&
                     application.attachExternalConnection(candidate)
                 if (enabled) {
                     connection = Some(candidate)

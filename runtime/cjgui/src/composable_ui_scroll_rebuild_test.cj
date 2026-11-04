@@ -1,11 +1,10 @@
 package cjgui
 
+import std.time.*
+
 foreign {
     func cjgui_internal_renderer_test_enqueue_composable_wheel(
         session: UInt64, nodeId: UInt64, deltaY: Float64, phase: UInt32, momentum: UInt32): Int32
-    func cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(
-        session: UInt64, nodeId: UInt64): Int32
-    func cjgui_internal_renderer_test_invoke_captured_composable_accessibility_action(session: UInt64): Int32
     func cjgui_internal_renderer_test_composable_scroll_owner_at_point(session: UInt64, x: Float64, y: Float64,
         owner: CPointer<UInt64>, isScroll: CPointer<UInt32>, wheel: CPointer<UInt32>): Int32
 }
@@ -81,13 +80,20 @@ private class ScrollRebuildController <: CjguiComposableUiController {
     }
 }
 
+@When[os == "macOS"]
 @Test
 func scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocus(): Unit {
+    cjguiMacosOwnerTest({ => scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocusBody() })
+}
+
+private func scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocusBody(): Unit {
     let controller = ScrollRebuildController()
     controller.nested = true
     let window = CjguiComposableUiWindow(controller,
         configuration: CjguiMacosApplicationWindowConfiguration("nested scroll rebuild fixture", 480u32, 320u32))
+    let budget = CjguiOwnerTurnBudget()
     try {
+        window.useOwnerTurnBudget(budget)
         @Assert(window.start(), true)
         finishScrollRebuildScene(window, 1)
         pressScrollRebuildAction(window, 9703u64)
@@ -99,7 +105,7 @@ func scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocus(): Unit {
             let scene = window.windowProgress().acceptedSceneVersion
             @Assert(unsafe { cjgui_internal_renderer_test_enqueue_composable_wheel(
                 window.testSessionToken(), node, -20.0, 1u32, 0u32) }, 0)
-            let _ = window.pump(0u32)
+            drainScrollRebuildWheel(window, node, { => viewport.offset() != before })
             finishScrollRebuildScene(window, scene + 1)
             @Assert(viewport.acceptedOffset(), before + 20)
             @Assert(window.windowProgress().focusedControlId, "rebuild-theme")
@@ -125,7 +131,7 @@ func scrollLayerHostNestedRebuildKeepsWheelAndOwnerReflowRevealsFocus(): Unit {
         @Assert(found, true)
         println("SCROLL_REBUILD_NESTED inner=${controller.viewport.acceptedOffset()} " +
             "outer=${controller.outerViewport.acceptedOffset()} owner_reflow_visible=true focus=retained")
-    } finally { window.close() }
+    } finally { budget.end(); window.close() }
 }
 
 private func pressScrollRebuildAction(window: CjguiComposableUiWindow, node: UInt64): Unit {
@@ -140,11 +146,12 @@ private func pressScrollRebuildAction(window: CjguiComposableUiWindow, node: UIn
 
 private func finishScrollRebuildScene(window: CjguiComposableUiWindow, minimum: Int64): Unit {
     var turns = 0
+    let deadline = MonoTime.now() + 5 * Duration.second
     while (window.isOpen() && (window.windowProgress().acceptedSceneVersion < minimum ||
-            window.ownerIdleWaitAllowance(UInt32.Max) != UInt32.Max) && turns < 240) {
+            window.ownerIdleWaitAllowance(UInt32.Max) != UInt32.Max) && turns < 240 && MonoTime.now() < deadline) {
         // The ordinary host advances pending layout/drawable preparation
         // before draining input. Window.pump alone only drains that input.
-        let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window)
+        advanceScrollRebuildTurn(window)
         turns += 1
     }
     if (window.windowProgress().acceptedSceneVersion < minimum ||
@@ -156,6 +163,45 @@ private func finishScrollRebuildScene(window: CjguiComposableUiWindow, minimum: 
     }
     @Assert(window.windowProgress().acceptedSceneVersion >= minimum, true)
     @Assert(window.ownerIdleWaitAllowance(UInt32.Max), UInt32.Max)
+}
+
+private func advanceScrollRebuildTurn(window: CjguiComposableUiWindow): Unit {
+    if (let Some(budget) <- window.attachedOwnerTurnBudget()) {
+        @Assert(budget.begin(), true)
+        try {
+            let _ = window.refreshIfNeeded()
+            let _ = window.pump(0u32)
+            let _ = budget.finishScheduling()
+        } finally { budget.end() }
+    } else {
+        let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window)
+    }
+}
+
+private func drainScrollRebuildWheel(window: CjguiComposableUiWindow, node: UInt64,
+    delivered: () -> Bool): Unit {
+    var pending = 0u32; var queuedKind = 0u32; var queuedNode = 0u64; var queuedScene = 0u64
+    var pumpedKind = 0u32; var pumpedNode = 0u64; var pumpedScene = 0u64
+    @Assert(unsafe { cjgui_internal_renderer_test_composable_interaction_trace(window.testSessionToken(),
+        inout pending, inout queuedKind, inout queuedNode, inout queuedScene,
+        inout pumpedKind, inout pumpedNode, inout pumpedScene) }, 0i32)
+    @Assert(pending > 0u32 && queuedKind == 30u32 && queuedNode == node, true)
+    let deadline = MonoTime.now() + 5 * Duration.second
+    var turns: Int64 = 0
+    while (window.isOpen() && turns < 240 && MonoTime.now() < deadline) {
+        advanceScrollRebuildTurn(window)
+        @Assert(unsafe { cjgui_internal_renderer_test_composable_interaction_trace(window.testSessionToken(),
+            inout pending, inout queuedKind, inout queuedNode, inout queuedScene,
+            inout pumpedKind, inout pumpedNode, inout pumpedScene) }, 0i32)
+        // Native's last-pumped marker is written while the main-thread ticket
+        // is being prepared. Only the controller/viewport proves that the
+        // owner has subsequently received and routed this same queued event.
+        if (pending == 0u32 && pumpedKind == 30u32 && pumpedNode == node && delivered()) { return }
+        turns += 1
+    }
+    println("SCROLL_REBUILD_WHEEL_UNREADY pending=${pending} queued=${queuedKind}:${queuedNode}:${queuedScene} " +
+        "pumped=${pumpedKind}:${pumpedNode}:${pumpedScene} turns=${turns}")
+    @Assert(pending == 0u32 && pumpedKind == 30u32 && pumpedNode == node && delivered(), true)
 }
 
 @Test
@@ -201,4 +247,185 @@ func scrollLayerHostKeepsAcceptedViewportAfterPaintAndHelpRebuild(): Unit {
             @Assert(controller.viewport.acceptedOffset(), before + 20)
         }
     } finally { window.close() }
+}
+
+// An ordinary virtual-list consumer owns its local offset. Its wheel must not
+// also be spent on the enclosing public ScrollViewport.
+private class NestedVirtualWheelRows <: CjguiComposableUiVariableHeightListSource {
+    public func itemCount(): Int64 { return 20 }
+    public func itemAt(index: Int64): CjguiComposableUiVariableHeightListItem {
+        return CjguiComposableUiVariableHeightListItem("item_${index}", index + 1,
+            "row ${index}", 1, estimatedHeight: 76)
+    }
+    public func indexForKey(key: String): Int64 {
+        for (index in 0..20) { if (key == "item_${index}") { return index } }
+        return -1
+    }
+    public func measurementGeneration(): Int64 { return 1 }
+    public func buildRow(item: CjguiComposableUiVariableHeightListItem,
+        isSelected: Bool, isFocused: Bool): CjguiComposableUiNode {
+        let row = cjguiComposableVertical(990100 + item.resourceId, "nested-row-${item.resourceId}",
+            CjguiComposableUiStyle(fixedHeight: 76))
+        row.add(cjguiComposableButton(991000 + item.resourceId, "nested-select-${item.resourceId}",
+            "select", "SELECT", item.resourceId, CjguiComposableUiStyle(fixedHeight: 26)))
+        return row
+    }
+}
+
+private class NestedVirtualWheelController <: CjguiComposableUiController {
+    let outer = CjguiComposableUiScrollViewport()
+    let list = CjguiComposableUiVirtualListState()
+    let rows = NestedVirtualWheelRows()
+    var revision: Int64 = 1
+    var selectedOwner: Int64 = 1
+    var wheelEvents: Int64 = 0
+    var wheelRefusals: Int64 = 0
+    var wheelNode: Int64 = 0
+    var wheelText: String = ""
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableScrollArea(9900, "nested-virtual-outer", outer,
+            CjguiComposableUiStyle(growX: 1, growY: 1, clipsContent: true))
+        let content = cjguiComposableVertical(9902, "nested-virtual-content",
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 800))
+        content.add(cjguiComposableVariableHeightList(9901, "nested-virtual-list", 9903,
+            rows, list, 76, 5, 3, CjguiComposableUiStyle(growX: 1, fixedHeight: 120)))
+        content.add(cjguiComposableVertical(9904, "nested-virtual-tail", CjguiComposableUiStyle(fixedHeight: 680)))
+        root.add(content)
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        if (event.eventKind == 30) {
+            wheelEvents += 1
+            wheelNode = event.node.nodeId
+            wheelText = event.text
+        }
+        if (event.eventKind == 30 && event.node.nodeId == 9901) {
+            list.scrollByViewport(event.text)
+            revision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && event.node.actionName == "SELECT") {
+            selectedOwner = event.node.resourceId
+            revision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(kind: Int64, node: Int64): CjguiComposableUiDispatchResult {
+        if (kind == 30) { wheelRefusals += 1 }
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@When[os == "macOS"]
+@Test
+func virtualWheelConsumesBeforeOuterAndRetiredFocusDoesNotWriteOwner(): Unit {
+    cjguiMacosOwnerTest({ => virtualWheelConsumesBeforeOuterAndRetiredFocusDoesNotWriteOwnerBody() })
+}
+
+private func virtualWheelConsumesBeforeOuterAndRetiredFocusDoesNotWriteOwnerBody(): Unit {
+    let controller = NestedVirtualWheelController()
+    let window = CjguiComposableUiWindow(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("nested virtual wheel", 480u32, 320u32))
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        finishScrollRebuildScene(window, 1)
+        window.testSetSceneWriteTrace(true)
+        @Assert(window.focusAcceptedNodeById(991001), true)
+        let beforeScene = window.windowProgress().acceptedSceneVersion
+        let outerBefore = controller.outer.acceptedOffset()
+        @Assert(controller.list.scrollOffset(), 0)
+        @Assert(unsafe { cjgui_internal_renderer_test_enqueue_composable_wheel(
+            window.testSessionToken(), 9901u64, -20.0, 1u32, 0u32) }, 0i32)
+        drainScrollRebuildWheel(window, 9901u64, { => controller.wheelEvents > 0 || controller.wheelRefusals > 0 })
+        println("SCROLL_WHEEL_OWNER events=${controller.wheelEvents} refusals=${controller.wheelRefusals} " +
+            "node=${controller.wheelNode} text=${controller.wheelText}")
+        @Assert(controller.wheelEvents, 1)
+        @Assert(controller.wheelRefusals, 0)
+        @Assert(controller.wheelNode, 9901)
+        @Assert(controller.list.scrollOffset() > 0, true)
+        @Assert(controller.outer.offset(), outerBefore)
+        finishScrollRebuildScene(window, beforeScene + 1)
+        @Assert(controller.outer.acceptedOffset(), outerBefore)
+        @Assert(controller.selectedOwner, 1)
+    } finally { budget.end(); window.close() }
+}
+
+@When[os == "macOS"]
+@Test
+func virtualWheelAtStartPassesUnconsumedGestureToOuter(): Unit {
+    cjguiMacosOwnerTest({ => virtualWheelAtStartPassesUnconsumedGestureToOuterBody() })
+}
+
+private func virtualWheelAtStartPassesUnconsumedGestureToOuterBody(): Unit {
+    let controller = NestedVirtualWheelController()
+    let window = CjguiComposableUiWindow(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("nested virtual edge", 480u32, 320u32))
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        finishScrollRebuildScene(window, 1)
+        window.testSetSceneWriteTrace(true)
+        @Assert(controller.outer.requestOffset(100), true)
+        let priorScene = window.windowProgress().acceptedSceneVersion
+        window.requestRefresh()
+        finishScrollRebuildScene(window, priorScene + 1)
+        let outerBefore = controller.outer.acceptedOffset()
+        @Assert(outerBefore > 0, true)
+        @Assert(controller.list.scrollOffset(), 0)
+        @Assert(unsafe { cjgui_internal_renderer_test_enqueue_composable_wheel(
+            window.testSessionToken(), 9901u64, 20.0, 1u32, 0u32) }, 0i32)
+        drainScrollRebuildWheel(window, 9901u64, { => controller.wheelEvents > 0 || controller.wheelRefusals > 0 })
+        println("SCROLL_WHEEL_OWNER events=${controller.wheelEvents} refusals=${controller.wheelRefusals} " +
+            "node=${controller.wheelNode} text=${controller.wheelText}")
+        @Assert(controller.wheelEvents, 1)
+        @Assert(controller.wheelRefusals, 0)
+        @Assert(controller.wheelNode, 9901)
+        @Assert(controller.list.scrollOffset(), 0)
+        @Assert(controller.outer.offset() < outerBefore, true)
+    } finally { budget.end(); window.close() }
+}
+
+@When[os == "macOS"]
+@Test
+func virtualWheelAtEndPassesClampedGestureToOuter(): Unit {
+    cjguiMacosOwnerTest({ => virtualWheelAtEndPassesClampedGestureToOuterBody() })
+}
+
+private func virtualWheelAtEndPassesClampedGestureToOuterBody(): Unit {
+    let controller = NestedVirtualWheelController()
+    let window = CjguiComposableUiWindow(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration("nested virtual end", 480u32, 320u32))
+    let budget = CjguiOwnerTurnBudget()
+    try {
+        window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        finishScrollRebuildScene(window, 1)
+        window.testSetSceneWriteTrace(true)
+        controller.list.scrollToIndex(19)
+        controller.revision += 1
+        let priorScene = window.windowProgress().acceptedSceneVersion
+        window.requestRefresh()
+        finishScrollRebuildScene(window, priorScene + 1)
+        let listBefore = controller.list.boundedWheelOffset()
+        let outerBefore = controller.outer.acceptedOffset()
+        @Assert(listBefore > 0, true)
+        @Assert(unsafe { cjgui_internal_renderer_test_enqueue_composable_wheel(
+            window.testSessionToken(), 9901u64, -20.0, 1u32, 0u32) }, 0i32)
+        drainScrollRebuildWheel(window, 9901u64, { => controller.wheelEvents > 0 || controller.wheelRefusals > 0 })
+        println("SCROLL_WHEEL_OWNER events=${controller.wheelEvents} refusals=${controller.wheelRefusals} " +
+            "node=${controller.wheelNode} text=${controller.wheelText}")
+        @Assert(controller.wheelEvents, 1)
+        @Assert(controller.wheelRefusals, 0)
+        @Assert(controller.wheelNode, 9901)
+        @Assert(controller.list.boundedWheelOffset(), listBefore)
+        @Assert(controller.outer.offset() > outerBefore, true)
+    } finally { budget.end(); window.close() }
 }

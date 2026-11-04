@@ -180,7 +180,7 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
     public let projection: CjguiComposableUiTreeProjection
     public let selection: CjguiComposableUiTreeSelection
     public let listState: CjguiComposableUiVirtualListState
-    private var observedDataVersion: Int64
+    private var observedAppliedCollectionRevision: Int64
     private var viewRevisionValue: Int64
     private var lastBatchStatus: String
     private var selectionVersionValue: Int64
@@ -207,7 +207,7 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         this.projection = treeProjection
         this.selection = CjguiComposableUiTreeSelection(projection)
         this.listState = CjguiComposableUiVirtualListState()
-        this.observedDataVersion = -1
+        this.observedAppliedCollectionRevision = -1
         this.viewRevisionValue = 0
         this.lastBatchStatus = ""
         this.selectionVersionValue = 0
@@ -244,31 +244,38 @@ public class CjguiRuleSetTreePanel <: CjguiSharedOperationTreeSelectionProvider 
         selectionVersionValue += 1
     }
 
-    /// Syncs the projection with the domain data version and prunes selection
+    /// Syncs the projection with the applied collection and prunes selection
     /// entries whose records vanished. Returns true when the projection
     /// changed and the section must be rebuilt.
     ///
     /// Existence is judged against the whole logical record set, never against
     /// the currently expanded rows: a collapse followed by any business update
     /// must not delete a legal hidden selection. The grouping index is rebuilt
-    /// from exactly one domain snapshot per observed version.
+    /// from exactly one domain snapshot when an applied change cannot be patched.
+    /// Draft, selection and save context changes do not invalidate applied rows.
     public func syncWithData(): Bool {
-        let version = domain.snapshot().version
-        if (version != observedDataVersion) {
-            observedDataVersion = version
+        let appliedRevision = domain.appliedCollectionRevision()
+        if (appliedRevision != observedAppliedCollectionRevision) {
             // Content-only change: the row set and grouping are unchanged, so the
             // projection patches the changed rows by key (no walk, no re-index,
             // no selection prune). Anything structural - or a change the source
-            // cannot prove - refreshes the index and rebuilds.
+            // cannot prove - refreshes the index and rebuilds. Its source cursor
+            // remains the business context version, never the applied revision.
             if (projection.refreshContentOnly()) {
+                observedAppliedCollectionRevision = appliedRevision
                 return true
             }
             source.refresh()
-            projection.invalidate()
-            // The source index now matches this version, so the content-only path
-            // may start from it.
-            projection.markSourceIndexCurrent()
+            if (!projection.invalidate()) {
+                // Keep lastError visible and leave this revision unconsumed so a
+                // failed rebuild can be attempted again.
+                return false
+            }
+            // Arm against the context actually captured by refresh, rather than
+            // a live version that may have advanced since that snapshot.
+            projection.markSourceIndexCurrent(source.snapshotVersion())
             selection.prune(source.logicalKeys())
+            observedAppliedCollectionRevision = appliedRevision
             return true
         }
         return false

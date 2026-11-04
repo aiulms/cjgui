@@ -84,6 +84,25 @@ END
 
 ## 外部接口
 
+### 稳定 key 显露与 viewport 证据
+
+`REVEAL_RULE_KEY` 会在当前筛选/排序后的活动数据源中解析稳定规则 key，并选择当前模式对应的
+列表、表格或网格 viewport。应用在 `REASON` 中返回解析后的 view key 和 viewport semantic；请求
+使用 `collectionViewRevision`，显露请求不会推进该 revision，也不选择记录、编辑草稿、Apply 或
+推进业务 owner 版本。key 不在活动视图、模式不支持，或 viewport 缺失/不匹配/已退役时必须拒绝。
+
+普通列表模式使用 `rule-list-scroll`，虚拟列表节点与 `recordListViewport` 共用同一 viewport。
+固定行和变高列表构造器提供接收该 viewport 的 experimental overload，原签名仍保持兼容。API
+及 requested、accepted、visible 之间的区别见 [`LAYOUT_PRIMITIVES.md`](../../LAYOUT_PRIMITIVES.md)。
+
+公开 `GET_WINDOW_INTERACTION` 最多返回四条 `WINDOW_VIEWPORT`：每条标识一个 semantic viewport，
+并包含请求 `offset`、accepted offset、内容/视口范围、pending 状态和布局次数；它不包含目标
+item key。消费者应等待同一 window session 的 accepted scene，再检查 accepted 行的稳定身份和
+正面积可见几何。AX/截图坐标必须按各自来源解释，不能把截图像素直接当成 window points。只有在
+单独确认目标行可见后，才由人点击或键盘选择；请求回执或 accepted offset 都不代表选择或可见。
+
+其余外部接口仍通过已有 `GET_CONTEXT` 和 `INVOKE` 动作：
+
 复用现有 `GET_CONTEXT` / `INVOKE`，没有新 RPC 或授权体系。规则集资源（8000）新增字段：
 
 - `collectionView`：当前视图的 `CJGUI_COLLECTION_VIEW 1 | ...` 文本。

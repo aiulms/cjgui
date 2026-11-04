@@ -66,13 +66,13 @@ static void ActualCommandFixture(id<MTLDevice> device) {
     uint64_t token=ctx.rendererSessionToken;
     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,1,1)==0 &&
         CjguiSetComposableCommandMenuItemOnMain(token,0,"shift-source","Move source","Edit",
-            "shortcut:shift+command+n",0,0,1,0)==0 &&
+            "shortcut:shift+command+n",0,0,1,0,0)==0 &&
         CjguiCommitComposableCommandMenuOnMain(token)==0,
         "prefix_present_original_A_command_published");
     PreparePlainCandidate(ctx);
     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,2,1)==0 &&
         CjguiSetComposableCommandMenuItemOnMain(token,0,"shift-source","Move source","Edit",
-            "shortcut:shift+command+n",0,0,1,0)==0,
+            "shortcut:shift+command+n",0,0,1,0,0)==0,
         "prefix_present_candidate_command_complete");
     NSEvent *key=[NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
         modifierFlags:NSEventModifierFlagCommand|NSEventModifierFlagShift timestamp:1
@@ -128,7 +128,7 @@ static void ActualOwnerPrefixCandidateFixture(id<MTLDevice> device, BOOL late, u
     NSString *shortcut=variant==1 ? @"shortcut:shift+command+z" : @"shortcut:command+z";
     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,1,1)==0 &&
         CjguiSetComposableCommandMenuItemOnMain(token,0,"range-text-undo","Undo","Edit",
-            shortcut.UTF8String,0,0,1,0)==0 &&
+            shortcut.UTF8String,0,0,1,0,0)==0 &&
         CjguiCommitComposableCommandMenuOnMain(token)==0,
         "registered_undo_original_A_declaration_published");
     NSEventModifierFlags flags=NSEventModifierFlagCommand;
@@ -166,7 +166,7 @@ static void ActualOwnerPrefixCandidateFixture(id<MTLDevice> device, BOOL late, u
     PreparePlainCandidate(ctx);
     CHECK(CjguiConfigureComposableCommandMenuOnMain(token,2,1)==0 &&
         CjguiSetComposableCommandMenuItemOnMain(token,0,"range-text-undo","Undo","Edit",
-            shortcut.UTF8String,0,0,1,0)==0,
+            shortcut.UTF8String,0,0,1,0,0)==0,
         "registered_undo_candidate_keeps_same_actual_declaration");
     CJGuiInternalComposableSceneNode *target=CjguiCloneComposableSceneNode(ctx,ctx.stagedComposableNodes[2],2,2);
     CjguiInternalRendererComposableNode raw=target.node;raw.nodeId=1013;raw.projectionVersion=2;

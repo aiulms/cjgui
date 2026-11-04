@@ -34,6 +34,49 @@ public class CjguiTextDocumentSelection {
     }
 }
 
+/// Result of registering one document at runtime. `resourceId` is the exact
+/// identity assigned or accepted by this workspace; callers must not infer it
+/// from list position, title, or the most recent selection.
+public class CjguiTextDocumentOpenResult {
+    public let applied: Bool
+    public let resourceId: Int64
+    public let reason: String
+    public let contextVersion: Int64
+
+    public init(applied: Bool, resourceId: Int64, reason: String, contextVersion: Int64) {
+        this.applied = applied
+        this.resourceId = resourceId
+        this.reason = reason
+        this.contextVersion = contextVersion
+    }
+}
+
+/// Live, ordered document summary for list projections. It carries no body.
+public class CjguiTextDocumentSummary {
+    public let documentId: Int64
+    public let title: String
+    public let version: Int64
+
+    public init(documentId: Int64, title: String, version: Int64) {
+        this.documentId = documentId
+        this.title = title
+        this.version = version
+    }
+}
+
+/// Application-owned policy for the public OPEN_DOCUMENT and CLOSE_DOCUMENT
+/// actions. The workspace routes the exact target and expected document
+/// version; the application still decides authorized paths, unsaved-close
+/// decisions and whether a save is allowed to precede closing.
+public interface CjguiTextDocumentLifecycleDomain {
+    func openAuthorizedDocumentFromExternal(): CjguiSharedOperationActionResult
+    func closeDocumentFromExternal(
+        documentId: Int64,
+        expectedVersion: Int64,
+        decision: String
+    ): CjguiSharedOperationActionResult
+}
+
 private class CjguiTextDocumentWorkspaceEntry {
     let document: CjguiTextDocument
     var isOpen: Bool
@@ -55,8 +98,18 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
     private let lock: Mutex
     private let documents: ArrayList<CjguiTextDocumentWorkspaceEntry>
     // A derived owner-local lookup index.  It never stores document content
-    // or version truth and documents are not structurally added after init.
+    // or version truth.
     private let documentsById: HashMap<Int64, CjguiTextDocumentWorkspaceEntry>
+    // Published IDs are never reused within this workspace lifetime. Closed
+    // entries leave one tombstone so an old target reports document_closed
+    // instead of being confused with a document that never existed.
+    private let retiredDocumentIds: HashMap<Int64, Bool>
+    // File bindings are associated with the document they actually opened or
+    // saved. Closing one document releases only that association.
+    private let fileBindingsByDocumentId: HashMap<Int64, CjguiTextDocumentFileBinding>
+    private let filePathsByDocumentId: HashMap<Int64, String>
+    private var nextDocumentIdValue: Int64
+    private var documentIdExhausted: Bool
     // Per-document preview limits are workspace-owned presentation truth.
     // They never duplicate document text or its content version.
     private let previewLimitsByDocumentId: HashMap<Int64, Int64>
@@ -72,12 +125,18 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
     private var selectionStartValue: Int64
     private var selectionEndValue: Int64
     private var selectionDocumentVersionValue: Int64
+    private var lifecycleDomain: ?CjguiTextDocumentLifecycleDomain
 
     public init(documents: ArrayList<CjguiTextDocument>) {
         if (documents.size == 0) { throw IllegalArgumentException("text_workspace_requires_document") }
         this.lock = Mutex()
         this.documents = ArrayList<CjguiTextDocumentWorkspaceEntry>()
         this.documentsById = HashMap<Int64, CjguiTextDocumentWorkspaceEntry>()
+        this.retiredDocumentIds = HashMap<Int64, Bool>()
+        this.fileBindingsByDocumentId = HashMap<Int64, CjguiTextDocumentFileBinding>()
+        this.filePathsByDocumentId = HashMap<Int64, String>()
+        this.nextDocumentIdValue = 0
+        this.documentIdExhausted = false
         this.previewLimitsByDocumentId = HashMap<Int64, Int64>()
         this.previewLimitVersionsByDocumentId = HashMap<Int64, Int64>()
         this.changes = ArrayList<CjguiSharedOperationChangeEntry>()
@@ -88,8 +147,10 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         this.selectionStartValue = 0
         this.selectionEndValue = 0
         this.selectionDocumentVersionValue = -1
+        this.lifecycleDomain = None
         var firstId: Int64 = -1
         var firstVersion: Int64 = -1
+        var maximumId: Int64 = -1
         for (document in documents) {
             var duplicate = false
             for (existing in this.documents) {
@@ -103,10 +164,17 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             let _ = this.documentsById.add(document.documentId(), entry)
             let _ = this.previewLimitsByDocumentId.add(document.documentId(), CjguiTextDocumentWorkspace.defaultPreviewLimit)
             let _ = this.previewLimitVersionsByDocumentId.add(document.documentId(), 0)
+            if (document.documentId() > maximumId) { maximumId = document.documentId() }
             if (firstId < 0) {
                 firstId = document.documentId()
                 firstVersion = document.version()
             }
+        }
+        if (maximumId == Int64.Max) {
+            this.nextDocumentIdValue = Int64.Max
+            this.documentIdExhausted = true
+        } else {
+            this.nextDocumentIdValue = maximumId + 1
         }
         this.selectedDocumentIdValue = firstId
         this.selectionStartValue = 0
@@ -186,7 +254,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
                     return CjguiSharedOperationTransferResult.fromActionResult(action, offer)
                 }
                 return CjguiSharedOperationTransferResult.rejected(
-                    0, "unknown_document", format: Some(request.acceptedFormat))
+                    0, missingDocumentReasonUnlocked(documentId), format: Some(request.acceptedFormat))
             }
             return CjguiSharedOperationTransferResult.rejected(
                 0, "invalid_transfer", format: Some(CjguiSharedOperationTransferFormat.utf8Text()))
@@ -236,8 +304,26 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             descriptor("REDO", "重做文档修改", ArrayList<CjguiSharedOperationParameterDescriptor>())
             , descriptor("SET_PREVIEW_LIMIT", "设置预览字节上限", ArrayList<CjguiSharedOperationParameterDescriptor>([
                 parameter("value", "INTEGER")
-            ]))
+            ])),
+            CjguiSharedOperationActionDescriptor("OPEN_DOCUMENT", "打开应用已授权文档",
+                ArrayList<CjguiSharedOperationParameterDescriptor>(), 0, 0),
+            CjguiSharedOperationActionDescriptor("CLOSE_DOCUMENT", "关闭指定文档",
+                ArrayList<CjguiSharedOperationParameterDescriptor>([
+                    CjguiSharedOperationParameterDescriptor("decision", "STRING", false)
+                ]), 1, 1)
         ])
+    }
+
+    /// Installs the application's lifecycle policy for the public
+    /// OPEN_DOCUMENT/CLOSE_DOCUMENT actions. The workspace routes exact
+    /// targets and expected versions; the application retains path admission,
+    /// dirty-close decisions and save ownership.
+    public func attachLifecycleDomainFromHuman(domain: CjguiTextDocumentLifecycleDomain): Bool {
+        return synchronized(lock) {
+            if (lifecycleDomain.isSome()) { return false }
+            lifecycleDomain = Some(domain)
+            return true
+        }
     }
 
     public func executeFromHuman(invocation: CjguiSharedOperationActionInvocation): CjguiSharedOperationActionResult {
@@ -297,7 +383,144 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
                 if (entry.isOpen) { return "open" }
                 return "document_closed"
             }
+            if (isRetiredUnlocked(documentId)) { return "document_closed" }
             return "unknown_document"
+        }
+    }
+
+    /// Registers one additional document without changing constructor use.
+    /// The caller supplies the body; the workspace assigns or validates the
+    /// exact resource identity and makes the new document current.
+    public func openDocumentFromHuman(title: String, content: String): CjguiTextDocumentOpenResult {
+        return synchronized(lock) {
+            if (title.size == 0) { return openRejectedUnlocked(-1, "invalid_document") }
+            let resourceId = match (allocateDocumentIdUnlocked()) {
+                case Some(value) => value
+                case None => return openRejectedUnlocked(-1, "document_id_exhausted")
+            }
+            var document: ?CjguiTextDocument = None
+            try {
+                document = Some(CjguiTextDocument(resourceId, title, content))
+            } catch (_) {
+                return openRejectedUnlocked(-1, "invalid_document")
+            }
+            if (let Some(value) <- document) {
+                return registerDocumentUnlocked(value, None, "")
+            }
+            return openRejectedUnlocked(-1, "invalid_document")
+        }
+    }
+
+    /// Registers an already constructed document with its caller-chosen ID.
+    /// A live or retired ID is never rebound; new IDs must be above the
+    /// workspace allocator's current position.
+    public func registerDocumentFromHuman(document: CjguiTextDocument): CjguiTextDocumentOpenResult {
+        return synchronized(lock) { registerDocumentUnlocked(document, None, "") }
+    }
+
+    /// Opens one application-authorized file and associates its binding with
+    /// exactly the new document. The bindings remain separate per document.
+    public func openDocumentFromFileFromHuman(
+        title: String,
+        binding: CjguiTextDocumentFileBinding,
+        path: String,
+        createIfMissing!: Bool = false
+    ): CjguiTextDocumentOpenResult {
+        return synchronized(lock) {
+            if (title.size == 0 || path.size == 0) { return openRejectedUnlocked(-1, "invalid_document") }
+            let resourceId = match (allocateDocumentIdUnlocked()) {
+                case Some(value) => value
+                case None => return openRejectedUnlocked(-1, "document_id_exhausted")
+            }
+            // Claim before the binding observes or mutates any file state.
+            // Reusing one binding for a second live document is refused here,
+            // not merely avoided by the sample constructing a fresh binding.
+            if (!binding.claimDocument(resourceId)) {
+                return openRejectedUnlocked(-1, "binding_in_use")
+            }
+            let opened = if (createIfMissing) {
+                binding.openOrCreateFromHuman(resourceId, title, path)
+            } else {
+                binding.openFromHuman(resourceId, title, path)
+            }
+            if (!opened.applied) {
+                let _ = binding.unclaimDocument(resourceId)
+                return openRejectedUnlocked(-1, opened.reason)
+            }
+            if (let Some(document) <- opened.document) {
+                let registered = registerDocumentUnlocked(document, Some(binding), path)
+                if (!registered.applied) { let _ = binding.releaseDocument(resourceId) }
+                return registered
+            }
+            let _ = binding.releaseDocument(resourceId)
+            return openRejectedUnlocked(-1, "invalid_document")
+        }
+    }
+
+    /// Associates an existing file binding and its intended save path with
+    /// one live document. It does not widen the binding's own payload or path
+    /// restrictions; the binding still owns baseline/conflict checks.
+    /// Reattaching the same binding is allowed. Replacing a live document's
+    /// binding is refused before the new binding is claimed or changed.
+    public func attachFileBindingFromHuman(
+        documentId: Int64,
+        binding: CjguiTextDocumentFileBinding,
+        path: String
+    ): CjguiSharedOperationActionResult {
+        return synchronized(lock) {
+            if (let None <- openEntryForIdUnlocked(documentId)) { return missingDocumentResultUnlocked(documentId) }
+            if (let Some(existing) <- fileBindingsByDocumentId.get(documentId)) {
+                if (!refEq(existing, binding)) {
+                    return rejectedUnlocked(false, "binding_replacement_unsupported")
+                }
+            }
+            if (!binding.claimDocument(documentId)) {
+                return rejectedUnlocked(false, "binding_in_use")
+            }
+            let boundId = binding.boundDocumentId()
+            if (boundId >= 0 && boundId != documentId) {
+                let _ = binding.unclaimDocument(documentId)
+                return rejectedUnlocked(false, "different_document")
+            }
+            let _ = fileBindingsByDocumentId.add(documentId, binding)
+            let effectivePath = if (path.size > 0) { path } else { binding.currentPath() }
+            let _ = filePathsByDocumentId.add(documentId, effectivePath)
+            return acceptedUnlocked("file_binding_attached")
+        }
+    }
+
+    public func fileBindingForDocument(documentId: Int64): ?CjguiTextDocumentFileBinding {
+        return synchronized(lock) { fileBindingsByDocumentId.get(documentId) }
+    }
+
+    public func filePathForDocument(documentId: Int64): String {
+        return synchronized(lock) {
+            if (let Some(path) <- filePathsByDocumentId.get(documentId)) { return path }
+            return ""
+        }
+    }
+
+    /// Ordered live-document enumeration for ordinary list projections. It
+    /// exposes no body and does not include closed entries.
+    public func openDocumentSummaries(): ArrayList<CjguiTextDocumentSummary> {
+        return synchronized(lock) {
+            let summaries = ArrayList<CjguiTextDocumentSummary>()
+            for (entry in documents) {
+                if (!entry.isOpen) { continue }
+                let snapshot = entry.document.snapshot()
+                summaries.add(CjguiTextDocumentSummary(snapshot.documentId, snapshot.title, snapshot.version))
+            }
+            return summaries
+        }
+    }
+
+    public func openDocumentCount(): Int64 {
+        return synchronized(lock) {
+            var count: Int64 = 0
+            for (entry in documents) {
+                if (entry.isOpen) { count += 1 }
+            }
+            return count
         }
     }
 
@@ -332,14 +555,14 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         return synchronized(lock) {
             if (let Some(entry) <- entryForIdUnlocked(documentId)) {
                 if (!entry.isOpen) { return rejectedUnlocked(false, "document_closed") }
-                entry.isOpen = false
+                retireDocumentUnlocked(documentId)
                 if (selectedDocumentIdValue == documentId) {
                     selectFirstOpenUnlocked()
                 }
                 appendContextChangeUnlocked(documentId, "document_closed")
                 return acceptedUnlocked("document_closed")
             }
-            return rejectedUnlocked(false, "unknown_document")
+            return missingDocumentResultUnlocked(documentId)
         }
     }
 
@@ -374,7 +597,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
                 }
                 return documentResultUnlocked(result)
             }
-            return rejectedUnlocked(false, "unknown_document")
+            return missingDocumentResultUnlocked(documentId)
         }
     }
 
@@ -409,7 +632,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
                     read.reason
                 )
             }
-            return CjguiSharedOperationRangeRead(false, false, resourceId, 0, 0, 0, "", "unknown_document")
+            return CjguiSharedOperationRangeRead(false, false, resourceId, 0, 0, 0, "", missingDocumentReasonUnlocked(resourceId))
         }
     }
 
@@ -435,6 +658,25 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
     }
 
     private func executeUnlocked(invocation: CjguiSharedOperationActionInvocation, isExternal: Bool): CjguiSharedOperationActionResult {
+        if (invocation.actionName == "OPEN_DOCUMENT") {
+            if (invocation.targetResourceIds.size != 0 || invocation.arguments.size != 0) {
+                return rejectedUnlocked(false, "invalid_parameters")
+            }
+            if (let Some(domain) <- lifecycleDomain) {
+                return domain.openAuthorizedDocumentFromExternal()
+            }
+            return rejectedUnlocked(false, "lifecycle_unavailable")
+        }
+        if (invocation.actionName == "CLOSE_DOCUMENT") {
+            if (invocation.targetResourceIds.size != 1) { return rejectedUnlocked(false, "invalid_target") }
+            var decision = ""
+            if (let Some(value) <- stringArgumentUnlocked(invocation, "decision")) { decision = value }
+            if (let Some(domain) <- lifecycleDomain) {
+                return domain.closeDocumentFromExternal(
+                    invocation.targetResourceIds[0], invocation.expectedVersion, decision)
+            }
+            return rejectedUnlocked(false, "lifecycle_unavailable")
+        }
         if (invocation.actionName == "SELECT_DOCUMENT") {
             if (invocation.targetResourceIds.size != 1 || invocation.arguments.size != 0) { return rejectedUnlocked(false, "invalid_parameters") }
             return selectDocumentUnlocked(invocation.targetResourceIds[0])
@@ -486,7 +728,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         invocation: CjguiSharedOperationActionInvocation,
         isExternal: Bool
     ): CjguiSharedOperationActionResult {
-        if (let None <- openEntryForIdUnlocked(documentId)) { return rejectedUnlocked(false, "unknown_document") }
+        if (let None <- openEntryForIdUnlocked(documentId)) { return missingDocumentResultUnlocked(documentId) }
         if (isExternal && invocation.expectedVersion != contextVersionValue) {
             return rejectedUnlocked(true, "version_conflict")
         }
@@ -542,7 +784,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             }
             return documentResultUnlocked(result)
         }
-        return rejectedUnlocked(false, "unknown_document")
+        return missingDocumentResultUnlocked(documentId)
     }
 
     private func historyUnlocked(documentId: Int64, isExternal: Bool, undo: Bool): CjguiSharedOperationActionResult {
@@ -560,7 +802,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             }
             return documentResultUnlocked(result)
         }
-        return rejectedUnlocked(false, "unknown_document")
+        return missingDocumentResultUnlocked(documentId)
     }
 
     private func batchEditUnlocked(
@@ -585,7 +827,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             return CjguiSharedOperationActionResult(result.applied, result.isVersionConflict,
                 result.versionBefore, result.versionAfter, result.reason)
         }
-        return rejectedUnlocked(false, "unknown_document")
+        return missingDocumentResultUnlocked(documentId)
     }
 
     private func selectDocumentUnlocked(documentId: Int64): CjguiSharedOperationActionResult {
@@ -598,7 +840,7 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
             appendContextChangeUnlocked(documentId, "selection")
             return acceptedUnlocked("selected")
         }
-        return rejectedUnlocked(false, "unknown_document")
+        return missingDocumentResultUnlocked(documentId)
     }
 
     private func selectFirstOpenUnlocked() {
@@ -703,6 +945,9 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
         if (let Some(entry) <- entryForIdUnlocked(documentId)) {
             if (!entry.isOpen) { return CjguiTextDocumentSelection(false, documentId, entry.document.version(), 0, 0, "document_closed") }
         }
+        if (isRetiredUnlocked(documentId)) {
+            return CjguiTextDocumentSelection(false, documentId, -1, 0, 0, "document_closed")
+        }
         return CjguiTextDocumentSelection(false, documentId, -1, 0, 0, "unknown_document")
     }
 
@@ -806,6 +1051,111 @@ public class CjguiTextDocumentWorkspace <: CjguiSharedOperationDomain & CjguiSha
 
     private func entryForIdUnlocked(documentId: Int64): ?CjguiTextDocumentWorkspaceEntry {
         return documentsById.get(documentId)
+    }
+
+    private func isRetiredUnlocked(documentId: Int64): Bool {
+        if (let Some(_) <- retiredDocumentIds.get(documentId)) { return true }
+        return false
+    }
+
+    private func missingDocumentResultUnlocked(documentId: Int64): CjguiSharedOperationActionResult {
+        if (isRetiredUnlocked(documentId)) { return rejectedUnlocked(false, "document_closed") }
+        return rejectedUnlocked(false, "unknown_document")
+    }
+
+    private func missingDocumentReasonUnlocked(documentId: Int64): String {
+        if (isRetiredUnlocked(documentId)) { return "document_closed" }
+        return "unknown_document"
+    }
+
+    private func openRejectedUnlocked(resourceId: Int64, reason: String): CjguiTextDocumentOpenResult {
+        return CjguiTextDocumentOpenResult(false, resourceId, reason, contextVersionValue)
+    }
+
+    private func allocateDocumentIdUnlocked(): ?Int64 {
+        if (documentIdExhausted) { return None }
+        var candidate = nextDocumentIdValue
+        while (candidate >= 0 && !documentIdAvailableUnlocked(candidate)) {
+            if (candidate == Int64.Max) {
+                documentIdExhausted = true
+                return None
+            }
+            candidate += 1
+        }
+        if (candidate < 0) {
+            documentIdExhausted = true
+            return None
+        }
+        if (candidate == Int64.Max) {
+            documentIdExhausted = true
+        } else {
+            nextDocumentIdValue = candidate + 1
+        }
+        return Some(candidate)
+    }
+
+    private func documentIdAvailableUnlocked(documentId: Int64): Bool {
+        if (let Some(_) <- documentsById.get(documentId)) { return false }
+        if (let Some(_) <- retiredDocumentIds.get(documentId)) { return false }
+        return true
+    }
+
+    private func registerDocumentUnlocked(
+        document: CjguiTextDocument,
+        binding: ?CjguiTextDocumentFileBinding,
+        path: String
+    ): CjguiTextDocumentOpenResult {
+        let documentId = document.documentId()
+        if (documentId < 0) { return openRejectedUnlocked(-1, "invalid_document") }
+        if (let Some(_) <- documentsById.get(documentId)) {
+            return openRejectedUnlocked(documentId, "duplicate_document_id")
+        }
+        if (isRetiredUnlocked(documentId)) {
+            return openRejectedUnlocked(documentId, "retired_document_id")
+        }
+        let entry = CjguiTextDocumentWorkspaceEntry(document)
+        documents.add(entry)
+        let _ = documentsById.add(documentId, entry)
+        let _ = previewLimitsByDocumentId.add(documentId, CjguiTextDocumentWorkspace.defaultPreviewLimit)
+        let _ = previewLimitVersionsByDocumentId.add(documentId, 0)
+        if (documentId == Int64.Max) {
+            documentIdExhausted = true
+        } else if (documentId >= nextDocumentIdValue) {
+            nextDocumentIdValue = documentId + 1
+        }
+        if (let Some(value) <- binding) {
+            let _ = fileBindingsByDocumentId.add(documentId, value)
+            let _ = filePathsByDocumentId.add(documentId, path)
+        }
+        selectedDocumentIdValue = documentId
+        selectionStartValue = 0
+        selectionEndValue = 0
+        selectionDocumentVersionValue = document.version()
+        appendContextChangeUnlocked(documentId, "document_opened")
+        return CjguiTextDocumentOpenResult(true, documentId, "opened", contextVersionValue)
+    }
+
+    private func retireDocumentUnlocked(documentId: Int64) {
+        var index: Int64 = 0
+        while (index < documents.size) {
+            if (documents[index].document.documentId() == documentId) {
+                let removed = documents.remove(at: index)
+                removed.isOpen = false
+                break
+            }
+            index += 1
+        }
+        let _ = documentsById.remove(documentId)
+        let _ = previewLimitsByDocumentId.remove(documentId)
+        let _ = previewLimitVersionsByDocumentId.remove(documentId)
+        if (let Some(binding) <- fileBindingsByDocumentId.get(documentId)) {
+            // The live owner is gone; clear its claim and trusted baseline so
+            // the binding cannot be mistaken for another document's owner.
+            let _ = binding.releaseDocument(documentId)
+        }
+        let _ = fileBindingsByDocumentId.remove(documentId)
+        let _ = filePathsByDocumentId.remove(documentId)
+        let _ = retiredDocumentIds.add(documentId, true)
     }
 
     private func openEntryForIdUnlocked(documentId: Int64): ?CjguiTextDocumentWorkspaceEntry {

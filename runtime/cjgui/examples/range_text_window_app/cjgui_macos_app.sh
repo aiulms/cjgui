@@ -4,4 +4,7 @@ CJGUI_MACOS_APP_BUNDLE_NAME='CJGUI Range Text Consumer'
 CJGUI_MACOS_APP_EXECUTABLE_NAME='CJGUIRangeTextConsumer'
 CJGUI_MACOS_APP_IDENTIFIER='org.cangjie.cjgui.range-text-consumer.example'
 CJGUI_MACOS_APP_DISPLAY_NAME='CJGUI Range Text Consumer'
-CJGUI_MACOS_APP_RESOURCES=()
+CJGUI_MACOS_APP_RESOURCES=(
+  "$APP_DIR/assets/tint_glyph_white.png"
+  "$APP_DIR/assets/tint_glyph_red.png"
+)

@@ -29,7 +29,6 @@ func textDocumentFileBindingAtomicallySavesReopensAndRefusesAnExternalOverwrite(
     @Assert(String.fromUtf8(File.readFrom(documentPath)), "外部改写")
     let _ = removeIfExists(directory, recursive: true)
 }
-
 @Test
 func textDocumentFileBindingCoordinatesInstancesAndNeverClobbersAClaimedNewTarget(): Unit {
     let directory = Directory.createTemp("/tmp")
@@ -60,4 +59,96 @@ func textDocumentFileBindingCoordinatesInstancesAndNeverClobbersAClaimedNewTarge
     @Assert(conflict.reason, "external_file_conflict")
     @Assert(String.fromUtf8(File.readFrom(documentPath)), "第一实例")
     let _ = removeIfExists(directory, recursive: true)
+}
+
+@Test
+func textDocumentFileBindingDoesNotTrustAnApplicationRejectedLoad(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let documentPath = directory.join("invalid-session.txt").toString()
+    File.writeTo(documentPath, "bad schema".toArray())
+    let binding = CjguiTextDocumentFileBinding()
+    let opened = binding.openValidatedFromHuman(7303, "业务会话", documentPath,
+        64, { text => text == "expected schema" })
+    @Assert(opened.applied, false)
+    @Assert(opened.reason, "validation_refused")
+    let overwritten = binding.saveFromHuman(
+        CjguiTextDocument(7303, "业务会话", "replacement").snapshot(), documentPath)
+    @Assert(overwritten.applied, false)
+    @Assert(overwritten.reason, "save_target_exists")
+    @Assert(String.fromUtf8(File.readFrom(documentPath)), "bad schema")
+    let _ = removeIfExists(directory, recursive: true)
+}
+
+@Test
+func textDocumentFileBindingBoundsWritesAndReadsBeforeAdopting(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let documentPath = directory.join("bounded-document.txt").toString()
+    let binding = CjguiTextDocumentFileBinding()
+    let tooLarge = binding.saveBoundedFromHuman(
+        CjguiTextDocument(7304, "有界文件", "超过限制").snapshot(),
+        documentPath, 2)
+    @Assert(tooLarge.applied, false)
+    @Assert(tooLarge.reason, "payload_too_large")
+    @Assert(exists(documentPath), false)
+
+    File.writeTo(documentPath, "valid candidate".toArray())
+    let oversized = binding.openValidatedFromHuman(7304, "有界文件", documentPath,
+        4, { _ => true })
+    @Assert(oversized.applied, false)
+    @Assert(oversized.reason, "payload_too_large")
+    let rejectedWrite = binding.saveFromHuman(
+        CjguiTextDocument(7304, "有界文件", "replacement").snapshot(), documentPath)
+    @Assert(rejectedWrite.applied, false)
+    @Assert(rejectedWrite.reason, "save_target_exists")
+    @Assert(String.fromUtf8(File.readFrom(documentPath)), "valid candidate")
+
+    let valid = binding.openValidatedFromHuman(7304, "有界文件", documentPath,
+        64, { text => text == "valid candidate" })
+    @Assert(valid.applied, true)
+    match (valid.document) {
+        case Some(document) => @Assert(document.snapshot().content, "valid candidate")
+        case None => @Assert(true, false)
+    }
+    let _ = removeIfExists(directory, recursive: true)
+}
+
+@Test
+func textDocumentFilePersistedStateKeepsExactOwnerAndPriorBaseline(): Unit {
+    let directory = Directory.createTemp("/tmp")
+    let path = directory.join("owner.txt").toString()
+    let otherPath = directory.join("other.txt").toString()
+    let binding = CjguiTextDocumentFileBinding()
+    let original = CjguiTextDocument(7310, "Owner A", "相同🙂").snapshot()
+    let otherOwner = CjguiTextDocument(7311, "Owner B", "相同🙂").snapshot()
+    let changed = CjguiTextDocumentSnapshot(7310, "Owner A", "相同🙂!", 1)
+    try {
+        @Assert(binding.persistedState(original, ""), "no_file_path")
+        @Assert(binding.persistedState(original, path), "unbound")
+        @Assert(binding.saveFromHuman(original, path).applied, true)
+        @Assert(binding.persistedState(original, path), "clean")
+        @Assert(binding.persistedState(changed, path), "dirty")
+        @Assert(binding.persistedState(otherOwner, path), "different_document")
+        @Assert(binding.persistedState(original, otherPath), "different_path")
+
+        // A failed save/open never grants a baseline or changes its owner.
+        File.writeTo(Path(otherPath), "already exists".toArray())
+        @Assert(binding.saveFromHuman(otherOwner, otherPath).reason, "save_target_exists")
+        @Assert(binding.openFromHuman(7311, "Owner B", directory.join("missing").toString()).applied, false)
+        @Assert(binding.persistedState(original, path), "clean")
+        @Assert(binding.persistedState(otherOwner, path), "different_document")
+
+        // State is explicitly an in-memory baseline comparison; a changed
+        // external file still fails the existing actual save conflict guard.
+        File.writeTo(Path(path), "external change".toArray())
+        @Assert(binding.persistedState(original, path), "clean")
+        @Assert(binding.saveFromHuman(changed, path).reason, "external_file_conflict")
+        @Assert(binding.persistedState(original, path), "clean")
+        @Assert(binding.persistedState(changed, path), "dirty")
+
+        // A successful explicit open adopts that owner and its own baseline.
+        @Assert(binding.openFromHuman(7311, "Owner B", path).applied, true)
+        let reopened = CjguiTextDocumentSnapshot(7311, "Owner B", "external change", 0)
+        @Assert(binding.persistedState(reopened, path), "clean")
+        @Assert(binding.persistedState(original, path), "different_document")
+    } finally { let _ = removeIfExists(directory, recursive: true) }
 }

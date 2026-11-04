@@ -25,7 +25,20 @@ CC="$DEVECO_OH_NATIVE_HOME/llvm/bin/clang"
 AR="$DEVECO_OH_NATIVE_HOME/llvm/bin/llvm-ar"
 OUT_DIR="$LAB/entry/oh_renderer"
 OUT_LIB="$OUT_DIR/libcjgui_ohos_renderer.a"
-SRC="$PLATFORM/host"
+# 核心 profile 与 sync_platform.sh 成对选择：snapshot=既有分叉宿主；
+# main=冻结主树核心的窄适配宿主（host_main + main_core 头）。
+CORE_PROFILE="${CJGUI_CORE_PROFILE:-snapshot}"
+case "$CORE_PROFILE" in
+  main|snapshot) ;;
+  *) echo "未知核心 profile: $CORE_PROFILE（只接受 main/snapshot）" >&2; exit 1 ;;
+esac
+if [ "$CORE_PROFILE" = "main" ]; then
+  SRC="$PLATFORM/host_main"
+  HEADER_INC="$PLATFORM/main_core"
+else
+  SRC="$PLATFORM/host"
+  HEADER_INC="$PLATFORM/snapshot"
+fi
 
 mkdir -p "$OUT_DIR"
 
@@ -43,7 +56,7 @@ fi
 "$CLANG" --target=aarch64-linux-ohos \
   --sysroot="$DEVECO_OH_NATIVE_HOME/sysroot" \
   -I "$SRC" \
-  -I "$PLATFORM/snapshot" \
+  -I "$HEADER_INC" \
   -I "$REPO_ROOT/runtime/cjgui/native" \
   -D__MUSL__ $GATE_FLAG $NO_REPLAY_MERGE_FLAG \
   -O2 -fPIC -ffunction-sections -fdata-sections \

@@ -145,7 +145,10 @@ python3 cjgui_generated_edit.py DESCRIPTOR ui-apply import.json
 输入节点的有效目标是 `nodeId`、`resourceId`、节点种类与投影版本的组合。正常同对象刷新保留
 正在进行的本地编辑；删节点、换绑资源/类型、禁用或转为只读会拒绝旧事件。Tab/Shift-Tab 遍历
 文本、按钮与布尔节点；Space/Return 激活按钮或切换布尔值。`cjguiComposableMultilineTextInput`
-默认把 Tab 用作导航，只有显式 `tabInsertsText: true` 才插入制表符。窗口可用
+默认把 Tab 用作导航，只有显式 `tabInsertsText: true` 才插入制表符。单行 TEXT/INTEGER 的
+Return 由系统输入代理消费，不插入换行也不结束编辑；多行保留系统换行插入。系统组字进行中的
+Enter/Esc 仍由文本服务处理，不把组合确认当作普通单行回车。新增 Return 分支已有代理级测试；
+当前版本在真实窗口中按 Return 后、不重新聚焦继续输入的行为尚未验收。窗口可用
 `bindCommand("save"|"undo"|"redo", nodeId)` 把 Command 快捷键映射到已有语义按钮，而非向
 native 写业务规则。
 

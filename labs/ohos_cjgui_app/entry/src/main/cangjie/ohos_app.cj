@@ -21,12 +21,14 @@ import cjgui_settings_counter_application.*
 import cjgui_ohos_transport.*
 import cjgui_shared_operation_core.*
 import std.convert.*
+import std.env.*
 
 // 渲染器提供的 ingress 观察（实现在 ohos_renderer.cpp，静态链入本模块）。
 foreign func cjgui_ohos_surface_ready(): UInt8
 foreign func ohos_renderer_shutdown_render_thread(): Int32
 foreign func cjgui_ohos_application_stop_requested(): Int32
 foreign func cjgui_ohos_request_application_stop(): Int32
+foreign func cjgui_ohos_request_ability_terminate(): Int32
 foreign func cjgui_ohos_renderer_shutdown_done(): Int32
 foreign func cjgui_ohos_renderer_running(): Int32
 foreign func cjgui_ohos_notify_owner_exit(reason: Int32): Unit
@@ -395,6 +397,13 @@ func executeGateCommand(gateName: String): String {
     return result
 }
 // 单轮服务：闸门命令派发 + 外部票据认领/dispatch/complete（Phase A/B 共用）。
+func settingsPersistPath(): Option<String> {
+    match (getVariable("CJGUI_APP_FILES_DIR")) {
+        case Some(dir) => if (dir.size == 0) { None } else { Some("${dir}/settings_counter.state") }
+        case None => None
+    }
+}
+
 func serveOnce(connection: CjguiSharedOperationExternalConnection): Bool {
     var served = false
     let (gateId, gateName) = VerificationSeam.pendingGateCommand()
@@ -422,6 +431,7 @@ func serveOnce(connection: CjguiSharedOperationExternalConnection): Bool {
     }
     return served
 }
+
 func ohosApplicationLoop(): Unit {
     var ticks: Int64 = 0
     // 第七次复核 Q3：域/外部连接/传输监听全部前移到 surface 等待之前——
@@ -439,8 +449,25 @@ func ohosApplicationLoop(): Unit {
     // 域/控制器/外部连接（无 window 重载）与传输监听先于 surface 等待建立；
     // KnownShimNoRef 档下 owner/传输替身持续服务（无渲染，明确发布后端不可用），
     // surface 就绪后无缝创建 host 进入渲染（真实引用平台不受影响）。
-    let domain = CjguiSettingsCounterDomain()
-    let controller = CjguiSettingsCounterController(domain)
+    // 平台提供应用私有沙箱路径；业务状态文件归应用模块，框架不解释内容。
+    let domain = CjguiSettingsCounterDomain(persistPath: settingsPersistPath())
+    cjguiOhosInfo("CjguiApp", "settings state: ${domain.lastPersistReason} version=${domain.counterSnapshot().version} count=${domain.counterSnapshot().count}")
+    // H 只提供沙箱路径：打开/预览/确认/保存/脏态/文件保护都由公共 UI document
+    // session 负责；文件与业务状态分开保存，文档内容不并入业务状态。
+    let uiDocumentPath: Option<String> = match (settingsPersistPath()) {
+        case Some(path) => Some("${path}.ui-document")
+        case None => None
+    }
+    let controller = CjguiSettingsCounterController(domain, uiDocumentPath: uiDocumentPath,
+        showExitApp: true,
+        exitRequest: { => let _ = unsafe { cjgui_ohos_request_ability_terminate() } })
+    match (uiDocumentPath) {
+        case Some(path) =>
+            let startup = controller.beginUiDocumentStartup()
+            cjguiOhosInfo("CjguiApp", "ui document startup: ${startup} path=${path}")
+        case None =>
+            cjguiOhosInfo("CjguiApp", "ui document startup skipped: no sandbox path")
+    }
     // 链1：三参重载——changeDomain 必须给（否则 visibleActions 无业务动作，
     // hasSafeAuthorization 的 scope 核对失败 → unauthorized_caller，实测）。
     let connection = CjguiSharedOperationExternalConnection(domain, settingsCounterAuthorization(), domain)
@@ -601,6 +628,12 @@ func ohosApplicationLoop(): Unit {
             window.requestRefresh()
         }
         let _ = host.pumpOneTurn()
+        // 公共 UI document 会话的提交票据在同一正常轮次内结算；终态变化才
+        // 重绘状态/预览投影，不另设后台泵。保存由工作区按钮显式触发。
+        if (controller.settleUiDocument()) {
+            window.requestRefresh()
+            cjguiOhosInfo("CjguiApp", "ui document settled: ${controller.uiDocumentStatus()}")
+        }
         // H2：滚动活动由**共同宿主**在 pumpOneTurn 内推进（changed→刷新、
         // active→有界唤醒）；样例本地 step 已退役——宿主与样例各推一次会把
         // 活动按双倍速率推进。下方诊断只读，不再 step。
@@ -624,6 +657,14 @@ func ohosApplicationLoop(): Unit {
         }
         if (ticks % 200 == 0) {
             cjguiOhosInfo("CjguiApp", "generated_work tick=${ticks} ${controller.generatedUiRegion().testWorkCounts()}")
+            // 只在窗口未渲染（被拒/未提交）时补一行命名原因；健康态不产生常驻噪声。
+            let progress = window.windowProgress()
+            if (!progress.isActive) {
+                cjguiOhosInfo("CjguiApp",
+                    "window_progress active=false scene=${progress.sceneVersion} " +
+                        "presentation=${progress.presentationState} pending=${progress.pendingRefreshReason} " +
+                        "failure=${progress.lastNativeFailure}")
+            }
         }
     }
     // 关闭链（Sol 归属，每步唯一完成者）：
@@ -634,6 +675,10 @@ func ohosApplicationLoop(): Unit {
     //  5) 启动身份复位（渲染器代际已在请求时递增；本循环报告真实终态）
     // 第九次复核 C：Phase B 正常结束汇入统一清理尾部（renderer 必已启动，
     // shutdown 真实执行；字段与渲染档终态判据兼容）。
+    // 正常退出前的文档终态：结算提交中的票据、取消未确认预览，未保存界面
+    // 走公共 session 的受保护写路径保存。失败只记录事实，不伪造成功，也不
+    // 阻止系统关闭。
+    cjguiOhosInfo("CjguiApp", "ui document close: ${controller.prepareUiDocumentForShutdown()}")
     OhosTransportBridge.requestStop()
     let transportClosed = OhosTransportBridge.awaitClosed(2000)
     let (queued, _qbytes, conns, inflight, lifecycle) = OhosTransportBridge.snapshotCounters()

@@ -555,6 +555,120 @@ func ownerSnapshotReadsAnotherRecordWithoutChangingTheSelection(): Unit {
     @Assert(domain.formSnapshotForRecord(999999).isNone(), true)
 }
 
+private func ruleSetSnapshotFieldValuesMatch(before: CjguiSharedFormSnapshot,
+    after: CjguiSharedFormSnapshot): Bool {
+    if (before.appliedConfigVersion != after.appliedConfigVersion ||
+        before.draftVersion != after.draftVersion ||
+        before.baseAppliedConfigVersion != after.baseAppliedConfigVersion) {
+        return false
+    }
+    for (field in before.allFields()) {
+        let actual = after.fieldForResourceId(field.resourceId)
+        if (actual.draftText != field.draftText ||
+            actual.appliedValue.displayText() != field.appliedValue.displayText() ||
+            actual.draftFieldVersion != field.draftFieldVersion) {
+            return false
+        }
+    }
+    return true
+}
+
+@Test
+func ruleSetFieldSelectionStaysWithActiveField(): Unit {
+    let domain = CjguiRuleSetEditingDomain.newUntitled()
+    @Assert(domain.createRecordFromHuman("重复规则 11", true, 2, "cache", "field-selection-a").applied, true)
+    let ownerA = domain.selectedRecordId()
+    let before = domain.formSnapshotForRecord(ownerA).getOrThrow()
+    let versionBefore = domain.version()
+    let labelId = CjguiRuleSetEditingDomain.formLabelResourceId
+    let enabledId = CjguiRuleSetEditingDomain.formEnabledResourceId
+    let retentionId = CjguiRuleSetEditingDomain.formRetentionResourceId
+    let excludedId = CjguiRuleSetEditingDomain.formExcludedTypeResourceId
+    let notesId = CjguiRuleSetEditingDomain.formNotesResourceId
+
+    let labelText = before.fieldForResourceId(labelId).draftText
+    @Assert(labelText, "重复规则 11")
+    // The actual text is seven UTF-16 units; selecting its end must stay 7:7.
+    @Assert(domain.editTextForCollectionItemFromHuman(ownerA, labelId, labelText, 7, 7).applied, true)
+    let labelFocused = domain.formSnapshotForRecord(ownerA).getOrThrow()
+    @Assert(domain.version(), versionBefore)
+    @Assert(labelFocused.contextVersion, before.contextVersion)
+    @Assert(ruleSetSnapshotFieldValuesMatch(before, labelFocused), true)
+    @Assert(labelFocused.fieldForResourceId(labelId).isFocused, true)
+    @Assert(labelFocused.fieldForResourceId(labelId).selectionStart, 7)
+    @Assert(labelFocused.fieldForResourceId(labelId).selectionEnd, 7)
+    @Assert(labelFocused.fieldForResourceId(enabledId).isFocused, false)
+    @Assert(labelFocused.fieldForResourceId(enabledId).selectionStart, 0)
+    @Assert(labelFocused.fieldForResourceId(enabledId).selectionEnd, 0)
+    @Assert(labelFocused.fieldForResourceId(retentionId).isFocused, false)
+    @Assert(labelFocused.fieldForResourceId(retentionId).selectionStart, 0)
+    @Assert(labelFocused.fieldForResourceId(retentionId).selectionEnd, 0)
+    @Assert(labelFocused.fieldForResourceId(excludedId).isFocused, false)
+    @Assert(labelFocused.fieldForResourceId(excludedId).selectionStart, 0)
+    @Assert(labelFocused.fieldForResourceId(excludedId).selectionEnd, 0)
+    @Assert(labelFocused.fieldForResourceId(notesId).isFocused, false)
+    @Assert(labelFocused.fieldForResourceId(notesId).selectionStart, 0)
+    @Assert(labelFocused.fieldForResourceId(notesId).selectionEnd, 0)
+
+    // A same-value selection update changes the active field and its valid
+    // caret together, without changing any field body or owner version.
+    let retentionText = labelFocused.fieldForResourceId(retentionId).draftText
+    @Assert(retentionText, "2")
+    @Assert(domain.editTextForCollectionItemFromHuman(ownerA, retentionId, retentionText, 1, 1).applied, true)
+    let retentionFocused = domain.formSnapshotForRecord(ownerA).getOrThrow()
+    @Assert(domain.version(), versionBefore)
+    @Assert(retentionFocused.contextVersion, before.contextVersion)
+    @Assert(ruleSetSnapshotFieldValuesMatch(before, retentionFocused), true)
+    @Assert(retentionFocused.fieldForResourceId(enabledId).isFocused, false)
+    @Assert(retentionFocused.fieldForResourceId(enabledId).selectionStart, 0)
+    @Assert(retentionFocused.fieldForResourceId(enabledId).selectionEnd, 0)
+    @Assert(retentionFocused.fieldForResourceId(labelId).isFocused, false)
+    @Assert(retentionFocused.fieldForResourceId(labelId).selectionStart, 0)
+    @Assert(retentionFocused.fieldForResourceId(labelId).selectionEnd, 0)
+    @Assert(retentionFocused.fieldForResourceId(retentionId).isFocused, true)
+    @Assert(retentionFocused.fieldForResourceId(retentionId).selectionStart, 1)
+    @Assert(retentionFocused.fieldForResourceId(retentionId).selectionEnd, 1)
+    @Assert(retentionFocused.fieldForResourceId(excludedId).isFocused, false)
+    @Assert(retentionFocused.fieldForResourceId(excludedId).selectionStart, 0)
+    @Assert(retentionFocused.fieldForResourceId(excludedId).selectionEnd, 0)
+    @Assert(retentionFocused.fieldForResourceId(notesId).isFocused, false)
+    @Assert(retentionFocused.fieldForResourceId(notesId).selectionStart, 0)
+    @Assert(retentionFocused.fieldForResourceId(notesId).selectionEnd, 0)
+
+    // Switching to a Boolean owner must not lend it the old text caret.
+    @Assert(domain.editBooleanForCollectionItemFromHuman(ownerA, enabledId, true).applied, true)
+    let enabledFocused = domain.formSnapshotForRecord(ownerA).getOrThrow()
+    @Assert(domain.version(), versionBefore)
+    @Assert(enabledFocused.contextVersion, before.contextVersion)
+    @Assert(ruleSetSnapshotFieldValuesMatch(before, enabledFocused), true)
+    @Assert(enabledFocused.fieldForResourceId(enabledId).isFocused, true)
+    @Assert(enabledFocused.fieldForResourceId(enabledId).selectionStart, 0)
+    @Assert(enabledFocused.fieldForResourceId(enabledId).selectionEnd, 0)
+    @Assert(enabledFocused.fieldForResourceId(labelId).isFocused, false)
+    @Assert(enabledFocused.fieldForResourceId(labelId).selectionStart, 0)
+    @Assert(enabledFocused.fieldForResourceId(labelId).selectionEnd, 0)
+    @Assert(enabledFocused.fieldForResourceId(retentionId).isFocused, false)
+    @Assert(enabledFocused.fieldForResourceId(retentionId).selectionStart, 0)
+    @Assert(enabledFocused.fieldForResourceId(retentionId).selectionEnd, 0)
+    @Assert(enabledFocused.fieldForResourceId(excludedId).isFocused, false)
+    @Assert(enabledFocused.fieldForResourceId(excludedId).selectionStart, 0)
+    @Assert(enabledFocused.fieldForResourceId(excludedId).selectionEnd, 0)
+    @Assert(enabledFocused.fieldForResourceId(notesId).isFocused, false)
+    @Assert(enabledFocused.fieldForResourceId(notesId).selectionStart, 0)
+    @Assert(enabledFocused.fieldForResourceId(notesId).selectionEnd, 0)
+
+    // The owner-scoped read of a now non-selected record is unfocused and must
+    // not publish the stale range left by its previous active field.
+    @Assert(domain.createRecordFromHuman("另一条规则", false, 3, "logs", "field-selection-b").applied, true)
+    let ownerAUnselected = domain.formSnapshotForRecord(ownerA).getOrThrow()
+    @Assert(ruleSetSnapshotFieldValuesMatch(before, ownerAUnselected), true)
+    for (field in ownerAUnselected.allFields()) {
+        @Assert(field.isFocused, false)
+        @Assert(field.selectionStart, 0)
+        @Assert(field.selectionEnd, 0)
+    }
+}
+
 @Test
 func notesFieldDraftApplyPersistAndDeclaredLengthBoundary(): Unit {
     let domain = CjguiRuleSetEditingDomain.newUntitled()

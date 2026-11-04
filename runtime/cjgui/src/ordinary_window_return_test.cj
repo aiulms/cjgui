@@ -128,3 +128,4 @@ func modalReturnQueryKeepsDifferentAndRefusedTargetsTerminal(): Unit {
         preExitRefusal: "candidate_rejected")
     @Assert(failure[2], "target_changed")
 }
+

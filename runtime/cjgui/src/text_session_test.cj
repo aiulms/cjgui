@@ -855,6 +855,94 @@ func testIdenticalTextFromNewerOwnerVersionAdvancesMirrorRevision(): Unit {
 }
 
 @Test
+func acceptedSceneCjOnlySplitStateRearmsExistingRestoreFlag(): Unit {
+    // Cj-only session-contract state, not a native-install or production Window RED.
+    // The direct confirmation below exercises only the session's semantic flag API;
+    // the Window ordering is covered separately by the real consumer path.
+    let owner = FakeTextOwner("abc")
+    let session = makeSession(owner)
+    session.setSelection16(1, 1)
+    let initialSelection = session.selection16()
+    let basis = session.freezeInstalledRangeBasis(92u64, 8u64, 4u64).getOrThrow()
+    @Assert(basis.ownerVersion, 1)
+    @Assert(session.activateInstalledRangeBasis(basis, 6u64), true)
+    let initial = session.freezeInstalledSelectionSource(8u64, 4u64).getOrThrow()
+    @Assert(initial.acceptedVersion, 1)
+
+    owner.bumpVersionOnly()
+    @Assert(owner.text(), "abc")
+    @Assert(session.refreshMirror(), true)
+    @Assert(session.mirrorText(), "abc")
+    @Assert(session.contentVersion(), 2)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.selection16()[0], initialSelection[0])
+    @Assert(session.selection16()[1], initialSelection[1])
+
+    // This is deliberately not claimed as native evidence. It creates the exact
+    // semantic-session/installed-chain split that accepted-scene refresh must heal.
+    @Assert(session.confirmNativeSelectionRestored(2, 1, 1), true)
+    @Assert(session.needsNativeSelectionRestore(), false)
+    @Assert(session.freezeInstalledSelectionSource(8u64, 4u64).isNone(), true)
+
+    @Assert(session.refreshMirrorForAcceptedScene("abc"), false)
+    let after = session.mirrorSnapshot()
+    @Assert(after.text, "abc")
+    @Assert(after.contentVersion, 2)
+    @Assert(after.sourceVersion, 2)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.selection16()[0], initialSelection[0])
+    @Assert(session.selection16()[1], initialSelection[1])
+    // The method only asks the existing restore path to run; it cannot renew a
+    // stale chain or mutate owner content itself.
+    @Assert(session.freezeInstalledSelectionSource(8u64, 4u64).isNone(), true)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "abc")
+}
+
+@Test
+func acceptedSceneRefusesOldBodyThenAdoptsExactCurrentSourceWithoutRenewingChain(): Unit {
+    let owner = FakeTextOwner("abc")
+    let session = makeSession(owner)
+    session.setSelection16(1, 1)
+    let initialSelection = session.selection16()
+    let basis = session.freezeInstalledRangeBasis(93u64, 9u64, 5u64).getOrThrow()
+    @Assert(session.activateInstalledRangeBasis(basis, 7u64), true)
+    let initial = session.freezeInstalledSelectionSource(9u64, 5u64).getOrThrow()
+    @Assert(initial.acceptedVersion, 1)
+
+    owner.externalWrite(0, 0, "x")
+    @Assert(owner.text(), "xabc")
+    @Assert(owner.ver, 2)
+
+    // The old accepted bytes cannot adopt the newer source, advance the mirror,
+    // or create a new installed-chain basis.
+    @Assert(session.refreshMirrorForAcceptedScene("abc"), false)
+    let rejected = session.mirrorSnapshot()
+    @Assert(rejected.text, "abc")
+    @Assert(rejected.contentVersion, 1)
+    @Assert(rejected.sourceVersion, 2)
+    @Assert(session.selection16()[0], initialSelection[0])
+    @Assert(session.selection16()[1], initialSelection[1])
+    @Assert(session.needsNativeSelectionRestore(), false)
+    @Assert(session.freezeInstalledSelectionSource(9u64, 5u64).isNone(), true)
+    @Assert(owner.writeCalls, 0)
+
+    // Only the exact current accepted body may refresh the mirror. That refresh
+    // requests the existing restore; it still does not assert a native receipt.
+    @Assert(session.refreshMirrorForAcceptedScene("xabc"), true)
+    let adopted = session.mirrorSnapshot()
+    @Assert(adopted.text, "xabc")
+    @Assert(adopted.contentVersion, 2)
+    @Assert(adopted.sourceVersion, 2)
+    @Assert(session.selection16()[0], 2)
+    @Assert(session.selection16()[1], 2)
+    @Assert(session.needsNativeSelectionRestore(), true)
+    @Assert(session.freezeInstalledSelectionSource(9u64, 5u64).isNone(), true)
+    @Assert(owner.writeCalls, 0)
+    @Assert(owner.text(), "xabc")
+}
+
+@Test
 func testMirrorMoveDoesNotReleaseTheCalibrationLock(): Unit {
     // 校准锁要防的是"平台代理已落字、accepted 正文没变"的分叉。移动有界镜像只是让会话
     // 这一侧读到了新内容,native 代理并没有按新镜像重新绑定 ⇒ 不得顺手解锁。

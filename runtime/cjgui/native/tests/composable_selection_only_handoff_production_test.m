@@ -57,6 +57,20 @@ static void SelectionOnlyFixture(id<MTLDevice> device,BOOL cancel,BOOL predecess
             [ctx.rejectedAfterCaretInputs.firstObject.payload isEqualToString:@"尾"] &&
             [original isEqualToString:ctx.composableSceneOverlay.inputProxy.string],
             "selection_only_cancel_preserves_payload_in_existing_recovery_not_A");
+        // The actual retained original payload, not a fabricated busy flag,
+        // must reject a batch before either live session is retired.
+        CJGuiInternalSession *sibling=ProductionFixture(device);
+        CHECK(sibling!=nil,"exit_recovery_real_sibling_created");
+        uint64_t sessions[2]={token,sibling ? sibling.rendererSessionToken : 0};
+        uint64_t generations[2]={ctx.sessionGeneration,sibling ? sibling.sessionGeneration : 0};
+        if(sibling) {
+            CHECK(cjgui_internal_renderer_exit_commit(sessions,generations,2)==
+                CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED &&
+                !ctx.destroyed && !sibling.destroyed &&
+                ctx.rejectedAfterCaretInputs.count==1 &&
+                [ctx.rejectedAfterCaretInputs.firstObject.payload isEqualToString:@"尾"],
+                "exit_recovery_original_payload_blocks_all_sessions_without_mutation");
+        }
         uint64_t metadata[21]={0};uint8_t payload[3]={0},reason[256]={0};
         CHECK(cjgui_internal_renderer_peek_caret_recovery(token,metadata,21)==0 &&
             metadata[12]==3 && metadata[18]>0 && metadata[18]<sizeof(reason) &&
@@ -68,7 +82,29 @@ static void SelectionOnlyFixture(id<MTLDevice> device,BOOL cancel,BOOL predecess
             cjgui_internal_renderer_finish_caret_recovery(token,metadata[1],metadata[0],2)==0 &&
             ctx.retainedAfterCaretInputBytes==0,
             "selection_only_recovery_releases_charge_only_after_copy_confirm");
-        CjguiReleaseSession(token);return;
+        if(sibling) {
+            CHECK(ctx.pendingInputQueueFullNotice &&
+                cjgui_internal_renderer_exit_commit(sessions,generations,2)==
+                    CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED &&
+                !ctx.destroyed && !sibling.destroyed,
+                "exit_recovery_confirm_keeps_original_notice_and_sessions_alive");
+            // Recovery confirmation releases the payload charge, but it does
+            // not consume the already queued failure notification. Deliver
+            // that original event through the normal pump before retirement.
+            CjguiInternalRendererEvent notice={0};
+            CHECK(cjgui_internal_renderer_pump_event(token,0,&notice)==CJGUI_INTERNAL_RENDERER_OK &&
+                notice.kind==CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_INPUT_QUEUE_FULL &&
+                !ctx.pendingInputQueueFullNotice && ctx.retainedAfterCaretInputBytes==0,
+                "exit_recovery_original_notice_consumed_by_normal_pump");
+            CjguiInternalRendererStatus committed=cjgui_internal_renderer_exit_commit(sessions,generations,2);
+            CHECK(committed==CJGUI_INTERNAL_RENDERER_OK && ctx.destroyed && sibling.destroyed,
+                "exit_recovery_same_original_sessions_commit_after_confirm");
+            if(committed!=CJGUI_INTERNAL_RENDERER_OK) {
+                CjguiReleaseSession(sibling.rendererSessionToken);
+                CjguiReleaseSession(token);
+            }
+        } else { CjguiReleaseSession(token); }
+        return;
     }
     PreparePlainCandidate(ctx);
     CJGuiInternalComposableSceneNode *departed=CjguiCloneComposableSceneNode(ctx,ctx.stagedComposableNodes[1],1,2);

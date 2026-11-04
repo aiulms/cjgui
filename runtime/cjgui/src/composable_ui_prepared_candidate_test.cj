@@ -1,8 +1,13 @@
 package cjgui
 
 import std.collection.*
+import std.time.*
 
 foreign {
+    func cjgui_internal_renderer_test_menu_preparation_gate(session: UInt64, held: UInt8): Int32
+    func cjgui_internal_renderer_test_menu_preparation_order(session: UInt64,
+        outMenuConsumed: CPointer<UInt64>, outDrawableAdmitted: CPointer<UInt64>,
+        outPreparation: CPointer<UInt64>): Int32
     func cjgui_internal_renderer_test_composable_selection(
         session: UInt64, outSelectionStart: CPointer<UInt32>, outSelectionEnd: CPointer<UInt32>
     ): Int32
@@ -77,7 +82,8 @@ private func focusSelectionRestoreFixture(window: CjguiComposableUiWindow): Bool
     return focused
 }
 
-private class SelectionRestorePacedController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant {
+private class SelectionRestorePacedController <: CjguiComposableUiController & CjguiComposableUiSceneRefreshParticipant &
+    CjguiComposableUiCandidateSelectionProvider {
     let owner: FakeTextOwner
     var revision: Int64 = 1
     var candidate: String = ""
@@ -87,6 +93,11 @@ private class SelectionRestorePacedController <: CjguiComposableUiController & C
     var rollbacks: Int64 = 0
     var companionHeight: Int64 = 22
     var companion: String = "accepted companion"
+    var testCommandEnabled: Bool = false
+    var fixturePhase: String = "setup_start"
+    var fixtureWindow: ?CjguiComposableUiWindow = None
+    var fixtureSession: ?CjguiTextSession = None
+    var fixtureBudget: ?CjguiOwnerTurnBudget = None
 
     init(owner: FakeTextOwner) { this.owner = owner }
 
@@ -94,17 +105,58 @@ private class SelectionRestorePacedController <: CjguiComposableUiController & C
     public func beginSceneRefresh(): Bool { return true }
     public func buildUi(): CjguiComposableUiNode {
         builds += 1
+        if (let Some(window) <- fixtureWindow) {
+            let facts = window.testSelectionRefreshIdentity()
+            let deadline = match (fixtureBudget) { case Some(budget) => budget.deadlineNs(); case None => 0u64 }
+            let now = unsafe { cjgui_internal_renderer_owner_clock_ns() }
+            println("PACED_SELECTION_BUILD phase=${fixturePhase} count=${builds} " +
+                "epoch=${facts[0]} prior_preparation=${facts[1]} revision=${revision} owner=${owner.ver} deadline_ns=${deadline} now_ns=${now}")
+        }
         candidate = owner.text()
         let root = cjguiComposableVertical(9890, "selection-restore-root", CjguiComposableUiStyle())
         root.add(cjguiComposableText(9892, "selection-restore-companion", companion,
             CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: companionHeight)))
         root.add(cjguiComposableMultilineTextInput(9891, "selection-restore-body", "Document", candidate, 9891,
             CjguiComposableUiStyle(fixedWidth: 360, fixedHeight: 180)))
+        if (testCommandEnabled) {
+            root.add(cjguiComposableButton(9893, "selection-fixture-action", "Action", "FIXTURE_ACTION", 9891,
+                CjguiComposableUiStyle()))
+        }
         return root
     }
     public func prepareSceneRefresh(): Bool { return true }
-    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> { return ArrayList() }
-    public func commitSceneRefresh(): Unit { accepted = candidate; commits += 1 }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        if (!testCommandEnabled) { return ArrayList() }
+        return ArrayList<CjguiComposableUiCommand>([
+            CjguiComposableUiCommand("selection.fixture", 9893, CjguiComposableUiShortcut("r"))])
+    }
+    public func candidateSelectionProjection(): ?CjguiComposableUiCandidateSelectionProjection {
+        if (!testCommandEnabled) { return None }
+        let bound = match (fixtureSession) { case Some(value) => value; case None => return None }
+        let selected = match (bound.sourceSelectionSnapshot()) { case Some(value) => value; case None => return None }
+        let mirror = bound.mirrorSnapshot()
+        if (!mirror.prepared || mirror.contentVersion != selected.version ||
+            mirror.contextEpoch != bound.contextEpochValue()) { return None }
+        let anchor = selected.anchorByte - mirror.startByte
+        let focus = selected.focusByte - mirror.startByte
+        let a16 = match (cjguiUtf8OffsetToUtf16(mirror.text, anchor)) { case Some(value) => value; case None => return None }
+        let f16 = match (cjguiUtf8OffsetToUtf16(mirror.text, focus)) { case Some(value) => value; case None => return None }
+        let completed: ?CjguiInstalledSelectionCompletion = match (fixtureWindow) {
+            case Some(window) => window.installedSelectionCompletion()
+            case None => None
+        }
+        return Some(CjguiComposableUiCandidateSelectionProjection(completed, selected,
+            bound.freezeSelectionTicket(),
+            "paced-source:${mirror.contextEpoch}:${mirror.contentVersion}:${mirror.startByte}:${mirror.text.size}",
+            9891, 9891, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT, mirror.text, a16, f16, focus))
+    }
+    public func commitSceneRefresh(): Unit {
+        accepted = candidate; commits += 1
+        if (let Some(window) <- fixtureWindow) {
+            let facts = window.testSelectionRefreshIdentity()
+            println("PACED_SELECTION_COMMIT phase=${fixturePhase} count=${commits} epoch=${facts[0]}")
+        }
+    }
     public func rollbackSceneRefresh(): Unit { candidate = ""; rollbacks += 1 }
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
         let _ = event
@@ -141,20 +193,56 @@ private func finishPacedCandidate(window: CjguiComposableUiWindow,
 // Use the same owner-turn order as the host: refresh/preparation first, then
 // pump so result() and its pending selection restore run in that turn.
 private func runPacedOwnerTurn(window: CjguiComposableUiWindow,
-    budget: CjguiOwnerTurnBudget): Bool {
+    budget: CjguiOwnerTurnBudget, scheduling!: Bool = false): Bool {
     if (!budget.begin()) { return false }
     let _ = window.refreshIfNeeded()
     let _ = window.pump(0u32)
+    if (scheduling) { let _ = budget.finishScheduling() }
     budget.end()
     return true
 }
 
+private func waitPacedInitialAccepted(window: CjguiComposableUiWindow, budget: CjguiOwnerTurnBudget): Bool {
+    let deadline = MonoTime.now() + 5 * Duration.second
+    while (window.windowProgress().acceptedSceneVersion <= 0 && MonoTime.now() < deadline) {
+        if (!runPacedOwnerTurn(window, budget, scheduling: true)) { return false }
+    }
+    return window.windowProgress().acceptedSceneVersion > 0
+}
+
+// A focus/first-source request is a real setup operation, distinct from the
+// later owner mutation. Freeze the target baseline only after it has settled.
+private func settlePacedFocusSetup(window: CjguiComposableUiWindow,
+    budget: CjguiOwnerTurnBudget, controller: SelectionRestorePacedController): Bool {
+    let deadline = MonoTime.now() + 5 * Duration.second
+    var turns: Int64 = 0
+    var stable: Int64 = 0
+    var priorBuilds: Int64 = -1
+    while (turns < 48 && MonoTime.now() < deadline) {
+        if (!runPacedOwnerTurn(window, budget, scheduling: true)) { return false }
+        let facts = window.testSelectionRefreshIdentity()
+        if (controller.builds == priorBuilds && facts[1] == 0 && facts[2] == 0 && facts[3] == 0 &&
+            !window.hasDeferredEventWork() && !budget.hasPreparedWork()) {
+            stable += 1
+            if (stable == 2) {
+                println("PACED_SELECTION_SETUP_SETTLED builds=${controller.builds} commits=${controller.commits} " +
+                    "epoch=${facts[0]} owner=${controller.owner.ver}")
+                return true
+            }
+        } else { stable = 0 }
+        priorBuilds = controller.builds
+        turns += 1
+    }
+    return false
+}
+
 private func runPacedOwnerTurnWithLivePreparation(window: CjguiComposableUiWindow,
-    budget: CjguiOwnerTurnBudget): Bool {
+    budget: CjguiOwnerTurnBudget, scheduling!: Bool = false): Bool {
     if (!budget.begin()) { return false }
     let _ = window.refreshIfNeeded()
     let preparingAtPump = budget.hasPreparedWork()
     let _ = window.pump(0u32)
+    if (scheduling) { let _ = budget.finishScheduling() }
     budget.end()
     return preparingAtPump
 }
@@ -466,8 +554,124 @@ func testPacedCandidateOwnerAdvanceRejectsOldPreparationAndCloseReleasesOnce(): 
     } finally { budget.end(); window.close() }
 }
 
+@When[os == "macOS"]
+private func runPacedSelectionOwnerTest(body: () -> Unit): Unit {
+    cjguiMacosOwnerTest(body)
+}
+@When[os != "macOS"]
+private func runPacedSelectionOwnerTest(body: () -> Unit): Unit { body() }
+
+@Test
+func testPacedSelectionMenuOperationResumesBeforeDrawable(): Unit {
+    runPacedSelectionOwnerTest({ => pacedSelectionMenuOperationResumesBeforeDrawableBody() })
+}
+
+private func pacedSelectionMenuOperationResumesBeforeDrawableBody(): Unit {
+    // The old FakeTextOwner-only binding has no source selection authority;
+    // sourceSelectionSnapshot() is always None and cannot admit kind 7.
+    let authority = SelectionAuthorityTestOwner()
+    let owner = authority.body
+    owner.data = "row one\nrow two\n".toArray()
+    let controller = SelectionRestorePacedController(owner)
+    controller.testCommandEnabled = true
+    let window = CjguiComposableUiWindow(controller,
+        configuration: CjguiMacosApplicationWindowConfiguration(
+            "CJGUI real selection-bound menu fixture", 980u32, 620u32, rangeTextEditDeltaDelivery: true))
+    let budget = CjguiOwnerTurnBudget()
+    controller.fixtureWindow = Some(window)
+    controller.fixtureBudget = Some(budget)
+    try {
+        let session = window.bindRangeTextSession(9891, "selection-restore-body", authority, authority,
+            9891, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        controller.fixtureSession = Some(session)
+        session.setSelection16(5, 5)
+        @Assert(session.sourceSelectionSnapshot().isSome(), true)
+        // Only host eligibility is controlled; the initial installation and
+        // subsequent A->B receipts still come from actual native admission.
+        window.testSetInitialTextFocusWindowState(true, true, true, true, false)
+        @Assert(window.requestInitialOwnedTextFocusRestore(), true)
+        window.useOwnerTurnBudget(budget)
+        @Assert(budget.begin(), true)
+        @Assert(window.start(), true)
+        @Assert(window.isTextRangeEditDeltaDeliveryEnabled(), true)
+        budget.end()
+        @Assert(waitPacedInitialAccepted(window, budget), true)
+        controller.fixturePhase = "setup_first_source"
+        let initialDeadline = MonoTime.now() + 5 * Duration.second
+        var initialTurns: Int64 = 0
+        while (window.installedSelectionCompletion().isNone() && initialTurns < 48 && MonoTime.now() < initialDeadline) {
+            @Assert(runPacedOwnerTurn(window, budget, scheduling: true), true)
+            initialTurns += 1
+        }
+        @Assert(settlePacedFocusSetup(window, budget, controller), true)
+        @Assert(controller.builds, 1)
+        @Assert(controller.commits, 1)
+        @Assert(controller.rollbacks, 0)
+        @Assert(window.installedSelectionCompletion().isSome(), true)
+        @Assert(window.admitTextOwnerWrite(None).isReady, true)
+        @Assert(owner.text(), "row one\nrow two\n")
+        let baseBuilds = controller.builds
+        let baseCommits = controller.commits
+        let baseRollbacks = controller.rollbacks
+        @Assert(unsafe { cjgui_internal_renderer_test_menu_preparation_gate(window.testSessionToken(), 1u8) },
+            CJGUI_INTERNAL_RENDERER_OK)
+        controller.fixturePhase = "target_owner"
+        @Assert(window.performTextOwnerSelectionChange({ =>
+            let before = owner.ver
+            let deleted = session.handlePlainIntent(CjguiTextPlainIntent.DeleteBackward)
+            return (deleted.handled && deleted.wroteOwner, before, owner.ver)
+        }), true)
+        let expected = owner.text()
+        controller.revision += 1
+        window.requestRefresh()
+        var observedPendingMenu = false
+        var accepted = false
+        var turns: Int64 = 0
+        while (turns < 96 && !accepted) {
+            @Assert(budget.begin(), true)
+            if (window.testSelectionBoundMenuPending()) { observedPendingMenu = true }
+            let _ = window.refreshIfNeeded()
+            // Observe the real yielded operation before pump can resume it.
+            if (window.testSelectionBoundMenuPending()) {
+                observedPendingMenu = true
+                @Assert(unsafe { cjgui_internal_renderer_test_menu_preparation_gate(window.testSessionToken(), 0u8) },
+                    CJGUI_INTERNAL_RENDERER_OK)
+            }
+            let _ = window.pump(0u32)
+            if (window.testSelectionBoundMenuPending()) { observedPendingMenu = true }
+            let _ = budget.finishScheduling()
+            budget.end()
+            accepted = (window.acceptedNodeValue("selection-restore-body") ?? "") == expected &&
+                !session.needsNativeSelectionRestore()
+            turns += 1
+        }
+        @Assert(observedPendingMenu, true)
+        @Assert(accepted, true)
+        @Assert(owner.text(), expected)
+        @Assert(controller.builds, baseBuilds + 1)
+        @Assert(controller.commits, baseCommits + 1)
+        @Assert(controller.rollbacks, baseRollbacks)
+        var menuConsumed: UInt64 = 0u64
+        var drawableAdmitted: UInt64 = 0u64
+        var preparation: UInt64 = 0u64
+        @Assert(unsafe { cjgui_internal_renderer_test_menu_preparation_order(window.testSessionToken(),
+            inout menuConsumed, inout drawableAdmitted, inout preparation) }, CJGUI_INTERNAL_RENDERER_OK)
+        @Assert(preparation > 0u64 && menuConsumed > 0u64 && drawableAdmitted > menuConsumed, true)
+        @Assert(runPacedOwnerTurn(window, budget, scheduling: true), true)
+        @Assert(controller.builds, baseBuilds + 1)
+        @Assert(controller.commits, baseCommits + 1)
+    } finally {
+        let _ = unsafe { cjgui_internal_renderer_test_menu_preparation_gate(window.testSessionToken(), 0u8) }
+        budget.end(); window.close(); controller.fixtureWindow = None; controller.fixtureSession = None; controller.fixtureBudget = None
+    }
+}
+
 @Test
 func testPacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefresh(): Unit {
+    runPacedSelectionOwnerTest({ => pacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefreshBody() })
+}
+
+private func pacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefreshBody(): Unit {
     let owner = FakeTextOwner("row one\nrow two\n")
     owner.bumpVersionOnly()
     owner.bumpVersionOnly()
@@ -477,15 +681,31 @@ func testPacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefresh()
     let controller = SelectionRestorePacedController(owner)
     let window = CjguiComposableUiWindow(controller)
     let budget = CjguiOwnerTurnBudget()
+    controller.fixtureWindow = Some(window)
+    controller.fixtureBudget = Some(budget)
     try {
         let session = window.bindRangeTextSession(9891, "selection-restore-body", owner, owner,
             9891, CJGUI_COMPOSABLE_UI_MULTILINE_TEXT_INPUT)
+        window.useOwnerTurnBudget(budget)
+        @Assert(budget.begin(), true)
         @Assert(window.start(), true)
+        budget.end()
+        @Assert(waitPacedInitialAccepted(window, budget), true)
         @Assert(window.windowProgress().acceptedSceneVersion > 0, true)
         @Assert(controller.commits, 1)
-        window.useOwnerTurnBudget(budget)
+        controller.fixturePhase = "setup_focus"
         @Assert(focusSelectionRestoreFixture(window), true)
         @Assert(window.focusedNodeIdForTest(), 9891)
+        @Assert(settlePacedFocusSetup(window, budget, controller), true)
+        @Assert(controller.builds, 1)
+        @Assert(controller.commits, 1)
+        @Assert(controller.rollbacks, 0)
+        @Assert(owner.ver, 4)
+        @Assert(owner.text(), "row one\nrow two\n")
+        let baseBuilds = controller.builds
+        let baseCommits = controller.commits
+        let baseRollbacks = controller.rollbacks
+        controller.fixturePhase = "target_owner"
 
         // A normal accepted plain delete advances the owner from v4 to v5.
         session.setSelection16(5, 5)
@@ -512,9 +732,9 @@ func testPacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefresh()
         var turns: Int64 = 0
         while (turns < 48 && !acceptedAndRestored) {
             if (turns == 0) {
-                @Assert(runPacedOwnerTurnWithLivePreparation(window, budget), true)
+                @Assert(runPacedOwnerTurnWithLivePreparation(window, budget, scheduling: true), true)
             } else {
-                @Assert(runPacedOwnerTurn(window, budget), true)
+                @Assert(runPacedOwnerTurn(window, budget, scheduling: true), true)
             }
             acceptedAndRestored = (window.acceptedNodeValue("selection-restore-body") ?? "") == expected &&
                 !session.needsNativeSelectionRestore()
@@ -529,9 +749,9 @@ func testPacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefresh()
         @Assert(session.selection16()[0], 12)
         @Assert(session.selection16()[1], 12)
         @Assert(session.needsNativeSelectionRestore(), false)
-        @Assert(controller.builds, 2)
-        @Assert(controller.commits, 2)
-        @Assert(controller.rollbacks, 0)
+        @Assert(controller.builds, baseBuilds + 1)
+        @Assert(controller.commits, baseCommits + 1)
+        @Assert(controller.rollbacks, baseRollbacks)
 
         let native = readPacedNativeSelection(window)
         @Assert(native[0], CJGUI_INTERNAL_RENDERER_OK)
@@ -541,15 +761,15 @@ func testPacedCandidateResultSelectionRestoreDoesNotCancelExternalOwnerRefresh()
         // A settled turn must not rebuild, roll back, or repeat the selection
         // restore after the one accepted owner identity has been installed.
         @Assert(runPacedOwnerTurn(window, budget), true)
-        @Assert(controller.builds, 2)
-        @Assert(controller.commits, 2)
-        @Assert(controller.rollbacks, 0)
+        @Assert(controller.builds, baseBuilds + 1)
+        @Assert(controller.commits, baseCommits + 1)
+        @Assert(controller.rollbacks, baseRollbacks)
         @Assert(session.needsNativeSelectionRestore(), false)
         let settledNative = readPacedNativeSelection(window)
         @Assert(settledNative[0], CJGUI_INTERNAL_RENDERER_OK)
         @Assert(settledNative[1], 12u32)
         @Assert(settledNative[2], 12u32)
-    } finally { budget.end(); window.close() }
+    } finally { budget.end(); window.close(); controller.fixtureWindow = None; controller.fixtureBudget = None }
 }
 
 @Test

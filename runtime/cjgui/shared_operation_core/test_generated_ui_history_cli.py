@@ -72,7 +72,7 @@ class GeneratedUiHistoryCliTests(unittest.TestCase):
             self.assertEqual(value["reason"], reason)
             self.assertFalse(value["submitted"])
             self.assertEqual(transport.requests, [])
-
+    
     def test_malformed_saved_json_does_not_send_or_traceback(self):
         transport = Transport()
         code, value, _ = self.invoke("ui-undo", transport, raw="{invalid")

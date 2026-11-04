@@ -5,16 +5,17 @@ operation descriptor. It is deliberately generic: resources, actions and
 parameter shapes come from the running application, not from this repository
 or a hard-coded consumer list.
 
-This directory holds **two** clients over the same descriptor and the same
-permission system, and both are documented here:
+This directory holds three public client layers over the same descriptor and
+permission system:
 
 | Client | What it is for |
 | --- | --- |
 | `client.py` | The generic CLI/importable API: read resources and live content, invoke dynamically named actions, observe changes. See [CLI workflow](#cli-workflow). |
 | `cjgui_generated_client.py` | The typed client for **runtime-generated UI**: discover published capabilities, read the accepted structure, submit a candidate structure and observe acceptance. See [Runtime-generated UI](#runtime-generated-ui-experimental). |
+| `cjgui_document_client.py` | The typed explicit-version layer for fixed-binding `text_document` workspaces. See [Typed document client](DOCUMENT_CLIENT.md). |
 
 Neither adds a business owner, a model runtime or a second permission gateway;
-a caller may use one or both against a single running application.
+a caller may use one or more against a single running application.
 
 ## Start a shared-document window
 
@@ -82,8 +83,11 @@ fixed interval; polling does not trigger build/layout/Metal work in the app.
 
 `GET_WINDOW_INTERACTION` is a second, explicitly granted read for
 `WINDOW_INTERACTION_VERSION`, `WINDOW_FOCUS`, optional UTF-16
-`WINDOW_SELECTION`, and `WINDOW_ACTIVE_LAYER`. These are interaction identity
-and coordinates, never text or domain content. Because a current window focus
+`WINDOW_SELECTION`, `WINDOW_ACTIVE_LAYER`, and at most four `WINDOW_VIEWPORT`
+facts. A viewport fact identifies its semantic scroll area and reports requested
+`offset`, accepted offset, content/viewport extents, pending state, and solve
+count; it does not identify a target row or prove visibility. These are
+interaction/view facts, never text or domain content. Because a current window focus
 or layer cannot be truthfully assigned to an arbitrary narrow resource scope,
 the transport emits no interaction facts for an `IDS`-only grant and returns
 `unauthorized_resource`; the action needs an `ALL` resource scope. Read

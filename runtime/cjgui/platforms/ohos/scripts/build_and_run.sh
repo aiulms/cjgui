@@ -41,6 +41,7 @@ BUILD_ONLY=0
 RUN_ID=""
 VERIFY_TRANSPORT=0
 TEST_GATES=0
+CLI_CORE_PROFILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-emulator-start) NO_START=1 ;;
@@ -49,10 +50,53 @@ while [ $# -gt 0 ]; do
     --test-gates) TEST_GATES=1 ;;
     --no-replay-merge) export CJGUI_NO_REPLAY_MERGE=1 ;;
     --run-id) RUN_ID="${2:?--run-id 需要值}"; shift ;;
+    --core-profile) CLI_CORE_PROFILE="${2:?--core-profile 需要 main 或 snapshot}"; shift ;;
     *) echo "未知参数: $1"; exit 2 ;;
   esac
   shift
 done
+
+# 核心 profile 的实际选择必须来自消费方声明或显式参数，不能依赖执行者临时
+# 的 shell 环境。优先级：--core-profile > CJGUI_CORE_PROFILE > 消费方文件 > snapshot。
+# 消费方文件只认本 lab 根下的 `cjgui_consumer.profile`（core_profile=main），
+# 其他 lab 没有该文件时保持旧的 snapshot 默认，旧回退 HAP 不受影响。
+CORE_PROFILE="${CJGUI_CORE_PROFILE:-}"
+CORE_PROFILE_SOURCE="default(snapshot)"
+if [ -n "$CORE_PROFILE" ]; then
+  CORE_PROFILE_SOURCE="env:CJGUI_CORE_PROFILE"
+fi
+CONSUMER_PROFILE_FILE="$LAB/cjgui_consumer.profile"
+if [ -f "$CONSUMER_PROFILE_FILE" ]; then
+  DECLARED_PROFILE="$(sed -n 's/^[[:space:]]*core_profile[[:space:]]*=[[:space:]]*//p' \
+    "$CONSUMER_PROFILE_FILE" | tail -1 | tr -d '[:space:]')"
+  case "$DECLARED_PROFILE" in
+    main|snapshot) ;;
+    *)
+      echo "ENTRY-FAIL 消费方 profile 声明无效：$CONSUMER_PROFILE_FILE core_profile='${DECLARED_PROFILE}'" >&2
+      exit 2
+      ;;
+  esac
+  if [ -z "$CORE_PROFILE" ]; then
+    CORE_PROFILE="$DECLARED_PROFILE"
+    CORE_PROFILE_SOURCE="consumer:$CONSUMER_PROFILE_FILE"
+  elif [ "$CORE_PROFILE" != "$DECLARED_PROFILE" ]; then
+    echo "  核心 profile 覆盖：${CORE_PROFILE_SOURCE}=$CORE_PROFILE，消费方声明=$DECLARED_PROFILE"
+  fi
+fi
+if [ -n "$CLI_CORE_PROFILE" ]; then
+  CORE_PROFILE="$CLI_CORE_PROFILE"
+  CORE_PROFILE_SOURCE="cli:--core-profile"
+fi
+CORE_PROFILE="${CORE_PROFILE:-snapshot}"
+case "$CORE_PROFILE" in
+  main|snapshot) ;;
+  *)
+    echo "ENTRY-FAIL 未知核心 profile: $CORE_PROFILE（只接受 main/snapshot）" >&2
+    exit 2
+    ;;
+esac
+export CJGUI_CORE_PROFILE="$CORE_PROFILE"
+echo "CORE_PROFILE=$CORE_PROFILE（来源: $CORE_PROFILE_SOURCE）"
 
 if [ "$BUILD_ONLY" = "1" ] && { [ "${CJGUI_NEGATIVE_NO_START:-0}" = "1" ] ||
     [ "${CJGUI_NEGATIVE_STALE_LOG:-0}" = "1" ] || [ "${CJGUI_NEGATIVE_SEAM_ONLY:-0}" = "1" ]; }; then
@@ -109,6 +153,25 @@ RUN_DIR="$ARTIFACTS/run/$RUN_ID"
 mkdir -p "$RUN_DIR"
 LOG="$RUN_DIR/build_$RUN_ID.log"
 echo "RUN_ID=$RUN_ID"
+# 本轮实际消费的核心身份：profile、冻结清单与对应宿主。源码清单与 HAP
+# 身份之外单列一行，重开/复核时不必再猜执行者当时用了哪个 profile。
+{
+  echo "core_profile=$CORE_PROFILE"
+  echo "core_profile_source=$CORE_PROFILE_SOURCE"
+  if [ "$CORE_PROFILE" = "main" ]; then
+    echo "core_source=$PLATFORM/main_core/src"
+    echo "core_manifest=$PLATFORM/main_core/MANIFEST.sha256"
+    echo "core_manifest_sha256=$(shasum -a 256 "$PLATFORM/main_core/MANIFEST.sha256" | awk '{print $1}')"
+    echo "core_source_revision=$(cat "$PLATFORM/main_core/SOURCE_REVISION.txt" 2>/dev/null | head -1)"
+    echo "host_source=$PLATFORM/host_main"
+  else
+    echo "core_source=$PLATFORM/snapshot/src"
+    echo "core_manifest=none"
+    echo "core_manifest_sha256=none"
+    echo "core_source_revision=none"
+    echo "host_source=$PLATFORM/host"
+  fi
+} > "$RUN_DIR/consumer_identity_$RUN_ID.txt"
 
 echo "== 0/7 平台指纹 + 同步消费方源码 =="
 bash "$HERE/fingerprint.sh"
@@ -138,6 +201,37 @@ fi
 echo "== 0b/7 编译宿主渲染器静态库 =="
 # shellcheck disable=SC2086  # GATE_RENDERER_ARG 为空时不应产生空参数
 bash "$HERE/build_renderer.sh" "$LAB" $GATE_RENDERER_ARG
+
+echo "== 0b2/7 核心身份失效（profile/冻结核心变化必须重编仓颉核心）=="
+# sync_platform 用 rsync -a 保留源文件 mtime，而 cjpm 依据 mtime 判断增量；
+# 切换 profile 或替换冻结核心后，源文件 mtime 可能早于旧 .cjo/.so，于是旧核心
+# 被原样打进新 HAP（实测：16:47 的旧核心随 18:46 的包发出）。这里按实际核心
+# 身份记账：profile + 冻结清单哈希（snapshot 用源码树摘要），身份变化才失效
+# 整个仓颉中间产物；同一身份保持增量。
+case "$CORE_PROFILE" in
+  main)
+    CORE_IDENTITY="profile=main manifest=$(shasum -a 256 "$PLATFORM/main_core/MANIFEST.sha256" | awk '{print $1}') host=host_main"
+    ;;
+  snapshot)
+    SNAPSHOT_TREE_SHA="$(find "$PLATFORM/snapshot/src" -type f -print0 | sort -z \
+      | xargs -0 shasum -a 256 | shasum -a 256 | awk '{print $1}')"
+    CORE_IDENTITY="profile=snapshot tree=$SNAPSHOT_TREE_SHA host=host"
+    ;;
+esac
+IDENTITY_FILE="$LAB/entry/.cjgui_core_identity"
+PREVIOUS_IDENTITY="$(cat "$IDENTITY_FILE" 2>/dev/null || echo none)"
+if [ "$CORE_IDENTITY" != "$PREVIOUS_IDENTITY" ]; then
+  echo "  旧: $PREVIOUS_IDENTITY"
+  echo "  新: $CORE_IDENTITY"
+  rm -rf "$LAB/entry/build/default/intermediates/cj"
+  rm -f "$LAB/entry/target/.dep-cache"
+  find "$LAB/entry/build" \( -name 'libcjgui.so' -o -name 'libcjgui_app.so' \) -type f -delete 2>/dev/null || true
+  rm -f "$LAB/entry/oh_modules/libcjgui_app.so"
+  printf '%s\n' "$CORE_IDENTITY" > "$IDENTITY_FILE"
+  echo "  已失效仓颉核心/应用中间产物与打包副本"
+else
+  echo "  身份未变，保留增量: $CORE_IDENTITY"
+fi
 
 echo "== 0c/7 强制重链（cjpm 不感知 .a 变化）=="
 # 实测结论：只删 cjpm 的增量账本（.dep-cache/.cjpm-history）**不会**触发重链

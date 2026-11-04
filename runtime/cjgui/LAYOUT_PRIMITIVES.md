@@ -71,6 +71,44 @@ actions.add(cjguiComposableButton(3502, "draft-apply", "应用草稿", "APPLY_DR
 - **候选拒绝**：生成式结构中的非法属性、未知属性、比例错误、子节点数量
   错误都走既有候选事务；拒绝时保留上一份 accepted 界面、业务身份与草稿。
 
+## 固定与变高虚拟列表的共享视口
+
+固定行和变高列表保留原有构造器，并提供绑定调用方
+`CjguiComposableUiScrollViewport` 的 experimental overload。两个构造器的完整
+参数分别为：
+
+```cangjie
+cjguiComposableVirtualList(nodeId: Int64, semanticId: String, contentNodeId: Int64,
+    viewport: CjguiComposableUiScrollViewport, source: CjguiComposableUiVirtualListSource,
+    state: CjguiComposableUiVirtualListState, rowHeight: Int64, rowGap: Int64,
+    overscan: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true)
+cjguiComposableVariableHeightList(nodeId: Int64, semanticId: String, contentNodeId: Int64,
+    viewport: CjguiComposableUiScrollViewport, source: CjguiComposableUiVariableHeightListSource,
+    state: CjguiComposableUiVirtualListState, estimatedRowHeight: Int64, rowGap: Int64,
+    overscan: Int64, style: CjguiComposableUiStyle, enabled!: Bool = true)
+```
+
+`viewport` 必须是同一窗口滚动区、滚动条、列表和定向 reveal 共用的那个对象；
+不要从当前偏移另造第二份状态。变高列表的 `estimatedRowHeight` 只估计尚未测量
+行；被显露的行走普通子树测量、布局和渲染路径。
+
+`CjguiComposableUiWindow.revealVirtualListItem(semanticId, itemKey, viewport)`
+只请求把当前列表源中稳定 key 对应的行显露。`true` 表示请求被接受，不表示该
+key 已进入 accepted scene、当前可见或已呈现；窗口进度、同语义 viewport 的
+accepted 偏移、accepted 行身份/几何和应用自己的 owner 读回是不同证据。公开
+`GET_WINDOW_INTERACTION` 最多返回四条 `WINDOW_VIEWPORT`：其中 `offset` 是请求
+偏移，`accepted` 是已接受偏移，并带 `content`、`viewport`、`pending`、`solves`；
+该摘要不包含目标 key，不能只用偏移推断某行可见。
+
+应用应先在当前筛选/排序后的活动 source 中解析稳定 key，再使用当前
+`semanticId` 和同一 viewport 调用 reveal。显露本身不选择该行、不 Apply、不编辑
+owner，也不推进业务版本；选择/编辑仍走已有行操作和业务 writer。未知 key、
+不匹配的滚动语义或 viewport、已退役的列表句柄都应明确拒绝。消费者随后等待
+实际 accepted scene，再独立确认目标行及其有效几何，才允许人继续点选或输入。
+
+上述 overload 与 reveal 接缝仍为 experimental；当前实现与正常应用消费的最终
+范围以对应源码锁和消费者结果为准，其他平台及通用可见性保证未验。
+
 ## 支持与已知边界
 
 | 能力 | 状态 | 说明 |

@@ -33,6 +33,64 @@ private func h2ExperimentalViewport(content: Int64, viewport: Int64, offset: Int
     return scroll
 }
 
+/// The existing focus-scroll observation must identify the target viewport and
+/// the request generation actually promoted, not just the current request.
+@Test
+func focusScrollTargetFactsSeparateAcceptedAndNewerRequest(): Unit {
+    let viewport = CjguiComposableUiScrollViewport()
+    viewport.stageExtents(400, 100, 0)
+    viewport.commitStagedExtents()
+    @Assert(viewport.requestOffset(80), true)
+    let firstGeneration = viewport.requestGeneration()
+    viewport.stageExtents(220, 100, 80)
+    @Assert(viewport.requestOffset(180), true)
+    let secondGeneration = viewport.requestGeneration()
+    viewport.commitStagedExtents()
+
+    let facts = cjguiFocusScrollViewportTargetFacts(viewport, 11, 12345u64)
+    @Assert(facts.contains("target_viewport_state=${viewport.viewStateIdentity()}"), true)
+    @Assert(facts.contains("scene=11 monotonic_ns=12345"), true)
+    @Assert(facts.contains("request_generation=${secondGeneration}"), true)
+    @Assert(facts.contains("accepted_generation=${firstGeneration}"), true)
+    @Assert(facts.contains("requested=120 accepted=80 pending=true"), true)
+
+    viewport.stageExtents(220, 100, 120)
+    viewport.commitStagedExtents()
+    let settled = cjguiFocusScrollViewportTargetFacts(viewport, 12, 12346u64)
+    @Assert(settled.contains("accepted_generation=${secondGeneration}"), true)
+    @Assert(settled.contains("requested=120 accepted=120 pending=false"), true)
+}
+
+@Test
+func focusScrollTargetFactsPreserveNoChangeDiscardAndViewportIdentity(): Unit {
+    let first = CjguiComposableUiScrollViewport()
+    first.stageExtents(400, 100, 0)
+    first.commitStagedExtents()
+    let initialGeneration = first.requestGeneration()
+    @Assert(first.requestOffset(-1), false)
+    @Assert(first.requestGeneration(), initialGeneration)
+    let noChange = cjguiFocusScrollViewportTargetFacts(first, 13, 1u64)
+    @Assert(noChange.contains("requested=0 accepted=0 pending=false"), true)
+
+    @Assert(first.requestOffset(80), true)
+    first.stageExtents(220, 100, 80)
+    @Assert(first.requestOffset(180), true)
+    let newer = first.requestGeneration()
+    first.discardStagedExtents()
+    let rejectedCandidate = cjguiFocusScrollViewportTargetFacts(first, 14, 2u64)
+    @Assert(rejectedCandidate.contains("request_generation=${newer}"), true)
+    @Assert(rejectedCandidate.contains("accepted_generation=${initialGeneration}"), true)
+    @Assert(rejectedCandidate.contains("requested=180 accepted=0 pending=true"), true)
+
+    let second = CjguiComposableUiScrollViewport()
+    second.stageExtents(400, 100, 0)
+    second.commitStagedExtents()
+    let other = cjguiFocusScrollViewportTargetFacts(second, 15, 3u64)
+    @Assert(second.viewStateIdentity() != first.viewStateIdentity(), true)
+    @Assert(other.contains("target_viewport_state=${second.viewStateIdentity()} scene="), true)
+    @Assert(other.contains("target_viewport_state=${first.viewStateIdentity()} scene="), false)
+}
+
 /// Astra 给出的 A/B 判别例：初始 accepted=0、最大偏移 300。
 /// 接受 A 之后 requested 必须仍属于 B，并且已经按 A 的新范围（120）夹紧。
 @Test

@@ -4,7 +4,21 @@
 #define CJGUI_INTERNAL_TESTING 1
 #import "../cjgui_internal_renderer.m"
 #import <AppKit/AppKit.h>
+#import <objc/runtime.h>
 #include <stdio.h>
+
+// NSAccessibilityElement implements the optional disclosure getters for every
+// instance, so respondsToSelector cannot prove the capability is absent.
+// AppKit projects an optional AX attribute from the class that overrides the
+// getter; compare implementations to keep the historical shared-class leak red.
+static BOOL CjguiExposesRowDisclosure(Class cls) {
+    Method base = class_getInstanceMethod([NSAccessibilityElement class], @selector(isAccessibilityDisclosed));
+    Method disclosed = class_getInstanceMethod(cls, @selector(isAccessibilityDisclosed));
+    Method baseLevel = class_getInstanceMethod([NSAccessibilityElement class], @selector(accessibilityDisclosureLevel));
+    Method level = class_getInstanceMethod(cls, @selector(accessibilityDisclosureLevel));
+    return (disclosed && method_getImplementation(disclosed) != method_getImplementation(base)) ||
+           (level && method_getImplementation(level) != method_getImplementation(baseLevel));
+}
 
 static CJGuiInternalComposableSceneNode *control(uint32_t kind, uint64_t nodeId,
                                                   NSString *semanticId, NSString *label,
@@ -88,6 +102,23 @@ int main(void) {
             fprintf(stderr, "RED retired AX action retargeted rebound owner\n"); return 7;
         }
 
+        // A same-owner command can become checkable without changing its
+        // node identity. Assistive clients must be told that its role changed.
+        CJGuiInternalComposableSceneNode *command = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON, 22, @"command", @"Command", 0);
+        CjguiInternalRendererComposableNode commandValue = command.node;
+        commandValue.isInteractive = 1; commandValue.semanticRole = 6; command.node = commandValue;
+        overlay.nodes = @[command]; [overlay reconcileAccessibilityActions];
+        CJGuiInternalComposableAccessibilityAction *commandAX = overlay.accessibilityActions.firstObject;
+        uint64_t roleNotices = session.testComposableAccessibilityNotificationCount;
+        CJGuiInternalComposableSceneNode *checkable = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON, 22, @"command", @"Command", 0);
+        commandValue = checkable.node; commandValue.isInteractive = 1; commandValue.semanticRole = 7; checkable.node = commandValue;
+        overlay.nodes = @[checkable]; [overlay reconcileAccessibilityActions];
+        if (overlay.accessibilityActions.firstObject != commandAX ||
+            ![[commandAX accessibilityRole] isEqualToString:NSAccessibilityCheckBoxRole] ||
+            session.testComposableAccessibilityNotificationCount != roleNotices + 1) {
+            fprintf(stderr, "RED same identity role change did not notify AX clients\n"); return 40;
+        }
+
         CJGuiInternalComposableSceneNode *outline = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA, 30, @"tree", @"Tree", 0);
         CjguiInternalRendererComposableNode ov = outline.node; ov.semanticRole = 4; ov.effectGroupSubtreeCount = 3; outline.node = ov;
         CJGuiInternalComposableSceneNode *row = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON, 31, @"row-1", @"Parent", 0);
@@ -101,6 +132,10 @@ int main(void) {
         CJGuiInternalComposableAccessibilityAction *rowAX = overlay.accessibilityActions[1];
         CJGuiInternalComposableAccessibilityAction *childAX = overlay.accessibilityActions[2];
         if (![outlineAX.accessibilityRole isEqualToString:NSAccessibilityOutlineRole] ||
+            CjguiExposesRowDisclosure(object_getClass(outlineAX)) ||
+            ![rowAX isMemberOfClass:[CJGuiInternalComposableAccessibilityRowAction class]] ||
+            ![rowAX.accessibilityRole isEqualToString:NSAccessibilityRowRole] ||
+            ![[rowAX accessibilityChildren] containsObject:childAX] ||
             [rowAX accessibilityParent] != outlineAX || [childAX accessibilityParent] != rowAX ||
             ![rowAX isAccessibilityExpanded] || ![childAX isAccessibilitySelected] ||
             [childAX accessibilityDisclosureLevel] != 1 || [childAX isAccessibilityEnabled]) {
@@ -124,6 +159,98 @@ int main(void) {
         [overlay reconcileAccessibilityActions];
         if (session.testComposableAccessibilityNotificationCount != settledNotifications + 1) {
             fprintf(stderr, "RED accepted geometry change did not issue one AX layout notification\n"); return 10;
+        }
+
+        // A stable node identity may change role. Optional AX getters are class
+        // capabilities, so a cache hit with the wrong wrapper class must be
+        // retired and replaced instead of reused.
+        CJGuiInternalComposableSceneNode *morph = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+                                                          70, @"morph", @"Morph", 0);
+        CjguiInternalRendererComposableNode morphValue = morph.node;
+        morphValue.isInteractive = 1;
+        morphValue.semanticRole = 6;
+        morphValue.semanticIncarnation = 7;
+        morph.node = morphValue;
+        overlay.nodes = @[morph];
+        [overlay reconcileAccessibilityActions];
+        CJGuiInternalComposableAccessibilityAction *morphPlainAX = overlay.accessibilityActions.firstObject;
+        if ([morphPlainAX isMemberOfClass:[CJGuiInternalComposableAccessibilityRowAction class]] ||
+            CjguiExposesRowDisclosure(object_getClass(morphPlainAX))) {
+            fprintf(stderr, "RED non-row wrapper exposed row disclosure capability\n"); return 33;
+        }
+        uint64_t morphNotices = session.testComposableAccessibilityNotificationCount;
+        morphValue = morph.node;
+        morphValue.semanticRole = 5;
+        morphValue.semanticState = 1u | 4u;
+        morphValue.semanticLevel = 2;
+        morph.node = morphValue;
+        morph.semanticRowKey = @"morph";
+        overlay.nodes = @[morph];
+        [overlay reconcileAccessibilityActions];
+        CJGuiInternalComposableAccessibilityAction *morphRowAX = overlay.accessibilityActions.firstObject;
+        if (morphRowAX == morphPlainAX || [morphPlainAX currentNode] ||
+            ![morphRowAX isMemberOfClass:[CJGuiInternalComposableAccessibilityRowAction class]] ||
+            ![morphRowAX.accessibilityRole isEqualToString:NSAccessibilityRowRole] ||
+            ![morphRowAX isAccessibilityExpanded] || [morphRowAX accessibilityDisclosureLevel] != 2 ||
+            session.testComposableAccessibilityNotificationCount != morphNotices + 1) {
+            fprintf(stderr, "RED non-row to row reused a base wrapper or lost row disclosure\n"); return 34;
+        }
+        CJGuiInternalComposableSceneNode *morphRowUpdated = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+                                                                    70, @"morph", @"Morph renamed", 0);
+        CjguiInternalRendererComposableNode morphUpdatedValue = morphRowUpdated.node;
+        morphUpdatedValue.isInteractive = 1;
+        morphUpdatedValue.semanticRole = 5;
+        morphUpdatedValue.semanticState = 1u | 4u;
+        morphUpdatedValue.semanticLevel = 2;
+        morphUpdatedValue.semanticIncarnation = 7;
+        morphRowUpdated.node = morphUpdatedValue;
+        morphRowUpdated.semanticRowKey = @"morph";
+        uint64_t rowUpdateNotices = session.testComposableAccessibilityNotificationCount;
+        overlay.nodes = @[morphRowUpdated];
+        [overlay reconcileAccessibilityActions];
+        if (overlay.accessibilityActions.firstObject != morphRowAX ||
+            ![[morphRowAX accessibilityLabel] isEqualToString:@"Morph renamed"] ||
+            session.testComposableAccessibilityNotificationCount != rowUpdateNotices + 1) {
+            fprintf(stderr, "RED same-class row update lost AX identity\n"); return 35;
+        }
+        CJGuiInternalComposableSceneNode *morphPlainAgain = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+                                                                    70, @"morph", @"Morph", 0);
+        morphValue = morphPlainAgain.node;
+        morphValue.isInteractive = 1;
+        morphValue.semanticRole = 6;
+        morphValue.semanticIncarnation = 7;
+        morphPlainAgain.node = morphValue;
+        uint64_t plainNotices = session.testComposableAccessibilityNotificationCount;
+        overlay.nodes = @[morphPlainAgain];
+        [overlay reconcileAccessibilityActions];
+        CJGuiInternalComposableAccessibilityAction *morphPlainAgainAX = overlay.accessibilityActions.firstObject;
+        if (morphPlainAgainAX == morphRowAX || [morphRowAX currentNode] ||
+            ![morphPlainAgainAX isMemberOfClass:[CJGuiInternalComposableAccessibilityAction class]] ||
+            CjguiExposesRowDisclosure(object_getClass(morphPlainAgainAX)) ||
+            ![morphPlainAgainAX.accessibilityRole isEqualToString:NSAccessibilityButtonRole] ||
+            session.testComposableAccessibilityNotificationCount != plainNotices + 1) {
+            fprintf(stderr, "RED row to non-row reused a row wrapper or kept disclosure\n"); return 36;
+        }
+        CJGuiInternalComposableSceneNode *morphReturn = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON,
+                                                                70, @"morph", @"Morph", 0);
+        morphValue = morphReturn.node;
+        morphValue.isInteractive = 1;
+        morphValue.semanticRole = 5;
+        morphValue.semanticState = 1u;
+        morphValue.semanticIncarnation = 7;
+        morphReturn.node = morphValue;
+        morphReturn.semanticRowKey = @"morph";
+        uint64_t returnNotices = session.testComposableAccessibilityNotificationCount;
+        overlay.nodes = @[morphReturn];
+        [overlay reconcileAccessibilityActions];
+        CJGuiInternalComposableAccessibilityAction *morphReturnAX = overlay.accessibilityActions.firstObject;
+        if (morphReturnAX == morphPlainAgainAX || [morphPlainAgainAX currentNode] ||
+            ![morphReturnAX isMemberOfClass:[CJGuiInternalComposableAccessibilityRowAction class]] ||
+            ![morphReturnAX.accessibilityRole isEqualToString:NSAccessibilityRowRole] ||
+            [morphReturnAX isAccessibilityExpanded] || [morphReturnAX accessibilityDisclosureLevel] != 0 ||
+            session.testComposableAccessibilityNotificationCount != returnNotices + 1 ||
+            [morphPlainAgainAX accessibilityPerformPress]) {
+            fprintf(stderr, "RED retained non-row AX reference survived return to row\n"); return 37;
         }
 
         CJGuiInternalComposableSceneNode *slider = control(CJGUI_INTERNAL_RENDERER_COMPOSABLE_SLIDER,

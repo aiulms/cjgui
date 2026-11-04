@@ -571,3 +571,89 @@ func handwrittenInstanceAliasNamesInstanceForRangeBinding(): Unit {
     holder.clearHandwrittenInstanceAliases()
     @Assert(holder.compositeInstanceKeyForNodeId(910), "")
 }
+
+@Test
+func presetCardsWorkSessionRoundTripsAppliedDraftVersionsAndSelection(): Unit {
+    let source = PrintPresetDomain()
+    let cardA = source.cards.card("cardA").getOrThrow()
+    let cardB = source.cards.card("cardB").getOrThrow()
+    @Assert(cardA.setText("jobName", "A 未应用草稿"), true)
+    @Assert(cardA.setText("copies", "7"), true)
+    @Assert(cardA.setBoolean("duplex", true), true)
+    @Assert(cardB.setText("jobName", "B 已应用值"), true)
+    @Assert(cardB.apply()[0], true)
+    @Assert(cardB.setText("jobName", "B 未应用草稿"), true)
+    cardB.setLocked(true)
+    @Assert(source.cards.selectKey("cardB"), true)
+    let payload = source.cards.workSessionPayload()
+
+    let restored = PrintPresetDomain()
+    @Assert(restored.cards.restoreWorkSessionPayload(payload), true)
+    @Assert(restored.cards.selectedKey(), "cardB")
+    let restoredA = restored.cards.card("cardA").getOrThrow()
+    let restoredB = restored.cards.card("cardB").getOrThrow()
+    @Assert(restoredA.ownerId, PresetCardCollection.cardAOwner)
+    @Assert(restoredB.ownerId, PresetCardCollection.cardBOwner)
+    @Assert(restoredA.snapshot(0).fieldForResourceId(6201).appliedValue.displayText(), "资料 A")
+    @Assert(restoredA.draftText("jobName"), "A 未应用草稿")
+    @Assert(restoredA.actionAvailability("CANCEL_DRAFT").isAvailable, true)
+    @Assert(restoredA.draftVersionValue(), cardA.draftVersionValue())
+    @Assert(restoredA.appliedVersionValue(), cardA.appliedVersionValue())
+    @Assert(restoredA.fieldVersion("copies"), cardA.fieldVersion("copies"))
+    @Assert(restoredA.draftText("copies"), "7")
+    @Assert(restoredA.draftBoolean("duplex"), Some(true))
+    @Assert(restoredB.snapshot(0).fieldForResourceId(6201).appliedValue.displayText(), "B 已应用值")
+    @Assert(restoredB.draftText("jobName"), "B 未应用草稿")
+    @Assert(restoredB.actionAvailability("CANCEL_DRAFT").isAvailable, false)
+    @Assert(restoredB.draftVersionValue(), cardB.draftVersionValue())
+    @Assert(restoredB.appliedVersionValue(), cardB.appliedVersionValue())
+    @Assert(restoredB.fieldVersion("jobName"), cardB.fieldVersion("jobName"))
+    @Assert(restoredB.isLocked(), true)
+    restoredB.setLocked(false)
+    @Assert(restoredB.actionAvailability("CANCEL_DRAFT").isAvailable, true)
+    @Assert(restoredB.apply()[0], true)
+    @Assert(restoredB.appliedText("jobName"), "B 未应用草稿")
+    @Assert(restoredA.cancel()[0], true)
+    @Assert(restoredA.appliedText("jobName"), "资料 A")
+    @Assert(restoredA.draftText("jobName"), "资料 A")
+}
+
+@Test
+func presetCardsRejectMalformedWorkSessionBeforeAnyOwnerChanges(): Unit {
+    let domain = PrintPresetDomain()
+    let beforeA = domain.cards.card("cardA").getOrThrow().draftText("jobName")
+    let beforeB = domain.cards.card("cardB").getOrThrow().draftText("jobName")
+    let payload = domain.cards.workSessionPayload()
+    @Assert(domain.cards.restoreWorkSessionPayload("${payload}\ntrailing-data"), false)
+    @Assert(domain.cards.card("cardA").getOrThrow().draftText("jobName"), beforeA)
+    @Assert(domain.cards.card("cardB").getOrThrow().draftText("jobName"), beforeB)
+}
+
+private func withPresetWorkSessionLine(payload: String, lineIndex: Int64, replacement: String): String {
+    let lines = payload.split("\n")
+    let result = StringBuilder()
+    for (index in 0..lines.size) {
+        if (index > 0) { result.append("\n") }
+        result.append(if (index == lineIndex) { replacement } else { lines[index] })
+    }
+    return result.toString()
+}
+
+@Test
+func presetCardsRejectOwnerMismatchAndVersionExhaustionBeforeAnyMutation(): Unit {
+    let domain = PrintPresetDomain()
+    let cardA = domain.cards.card("cardA").getOrThrow()
+    @Assert(cardA.setText("jobName", "尚未保存的A草稿"), true)
+    let beforeA = cardA.draftText("jobName")
+    let beforeB = domain.cards.card("cardB").getOrThrow().draftText("jobName")
+    let payload = domain.cards.workSessionPayload()
+    let wrongOwner = withPresetWorkSessionLine(payload, 2, "CARD cardA 9999 1 0 1")
+    @Assert(domain.cards.isValidWorkSessionPayload(wrongOwner), false)
+    @Assert(domain.cards.restoreWorkSessionPayload(wrongOwner), false)
+    let exhaustedVersion = withPresetWorkSessionLine(payload, 2,
+        "CARD cardA 6301 9000000000000001 0 1")
+    @Assert(domain.cards.isValidWorkSessionPayload(exhaustedVersion), false)
+    @Assert(domain.cards.restoreWorkSessionPayload(exhaustedVersion), false)
+    @Assert(domain.cards.card("cardA").getOrThrow().draftText("jobName"), beforeA)
+    @Assert(domain.cards.card("cardB").getOrThrow().draftText("jobName"), beforeB)
+}

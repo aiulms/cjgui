@@ -394,6 +394,8 @@ struct CjguiInternalRendererComposableNode {
     var iconTintGreen: Float64 = 0.0
     var iconTintBlue: Float64 = 0.0
     var iconTintAlpha: Float64 = 0.0
+    var pointerControlMinimum: Int64 = 0
+    var pointerControlMaximum: Int64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -437,7 +439,8 @@ struct CjguiInternalRendererComposableNode {
         cornerRadiiPresent!: UInt32 = 0u32, cornerTopLeft!: Float64 = 0.0, cornerTopRight!: Float64 = 0.0,
         cornerBottomRight!: Float64 = 0.0, cornerBottomLeft!: Float64 = 0.0, zIndex!: Int64 = 0,
         rotateDegrees!: Float64 = 0.0, iconTintRed!: Float64 = 0.0, iconTintGreen!: Float64 = 0.0,
-        iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0) {
+        iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0,
+        pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0) {
         this.nodeId = nodeId
         this.projectionVersion = projectionVersion
         this.resourceId = resourceId
@@ -573,6 +576,8 @@ struct CjguiInternalRendererComposableNode {
         this.iconTintGreen = iconTintGreen
         this.iconTintBlue = iconTintBlue
         this.iconTintAlpha = iconTintAlpha
+        this.pointerControlMinimum = pointerControlMinimum
+        this.pointerControlMaximum = pointerControlMaximum
     }
 }
 

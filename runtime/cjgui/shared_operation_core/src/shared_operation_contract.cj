@@ -1,6 +1,7 @@
 package cjgui_shared_operation_core
 
 import std.collection.*
+import std.sync.*
 import std.time.*
 
 /// Experimental public value carried by a resource field or action argument.
@@ -1305,6 +1306,11 @@ public class CjguiSharedOperationExternalAuthorization {
     public let callerId: String
     private let capabilityToken: String
     private let scopes: ArrayList<CjguiSharedOperationExternalActionScope>
+    // A document opened after connection start can be granted explicitly by
+    // the application without rebuilding the connection or widening an
+    // unrelated action. Existing static scopes remain the default policy.
+    private let lock: Mutex
+    private let additionalResourceIds: HashMap<String, ArrayList<Int64>>
 
     public init(
         callerId: String,
@@ -1314,51 +1320,133 @@ public class CjguiSharedOperationExternalAuthorization {
         this.callerId = callerId
         this.capabilityToken = capabilityToken
         this.scopes = ArrayList<CjguiSharedOperationExternalActionScope>(scopes)
+        this.lock = Mutex()
+        this.additionalResourceIds = HashMap<String, ArrayList<Int64>>()
+    }
+
+    /// Grants one already-declared action for one exact resource ID. An
+    /// unknown action or an all-resource scope is left unchanged.
+    public func grantResource(actionName: String, resourceId: Int64): Bool {
+        return synchronized(lock) {
+            var declared = false
+            var alreadyAll = false
+            for (scope in scopes) {
+                if (scope.actionName == actionName) {
+                    declared = true
+                    if (scope.allowsAllResources) { alreadyAll = true }
+                }
+            }
+            if (!declared) { return false }
+            if (alreadyAll || resourceId < 0) { return alreadyAll }
+            var granted = ArrayList<Int64>()
+            if (let Some(value) <- additionalResourceIds.get(actionName)) {
+                granted = value
+            } else {
+                let created = ArrayList<Int64>()
+                let _ = additionalResourceIds.add(actionName, created)
+                granted = created
+            }
+            if (!containsResourceId(granted, resourceId)) { granted.add(resourceId) }
+            return true
+        }
     }
 
     public func actionScopes(): ArrayList<CjguiSharedOperationExternalActionScope> {
-        return ArrayList<CjguiSharedOperationExternalActionScope>(scopes)
+        return synchronized(lock) {
+            let result = ArrayList<CjguiSharedOperationExternalActionScope>()
+            for (scope in scopes) {
+                let merged = scope.allowedResourceIds()
+                if (let Some(extra) <- additionalResourceIds.get(scope.actionName)) {
+                    for (resourceId in extra) {
+                        if (!containsResourceId(merged, resourceId)) { merged.add(resourceId) }
+                    }
+                }
+                result.add(CjguiSharedOperationExternalActionScope(
+                    scope.actionName, merged, scope.allowsAllResources))
+            }
+            return result
+        }
+    }
+
+    /// Removes one previously dynamic grant when its live resource retires.
+    /// Static application scopes are never narrowed here, and an all-resource
+    /// static scope is left unchanged. Returns true only when an exact dynamic
+    /// entry was actually removed.
+    public func revokeResource(actionName: String, resourceId: Int64): Bool {
+        return synchronized(lock) {
+            if (resourceId < 0) { return false }
+            if (let Some(extra) <- additionalResourceIds.get(actionName)) {
+                var index = 0
+                while (index < extra.size) {
+                    if (extra[index] == resourceId) {
+                        let _ = extra.remove(at: index)
+                        if (extra.size == 0) { let _ = additionalResourceIds.remove(actionName) }
+                        return true
+                    }
+                    index += 1
+                }
+            }
+            return false
+        }
     }
 
     public func permitsAction(actionName: String): Bool {
-        for (scope in scopes) {
-            if (scope.actionName == actionName) {
-                return true
+        return synchronized(lock) {
+            for (scope in scopes) {
+                if (scope.actionName == actionName) {
+                    return true
+                }
             }
+            return false
         }
-        return false
     }
 
     public func permitsResource(actionName: String, resourceId: Int64): Bool {
-        for (scope in scopes) {
-            if (scope.actionName == actionName && scope.permitsResource(resourceId)) {
-                return true
+        return synchronized(lock) {
+            for (scope in scopes) {
+                if (scope.actionName == actionName && scope.permitsResource(resourceId)) {
+                    return true
+                }
             }
+            if (let Some(extra) <- additionalResourceIds.get(actionName)) {
+                return containsResourceId(extra, resourceId)
+            }
+            return false
         }
-        return false
     }
 
     public func allowsAllResources(actionName: String): Bool {
-        for (scope in scopes) {
-            if (scope.actionName == actionName && scope.allowsAllResources) {
-                return true
+        return synchronized(lock) {
+            for (scope in scopes) {
+                if (scope.actionName == actionName && scope.allowsAllResources) {
+                    return true
+                }
             }
+            return false
         }
-        return false
     }
 
     public func allowedResourceIds(actionName: String): ArrayList<Int64> {
-        let allowed = ArrayList<Int64>()
-        for (scope in scopes) {
-            if (scope.actionName == actionName) {
-                for (resourceId in scope.allowedResourceIds()) {
+        return synchronized(lock) {
+            let allowed = ArrayList<Int64>()
+            for (scope in scopes) {
+                if (scope.actionName == actionName) {
+                    for (resourceId in scope.allowedResourceIds()) {
+                        if (!containsResourceId(allowed, resourceId)) {
+                            allowed.add(resourceId)
+                        }
+                    }
+                }
+            }
+            if (let Some(extra) <- additionalResourceIds.get(actionName)) {
+                for (resourceId in extra) {
                     if (!containsResourceId(allowed, resourceId)) {
                         allowed.add(resourceId)
                     }
                 }
             }
+            return allowed
         }
-        return allowed
     }
 
     public func matchesCapability(capability: String): Bool {

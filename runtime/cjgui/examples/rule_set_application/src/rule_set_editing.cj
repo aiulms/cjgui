@@ -217,6 +217,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     private let appliedRequestOrder: ArrayList<String>
     private let instanceIdentity: String
     private var versionValue: Int64
+    private var appliedCollectionRevisionValue: Int64
     private var selectedId: Int64
     private var nextId: Int64
     private var historyFloorVersion: Int64
@@ -269,7 +270,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         this.appliedRequests = HashMap<String, CjguiRuleSetAppliedRequest>()
         this.appliedRequestOrder = ArrayList<String>()
         this.instanceIdentity = Random().nextUInt64().toString()
-        this.versionValue = 0; this.selectedId = -1; this.nextId = 1; this.historyFloorVersion = 0
+        this.versionValue = 0; this.appliedCollectionRevisionValue = 0
+        this.selectedId = -1; this.nextId = 1; this.historyFloorVersion = 0
         this.documentGeneration = 0
         this.currentFilePath = ""; this.lastPersistedPayload = ""
         this.status = "新建规则集；请新增一条规则"
@@ -308,6 +310,10 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     /// caller that only needs freshness (the tree projection's content-update
     /// path) must not pay that.
     public func version(): Int64 { return synchronized(lock) { versionValue } }
+    /// Experimental applied collection cache invalidation revision. It advances
+    /// on content commits and document replacement/clear, not draft or selection
+    /// changes. This O(1) read shares the owner lock; it is not a CAS version.
+    public func appliedCollectionRevision(): Int64 { return synchronized(lock) { appliedCollectionRevisionValue } }
     public func splitFirstSize(): Int64 { return synchronized(lock) { splitFirstSizeValue } }
     public func splitFirstSizeVersion(): Int64 { return synchronized(lock) { splitFirstSizeVersionValue } }
     public func selectedDraftVersion(): Int64 {
@@ -456,6 +462,10 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
             descriptor("SET_COLLECTION_VIEW_MODE", "切换集合视图模式", viewModeParameters(), 1, 1),
             descriptor("SET_DETAIL_LAYOUT_STANDARD", "切换标准字段布局", ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1),
             descriptor("SET_DETAIL_LAYOUT_COMPACT", "切换紧凑字段布局", ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1),
+            descriptor("REVEAL_RULE_KEY", "显示规则条目",
+                ArrayList<CjguiSharedOperationParameterDescriptor>([
+                    CjguiSharedOperationParameterDescriptor("itemKey", "STRING", true)
+                ]), 1, 1),
             descriptor("SAVE_COLLECTION_VIEW_PREFERENCES", "保存视图偏好", ArrayList<CjguiSharedOperationParameterDescriptor>(), 1, 1)
         ])
     }
@@ -730,20 +740,80 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     /// Shared by the selected-record snapshot and the owner-scoped reads.
     private func formSnapshotForRecordUnlocked(record: CjguiMutableRuleSetRecord): CjguiSharedFormSnapshot {
         let isSelected = record.id == selectedId
+        let labelFocused = isSelected && record.activeFieldId == "label"
+        let enabledFocused = isSelected && record.activeFieldId == "enabled"
+        let retentionFocused = isSelected && record.activeFieldId == "retentionCount"
+        let excludedTypeFocused = isSelected && record.activeFieldId == "excludedType"
+        let notesFocused = isSelected && record.activeFieldId == "notes"
         // The published field version is the record's own draft version: the
         // one `EDIT_DRAFT_TEXT` and `APPLY_DRAFT` compare against. Publishing
         // a per-field counter made the token an external reader sees differ
         // from the token the write operations expect as soon as two fields
         // were edited in one flow.
+        // The record stores one caret pair. Publish it only on the matching
+        // focused text field; it is not shared selection state for every field.
         return CjguiSharedFormSnapshot(
-            versionValue, record.appliedRevision, record.draftVersion, record.baseAppliedRevision,
-            ArrayList<CjguiSharedFormFieldProjection>([
-                formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label", CjguiSharedOperationValue.string(record.label), record.draftLabel, record.labelError, record.draftVersion, isSelected && record.activeFieldId == "label", record.selectionStart, record.selectionEnd),
-                formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled", CjguiSharedOperationValue.boolean(record.enabled), if (record.draftEnabled) { "true" } else { "false" }, "", record.draftVersion, isSelected && record.activeFieldId == "enabled", 0, 0),
-                formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount", CjguiSharedOperationValue.integer(record.retentionCount), record.draftRetentionCount, record.retentionError, record.draftVersion, isSelected && record.activeFieldId == "retentionCount", record.selectionStart, record.selectionEnd),
-                formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType", CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType, record.excludedError, record.draftVersion, isSelected && record.activeFieldId == "excludedType", record.selectionStart, record.selectionEnd),
-                formProjection(CjguiRuleSetEditingDomain.formNotesResourceId, "notes", CjguiSharedOperationValue.string(record.notes), record.draftNotes, record.notesError, record.draftVersion, isSelected && record.activeFieldId == "notes", record.selectionStart, record.selectionEnd)
-            ]), record.baseAppliedRevision == record.appliedRevision, status
+            versionValue,
+            record.appliedRevision,
+            record.draftVersion,
+            record.baseAppliedRevision,
+            ArrayList<CjguiSharedFormFieldProjection>(
+                [
+                    formProjection(CjguiRuleSetEditingDomain.formLabelResourceId, "label",
+                        CjguiSharedOperationValue.string(record.label), record.draftLabel, record.labelError,
+                        record.draftVersion, labelFocused, if (labelFocused) {
+                            record.selectionStart
+                        } else {
+                            0
+                        }, if (labelFocused) {
+                            record.selectionEnd
+                        } else {
+                            0
+                        }),
+                    formProjection(CjguiRuleSetEditingDomain.formEnabledResourceId, "enabled",
+                        CjguiSharedOperationValue.boolean(record.enabled), if (record.draftEnabled) {
+                            "true"
+                        } else {
+                            "false"
+                        }, "", record.draftVersion, enabledFocused, 0, 0),
+                    formProjection(CjguiRuleSetEditingDomain.formRetentionResourceId, "retentionCount",
+                        CjguiSharedOperationValue.integer(record.retentionCount), record.draftRetentionCount,
+                        record.retentionError, record.draftVersion, retentionFocused, if (retentionFocused) {
+                            record.selectionStart
+                        } else {
+                            0
+                        }, if (retentionFocused) {
+                            record.selectionEnd
+                        } else {
+                            0
+                        }),
+                    formProjection(CjguiRuleSetEditingDomain.formExcludedTypeResourceId, "excludedType",
+                        CjguiSharedOperationValue.string(record.excludedType), record.draftExcludedType,
+                        record.excludedError, record.draftVersion, excludedTypeFocused,
+                        if (excludedTypeFocused) {
+                            record.selectionStart
+                        } else {
+                            0
+                        }, if (excludedTypeFocused) {
+                            record.selectionEnd
+                        } else {
+                            0
+                        }),
+                    formProjection(CjguiRuleSetEditingDomain.formNotesResourceId, "notes",
+                        CjguiSharedOperationValue.string(record.notes), record.draftNotes, record.notesError,
+                        record.draftVersion, notesFocused, if (notesFocused) {
+                            record.selectionStart
+                        } else {
+                            0
+                        }, if (notesFocused) {
+                            record.selectionEnd
+                        } else {
+                            0
+                        })
+                ]
+            ),
+            record.baseAppliedRevision == record.appliedRevision,
+            status
         )
     }
 
@@ -951,7 +1021,8 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
             actionName == "SAVE_COLLECTION_VIEW" || actionName == "SELECT_COLLECTION_VIEW" ||
             actionName == "RESET_COLLECTION_VIEW" || actionName == "SET_COLLECTION_VIEW_MODE" ||
             actionName == "SAVE_COLLECTION_VIEW_PREFERENCES" ||
-            actionName == "SET_DETAIL_LAYOUT_STANDARD" || actionName == "SET_DETAIL_LAYOUT_COMPACT"
+            actionName == "SET_DETAIL_LAYOUT_STANDARD" || actionName == "SET_DETAIL_LAYOUT_COMPACT" ||
+            actionName == "REVEAL_RULE_KEY"
     }
 
     private func executeUnlocked(invocation: CjguiSharedOperationActionInvocation, external: Bool): CjguiSharedOperationActionResult {
@@ -1335,7 +1406,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     }
 
     private func commitContentUnlocked(resourceIds: ArrayList<Int64>, kind: String) {
-        versionValue += 1; status = "内容已更新；尚未保存"
+        versionValue += 1; appliedCollectionRevisionValue += 1; status = "内容已更新；尚未保存"
         // Classify the change for the tree projection in ONE place. Only a pure
         // label rewrite can be patched by key; creation, deletion, copy,
         // enabled-group moves, batch writes and undo/redo change structure (or
@@ -1576,6 +1647,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
     }
     private func changeStreamIdentityUnlocked(): String { return "stream_${instanceIdentity}_${documentGeneration}" }
     private func clearDocumentUnlocked() {
+        appliedCollectionRevisionValue += 1
         for (record in records) { let _ = recordsById.remove(record.id) }
         while (records.size > 0) { let _ = records.remove(at: records.size - 1) }
         selectedId = -1; currentFilePath = ""; lastPersistedPayload = ""
@@ -1583,6 +1655,7 @@ public class CjguiRuleSetEditingDomain <: CjguiSharedRangeCollectionEditorDomain
         clearRememberedRequestsUnlocked()
     }
     private func replaceLoadedDocumentUnlocked(loaded: CjguiRuleSetLoadedFile, path: String, payload: String) {
+        appliedCollectionRevisionValue += 1
         for (record in records) { let _ = recordsById.remove(record.id) }
         while (records.size > 0) { let _ = records.remove(at: records.size - 1) }
         for (record in loaded.records) {

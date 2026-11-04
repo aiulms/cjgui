@@ -20,8 +20,6 @@ foreign {
         session: UInt64, nodeIndex: UInt32, selectionStart: UInt32, selectionEnd: UInt32): Int32
     func cjgui_internal_renderer_test_confirm_source_handoff_selection(
         session: UInt64, selectionStart: UInt32, selectionEnd: UInt32): Int32
-    func cjgui_internal_renderer_test_insert_composable_text(
-        session: UInt64, nodeIndex: UInt32, text: CString): Int32
     func cjgui_internal_renderer_test_close_text_preparation_worker_gate(): Unit
     func cjgui_internal_renderer_test_wait_for_text_preparation_worker_gate(timeoutMs: UInt32): Int32
     func cjgui_internal_renderer_test_open_text_preparation_worker_gate(): Unit

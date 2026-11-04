@@ -16,7 +16,30 @@ REPO_ROOT="$(cd "$PLATFORM/../../../.." && pwd)"
 LAB="${1:-$REPO_ROOT/labs/ohos_cjgui_app}"
 MODULE="$LAB/entry"
 SNAPSHOT="$PLATFORM/snapshot"
-HOST="$PLATFORM/host"
+# 核心来源 profile（2026-10-27）：
+#   snapshot（默认）= 既有分叉快照，仍可用于回退 HAP；
+#   main           = 冻结的主树共同核心 + 窄适配宿主，目标为同源 HAP。
+# 两个 profile 的头文件与宿主源码成对选择，不允许交叉混用。
+CORE_PROFILE="${CJGUI_CORE_PROFILE:-snapshot}"
+case "$CORE_PROFILE" in
+  main|snapshot) ;;
+  *) echo "未知核心 profile: $CORE_PROFILE（只接受 main/snapshot）" >&2; exit 1 ;;
+esac
+if [ "$CORE_PROFILE" = "main" ]; then
+  CORE_SRC="$PLATFORM/main_core/src"
+  CORE_HEADER="$PLATFORM/main_core/cjgui_internal_renderer.h"
+  SHARED_CORE_DEFAULT="$PLATFORM/main_core/shared_operation_core/src"
+  HOST="$PLATFORM/host_main"
+  if ! (cd "$PLATFORM/main_core" && shasum -a 256 -c MANIFEST.sha256 > /dev/null 2>&1); then
+    echo "冻结主树核心清单校验失败: $PLATFORM/main_core/MANIFEST.sha256（拒绝同步漂移源码）" >&2
+    exit 1
+  fi
+else
+  CORE_SRC="$SNAPSHOT/src"
+  CORE_HEADER="$SNAPSHOT/cjgui_internal_renderer.h"
+  SHARED_CORE_DEFAULT="$SNAPSHOT/shared_operation_core/src"
+  HOST="$PLATFORM/host"
+fi
 
 [ -d "$MODULE" ] || { echo "缺少消费方模块: $MODULE"; exit 1; }
 [ -f "$PLATFORM/FINGERPRINT.txt" ] || { echo "缺少平台指纹: $PLATFORM/FINGERPRINT.txt"; exit 1; }
@@ -39,12 +62,12 @@ fi
 #    用 rsync 镜像而不是「先 rm -rf 再复制」：只删除真正多出来的文件，
 #    既避免误删范围过大，也不会在构建中途把整个源码树清空。
 mkdir -p "$MODULE/cjgui/src" "$MODULE/shared_operation_core/src"
-rsync -a --delete --exclude 'target' --exclude 'build' "$SNAPSHOT/src/" "$MODULE/cjgui/src/"
+rsync -a --delete --exclude 'target' --exclude 'build' "$CORE_SRC/" "$MODULE/cjgui/src/"
 # 共享操作核心：本模块以主树 runtime/cjgui/shared_operation_core 为共同实现。
 # 旧 snapshot/shared_operation_core 只是冻结前的实验基线，不再作为构建来源；
 # 漂移拒绝：同步后共同模块必须带 owner 写入门等共同标记，否则具名失败，
 # 绝不静默退回旧快照。可用 CJGUI_SHARED_CORE_SRC 显式绑定其它来源。
-SHARED_CORE_SRC="${CJGUI_SHARED_CORE_SRC:-$REPO_ROOT/runtime/cjgui/shared_operation_core/src}"
+SHARED_CORE_SRC="${CJGUI_SHARED_CORE_SRC:-$SHARED_CORE_DEFAULT}"
 [ -f "$SHARED_CORE_SRC/shared_operation_contract.cj" ] || { echo "共享操作核心来源缺失: $SHARED_CORE_SRC" >&2; exit 1; }
 rsync -a --delete --exclude 'target' --exclude 'build' "$SHARED_CORE_SRC/" "$MODULE/shared_operation_core/src/"
 if [ -n "${CJGUI_FROZEN_INPUT_MANIFEST:-}" ]; then
@@ -64,14 +87,14 @@ mkdir -p "$MODULE/src/main/cpp"
 rsync -a --delete --exclude '*.o' --exclude '*.a' "$HOST/" "$MODULE/src/main/cpp/"
 
 # 3) 共享 ABI 头（快照是权威副本）
-cp "$SNAPSHOT/cjgui_internal_renderer.h" "$MODULE/src/main/cpp/cjgui_internal_renderer.h"
+cp "$CORE_HEADER" "$MODULE/src/main/cpp/cjgui_internal_renderer.h"
 
 # 4) 生成 ohos 目标的包清单（去 darwin 框架、补 ohos 目标段）
 cat > "$MODULE/cjgui/cjpm.toml" <<'TOML'
 [package]
   cjc-version = "1.1.3"
   compile-option = "--dy-std -O2"
-  description = "CJGUI core (ohos snapshot)"
+  description = "CJGUI core (ohos ${CORE_PROFILE})"
   name = "cjgui"
   output-type = "static"
   src-dir = "./src"
@@ -201,12 +224,25 @@ find "$MODULE" -maxdepth 1 -name 'cjgui_sync_*.manifest' ! -name "cjgui_sync_$SH
 {
   echo "platform_fingerprint=$FINGERPRINT"
   echo "synced_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "core_profile=$CORE_PROFILE"
+  echo "core_source=$CORE_SRC"
+  echo "host_source=$HOST"
+  echo "core_header=$CORE_HEADER"
+  if [ "$CORE_PROFILE" = "main" ]; then
+    echo "core_manifest=$PLATFORM/main_core/MANIFEST.sha256"
+    echo "core_manifest_sha256=$(shasum -a 256 "$PLATFORM/main_core/MANIFEST.sha256" | awk '{print $1}')"
+    echo "core_source_revision=$(head -1 "$PLATFORM/main_core/SOURCE_REVISION.txt")"
+  else
+    echo "core_manifest=none"
+    echo "core_manifest_sha256=none"
+    echo "core_source_revision=none"
+  fi
   find "$MODULE/cjgui/src" "$MODULE/shared_operation_core/src" "$MODULE/$APP_DIR_NAME/src" \
     "$MODULE/src/main/cpp" "$MODULE/ohos_transport/src" -type f | sort | while read -r f; do
     shasum -a 256 "$f"
   done
 } > "$MODULE/cjgui_sync_$SHORT.manifest"
 
-echo "同步完成（平台指纹: ${FINGERPRINT}）"
+echo "同步完成（平台指纹: ${FINGERPRINT}；核心 profile: ${CORE_PROFILE}）"
 echo "  lab=$LAB"
 echo "  核心 .cj: $(find "$MODULE/cjgui" "$MODULE/shared_operation_core" -name '*.cj' | grep -v _test.cj | wc -l | tr -d ' ')  宿主源码: $(ls "$MODULE/src/main/cpp"/*.cpp "$MODULE/src/main/cpp"/*.c 2>/dev/null | wc -l | tr -d ' ')"

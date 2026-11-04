@@ -655,6 +655,13 @@ public class CjguiTextSession {
         }
         let snapshot = this.mirrorSnapshot()
         if (acceptedText == snapshot.text && snapshot.contentVersion == snapshot.sourceVersion) {
+            if (this.selectionVersion >= 0) {
+                if (let Some(chain) <- this.installedRangeChain) {
+                    if (chain.acceptedVersion != snapshot.sourceVersion) {
+                        this.selectionNeedsNativeRestore = true
+                    }
+                }
+            }
             return false
         }
         let start = this.window.windowStartByte()
@@ -667,7 +674,15 @@ public class CjguiTextSession {
             // evidence for this frame.
             return false
         }
-        return this.refreshMirror()
+        let refreshed = this.refreshMirror()
+        if (this.selectionVersion >= 0) {
+            if (let Some(chain) <- this.installedRangeChain) {
+                if (chain.acceptedVersion != this.window.sourceVersion()) {
+                    this.selectionNeedsNativeRestore = true
+                }
+            }
+        }
+        return refreshed
     }
 
     private func invalidateSourceSelection(reason: String): Unit {

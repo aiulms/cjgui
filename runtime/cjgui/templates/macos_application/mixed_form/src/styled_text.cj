@@ -48,7 +48,7 @@ class PrintPresetStyledDescription {
     public let spans: ArrayList<Array<String>> = ArrayList<Array<String>>()
     init() {
         let path = getVariable("CJGUI_PRINT_PRESET_DESCRIPTION") ??
-            Path(getCommand()).parent.parent.join("Resources/styled-description.tsv").toString()
+            Path(getCommand()).parent.parent.join("Resources/assets/styled-description.tsv").toString()
         let lines = String.fromUtf8(File.readFrom(path)).split("\n")
         text = lines[0]
         for (index in 1..lines.size) {

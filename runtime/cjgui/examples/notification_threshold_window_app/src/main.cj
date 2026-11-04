@@ -4,6 +4,7 @@ import cjgui.*
 import cjgui_notification_threshold_application.*
 import cjgui_shared_operation_core.*
 import std.collection.*
+import std.convert.*
 import std.env.*
 
 private class CjguiNotificationThresholdController <: CjguiComposableUiController &
@@ -19,6 +20,12 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
     private let form: CjguiGeneratedUiFormBinding
     private let generated: CjguiGeneratedUiWindowRegion
     private let commandScope = CjguiComposableUiIdentityScope("notification-commands")
+    private let splitScope = CjguiComposableUiIdentityScope("notification-cards-split")
+    private let splitState = CjguiComposableUiSplitState(320, 140, 140)
+    private let thresholdTabsScope = CjguiComposableUiIdentityScope("notification-threshold-tabs")
+    private let thresholdTabsState = CjguiComposableUiTabsState("threshold")
+    private var thresholdSliderLocked = false
+    private var warmAccent = false
     private let contextMenu = CjguiContextCommandMenu(
         CjguiComposableUiIdentityScope("notification-threshold-menu"), "notification-threshold-menu")
     private let formViewport = CjguiComposableUiScrollViewport()
@@ -309,7 +316,13 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
                 CjguiComposableUiStyle(fixedWidth: 76, fixedHeight: 76), imageResourceId: "notification-beacon",
                 imageResourceVersion: beaconVersion))
         root.add(hero)
-        let cards = cjguiComposableHorizontal(10, "notification-cards", CjguiComposableUiStyle(fixedHeight: 180, gap: 16))
+        let accentRed = if (warmAccent) { 0.98 } else { 0.22 }
+        let accentGreen = if (warmAccent) { 0.48 } else { 0.52 }
+        let accentBlue = if (warmAccent) { 0.20 } else { 0.95 }
+        root.add(cjguiComposableText(72, "notification-accent-preview", "ACCENT PREVIEW",
+            CjguiComposableUiStyle(fixedHeight: 24, fontSize: 18.0, fontWeight: 500, fontFamily: "system"),
+            textStyleRuns: [CjguiComposableUiTextStyleRun(0, 6, 18.0, 500, "system",
+                accentRed, accentGreen, accentBlue, 1.0)]))
         let channelCard = cjguiComposableVertical(11, "channel-card",
             CjguiComposableUiStyle(growX: 1, padding: theme.card.padding, gap: theme.card.gap,
                 background: theme.card.background, border: theme.card.border))
@@ -327,7 +340,6 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
             cjguiComposableButton(36, "choose-delivery-channel", "选择通道… ⌘K", "CHOOSE_CHANNEL", 0,
                 notificationInteractiveStyle(CjguiComposableUiStyle(fixedHeight: 32, textColor: theme.body.textColor,
                     background: theme.input.background))))
-        cards.add(channelCard)
         let thresholdCard = cjguiComposableVertical(20, "threshold-card",
             CjguiComposableUiStyle(growX: 1, padding: theme.card.padding, gap: theme.card.gap,
                 background: theme.card.background, border: theme.card.border))
@@ -345,19 +357,49 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         thresholdFields.add(CjguiNumericStepper.build(thresholdBinding,
             style: CjguiNumericStepperStyle(input: inputStyle,
                 button: notificationInteractiveStyle(CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: 26)))))
+        let draftThresholdValue = CjguiComposableUiSliderGeometry.clampValue(
+            Int64.tryParse(draftThreshold) ?? thresholdSpec.minimum, thresholdSpec.minimum, thresholdSpec.maximum)
+        thresholdFields.add(cjguiComposableSlider(2205, "trigger-threshold-slider", draftThresholdValue,
+            thresholdSpec.minimum, thresholdSpec.maximum, 10, CjguiComposableUiStyle(fixedHeight: 28),
+            fieldId: thresholdField.fieldId, resourceId: thresholdField.resourceId,
+            operationActionName: thresholdSpec.writeActionName,
+            operationResourceId: CjguiNotificationThresholdDomain.resourceId,
+            enabled: !thresholdSliderLocked,
+            appearance: CjguiComposableUiSliderAppearance(thumbDiameter: 14, trackThickness: 4)))
+        thresholdFields.add(cjguiComposableButton(73, "toggle-threshold-slider-lock",
+            if (thresholdSliderLocked) { "解锁滑块" } else { "锁定滑块" }, "TOGGLE_SLIDER_LOCK", 0,
+            notificationInteractiveStyle(CjguiComposableUiStyle(fixedHeight: 28, textColor: theme.body.textColor,
+                background: theme.input.background))))
         thresholdFields.add(
             cjguiComposableBooleanInput(23, "notification-enabled", enabledField.label, draftEnabled,
                 enabledField.resourceId, inputStyle, fieldId: enabledField.fieldId,
                 operationActionName: form.fieldSpec(enabledField.fieldId).getOrThrow().writeActionName,
                 operationResourceId: CjguiNotificationThresholdDomain.resourceId, displayValueRole: "draft"))
-        thresholdCard.add(thresholdFields)
+        let thresholdPage = cjguiComposableVertical(26, "threshold-page", CjguiComposableUiStyle(gap: 8))
+        thresholdPage.add(thresholdFields)
+        let thresholdHelpPage = cjguiComposableVertical(27, "threshold-help-page", CjguiComposableUiStyle(gap: 6))
+        thresholdHelpPage.add(cjguiComposableText(28, "threshold-help",
+            "滑块范围 1–100，步长 10；锁定后拖动与方向键不写入，\n解锁后从当前外部值继续。",
+            CjguiComposableUiStyle(fixedHeight: 44, fontSize: bodyStyle.fontSize,
+                fontFamily: bodyStyle.fontFamily, textColor: bodyStyle.textColor)))
+        thresholdCard.add(cjguiComposableTabs(thresholdTabsScope, "threshold-tabs",
+            ArrayList<CjguiComposableUiTabPage>(
+                [
+                    CjguiComposableUiTabPage("threshold", "阈值", thresholdPage),
+                    CjguiComposableUiTabPage("help", "说明", thresholdHelpPage)
+                ]),
+            thresholdTabsState, CjguiComposableUiStyle(growX: 1), titleHeight: 26, containerNodeId: 29))
         thresholdCard.add(
             cjguiComposableText(24, "applied-summary",
                 "当前已应用：${current.channel} / ${current.threshold} / ${if (current.enabled) { "已启用" } else { "已停用" }}",
                 bodyStyle, resourceId: CjguiNotificationThresholdDomain.resourceId, fieldId: "notificationConfig",
                 displayValueRole: "applied"))
-        cards.add(thresholdCard);
-        root.add(cards)
+        // Split view: both cards keep their existing handwritten subtrees, and
+        // the handle writes the shared split state. No app-side size machine.
+        root.add(cjguiComposableScopedSplitView(splitScope, "notification-cards", channelCard, thresholdCard,
+            CjguiComposableUiSplitAxis.HORIZONTAL, splitState.firstSize(), splitState.firstMinimum(),
+            splitState.secondMinimum(), CjguiComposableUiStyle(fixedHeight: 230), handleThickness: 10,
+            splitState: splitState, containerNodeId: 10))
         // Toolbar and menu consume one declaration holder; both route through
         // the shared command entries rather than a second action table.
         root.add(cjguiComposableCommandToolbar(commandScope, "notification-command-bar",
@@ -439,6 +481,11 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         presentationActions.add(
             cjguiComposableButton(38, "open-notification-preview", "打开预览窗", "OPEN_PREVIEW", -1,
                 notificationInteractiveStyle(CjguiComposableUiStyle(fixedWidth: 104, fixedHeight: 34,
+                    background: theme.card.background, border: theme.card.border, textColor: bodyStyle.textColor,
+                    fontFamily: actionStyle.fontFamily))))
+        presentationActions.add(
+            cjguiComposableButton(71, "toggle-accent-color", "切换文字颜色", "TOGGLE_ACCENT", -1,
+                notificationInteractiveStyle(CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: 34,
                     background: theme.card.background, border: theme.card.border, textColor: bodyStyle.textColor,
                     fontFamily: actionStyle.fontFamily))))
         presentationActions.add(
@@ -610,6 +657,48 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
             }
             localRevision += 1
             return CjguiComposableUiDispatchResult(result.applied)
+        }
+        if (event.eventKind == 27 && event.node.nodeId == 73) {
+            thresholdSliderLocked = !thresholdSliderLocked
+            status = if (thresholdSliderLocked) { "滑块已锁定" } else { "滑块已解锁" }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.node.nodeId == 2205 &&
+            (event.eventKind == 35 || (event.eventKind >= 37 && event.eventKind <= 39))) {
+            if (thresholdSliderLocked) {
+                return CjguiComposableUiDispatchResult(false)
+            }
+            let field = form.fieldSpec("triggerThreshold").getOrThrow()
+            let currentText = domain.formSnapshot().fieldForResourceId(field.resourceId).draftText
+            let current = Int64.tryParse(currentText) ?? field.minimum
+            var next = current
+            if (event.eventKind == 35) {
+                let direction = if (event.text == "left" || event.text == "down") { -1 }
+                    else if (event.text == "right" || event.text == "up") { 1 } else { 0 }
+                if (direction == 0) { return CjguiComposableUiDispatchResult(false) }
+                next = CjguiComposableUiSliderGeometry.adjustValue(current, direction, field.minimum,
+                    field.maximum, event.node.pointerControlStep)
+            } else {
+                next = cjguiSliderValueForPointer(event.pointerX, event.node.bounds, field.minimum,
+                    field.maximum, event.node.pointerControlStep,
+                    thumbDiameter: event.node.pointerControlHandleThickness)
+            }
+            let text = next.toString()
+            let result = domain.editTextFromHuman(field.resourceId, text, 0, text.size)
+            status = if (result.applied) {
+                "阈值草稿已由滑块设为 ${text}"
+            } else {
+                "滑块写入被拒：${result.reason}"
+            }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(result.applied)
+        }
+        if (event.eventKind == 27 && event.node.nodeId == 71) {
+            warmAccent = !warmAccent
+            status = if (warmAccent) { "文字强调色已切换为暖色" } else { "文字强调色已恢复为蓝色" }
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind != 27) {
             return CjguiComposableUiDispatchResult(false)
@@ -931,13 +1020,16 @@ private func runNotificationWindow(): Int32 {
     let draftBridge = CjguiNotificationDraftTextBridge(domain, 9101, "deliveryChannel")
     notificationBindDraftTextSession(window, draftBridge)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), domain, window)
+    // Register before start so a startup failure still owns its retained
+    // close; closeAll below can then settle it before fonts are released.
+    let _ = group.add(host)
     if (!connection.enableWindowProgressReads(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
         !host.attachExternalConnection(connection) || !host.start()) {
         host.close()
+        let _ = group.closeAll()
         return 1
     }
-    let _ = group.add(host)
     let fonts = CjguiNotificationPreviewFonts()
     cjguiNotificationPreviewFontReport(fonts)
     let session = CjguiNotificationPreviewSession(group, fonts,
@@ -945,7 +1037,12 @@ private func runNotificationWindow(): Int32 {
     controller.bindPreviewActionHandler({action => session.perform(action)})
     let (previewOpened, previewMessage) = session.openPreviewNow()
     if (!previewOpened) {
-        host.close()
+        cjguiPreviewLog("CJGUI_PREVIEW_OPEN_FAILED ${previewMessage}")
+        let settled = group.closeAll()
+        if (!settled) {
+            cjguiPreviewLog("CJGUI_EXIT_UNSETTLED startup windows=${group.count()}")
+            return 1
+        }
         fonts.close()
         return 1
     }
@@ -954,7 +1051,8 @@ private func runNotificationWindow(): Int32 {
     // Diagnostic only (reopen differential): replay the fixed
     // close→reopen→close sequence from this loop with no X driver input.
     // "turn" requests the close the same way the preview button does and lets
-    // finishTurn run it; "loop" closes the host directly between group turns.
+    // the group's turn boundary run it; "loop" closes the host directly
+    // between group turns.
     let reopenProbe: ?CjguiNotificationReopenProbe = match (getVariable("CJGUI_PROBE_REOPEN")) {
         case Some(mode) => Some(CjguiNotificationReopenProbe(mode))
         case None => None
@@ -980,13 +1078,17 @@ private func runNotificationWindow(): Int32 {
                 }
             case None => ()
         }
-        session.finishTurn()
     }
     if (probeRequestedMainClose) {
         host.close()
     }
-    session.dispose()
-    group.closeAll()
+    // The host owns open/close settlement. Only after every window confirmed
+    // its discard may the application release the shared font registry.
+    let settled = group.closeAll()
+    if (!settled) {
+        cjguiPreviewLog("CJGUI_EXIT_UNSETTLED windows=${group.count()}")
+        return 1
+    }
     fonts.close()
     let stats = cjguiFontResourceDiagnostics()
     cjguiPreviewLog("CJGUI_PREVIEW_FONT_EXIT active=${stats[0]} live=${stats[1]} bytes=${stats[2]} " +

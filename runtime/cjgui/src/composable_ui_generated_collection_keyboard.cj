@@ -73,7 +73,9 @@ public func cjguiNavigateGeneratedCollection(collection: CjguiGeneratedUiCollect
         // The mount's own variable-height geometry moved its viewport. Focus the
         // SURVIVING scroll scope only when the accepted scene still carries it.
         requested = if (let Some(value) <- window) {
-            value.focusAcceptedSemanticNode(event.node.semanticId)
+            // The accepted event already names the exact mount node. Semantic
+            // labels can repeat in sibling holders; do not focus the first one.
+            value.focusAcceptedNodeById(event.node.nodeId)
         } else {
             false
         }

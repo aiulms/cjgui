@@ -50,7 +50,7 @@ export interface CjguiImeRestorePayload {
   focusGeneration?: number;
   appInstance?: number;
   sessionToken?: number;
-  nodeId?: number;
+  nodeId?: string;
   resourceId?: number;
   nodeKind?: number;
   bindingEpoch?: number;
@@ -66,7 +66,7 @@ export interface CjguiPendingFocusPayload {
   appInstance: number; sessionToken: number;
   sourceContext: number; sourceGeneration: number; focusGeneration: number;
   operation: number; context: number; generation: number;
-  nodeId: number; resourceId: number; nodeKind: number; bindingEpoch: number;
+  nodeId: string; resourceId: number; nodeKind: number; bindingEpoch: number;
   baseVersion: number; field: string; restoreRequest: number; deadlineMonoMs: number;
 }
 export interface CjguiUnappearedTransferPayload extends CjguiPendingFocusPayload {
@@ -74,7 +74,7 @@ export interface CjguiUnappearedTransferPayload extends CjguiPendingFocusPayload
 }
 export interface CjguiPendingFocusSnapshot {
   appInstance: number; sessionToken: number; context: number; generation: number;
-  focusGeneration: number; nodeId: number; resourceId: number; nodeKind: number;
+  focusGeneration: number; nodeId: string; resourceId: number; nodeKind: number;
   bindingEpoch: number; baseVersion: number; field: string;
 }
 export interface CjguiImeRestoreTargetSnapshot extends CjguiPendingFocusSnapshot {
@@ -93,12 +93,12 @@ export class CjguiPendingFocusSource {
 export class CjguiPendingFocusSchedule {
   readonly source: CjguiPendingFocusSource;
   readonly operation: number; readonly context: number; readonly generation: number;
-  readonly nodeId: number; readonly resourceId: number; readonly nodeKind: number;
+  readonly nodeId: string; readonly resourceId: number; readonly nodeKind: number;
   readonly bindingEpoch: number; readonly baseVersion: number; readonly field: string;
   readonly restoreRequest: number; readonly deadlineMonoMs: number;
   constructor(p: CjguiPendingFocusPayload) {
     this.source=new CjguiPendingFocusSource(p); this.operation=p.operation;
-    this.context=p.context; this.generation=p.generation; this.nodeId=p.nodeId;
+    this.context=p.context; this.generation=p.generation; this.nodeId=`${p.nodeId ?? ''}`;
     this.resourceId=p.resourceId; this.nodeKind=p.nodeKind; this.bindingEpoch=p.bindingEpoch;
     this.baseVersion=p.baseVersion; this.field=p.field;
     this.restoreRequest=p.restoreRequest; this.deadlineMonoMs=p.deadlineMonoMs;
@@ -106,7 +106,7 @@ export class CjguiPendingFocusSchedule {
   matches(snapshot: CjguiPendingFocusSnapshot): boolean {
     return snapshot.appInstance===this.source.appInstance && snapshot.sessionToken===this.source.sessionToken &&
       snapshot.context===this.context && snapshot.generation===this.generation &&
-      snapshot.focusGeneration===this.source.focusGeneration && snapshot.nodeId===this.nodeId &&
+      snapshot.focusGeneration===this.source.focusGeneration && `${snapshot.nodeId}`===this.nodeId &&
       snapshot.resourceId===this.resourceId && snapshot.nodeKind===this.nodeKind &&
       snapshot.bindingEpoch===this.bindingEpoch && snapshot.baseVersion>=this.baseVersion && snapshot.field===this.field;
   }
@@ -121,7 +121,7 @@ export class CjguiImeRestoreTicket {
   readonly focusGeneration: number;
   readonly appInstance: number;
   readonly sessionToken: number;
-  readonly nodeId: number;
+  readonly nodeId: string;
   readonly resourceId: number;
   readonly nodeKind: number;
   readonly bindingEpoch: number;
@@ -139,7 +139,7 @@ export class CjguiImeRestoreTicket {
     this.focusGeneration = payload.focusGeneration ?? -1;
     this.appInstance = payload.appInstance ?? -1;
     this.sessionToken = payload.sessionToken ?? -1;
-    this.nodeId = payload.nodeId ?? -1;
+    this.nodeId = `${payload.nodeId ?? ''}`;
     // -1 is native's valid no-resource presentation container, so missing
     // identity needs a distinct invalid sentinel. Exact target matching remains.
     this.resourceId = payload.resourceId ?? -2;
@@ -154,20 +154,23 @@ export class CjguiImeRestoreTicket {
   }
   valid(): boolean {
     return [this.originalResult, this.request, this.context, this.generation, this.focusGeneration, this.appInstance, this.sessionToken,
-      this.nodeId, this.resourceId, this.nodeKind, this.bindingEpoch, this.baseVersion,
+      this.resourceId, this.nodeKind, this.bindingEpoch, this.baseVersion,
       this.deadlineMonoMs, this.start, this.end].every((value: number): boolean => Number.isSafeInteger(value))
+      && this.nodeId.length > 0 && /^[0-9]+$/.test(this.nodeId) && this.nodeId !== '0'
       && this.originalResult >= 0 && this.request >= 0 && this.context > 0 && this.generation > 0 && this.focusGeneration > 0 && this.appInstance > 0
-      && this.sessionToken > 0 && this.nodeId > 0 && this.resourceId >= -1 && this.nodeKind >= 0
+      && this.sessionToken > 0 && this.resourceId >= -1 && this.nodeKind >= 0
       && this.bindingEpoch >= 0 && this.baseVersion >= 0 && this.field.length > 0
       && this.start >= 0 && this.end >= this.start && this.end <= this.text.length;
   }
   // Diagnostic of the same frozen validity contract. Never logs full text.
   validityMismatch(): string {
+    if(this.nodeId.length===0)return 'nodeId expected=nonempty actual=empty';
+    if(!/^[0-9]+$/.test(this.nodeId)||this.nodeId==='0')return `nodeId expected=decimal>0 actual=${this.nodeId}`;
     const values: number[] = [this.originalResult,this.request,this.context,this.generation,this.focusGeneration,
-      this.appInstance,this.sessionToken,this.nodeId,this.resourceId,this.nodeKind,this.bindingEpoch,
+      this.appInstance,this.sessionToken,this.resourceId,this.nodeKind,this.bindingEpoch,
       this.baseVersion,this.deadlineMonoMs,this.start,this.end];
     const names: string[] = ['originalResult','request','context','generation','focusGeneration','appInstance',
-      'sessionToken','nodeId','resourceId','nodeKind','bindingEpoch','baseVersion','deadlineMonoMs','start','end'];
+      'sessionToken','resourceId','nodeKind','bindingEpoch','baseVersion','deadlineMonoMs','start','end'];
     for(let i=0;i<values.length;i++) {
       if(!Number.isSafeInteger(values[i]))return `${names[i]} expected=safeInteger actual=${values[i]}`;
     }
@@ -190,7 +193,7 @@ export class CjguiImeRestoreTicket {
     if(snap.generation!==this.generation)return `generation expected=${this.generation} actual=${snap.generation}`;
     if(snap.focusGeneration!==this.focusGeneration)return `focusGeneration expected=${this.focusGeneration} actual=${snap.focusGeneration}`;
     if(snap.field!==this.field)return `field expected=${this.field} actual=${snap.field}`;
-    if(snap.nodeId!==this.nodeId)return `nodeId expected=${this.nodeId} actual=${snap.nodeId}`;
+    if(`${snap.nodeId}`!==this.nodeId)return `nodeId expected=${this.nodeId} actual=${snap.nodeId}`;
     if(snap.resourceId!==this.resourceId)return `resourceId expected=${this.resourceId} actual=${snap.resourceId}`;
     if(snap.nodeKind!==this.nodeKind)return `nodeKind expected=${this.nodeKind} actual=${snap.nodeKind}`;
     if(this.request===0) {

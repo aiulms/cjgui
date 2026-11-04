@@ -479,6 +479,37 @@ func modalReturnOldCarrierReceiptCannotCompleteReplacementOrOverwriteInstalled()
 }
 
 @Test
+func modalCloseRetiresInstalledSelectionReturnCarrier(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testModalReturnCarrierRebuild(rebind: false)
+    @Assert(facts[8], "true")
+    @Assert(facts[10], "installed")
+    @Assert(window.testHasModalReturnCarrier(), false)
+}
+
+@Test
+func modalCloseRetiresTerminalRebindRefusalCarrier(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testModalReturnCarrierRebuild()
+    @Assert(facts[6], "binding_changed")
+    @Assert(facts[7], "binding_changed")
+    @Assert(window.testHasModalReturnCarrier(), false)
+}
+
+@Test
+func modalCloseRetirementKeepsUnsettledReplacementAndRejectsOldReceipt(): Unit {
+    let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
+    let facts = window.testModalReturnCarrierRebuild(rebind: false, checkUnsettled: true)
+    @Assert(facts[6], "true") // no terminal selection/ACK yet
+    @Assert(facts[7], "true") // a result alone is not a terminal ACK
+    @Assert(facts[8], "false") // the old candidate's receipt cannot consume the replacement
+    @Assert(facts[9], "pending")
+    @Assert(facts[10], "true") // the replacement's own receipt still installs
+    @Assert(facts[12], "installed")
+    @Assert(window.testHasModalReturnCarrier(), false)
+}
+
+@Test
 func ordinaryLocalFilterReturnRetainsSentinelIdentityAndExactSelection(): Unit {
     let window = CjguiComposableUiWindow(ModalReturnCarrierTestController())
     let facts = window.testOrdinaryModalReturnWithoutBookmark(localTarget: true)

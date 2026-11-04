@@ -58,8 +58,13 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
     private var imageCatalog: ?CjguiGeneratedUiCapabilityCatalog
     private let streamIdentity: String
     private let changeLog: ArrayList<CjguiSharedOperationChangeEntry>
+    // 可选的重启缓存路径：只有平台适配层给出私有沙箱路径时才落盘；
+    // 没有路径（例如单元测试或未配置的消费者）时行为与原来完全一致。
+    private let statePath: Option<String>
+    private let stateStore: CjguiSettingsCounterStateStore
+    public var lastPersistReason: String = "settings_state_not_configured"
 
-    public init() {
+    public init(persistPath!: Option<String> = None) {
         this.versionValue = 0
         this.countValue = 10
         this.enabledValue = true
@@ -68,10 +73,25 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
         this.scrollNoteValue = "滚动备注"
         this.imageVersionValue = 1
         this.imageCatalog = None
+        this.statePath = persistPath
+        this.stateStore = CjguiSettingsCounterStateStore()
+        this.lastPersistReason = "settings_state_not_configured"
         // 每次启动的 capability 均为新发；把它编入流标识，防止重启后
         // 调用方把数值版本当作同一游标续读。
         this.streamIdentity = "settings_counter_stream_${Random().nextUInt64()}"
         this.changeLog = ArrayList<CjguiSharedOperationChangeEntry>()
+        if (let Some(path) <- persistPath) {
+            if (let Some(saved) <- this.stateStore.load(path)) {
+                this.versionValue = saved.version
+                this.countValue = saved.count
+                this.enabledValue = saved.enabled
+                this.nameValue = saved.name
+                this.aliasValue = saved.alias
+                this.scrollNoteValue = saved.scrollNote
+                this.imageVersionValue = saved.imageVersion
+            }
+            this.lastPersistReason = this.stateStore.lastReason
+        }
     }
 
     public func resourceType(): String { return "settings_counter" }
@@ -268,6 +288,20 @@ public class CjguiSettingsCounterDomain <: CjguiSharedOperationDomain & CjguiSha
 
     private func recordChange(kind: String) {
         changeLog.add(CjguiSharedOperationChangeEntry(versionValue, CjguiSettingsCounterDomain.resourceId, kind))
+        persistAcceptedState()
+    }
+
+    // 接受后的状态是唯一权威；落盘只是重启缓存。写入失败不回滚业务，
+    // 也不冒充成功：原因保留在 lastPersistReason 供诊断读取。
+    private func persistAcceptedState(): Unit {
+        match (statePath) {
+            case Some(path) =>
+                let ok = stateStore.save(path, CjguiSettingsCounterSnapshot(versionValue, countValue, enabledValue,
+                    nameValue, aliasValue, scrollNoteValue, imageVersionValue))
+                lastPersistReason = stateStore.lastReason
+                let _ = ok
+            case None => lastPersistReason = "settings_state_not_configured"
+        }
     }
 
     private func accepted(before: Int64, reason: String): CjguiSharedOperationActionResult {
@@ -308,6 +342,85 @@ public func settingsCounterAuthorization(): CjguiSharedOperationExternalAuthoriz
         ]))
 }
 
+/// Table rows over the already-published owner fields. Read-only projection:
+/// the table never writes owner state, and row activation only selects locally.
+class CjguiSettingsFieldRowSource <: CjguiComposableUiVariableHeightListSource {
+    private let rows: Array<CjguiComposableUiVariableHeightListItem>
+    init(rows: Array<CjguiComposableUiVariableHeightListItem>) { this.rows = rows }
+    public func itemCount(): Int64 { return rows.size }
+    public func itemAt(index: Int64): CjguiComposableUiVariableHeightListItem {
+        if (index < 0 || index >= rows.size) { return CjguiComposableUiVariableHeightListItem.missing() }
+        return rows[index]
+    }
+    public func indexForKey(key: String): Int64 {
+        var index: Int64 = 0
+        while (index < rows.size) {
+            if (rows[index].key == key) { return index }
+            index += 1
+        }
+        return -1
+    }
+    public func measurementGeneration(): Int64 { return 0 }
+    public func buildRow(item: CjguiComposableUiVariableHeightListItem, isSelected: Bool,
+        isFocused: Bool): CjguiComposableUiNode {
+        return cjguiComposableText(-1, "settings-field-row-${item.key}", item.title,
+            CjguiComposableUiStyle(fixedHeight: 26))
+    }
+}
+
+/// 集合列表视图的行内容：字段名可激活按钮 + 当前 owner 值。选中/焦点只画在
+/// 本地行上；选中事实仍由共同 CjguiComposableUiCollectionSelection 持有。
+class CjguiSettingsFieldCardRowSource <: CjguiComposableUiVariableHeightListSource {
+    private let rows: Array<CjguiComposableUiVariableHeightListItem>
+    private let valueOf: (String) -> String
+    init(rows: Array<CjguiComposableUiVariableHeightListItem>, valueOf: (String) -> String) {
+        this.rows = rows
+        this.valueOf = valueOf
+    }
+    public func itemCount(): Int64 { return rows.size }
+    public func itemAt(index: Int64): CjguiComposableUiVariableHeightListItem {
+        if (index < 0 || index >= rows.size) { return CjguiComposableUiVariableHeightListItem.missing() }
+        return rows[index]
+    }
+    public func indexForKey(key: String): Int64 {
+        var index: Int64 = 0
+        while (index < rows.size) {
+            if (rows[index].key == key) { return index }
+            index += 1
+        }
+        return -1
+    }
+    public func measurementGeneration(): Int64 { return 0 }
+    public func buildRow(item: CjguiComposableUiVariableHeightListItem, isSelected: Bool,
+        isFocused: Bool): CjguiComposableUiNode {
+        let selected = isSelected || isFocused
+        let root = CjguiComposableUiIdentityScope("settings-field-card")
+        let row = cjguiComposableHorizontal(-1, "settings-field-card-${item.key}",
+            CjguiComposableUiStyle(fixedHeight: 30, growX: 1, padding: 4, gap: 6,
+                background: if (selected) {
+                    CjguiComposableUiColor(0.20, 0.32, 0.52, 1.0)
+                } else {
+                    CjguiComposableUiColor(0.09, 0.12, 0.20, 1.0)
+                }, alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER),
+            identity: Some(root.child("rows").local(item.key)))
+        row.add(cjguiComposableButton(-1, "settings-field-card-select-${item.key}", item.title,
+            "SELECT_FIELD", item.resourceId,
+            CjguiComposableUiStyle(fixedWidth: 70, fixedHeight: 26, fontSize: 11.5,
+                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0)),
+            identity: Some(root.child("cells").child(item.key).local("select"))))
+        row.add(cjguiComposableText(-1, "settings-field-card-value-${item.key}", valueOf(item.key),
+            CjguiComposableUiStyle(growX: 1, fixedHeight: 26, fontSize: 11.5,
+                textColor: if (selected) {
+                    CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0)
+                } else {
+                    CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0)
+                }, alignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER),
+            identity: Some(root.child("cells").child(item.key).local("value"))))
+        return row
+    }
+}
+
 /// 控制器：把领域状态投影为 CJGUI 组件树；人机共用同一身份与样式。
 /// 节点身份固定（1/10/11/12/20/21/22/23/30，控制 id 均低于 200）。
 public class CjguiSettingsCounterController <: CjguiComposableUiController &
@@ -333,6 +446,34 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
     // 公共 focusAcceptedSemanticNode 请求滚动区内编辑器（reveal→新 accepted
     // 几何→正确系统上下文→输入→owner）。宿主循环在 pump 后消费挂起请求。
     public static let nodeIdFocusNoteNav: Int64 = 944
+    // 集合/表格：手写滚动区内的字段表（读取既有 owner 字段，不改业务状态）。
+    public static let nodeIdFieldTable: Int64 = 950
+    public static let nodeIdFieldTableNav: Int64 = 951
+    // 集合：共同 CjguiGeneratedUiCollection 的列表/表格两种呈现，工作区状态
+    // （模式/列/排序/视图快照）由 CjguiCollectionWorkspace 持有。视图快照只存
+    // 本进程内存，不写业务状态，也不替代 cjgui.ui-document。
+    public static let nodeIdFieldCollection: Int64 = 960
+    public static let nodeIdFieldCollectionNav: Int64 = 961
+    // 生成区宿主：动态生成树放在有界滚动视口的内容侧；内容高度由共同布局
+    // 按自然高度求解，根节点不再作为有界竖排容器的可收缩子项被压到 0。
+    public static let nodeIdGeneratedScroll: Int64 = 895
+    public static let nodeIdGeneratedContent: Int64 = 896
+    // 公共界面文档工作区（会话/预览/保存/恢复）挂在手写滚动内容里。
+    public static let nodeIdUiDocumentPanel: Int64 = 897
+    public static let nodeIdUiDocumentNavRow: Int64 = 898
+    public static let nodeIdUiDocumentNav: Int64 = 899
+    // 平台可选的正常退出入口：仅在平台显式开启时出现，动作由平台注入。
+    public static let nodeIdExitApp: Int64 = 905
+    private let collectionRows: Array<CjguiComposableUiVariableHeightListItem>
+    private let collectionViewState: CjguiComposableUiCollectionViewState
+    private let collectionWorkspace: CjguiCollectionWorkspace
+    private let collectionSelection = CjguiComposableUiCollectionSelection()
+    private let collectionValues = HashMap<String, String>()
+    private let collectionMountScope = CjguiComposableUiIdentityScope("settings-field-collection-mount")
+    private var collectionColumnEditorVisible: Bool = false
+    private var collectionViewSnapshot: String = ""
+    private var selectedFieldKey: String = ""
+    private let fieldTableListState = CjguiComposableUiVirtualListState()
     private var pendingFocusSemantic: ?String = None
 
     public func requestFocusSemantic(semanticId: String): Unit {
@@ -350,20 +491,125 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
     // `window.stepWindowActivities`。
     private let domain: CjguiSettingsCounterDomain
     private let generatedRegion: CjguiGeneratedUiWindowRegion
+    // 公共界面文档会话：打开/预览/确认/保存/恢复都走共同 workspace；文件路径
+    // 由平台适配层给出的应用沙箱提供，框架不解释业务内容。
+    private let uiDocumentSession: CjguiGeneratedUiDocumentSession
+    private let uiDocumentWorkspace: CjguiUiDocumentWorkspace
+    private let uiDocumentCloseGuard: CjguiUiDocumentCloseGuard
+    private var uiDocumentPathText: String
+    private let generatedScrollViewport: CjguiComposableUiScrollViewport = CjguiComposableUiScrollViewport()
     private var localRevision: Int64
     private var statusText: String
+    private let showExitApp: Bool
+    private let exitRequest: () -> Unit
     // C：样式阶段（0 混合 → 1 修改 → 2 倒置 → 3 重叠 → 4 超 64 → 5 清除）。
     // 纯 UI 声明状态：非法批次的拒绝与保旧都发生在框架渲染器，这里只负责
     // 把每阶段的声明真实送到同一条 wire。
     private var styleRunsPhase: Int64
 
-    public init(domain: CjguiSettingsCounterDomain) {
+    public init(domain: CjguiSettingsCounterDomain, uiDocumentPath!: Option<String> = None,
+        showExitApp!: Bool = false, exitRequest!: () -> Unit = { => }) {
         this.domain = domain
-        this.generatedRegion = CjguiGeneratedUiWindowRegion(settingsGeneratedCatalog(domain),
+        this.showExitApp = showExitApp
+        this.exitRequest = exitRequest
+        let region = CjguiGeneratedUiWindowRegion(settingsGeneratedCatalog(domain),
             CjguiSettingsCounterGeneratedBinding(domain), "settings-generated")
+        this.generatedRegion = region
+        // H 只提供沙箱路径与生命周期时机；打开/预览/确认/保存/恢复、脏态与
+        // 文件保护都归公共 UI document session。没有路径时工作区只展示状态，
+        // 不写任何默认文件。
+        let documentPath = match (uiDocumentPath) {
+            case Some(path) => path
+            case None => ""
+        }
+        let documentSession = CjguiGeneratedUiDocumentSession(path: documentPath)
+        this.uiDocumentSession = documentSession
+        let documentWorkspace = CjguiUiDocumentWorkspace(
+            CjguiComposableUiIdentityScope("settings-ui-document-mount"), "workspace", documentSession,
+            region, title: "界面文档")
+        this.uiDocumentWorkspace = documentWorkspace
+        let closeGuard = CjguiUiDocumentCloseGuard()
+        closeGuard.add(documentWorkspace)
+        this.uiDocumentCloseGuard = closeGuard
+        this.uiDocumentPathText = documentPath
         this.localRevision = 1
         this.statusText = "编辑后应用计数配置"
         this.styleRunsPhase = 0
+        // 集合视图只读已发布 owner 字段：行来自同一组字段名，值列在每次构建前
+        // 刷新；列/排序/模式与视图快照都归共同集合工作区。
+        let rows = ArrayList<CjguiComposableUiVariableHeightListItem>()
+        rows.add(CjguiComposableUiVariableHeightListItem("name", 1, "名称", 0, estimatedHeight: 30))
+        rows.add(CjguiComposableUiVariableHeightListItem("alias", 2, "别名", 0, estimatedHeight: 30))
+        rows.add(CjguiComposableUiVariableHeightListItem("count", 3, "计数", 0, estimatedHeight: 30))
+        rows.add(CjguiComposableUiVariableHeightListItem("enabled", 4, "启用", 0, estimatedHeight: 30))
+        this.collectionRows = rows.toArray()
+        let values = this.collectionValues
+        let selection = this.collectionSelection
+        let cards = CjguiSettingsFieldCardRowSource(this.collectionRows, { key =>
+            match (values.get(key)) {
+                case Some(value) => value
+                case None => "-"
+            }
+        })
+        let filtered = CjguiComposableUiFilteredListSource(cards, { item => item.title })
+        let columns = ArrayList<CjguiComposableUiTableColumn>()
+        columns.add(CjguiComposableUiTableColumn("field", "字段", "field", 64, "COLLECTION_SORT_FIELD",
+            { item => item.title },
+            { left, right =>
+                if (left.title < right.title) {
+                    -1
+                } else if (left.title > right.title) {
+                    1
+                } else {
+                    0
+                }
+            }, minWidth: 48, maxWidth: 80))
+        columns.add(CjguiComposableUiTableColumn("value", "值", "value", 0, "",
+            { item =>
+                match (values.get(item.key)) {
+                    case Some(value) => value
+                    case None => "-"
+                }
+            }, { left, right => 0 }, minWidth: 90, maxWidth: 200))
+        columns.add(CjguiComposableUiTableColumn("writer", "公共写入", "writer", 88, "",
+            { item => CjguiSettingsCounterController.collectionWriter(item.key) },
+            { left, right => 0 }, minWidth: 76, maxWidth: 110))
+        let table = CjguiComposableUiTableSource(filtered, "settings-field-collection-source",
+            columns.toArray(), CjguiSettingsCounterController.collectionTableStyle(),
+            rowAction: { item => CjguiComposableUiTableRowAction("SELECT_FIELD", item.resourceId) },
+            rowSelected: { key => selection.isSelected(key) })
+        let collection = CjguiGeneratedUiCollection("settingsFields", "settingsFieldCollection",
+            filtered, table, selection)
+        let view = CjguiComposableUiCollectionViewState(table, ["list", "table"], "list")
+        this.collectionViewState = view
+        let presentations = HashMap<String, String>()
+        presentations.add("list", "list")
+        presentations.add("table", "table")
+        this.collectionWorkspace = CjguiCollectionWorkspace(collection, view,
+            CjguiComposableUiIdentityScope("settings-field-collection-workspace"),
+            title: "字段集合", modePresentations: presentations)
+    }
+
+    static func collectionWriter(key: String): String {
+        return match (key) {
+            case "name" => "EDIT_NAME"
+            case "alias" => "EDIT_ALIAS"
+            case "count" => "INCREMENT"
+            case "enabled" => "SET_ENABLED"
+            case _ => "-"
+        }
+    }
+
+    static func collectionTableStyle(): CjguiComposableUiTableStyle {
+        return CjguiComposableUiTableStyle(26, 24, 6, 11.5, "system",
+            CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+            CjguiComposableUiColor(0.20, 0.32, 0.52, 1.0),
+            CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0),
+            CjguiComposableUiColor(0.28, 0.34, 0.46, 1.0),
+            CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
+            CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0),
+            CjguiComposableUiColor(0.60, 0.64, 0.72, 1.0),
+            CjguiComposableUiColor(0.38, 0.55, 0.78, 1.0))
     }
 
     public func generatedUiRegion(): CjguiGeneratedUiWindowRegion { return generatedRegion }
@@ -394,10 +640,12 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
             fontSize: 12.0)
         let value = CjguiComposableUiStyle(fixedHeight: 84, textColor: CjguiComposableUiColor(1.0, 0.92, 0.55, 1.0),
             fontSize: 54.0, fontWeight: 600)
-        let action = CjguiComposableUiStyle(fixedWidth: 190, fixedHeight: 64, gap: 16,
+        // Narrow-window fit: two fixed buttons must fit the 377vp card's
+        // remaining width (the old 190vp pair clipped past the right edge).
+        let action = CjguiComposableUiStyle(fixedWidth: 130, fixedHeight: 64, gap: 16,
             background: CjguiComposableUiColor(0.18, 0.32, 0.52, 1.0),
             border: CjguiComposableUiColor(0.38, 0.55, 0.78, 1.0), borderWidth: 2,
-            cornerRadius: 14, fontSize: 30.0, fontWeight: 600,
+            cornerRadius: 14, fontSize: 26.0, fontWeight: 600,
             textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))
         let card = CjguiComposableUiStyle(growX: 1, padding: 24, gap: 14,
             background: CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0),
@@ -466,7 +714,21 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
                 textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0), fontSize: 13.0)))
         // 生成区提到手写视口之前：487 vp 的首屏里两者必须同时可见，
         // 公开生成视口与手写视口才能在同一个 normal 产物上被消费。
-        root.add(generatedRegion.buildNode())
+        // 生成树是动态内容：放进有界滚动视口的内容侧（内容高度按自然高度
+        // 求解），而不是作为有界竖排根的可收缩子项；根节点因此不需要
+        // fixedHeight，内容增长时由视口滚动，不是把根压到 0 高。
+        let generatedScroll = cjguiComposableScrollArea(
+            CjguiSettingsCounterController.nodeIdGeneratedScroll, "settings-generated-scroll",
+            generatedScrollViewport,
+            CjguiComposableUiStyle(fixedHeight: 120, growX: 1, cornerRadius: 12, clipsContent: true,
+                background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+                border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1))
+        let generatedHost = cjguiComposableVertical(
+            CjguiSettingsCounterController.nodeIdGeneratedContent, "settings-generated-content",
+            CjguiComposableUiStyle(gap: 0, growX: 1))
+        generatedHost.add(generatedRegion.buildNode())
+        generatedScroll.add(generatedHost)
+        root.add(generatedScroll)
 
         let cardBox = cjguiComposableVertical(15, "counter-card", card)
         cardBox.add(cjguiComposableText(12, "counter-value", "计数：${snapshot.count}",
@@ -476,11 +738,11 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         let imageRow = cjguiComposableHorizontal(29, "counter-image-row",
             CjguiComposableUiStyle(fixedHeight: 72, gap: 16))
         imageRow.add(cjguiComposableImage(CjguiSettingsCounterController.nodeIdImage, "counter-beacon",
-            image.rasterPath, CjguiComposableUiStyle(fixedWidth: 160, fixedHeight: 72),
+            image.rasterPath, CjguiComposableUiStyle(fixedWidth: 120, fixedHeight: 72),
             contentMode: 1, imageResourceId: image.key, imageResourceVersion: image.version))
         imageRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdImageSwitch,
             "counter-image-switch", "切换图片", "SWITCH_IMAGE", CjguiSettingsCounterDomain.resourceId,
-            CjguiComposableUiStyle(fixedWidth: 180, fixedHeight: 60,
+            CjguiComposableUiStyle(fixedWidth: 140, fixedHeight: 60, fontSize: 15.0,
                 background: CjguiComposableUiColor(0.23, 0.30, 0.48, 1.0),
                 textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
         cardBox.add(imageRow)
@@ -583,12 +845,33 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         handContent.add(cjguiComposableText(902, "hand-scroll-head", "手写滚动区（上下拖动查看）",
             CjguiComposableUiStyle(fixedHeight: 18, textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0),
                 fontSize: 13.0, fontWeight: 600)))
-        handContent.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFocusNoteNav,
+        let navStyle = CjguiComposableUiStyle(fixedWidth: 100, fixedHeight: 30,
+            background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+            textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))
+        let navRow = cjguiComposableHorizontal(952, "hand-nav-row",
+            CjguiComposableUiStyle(fixedHeight: 30, gap: 8))
+        navRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFocusNoteNav,
             "settings-focus-note-nav", "定位滚动备注", "FOCUS_SCROLL_NOTE",
-            CjguiSettingsCounterDomain.resourceId,
-            CjguiComposableUiStyle(fixedWidth: 110, fixedHeight: 30,
-                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
-                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+            CjguiSettingsCounterDomain.resourceId, navStyle))
+        navRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFieldTableNav,
+            "settings-focus-field-table", "定位字段表", "FOCUS_FIELD_TABLE",
+            CjguiSettingsCounterDomain.resourceId, navStyle))
+        navRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdFieldCollectionNav,
+            "settings-focus-field-collection", "定位字段集合", "FOCUS_FIELD_COLLECTION",
+            CjguiSettingsCounterDomain.resourceId, navStyle))
+        handContent.add(navRow)
+        let uiDocNavRow = cjguiComposableHorizontal(
+            CjguiSettingsCounterController.nodeIdUiDocumentNavRow, "settings-uidoc-nav-row",
+            CjguiComposableUiStyle(fixedHeight: 30, gap: 8))
+        uiDocNavRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdUiDocumentNav,
+            "settings-focus-ui-document", "定位界面文档", "FOCUS_UI_DOCUMENT",
+            CjguiSettingsCounterDomain.resourceId, navStyle))
+        if (showExitApp) {
+            uiDocNavRow.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdExitApp,
+                "settings-exit-app", "退出应用", "EXIT_APP",
+                CjguiSettingsCounterDomain.resourceId, navStyle))
+        }
+        handContent.add(uiDocNavRow)
         var rowNodeId: Int64 = 910
         for (i in 1..=8) {
             handContent.add(cjguiComposableText(rowNodeId, "hand-scroll-row${i}",
@@ -626,10 +909,204 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         handContent.add(cjguiComposableButton(CjguiSettingsCounterController.nodeIdHandScrollDecrement,
             "hand-scroll-decrement", "滚动区减少", "DECREMENT",
             CjguiSettingsCounterDomain.resourceId, action, enabled: snapshot.enabled))
+        handContent.add(buildFieldTable(snapshot))
+        handContent.add(buildFieldCollection(snapshot))
+        handContent.add(buildUiDocumentPanel())
         handScroll.add(handContent)
         root.add(handScroll)
         root.add(cardBox)
         return root
+    }
+
+    /// 公共表格（CjguiComposableUiTableSource）读取已发布的 owner 字段：
+    /// 列布局、表头、单元格与行选中都来自共同实现；行激活只改本地选中，
+    /// 不写 owner，也不新增业务字段。
+    private func buildFieldTable(snapshot: CjguiSettingsCounterSnapshot): CjguiComposableUiNode {
+        let values = HashMap<String, String>()
+        values.add("name", snapshot.name)
+        values.add("alias", snapshot.alias)
+        values.add("count", "${snapshot.count}")
+        values.add("enabled", if (snapshot.enabled) { "true" } else { "false" })
+        let writers = HashMap<String, String>()
+        writers.add("name", "EDIT_NAME")
+        writers.add("alias", "EDIT_ALIAS")
+        writers.add("count", "INCREMENT")
+        writers.add("enabled", "SET_ENABLED")
+        let rows = ArrayList<CjguiComposableUiVariableHeightListItem>()
+        rows.add(CjguiComposableUiVariableHeightListItem("name", 1, "名称", 0, estimatedHeight: 26))
+        rows.add(CjguiComposableUiVariableHeightListItem("alias", 2, "别名", 0, estimatedHeight: 26))
+        rows.add(CjguiComposableUiVariableHeightListItem("count", 3, "计数", 0, estimatedHeight: 26))
+        rows.add(CjguiComposableUiVariableHeightListItem("enabled", 4, "启用", 0, estimatedHeight: 26))
+        let source = CjguiComposableUiFilteredListSource(CjguiSettingsFieldRowSource(rows.toArray()),
+            { item => item.title })
+        let columns = ArrayList<CjguiComposableUiTableColumn>()
+        columns.add(CjguiComposableUiTableColumn("field", "字段", "field", 64, "",
+            { item => item.title }, { left, right => 0 }, minWidth: 48, maxWidth: 80))
+        columns.add(CjguiComposableUiTableColumn("value", "值", "value", 0, "",
+            { item => match (values.get(item.key)) {
+                case Some(value) => value
+                case None => "-"
+            } }, { left, right => 0 }, minWidth: 90, maxWidth: 200))
+        columns.add(CjguiComposableUiTableColumn("writer", "公共写入", "writer", 88, "",
+            { item => match (writers.get(item.key)) {
+                case Some(value) => value
+                case None => "-"
+            } }, { left, right => 0 }, minWidth: 76, maxWidth: 110))
+        let style = CjguiComposableUiTableStyle(26, 24, 6, 11.5, "system",
+            CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+            CjguiComposableUiColor(0.20, 0.32, 0.52, 1.0),
+            CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0),
+            CjguiComposableUiColor(0.28, 0.34, 0.46, 1.0),
+            CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
+            CjguiComposableUiColor(1.0, 1.0, 1.0, 1.0),
+            CjguiComposableUiColor(0.60, 0.64, 0.72, 1.0),
+            CjguiComposableUiColor(0.38, 0.55, 0.78, 1.0))
+        let selected = selectedFieldKey
+        let table = CjguiComposableUiTableSource(source, "settings-field-table-source",
+            columns.toArray(), style,
+            rowAction: { item => CjguiComposableUiTableRowAction("SELECT_FIELD", item.resourceId) },
+            rowSelected: { key => key == selected })
+        let tableBox = cjguiComposableVertical(CjguiSettingsCounterController.nodeIdFieldTable,
+            "settings-field-table", CjguiComposableUiStyle(gap: 4, growX: 1, padding: 4,
+                background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+                border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1))
+        tableBox.add(cjguiComposableText(953, "settings-field-table-title",
+            "字段表（点行选中）", CjguiComposableUiStyle(fixedHeight: 18, fontSize: 12.0,
+                textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0))))
+        tableBox.add(table.buildHeader())
+        if (selected.size > 0) {
+            fieldTableListState.setSelectedKey(selected)
+        }
+        // 行由共同变高列表按表源物化（身份在布局期解析），与表头同源于表源。
+        tableBox.add(cjguiComposableVariableHeightList(954, "settings-field-table-list", 955, table,
+            fieldTableListState, 26, 0, 2,
+            CjguiComposableUiStyle(fixedHeight: 130, growX: 1)))
+        return tableBox
+    }
+
+    /// 字段集合：同一组 owner 字段经共同 CjguiGeneratedUiCollection 以列表/
+    /// 表格两种呈现挂载，模式、列设置、排序与视图快照都走共同集合工作区。
+    /// 视图动作只改视图状态；行激活只改本地选中，都不写 owner。
+    private func buildFieldCollection(snapshot: CjguiSettingsCounterSnapshot): CjguiComposableUiNode {
+        collectionValues.clear()
+        collectionValues.add("name", snapshot.name)
+        collectionValues.add("alias", snapshot.alias)
+        collectionValues.add("count", "${snapshot.count}")
+        collectionValues.add("enabled", if (snapshot.enabled) { "true" } else { "false" })
+        let mode = collectionViewState.mode()
+        let presentation = collectionWorkspace.presentationForMode(mode)
+        let box = cjguiComposableVertical(CjguiSettingsCounterController.nodeIdFieldCollection,
+            "settings-field-collection", CjguiComposableUiStyle(gap: 4, growX: 1, padding: 4,
+                background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+                border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1))
+        box.add(cjguiComposableText(966, "settings-field-collection-title",
+            "字段集合 · ${mode}（共同集合/表格）", CjguiComposableUiStyle(fixedHeight: 18, fontSize: 12.0,
+                textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0))))
+        let modeStyle = CjguiComposableUiStyle(fixedWidth: 76, fixedHeight: 24, fontSize: 10.5,
+            background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+            textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))
+        let modeRow = cjguiComposableHorizontal(967, "settings-field-collection-mode-row",
+            CjguiComposableUiStyle(fixedHeight: 24, gap: 6))
+        modeRow.add(cjguiComposableButton(963, "settings-collection-mode-list", "列表视图",
+            "COLLECTION_MODE_LIST", -1, modeStyle))
+        modeRow.add(cjguiComposableButton(964, "settings-collection-mode-table", "表格视图",
+            "COLLECTION_MODE_TABLE", -1, modeStyle))
+        modeRow.add(cjguiComposableButton(965, "settings-collection-columns-toggle",
+            if (collectionColumnEditorVisible) { "隐藏列设置" } else { "列设置" },
+            "COLLECTION_COLUMNS_TOGGLE", -1,
+            CjguiComposableUiStyle(fixedWidth: 96, fixedHeight: 24, fontSize: 10.5,
+                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        box.add(modeRow)
+        box.add(collectionWorkspace.buildActionBar(970, CjguiComposableUiStyle(gap: 4),
+            collectionViewSnapshot, CjguiComposableUiStyle(fixedHeight: 24, padding: 4, fontSize: 10.5,
+                background: CjguiComposableUiColor(0.12, 0.16, 0.24, 1.0),
+                textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
+                border: CjguiComposableUiColor(0.28, 0.34, 0.46, 1.0), borderWidth: 1,
+                cornerRadius: 6)))
+        if (collectionColumnEditorVisible) {
+            box.add(collectionWorkspace.buildColumnEditor(1000, CjguiComposableUiStyle(gap: 3),
+                CjguiComposableUiStyle(fixedHeight: 24, fontSize: 10.0, padding: 4,
+                    background: CjguiComposableUiColor(0.14, 0.20, 0.32, 1.0),
+                    textColor: CjguiComposableUiColor(0.90, 0.93, 0.98, 1.0))))
+        }
+        box.add(collectionWorkspace.collection().buildNode(980, "settings-field-collection-view",
+            981, "settings-field-collection-content", presentation,
+            CjguiComposableUiStyle(fixedHeight: 130, growX: 1),
+            identityScope: Some(collectionMountScope)))
+        box.add(collectionWorkspace.buildStatusLine(982))
+        return box
+    }
+
+    /// 公共界面文档工作区：按钮/状态/预览都来自共同 workspace，文件路径由
+    /// 平台沙箱给出；应用只负责挂载与事件转交，不另写一套文档状态机。
+    private func buildUiDocumentPanel(): CjguiComposableUiNode {
+        let box = cjguiComposableVertical(CjguiSettingsCounterController.nodeIdUiDocumentPanel,
+            "settings-ui-document-panel", CjguiComposableUiStyle(gap: 4, growX: 1))
+        box.add(uiDocumentWorkspace.build(
+            CjguiComposableUiStyle(background: CjguiComposableUiColor(0.10, 0.14, 0.22, 1.0),
+                border: CjguiComposableUiColor(0.26, 0.34, 0.50, 1.0), borderWidth: 1, cornerRadius: 10),
+            CjguiComposableUiStyle(fixedHeight: 20, fontSize: 13.0, fontWeight: 600,
+                textColor: CjguiComposableUiColor(0.94, 0.96, 1.0, 1.0)),
+            CjguiComposableUiStyle(fontSize: 11.5,
+                textColor: CjguiComposableUiColor(0.80, 0.84, 0.92, 1.0)),
+            CjguiComposableUiStyle(fixedWidth: 92, fixedHeight: 26, fontSize: 11.0,
+                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        // 公共 path row：打开/另存都走同一 workspace 命令与受保护写路径；路径
+        // 字符串仍由应用持有（沙箱注入），框架不发明默认文件。
+        box.add(uiDocumentWorkspace.buildPathRow(uiDocumentPathText,
+            CjguiComposableUiStyle(fixedHeight: 30, fontSize: 10.5, growX: 1, padding: 4,
+                background: CjguiComposableUiColor(0.07, 0.10, 0.16, 1.0),
+                textColor: CjguiComposableUiColor(0.86, 0.89, 0.95, 1.0),
+                border: CjguiComposableUiColor(0.28, 0.34, 0.46, 1.0), borderWidth: 1, cornerRadius: 6),
+            CjguiComposableUiStyle(fixedWidth: 76, fixedHeight: 26, fontSize: 10.5,
+                background: CjguiComposableUiColor(0.16, 0.26, 0.44, 1.0),
+                textColor: CjguiComposableUiColor(0.95, 0.97, 1.0, 1.0))))
+        return box
+    }
+
+    /// 启动时的正常文件打开：公共 session 读文件→预览→确认提交；文件缺失/
+    /// 损坏是具名拒绝，保留手写界面。返回可记录的启动事实。
+    public func beginUiDocumentStartup(): String {
+        if (uiDocumentPathText.size == 0) {
+            return "ui_document_no_path"
+        }
+        let result = uiDocumentWorkspace.beginStartup(uiDocumentPathText,
+            policy: CJGUI_UI_DOCUMENT_POLICY_REPLACE)
+        return "startup applied=${result.applied} reason=${result.reason} token=${result.token} " +
+            "version=${result.version}"
+    }
+
+    /// 每轮只结算真正提交中的票据；返回 true 表示发生了需要重绘的终态变化。
+    public func settleUiDocument(): Bool {
+        if (uiDocumentSession.stateFor(generatedRegion).mode != "submitted") {
+            return false
+        }
+        let result = uiDocumentWorkspace.finish()
+        if (result.reason == "ui_document_pending") {
+            return false
+        }
+        statusText = "界面文档结算 ${result.reason} accepted=${result.accepted}"
+        localRevision += 1
+        return true
+    }
+
+    public func uiDocumentPending(): Bool {
+        return uiDocumentSession.stateFor(generatedRegion).mode == "submitted"
+    }
+
+    public func uiDocumentStatus(): String {
+        return uiDocumentSession.statusTextFor(generatedRegion)
+    }
+
+    /// 生命周期收尾：先结算提交中的票据/取消未确认预览，再对未保存界面走
+    /// 同一受保护写路径保存；返回事实供日志，不伪造成功。
+    public func prepareUiDocumentForShutdown(): String {
+        let before = uiDocumentCloseGuard.settleAndReport()
+        let saveIssue = uiDocumentCloseGuard.saveUnsaved({ _ => uiDocumentPathText })
+        let after = uiDocumentCloseGuard.settleAndReport()
+        return "before=${before} save=${saveIssue} after=${after}"
     }
 
     public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
@@ -637,6 +1114,117 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         if (generated.didApply) {
             localRevision += 1
             return generated
+        }
+        if (event.eventKind == 27) {
+            if (let Some(commandId) <- cjguiCommandToolbarCommandId(event.node.actionName)) {
+                if (uiDocumentWorkspace.ownsCommand(commandId)) {
+                    // The path-row commands act on the consumer's CURRENT path
+                    // string; the other commands own only session state.
+                    let isPathCommand = commandId == uiDocumentWorkspace.pathCommandId() ||
+                        commandId == uiDocumentWorkspace.pathCommandId(open: false)
+                    let outcome = if (isPathCommand) {
+                        uiDocumentWorkspace.handlePathCommand(commandId, uiDocumentPathText)
+                    } else {
+                        uiDocumentWorkspace.handleCommand(commandId)
+                    }
+                    let reason = match (outcome) {
+                        case Some(value) => value.reason
+                        case None => "ui_document_command_unhandled"
+                    }
+                    statusText = "界面文档 ${reason}"
+                    localRevision += 1
+                    return CjguiComposableUiDispatchResult(true)
+                }
+            }
+            if (event.node.nodeId == CjguiSettingsCounterController.nodeIdExitApp) {
+                statusText = "正在退出应用"
+                localRevision += 1
+                exitRequest()
+                return CjguiComposableUiDispatchResult(true)
+            }
+            if (event.node.nodeId == CjguiSettingsCounterController.nodeIdUiDocumentNav) {
+                requestFocusSemantic("${uiDocumentWorkspace.semanticPrefix()}-save")
+                statusText = "已请求定位界面文档"
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(true)
+            }
+        }
+        // 集合视图动作：模式/列/排序/快照都归共同工作区；保存快照只存本进程
+        // 内存，恢复在无快照时按真实可用性拒绝。
+        if (event.eventKind == 27) {
+            if (let Some(action) <- collectionWorkspace.actionForEvent(event)) {
+                let outcome = collectionWorkspace.executeAction(action,
+                    { encoded => collectionViewSnapshot = encoded; true }, { => collectionViewSnapshot })
+                statusText = outcome.status
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(outcome.applied)
+            }
+            if (let Some(applied) <- collectionWorkspace.applyColumnEvent(event)) {
+                collectionViewState.notePresentationChanged()
+                statusText = collectionWorkspace.status()
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(applied)
+            }
+            if (event.node.nodeId == 963 || event.node.nodeId == 964) {
+                let mode = if (event.node.nodeId == 963) { "list" } else { "table" }
+                let applied = collectionWorkspace.setMode(mode)
+                if (applied) { statusText = collectionWorkspace.status() }
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(applied)
+            }
+            if (event.node.nodeId == 965) {
+                collectionColumnEditorVisible = !collectionColumnEditorVisible
+                statusText = if (collectionColumnEditorVisible) { "展示列设置" } else { "隐藏列设置" }
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(true)
+            }
+            if (event.node.actionName == "COLLECTION_SORT_FIELD") {
+                // 表头排序是公共表源事实：字段列按标题显式切换升降序。
+                let applied = collectionWorkspace.toggleSort("field")
+                statusText = if (applied) { "字段列排序已切换" } else { "字段列排序未变化" }
+                localRevision += 1
+                return CjguiComposableUiDispatchResult(applied)
+            }
+        }
+        if (event.eventKind == 27
+            && event.node.nodeId == CjguiSettingsCounterController.nodeIdFieldCollectionNav) {
+            // 集合自身是滚动区；把焦点交给首行可聚焦控件，让整段集合落入
+            // 150vp 手写视口。表格呈现时目标改为表内首行首列单元格。
+            let target = if (collectionViewState.mode() == "table") {
+                "settings-field-collection-source-cell-name-field"
+            } else {
+                "settings-field-card-select-name"
+            }
+            requestFocusSemantic(target)
+            statusText = "已请求定位字段集合"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdFieldTableNav) {
+            // 目标选表内末个数据单元格（可聚焦按钮）：容器本身不是焦点目标，
+            // 对齐末行可让整张 130vp 表落入 150vp 手写视口；单元格在共同
+            // 表格的身份作用域内随行物化，导航照样经同一 reveal→外滚视口。
+            requestFocusSemantic("settings-field-table-source-cell-enabled-field")
+            statusText = "已请求定位字段表"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
+        }
+        // 行激活：表格只做本地选中，不写 owner，也不产生业务版本。
+        if (event.eventKind == 27 && event.node.actionName == "SELECT_FIELD") {
+            let key = match (event.node.resourceId) {
+                case 1 => "name"
+                case 2 => "alias"
+                case 3 => "count"
+                case 4 => "enabled"
+                case _ => ""
+            }
+            if (key.size == 0) { return CjguiComposableUiDispatchResult(false) }
+            selectedFieldKey = key
+            // 表格与集合共用这一行激活事实；集合的选中/焦点由共同选择对象持有。
+            collectionSelection.click(key, false, false, collectionWorkspace.collection().order())
+            statusText = "字段选中 ${key}"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
         }
         let snapshot = domain.counterSnapshot()
         if (event.eventKind == 27 && event.node.nodeId == CjguiSettingsCounterController.nodeIdFocusNoteNav) {
@@ -672,6 +1260,12 @@ public class CjguiSettingsCounterController <: CjguiComposableUiController &
         if (event.eventKind == 29 && event.node.nodeId == CjguiSettingsCounterController.nodeIdEnabled) {
             let next = event.text == "true"
             return applyCounter(domain.executeFromHuman(invokeBoolean("SET_ENABLED", next, snapshot.version)))
+        }
+        if (event.eventKind == 28 && event.node.semanticId == uiDocumentWorkspace.pathFieldSemanticId()) {
+            uiDocumentPathText = event.text
+            statusText = "界面文档路径 ${uiDocumentPathText}"
+            localRevision += 1
+            return CjguiComposableUiDispatchResult(true)
         }
         if (event.eventKind == 28 && event.node.nodeId == CjguiSettingsCounterController.nodeIdName) {
             return applyName(domain.executeFromHuman(invokeName(event.text, snapshot.version)))

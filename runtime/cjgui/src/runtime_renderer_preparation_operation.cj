@@ -90,7 +90,8 @@ func internalRendererStepPreparationOperation(session: UInt64, preparation: UInt
         return result
     }
     if ((data.kind == 2u32 || data.kind == 3u32 || data.kind == 9u32) &&
-        (data.nodes.size <= 0 || data.nodes.size > 8 || data.geometry.size != data.nodes.size ||
+        (data.nodes.size <= 0 || data.nodes.size > (if (data.kind == 9u32) { 16 } else { 8 }) ||
+         data.geometry.size != data.nodes.size ||
          data.strings.size != data.nodes.size * 9) ||
         (data.kind == 6u32 && data.strings.size != 2) ||
         (data.kind == 8u32 && data.strings.size != 4)) {

@@ -605,6 +605,30 @@ public class CjguiUiDocumentWorkspace {
 /// window close; this guard only settles document facts honestly and offers
 /// the ordinary save / discard / cancel actions. It never writes business
 /// data, never applies a business draft, and never invents a path.
+private class CjguiUiDocumentCloseDiscardFact {
+    let surfaceIdentity: Int64
+    let version: Int64
+    let digest: String
+    let path: String
+    let savedDigest: String
+    let savedBaseline: Int64
+
+    init(surfaceIdentity: Int64, state: CjguiUiDocumentSessionState) {
+        this.surfaceIdentity = surfaceIdentity
+        this.version = state.acceptedVersion
+        this.digest = state.acceptedDigest
+        this.path = state.path
+        this.savedDigest = state.savedDigest
+        this.savedBaseline = state.savedBaseline
+    }
+
+    func matches(surfaceIdentity: Int64, state: CjguiUiDocumentSessionState): Bool {
+        return surfaceIdentity > 0 && this.surfaceIdentity == surfaceIdentity && state.mode == "idle" &&
+            version == state.acceptedVersion && digest == state.acceptedDigest && path == state.path &&
+            savedDigest == state.savedDigest && savedBaseline == state.savedBaseline
+    }
+}
+
 public class CjguiUiDocumentCloseGuard {
     private let workspaces = ArrayList<CjguiUiDocumentWorkspace>()
     /// ONE-SHOT: the user chose "discard UI changes and close". Unsaved UI
@@ -612,6 +636,7 @@ public class CjguiUiDocumentCloseGuard {
     /// refuses; the flag is consumed by the next report so a later close after
     /// a cancelled business policy cannot silently discard again.
     private var discardUnsavedOnce = false
+    private let discardFacts = ArrayList<CjguiUiDocumentCloseDiscardFact>()
 
     public init() {}
 
@@ -624,7 +649,18 @@ public class CjguiUiDocumentCloseGuard {
     }
 
     public func discardUnsaved(): Unit {
+        discardFacts.clear()
+        for (workspace in workspaces) {
+            discardFacts.add(CjguiUiDocumentCloseDiscardFact(workspace.surface().uiDocumentSurfaceIdentity(),
+                workspace.session().stateFor(workspace.surface())))
+        }
         discardUnsavedOnce = true
+    }
+
+    /// Revoke a pending discard when the close intent is cancelled or fails.
+    public func cancelDiscard(): Unit {
+        discardUnsavedOnce = false
+        discardFacts.clear()
     }
 
     /// Settles submitted tickets through their own surfaces, cancels
@@ -634,13 +670,22 @@ public class CjguiUiDocumentCloseGuard {
     /// visible settlement is an explicit refusal to leave, never a silent
     /// rollback.
     public func settleAndReport(): String {
-        let discardUnsaved = discardUnsavedOnce
-        discardUnsavedOnce = false
+        return reportClose(consumeDiscard: true)
+    }
+
+    /// Inspect one participant of an application-wide close without consuming
+    /// its decision before the other participants have been checked.
+    public func inspectAndReport(): String {
+        return reportClose(consumeDiscard: false)
+    }
+
+    private func reportClose(consumeDiscard!: Bool): String {
         for (workspace in workspaces) {
             let state = workspace.session().stateFor(workspace.surface())
             if (state.mode == "submitted") {
                 let settled = workspace.finish()
                 if (settled.reason == "ui_document_pending" || settled.reason == "ui_document_ticket_mismatch") {
+                    cancelDiscard()
                     return "${workspace.title()}：界面载入仍在结算" +
                         "（${settled.reason}），请稍后重试或取消关闭"
                 }
@@ -655,11 +700,24 @@ public class CjguiUiDocumentCloseGuard {
         for (workspace in workspaces) {
             let state = workspace.session().stateFor(workspace.surface())
             if (state.mode == "mismatch") {
+                cancelDiscard()
                 return "${workspace.title()}：界面会话与区域身份不符（ui_document_surface_mismatch）"
             }
         }
-        if (discardUnsaved) {
-            return ""
+        if (discardUnsavedOnce) {
+            var valid = discardFacts.size == workspaces.size
+            if (valid) {
+                for (index in 0..workspaces.size) {
+                    let workspace = workspaces[index]
+                    if (!discardFacts[index].matches(workspace.surface().uiDocumentSurfaceIdentity(),
+                        workspace.session().stateFor(workspace.surface()))) {
+                        valid = false
+                        break
+                    }
+                }
+            }
+            if (!valid || consumeDiscard) { cancelDiscard() }
+            if (valid) { return "" }
         }
         for (workspace in workspaces) {
             let decision = workspace.closeDecision()
@@ -695,11 +753,13 @@ public class CjguiUiDocumentCloseGuard {
             } else {
                 let path = pathFor(workspace)
                 if (path.size == 0) {
+                    cancelDiscard()
                     return "ui_document_path_empty"
                 }
                 workspace.session().saveAs(workspace.surface(), path)
             }
             if (!result.applied) {
+                cancelDiscard()
                 return result.reason
             }
         }

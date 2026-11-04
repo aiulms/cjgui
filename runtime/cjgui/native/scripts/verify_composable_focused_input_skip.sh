@@ -24,6 +24,7 @@ mkdir -p "$output_dir"
 clang -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong \
   -isysroot "$sdkroot_path" -mmacosx-version-min=12.0 \
   "$runtime_dir/native/tests/composable_focused_input_skip_test.m" \
+  "$runtime_dir/native/cjgui_async_multiline_measure.m" \
   "$runtime_dir/native/cjgui_native_bridge.m" \
   -framework AppKit -framework Metal -framework MetalKit -framework QuartzCore -lobjc \
   -o "$output_dir/composable_focused_input_skip_test"

@@ -65,6 +65,64 @@ int main(void) {
             return 5;
         }
 
+        // Return/newline semantics: a single-line composable input has no line
+        // model. Its proxy must consume Return instead of inserting a line
+        // break, while multiline keeps NSTextView's own newline insertion.
+        overlay.activeProjectionVersion = 1;
+        overlay.activeNodeIndex = 0;
+        overlay.inputProxy = [[CJGuiInternalComposableInputProxy alloc] initWithFrame:NSMakeRect(0, 0, 1, 1)];
+        overlay.inputProxy.string = @"abc";
+        overlay.activeNodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT;
+        CJGuiInternalComposableSceneNode *single =
+            makeNode(CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT, 42, 7);
+        single.index = 0; single.value = @"abc";
+        CjguiInternalRendererComposableNode singleValue = single.node;
+        singleValue.projectionVersion = 1;
+        single.node = singleValue;
+        overlay.nodes = @[single];
+        BOOL singleHandled = [overlay textView:overlay.inputProxy
+                             doCommandBySelector:@selector(insertNewline:)];
+        if (!singleHandled || ![overlay.inputProxy.string isEqualToString:@"abc"]) {
+            fprintf(stderr, "single-line Return must be consumed without changing the proxy\n");
+            return 8;
+        }
+        overlay.activeNodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT;
+        CJGuiInternalComposableSceneNode *integer =
+            makeNode(CJGUI_INTERNAL_RENDERER_COMPOSABLE_INTEGER_INPUT, 42, 7);
+        integer.index = 0; integer.value = @"42";
+        CjguiInternalRendererComposableNode integerValue = integer.node;
+        integerValue.projectionVersion = 1;
+        integer.node = integerValue;
+        overlay.nodes = @[integer];
+        if (![overlay textView:overlay.inputProxy doCommandBySelector:@selector(insertNewline:)]) {
+            fprintf(stderr, "integer Return must be consumed without a line break\n");
+            return 9;
+        }
+        overlay.activeNodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT;
+        CJGuiInternalComposableSceneNode *multiline =
+            makeNode(CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT, 42, 7);
+        multiline.index = 0; multiline.value = @"abc";
+        CjguiInternalRendererComposableNode multilineValue = multiline.node;
+        multilineValue.projectionVersion = 1;
+        multiline.node = multilineValue;
+        overlay.nodes = @[multiline];
+        if ([overlay textView:overlay.inputProxy doCommandBySelector:@selector(insertNewline:)]) {
+            fprintf(stderr, "multiline Return must keep NSTextView newline insertion\n");
+            return 10;
+        }
+        // Marked text still belongs to the system composition: Return is the
+        // IME confirmation and must not be consumed by the single-line rule.
+        overlay.activeNodeKind = CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT;
+        overlay.nodes = @[single];
+        [overlay.inputProxy setMarkedText:@"n" selectedRange:NSMakeRange(1, 0)
+                        replacementRange:NSMakeRange(NSNotFound, 0)];
+        if (!overlay.inputProxy.hasMarkedText ||
+            [overlay textView:overlay.inputProxy doCommandBySelector:@selector(insertNewline:)]) {
+            fprintf(stderr, "marked Return must stay with the system composition\n");
+            return 11;
+        }
+        [overlay.inputProxy unmarkText];
+
         // Identity still gates the skip: a different text input is not active.
         if (CjguiStagedNodeIsFocusedInput(ctx, makeNode(CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT_INPUT, 43, 7))) {
             fprintf(stderr, "non-active node must not take the skip\n");

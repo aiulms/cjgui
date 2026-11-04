@@ -842,13 +842,16 @@ private func runNotificationWindow(): Int32 {
     let draftBridge = CjguiNotificationDraftTextBridge(domain, 9101, "deliveryChannel")
     notificationBindDraftTextSession(window, draftBridge)
     let connection = CjguiSharedOperationExternalConnection(domain, authorization(), domain, window)
+    // Register before start so a startup failure still owns its retained
+    // close; closeAll below can then settle it before fonts are released.
+    let _ = group.add(host)
     if (!connection.enableWindowProgressReads(window) ||
         !connection.enableGeneratedUiProvider(controller.generatedUiRegion()) ||
         !host.attachExternalConnection(connection) || !host.start()) {
         host.close()
+        let _ = group.closeAll()
         return 1
     }
-    let _ = group.add(host)
     let fonts = CjguiNotificationPreviewFonts()
     cjguiNotificationPreviewFontReport(fonts)
     let session = CjguiNotificationPreviewSession(group, fonts,
@@ -856,7 +859,12 @@ private func runNotificationWindow(): Int32 {
     controller.bindPreviewActionHandler({action => session.perform(action)})
     let (previewOpened, previewMessage) = session.openPreviewNow()
     if (!previewOpened) {
-        host.close()
+        cjguiPreviewLog("CJGUI_PREVIEW_OPEN_FAILED ${previewMessage}")
+        let settled = group.closeAll()
+        if (!settled) {
+            cjguiPreviewLog("CJGUI_EXIT_UNSETTLED startup windows=${group.count()}")
+            return 1
+        }
         fonts.close()
         return 1
     }
@@ -872,10 +880,14 @@ private func runNotificationWindow(): Int32 {
         if (host.isOpen()) {
             controller.finishPanelAction(window)
         }
-        session.finishTurn()
     }
-    session.dispose()
-    group.closeAll()
+    // The host owns open/close settlement. Only after every window confirmed
+    // its discard may the application release the shared font registry.
+    let settled = group.closeAll()
+    if (!settled) {
+        cjguiPreviewLog("CJGUI_EXIT_UNSETTLED windows=${group.count()}")
+        return 1
+    }
     fonts.close()
     let stats = cjguiFontResourceDiagnostics()
     cjguiPreviewLog("CJGUI_PREVIEW_FONT_EXIT active=${stats[0]} live=${stats[1]} bytes=${stats[2]} " +

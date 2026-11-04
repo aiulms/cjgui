@@ -13,6 +13,19 @@ import std.env.*
 import std.convert.*
 import std.unicode.*
 
+/// Leaves room for future per-field and draft increments after restoring an
+/// untrusted session; the existing owner increments use signed Int64 without
+/// an exhaustion guard.
+private let PRESET_CARD_WORK_SESSION_MAX_VERSION: Int64 = 9000000000000000
+
+// Collection-owned monotonic invalidation fact. Each card advances it at its
+// existing owner mutation point, so reads stay O(1) and deletion cannot make
+// the observed version go backwards or collide with an earlier card sum.
+class PresetCardRevisionClock {
+    var value: Int64 = 0
+    func advance(): Unit { value += 1 }
+}
+
 /// One preset card's business state. The field order matches PrintPresetDomain's
 /// binding exactly, so a card and the handwritten preset edit the same declared
 /// fields; only the owner target differs.
@@ -36,12 +49,14 @@ class PresetCard {
     /// owner state, not a second UI switch.
     private var locked: Bool = false
     private var revision: Int64 = 0
+    private let revisionClock: PresetCardRevisionClock
 
     init(ownerId: Int64, title: String, declarations: CjguiSharedFormBinding,
-        defaults: ArrayList<CjguiSharedOperationValue>) {
+        defaults: ArrayList<CjguiSharedOperationValue>, clock: PresetCardRevisionClock) {
         this.ownerId = ownerId
         this.title = title
         this.declarations = declarations
+        this.revisionClock = clock
         this.applied = ArrayList<CjguiSharedOperationValue>(defaults)
         this.draft = ArrayList<String>()
         this.fieldVersions = ArrayList<Int64>()
@@ -55,8 +70,17 @@ class PresetCard {
         return revision
     }
 
+    private func advanceRevision(): Unit {
+        revision += 1
+        revisionClock.advance()
+    }
+
     public func draftVersionValue(): Int64 {
         return draftVersion
+    }
+
+    public func appliedVersionValue(): Int64 {
+        return appliedVersion
     }
 
     public func isLocked(): Bool {
@@ -66,7 +90,7 @@ class PresetCard {
     public func setLocked(value: Bool): Unit {
         if (locked != value) {
             locked = value
-            revision += 1
+            advanceRevision()
         }
     }
 
@@ -151,6 +175,75 @@ class PresetCard {
     public func fieldVersion(fieldId: String): Int64 {
         let index = indexOf(fieldId)
         return if (index < 0) { 0 } else { fieldVersions[index] }
+    }
+
+    /// Validate one complete owner record before any card is changed.
+    public func canRestoreWorkSessionState(owner: Int64, drafts: ArrayList<String>,
+        appliedValues: ArrayList<String>, versions: ArrayList<Int64>, draftRevision: Int64,
+        appliedRevision: Int64): Bool {
+        if (owner != ownerId || drafts.size != declarations.fieldCount() ||
+            appliedValues.size != declarations.fieldCount() || versions.size != declarations.fieldCount() ||
+            draftRevision < 0 || draftRevision > PRESET_CARD_WORK_SESSION_MAX_VERSION ||
+            appliedRevision < 0 || appliedRevision > draftRevision ||
+            appliedRevision > PRESET_CARD_WORK_SESSION_MAX_VERSION) {
+            return false
+        }
+        for (index in 0..declarations.fieldCount()) {
+            if (versions[index] < 0 || versions[index] > draftRevision ||
+                versions[index] > PRESET_CARD_WORK_SESSION_MAX_VERSION ||
+                !validWorkSessionValue(declarations.fieldAtControlIndex(index), appliedValues[index], true) ||
+                !validWorkSessionValue(declarations.fieldAtControlIndex(index), drafts[index], false)) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Apply only a previously validated record. These values are the business
+    /// owner's draft and applied sides; no Apply operation is run during restore.
+    public func restoreWorkSessionState(drafts: ArrayList<String>, appliedValues: ArrayList<String>,
+        versions: ArrayList<Int64>, draftRevision: Int64, appliedRevision: Int64, lockedValue: Bool): Bool {
+        if (!canRestoreWorkSessionState(ownerId, drafts, appliedValues, versions,
+            draftRevision, appliedRevision)) { return false }
+        for (index in 0..declarations.fieldCount()) {
+            let field = declarations.fieldAtControlIndex(index)
+            applied[index] = if (field.editorKind == "BOOLEAN") {
+                CjguiSharedOperationValue.boolean(appliedValues[index] == "true")
+            } else if (field.editorKind == "INTEGER") {
+                CjguiSharedOperationValue.integer(Int64.parse(appliedValues[index]))
+            } else {
+                CjguiSharedOperationValue.string(appliedValues[index])
+            }
+            draft[index] = drafts[index]
+            fieldVersions[index] = versions[index]
+        }
+        draftVersion = draftRevision
+        appliedVersion = appliedRevision
+        locked = lockedValue
+        fieldBodies.clear()
+        for (index in 0..declarations.fieldCount()) {
+            rememberFieldBody(declarations.fieldAtControlIndex(index).fieldId,
+                fieldVersions[index], draft[index])
+        }
+        advanceRevision()
+        return true
+    }
+
+    private func validWorkSessionValue(field: CjguiSharedFormFieldDescriptor, text: String,
+        appliedValue: Bool): Bool {
+        if (field.editorKind == "BOOLEAN") { return text == "true" || text == "false" }
+        if (field.editorKind == "INTEGER") {
+            try {
+                let value = Int64.parse(text)
+                return !appliedValue || (value >= field.minimum && value <= field.maximum)
+            } catch (_: Exception) {
+                return !appliedValue
+            }
+        }
+        if (appliedValue && field.required && text.trim().isEmpty()) { return false }
+        if (appliedValue && field.maximumLength > 0 &&
+            CjguiSharedFieldRule.scalarCount(text) > field.maximumLength) { return false }
+        return true
     }
 
     private func isTextField(fieldId: String): Bool {
@@ -306,7 +399,7 @@ class PresetCard {
         draft[index] = text
         fieldVersions[index] += 1
         draftVersion += 1
-        revision += 1
+        advanceRevision()
         return true
     }
 
@@ -321,7 +414,7 @@ class PresetCard {
         draft[index] = if (value) { "true" } else { "false" }
         fieldVersions[index] += 1
         draftVersion += 1
-        revision += 1
+        advanceRevision()
         return true
     }
 
@@ -348,7 +441,7 @@ class PresetCard {
         // the draft revision again, or the card would remain forever dirty
         // (applied=1, draft=2) after a successful Apply.
         appliedVersion = draftVersion
-        revision += 1
+        advanceRevision()
         return (true, "none")
     }
 
@@ -372,7 +465,7 @@ class PresetCard {
         // Cancel restores the applied values; the card is clean afterwards even
         // when no byte changed (only the version marker was stale).
         appliedVersion = draftVersion
-        revision += 1
+        advanceRevision()
         return (true, "none")
     }
 
@@ -450,6 +543,7 @@ class PresetCardCollection {
     }
     private let declarations: CjguiSharedFormBinding
     private let cards: HashMap<String, PresetCard>
+    private let revisionClock = PresetCardRevisionClock()
     /// The owner context version shared with the handwritten form. Card reads
     /// report THIS version so a client's CAS is the same CAS every other
     /// operation uses; a per-card counter would make every write stale.
@@ -478,13 +572,13 @@ class PresetCardCollection {
                 CjguiSharedOperationValue.string("资料 A"),
                 CjguiSharedOperationValue.integer(4),
                 CjguiSharedOperationValue.boolean(false)
-            ])))
+            ]), revisionClock))
         cards.add("cardB", PresetCard(PresetCardCollection.cardBOwner, "卡片 B", declarations,
             ArrayList<CjguiSharedOperationValue>([
                 CjguiSharedOperationValue.string("资料 B"),
                 CjguiSharedOperationValue.integer(2),
                 CjguiSharedOperationValue.boolean(true)
-            ])))
+            ]), revisionClock))
         // 28 more ordinary objects: 30 in total, so the collection has to use its
         // existing bounded virtualization instead of laying every row out.
         for (index in 3..31) {
@@ -495,7 +589,7 @@ class PresetCardCollection {
                     CjguiSharedOperationValue.string("资料 ${PresetCardCollection.twoDigit(index)}"),
                     CjguiSharedOperationValue.integer(Int64(index % 9 + 1)),
                     CjguiSharedOperationValue.boolean(index % 2 == 0)
-                ])))
+                ]), revisionClock))
             order.add(key)
         }
         nextOwnerValue = 6301 + 30
@@ -528,6 +622,68 @@ class PresetCardCollection {
         return keysInOrder().size
     }
 
+    /// App-owned payload for the two stable mixed-form detail owners. The
+    /// framework stores this opaque text only; the layout document is separate.
+    public func workSessionPayload(): String {
+        let selectedHex = CjguiSharedOperationFrame.encodeUtf8Hex(selectedKeyValue)
+        let text = StringBuilder()
+        text.append("MIXED_PRINT_PRESETS 1\nSELECTED ${selectedKeyValue.size} ${selectedHex}\n")
+        appendCardWorkSession(text, "cardA", cards.get("cardA").getOrThrow())
+        appendCardWorkSession(text, "cardB", cards.get("cardB").getOrThrow())
+        text.append("END")
+        return text.toString()
+    }
+
+    /// Full parser/owner validation used before a candidate can become the
+    /// framework file binding's trusted baseline.
+    public func isValidWorkSessionPayload(payload: String): Bool {
+        if (let Some(candidate) <- parsePresetCardsWorkSession(payload)) {
+            return validateWorkSessionCandidate(candidate)
+        }
+        return false
+    }
+
+    /// Parses and validates every owner and selection before the first mutation.
+    public func restoreWorkSessionPayload(payload: String): Bool {
+        if (let Some(candidate) <- parsePresetCardsWorkSession(payload)) {
+            if (!validateWorkSessionCandidate(candidate)) { return false }
+            let restoredA = cards.get("cardA").getOrThrow().restoreWorkSessionState(
+                candidate.cardA.drafts, candidate.cardA.appliedValues, candidate.cardA.fieldVersions,
+                candidate.cardA.draftVersion, candidate.cardA.appliedVersion, candidate.cardA.locked)
+            let restoredB = cards.get("cardB").getOrThrow().restoreWorkSessionState(
+                candidate.cardB.drafts, candidate.cardB.appliedValues, candidate.cardB.fieldVersions,
+                candidate.cardB.draftVersion, candidate.cardB.appliedVersion, candidate.cardB.locked)
+            if (!restoredA || !restoredB) { return false }
+            selectedKeyValue = candidate.selectedKey
+            revisionClock.advance()
+            return true
+        }
+        return false
+    }
+
+    private func validateWorkSessionCandidate(candidate: PresetCardsWorkSessionCandidate): Bool {
+        let cardA = cards.get("cardA").getOrThrow()
+        let cardB = cards.get("cardB").getOrThrow()
+        return (candidate.selectedKey == "cardA" || candidate.selectedKey == "cardB") &&
+            candidate.cardA.key == "cardA" && candidate.cardA.ownerId == PresetCardCollection.cardAOwner &&
+            candidate.cardB.key == "cardB" && candidate.cardB.ownerId == PresetCardCollection.cardBOwner &&
+            workSessionRecordMatches(cardA, candidate.cardA) && workSessionRecordMatches(cardB, candidate.cardB)
+    }
+
+    private func appendCardWorkSession(output: StringBuilder, key: String, card: PresetCard): Unit {
+        output.append("CARD ${key} ${card.ownerId} ${card.draftVersionValue()} " +
+            "${card.appliedVersionValue()} ${if (card.isLocked()) { 1 } else { 0 }}\n")
+        let binding = card.binding()
+        for (index in 0..binding.fieldCount()) {
+            let fieldId = binding.fieldAtControlIndex(index).fieldId
+            let applied = card.appliedText(fieldId)
+            let draft = card.draftText(fieldId)
+            output.append("FIELD ${fieldId} ${card.fieldVersion(fieldId)} ${applied.size} " +
+                "${CjguiSharedOperationFrame.encodeUtf8Hex(applied)} ${draft.size} " +
+                "${CjguiSharedOperationFrame.encodeUtf8Hex(draft)}\n")
+        }
+    }
+
     public func selectedKey(): String {
         return selectedKeyValue
     }
@@ -541,6 +697,7 @@ class PresetCardCollection {
             return false
         }
         selectedKeyValue = key
+        revisionClock.advance()
         return true
     }
 
@@ -568,6 +725,7 @@ class PresetCardCollection {
             sortColumnValue = column
             sortAscendingValue = true
         }
+        revisionClock.advance()
         return true
     }
 
@@ -576,6 +734,7 @@ class PresetCardCollection {
             return false
         }
         filterValue = value
+        revisionClock.advance()
         return true
     }
 
@@ -591,6 +750,7 @@ class PresetCardCollection {
         }
         sortColumnValue = column
         sortAscendingValue = ascending
+        revisionClock.advance()
         return true
     }
 
@@ -606,8 +766,9 @@ class PresetCardCollection {
             }
             let owner = nextOwnerValue
             nextOwnerValue += 1
-            cards.add(key, PresetCard(owner, title, declarations, defaults))
+            cards.add(key, PresetCard(owner, title, declarations, defaults, revisionClock))
             order.add(key)
+            revisionClock.advance()
             return Some(key)
         }
         return None
@@ -654,6 +815,7 @@ class PresetCardCollection {
             let remaining = keysInOrder()
             selectedKeyValue = remaining[0]
         }
+        revisionClock.advance()
         return true
     }
 
@@ -665,7 +827,8 @@ class PresetCardCollection {
         if (!cards.contains(key) || newOwner <= 0) {
             return false
         }
-        cards.add(key, PresetCard(newOwner, title, declarations, defaults))
+        cards.add(key, PresetCard(newOwner, title, declarations, defaults, revisionClock))
+        revisionClock.advance()
         return true
     }
 
@@ -686,11 +849,7 @@ class PresetCardCollection {
     }
 
     public func revision(): Int64 {
-        var total: Int64 = 0
-        for ((_, card) in cards) {
-            total += card.ownerRevision()
-        }
-        return total
+        return revisionClock.value
     }
 
     public func feedback(key: String): ?CjguiGeneratedUiFormFeedback {
@@ -738,6 +897,140 @@ class PresetCardCollection {
 /// contract with the descriptions it accepts, enforced by the composition check
 /// and by the client that generates them. A description with fewer children still
 /// renders (the extra labels are simply absent) instead of failing the scene.
+class PresetCardWorkSessionRecord {
+    public let key: String
+    public let ownerId: Int64
+    public let draftVersion: Int64
+    public let appliedVersion: Int64
+    public let locked: Bool
+    public let fieldIds: ArrayList<String>
+    public let fieldVersions: ArrayList<Int64>
+    public let appliedValues: ArrayList<String>
+    public let drafts: ArrayList<String>
+
+    init(key: String, ownerId: Int64, draftVersion: Int64, appliedVersion: Int64, locked: Bool,
+        fieldIds: ArrayList<String>, fieldVersions: ArrayList<Int64>, appliedValues: ArrayList<String>,
+        drafts: ArrayList<String>) {
+        this.key = key
+        this.ownerId = ownerId
+        this.draftVersion = draftVersion
+        this.appliedVersion = appliedVersion
+        this.locked = locked
+        this.fieldIds = fieldIds
+        this.fieldVersions = fieldVersions
+        this.appliedValues = appliedValues
+        this.drafts = drafts
+    }
+}
+
+class PresetCardsWorkSessionCandidate {
+    public let selectedKey: String
+    public let cardA: PresetCardWorkSessionRecord
+    public let cardB: PresetCardWorkSessionRecord
+
+    init(selectedKey: String, cardA: PresetCardWorkSessionRecord, cardB: PresetCardWorkSessionRecord) {
+        this.selectedKey = selectedKey
+        this.cardA = cardA
+        this.cardB = cardB
+    }
+}
+
+private func workSessionRecordMatches(card: PresetCard, record: PresetCardWorkSessionRecord): Bool {
+    let binding = card.binding()
+    if (record.fieldIds.size != binding.fieldCount() ||
+        !card.canRestoreWorkSessionState(record.ownerId, record.drafts, record.appliedValues,
+            record.fieldVersions, record.draftVersion, record.appliedVersion)) { return false }
+    for (index in 0..binding.fieldCount()) {
+        if (record.fieldIds[index] != binding.fieldAtControlIndex(index).fieldId) { return false }
+    }
+    return true
+}
+
+private func parsePresetCardsWorkSession(payload: String): ?PresetCardsWorkSessionCandidate {
+    let lines = payload.split("\n")
+    if (lines.size != 11 || lines[0] != "MIXED_PRINT_PRESETS 1" || lines[10] != "END") { return None }
+    let selectedParts = lines[1].split(" ")
+    if (selectedParts.size != 3 || selectedParts[0] != "SELECTED") { return None }
+    let selectedBytes = workSessionParseNonnegative(selectedParts[1])
+    if (selectedBytes < 0) { return None }
+    let selected = workSessionDecodeHex(selectedParts[2], selectedBytes)
+    if (selected.isNone()) { return None }
+    let cardA = parsePresetCardWorkSessionRecord(lines, 2)
+    let cardB = parsePresetCardWorkSessionRecord(lines, 6)
+    if (cardA.isNone() || cardB.isNone()) { return None }
+    return Some(PresetCardsWorkSessionCandidate(selected.getOrThrow(), cardA.getOrThrow(), cardB.getOrThrow()))
+}
+
+private func parsePresetCardWorkSessionRecord(lines: Array<String>, start: Int64): ?PresetCardWorkSessionRecord {
+    if (start < 0 || start + 4 >= lines.size) { return None }
+    let header = lines[start].split(" ")
+    if (header.size != 6 || header[0] != "CARD" || (header[5] != "0" && header[5] != "1")) { return None }
+    let owner = workSessionParseNonnegative(header[2])
+    let draftVersion = workSessionParseNonnegative(header[3])
+    let appliedVersion = workSessionParseNonnegative(header[4])
+    if (owner < 0 || draftVersion < 0 || appliedVersion < 0) { return None }
+    let fieldIds = ArrayList<String>()
+    let fieldVersions = ArrayList<Int64>()
+    let appliedValues = ArrayList<String>()
+    let drafts = ArrayList<String>()
+    for (index in 0..3) {
+        let parts = lines[start + index + 1].split(" ")
+        if (parts.size != 7 || parts[0] != "FIELD") { return None }
+        let version = workSessionParseNonnegative(parts[2])
+        let appliedBytes = workSessionParseNonnegative(parts[3])
+        let draftBytes = workSessionParseNonnegative(parts[5])
+        if (version < 0 || appliedBytes < 0 || draftBytes < 0) { return None }
+        let applied = workSessionDecodeHex(parts[4], appliedBytes)
+        let draft = workSessionDecodeHex(parts[6], draftBytes)
+        if (applied.isNone() || draft.isNone()) { return None }
+        fieldIds.add(parts[1])
+        fieldVersions.add(version)
+        appliedValues.add(applied.getOrThrow())
+        drafts.add(draft.getOrThrow())
+    }
+    return Some(PresetCardWorkSessionRecord(header[1], owner, draftVersion, appliedVersion, header[5] == "1",
+        fieldIds, fieldVersions, appliedValues, drafts))
+}
+
+private func workSessionParseNonnegative(value: String): Int64 {
+    let digits = value.toArray()
+    if (digits.size == 0 || (digits.size > 1 && digits[0] == b'0')) { return -1 }
+    for (byte in value) {
+        if (byte < b'0' || byte > b'9') { return -1 }
+    }
+    try {
+        return Int64.parse(value)
+    } catch (_: Exception) {
+        return -1
+    }
+}
+
+private func workSessionDecodeHex(encoded: String, byteCount: Int64): ?String {
+    if (byteCount == 0 && encoded == "-") { return Some("") }
+    if (byteCount < 0 || encoded.size != byteCount * 2) { return None }
+    let source = encoded.toArray()
+    let output = ArrayList<UInt8>()
+    var index: Int64 = 0
+    while (index < source.size) {
+        let high = workSessionHexNibble(source[index])
+        let low = workSessionHexNibble(source[index + 1])
+        if (high < 0 || low < 0) { return None }
+        output.add(UInt8(high * 16 + low))
+        index += 2
+    }
+    try {
+        return Some(String.fromUtf8(output.toArray()))
+    } catch (_) {
+        return None
+    }
+}
+
+private func workSessionHexNibble(value: Byte): Int64 {
+    if (value >= b'0' && value <= b'9') { return Int64(value) - Int64(b'0') }
+    if (value >= b'A' && value <= b'F') { return Int64(value) - Int64(b'A') + 10 }
+    return -1
+}
+
 class PresetCardFactory <: CjguiCompositeComponentFactory {
     private let themeReader: () -> CjguiComposableUiTheme
 

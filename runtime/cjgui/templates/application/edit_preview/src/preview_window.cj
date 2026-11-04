@@ -298,15 +298,12 @@ class CjguiNotificationPreviewSession {
     private let group: CjguiLinuxApplicationHostGroup
     private let fonts: CjguiNotificationPreviewFonts
     // A generated region is bound to exactly one window: a region whose window
-    // was discarded must never be adopted by a later window. The business
-    // domain and the font registry stay shared; the controller (and its
-    // region) live and die with one preview window.
+    // was discarded is never adopted by a later window. The business domain
+    // and the font registry stay shared; the controller (and its region) are
+    // created by the host's window factory for exactly one generation.
     private let createController: () -> CjguiNotificationPreviewController
     private var windowController: ?CjguiNotificationPreviewController = None
-    private var host: ?CjguiLinuxApplicationHost = None
-    private var windowPrepared = false
-    private var closePending = false
-    private var openPending = false
+    private var activeWindowId: Int64 = 0
 
     init(group: CjguiLinuxApplicationHostGroup, fonts: CjguiNotificationPreviewFonts,
         createController!: () -> CjguiNotificationPreviewController) {
@@ -315,101 +312,66 @@ class CjguiNotificationPreviewSession {
         this.createController = createController
     }
 
-    private func retireClosedHost(): Unit {
-        match (host) {
-            case Some(existing) =>
-                let _ = group.remove(existing)
-            case None => ()
-        }
-        host = None
-        windowController = None
-    }
-
-    private func createPreviewWindow(): (Bool, String) {
-        let controller = createController()
-        let created = CjguiLinuxApplicationHost(controller,
-            configuration: CjguiMacosApplicationWindowConfiguration("通知预览 · 多样式文本", 760u32, 440u32))
-        controller.bindWindow(created.window())
-        if (!created.start()) {
-            created.close()
-            return (false, "预览窗启动失败")
-        }
-        let _ = group.add(created)
-        host = Some(created)
-        windowController = Some(controller)
-        windowPrepared = true
-        return (true, "预览窗已打开：手写与生成 label 共享草稿与字体 v${fonts.fileVersion}")
-    }
-
-    private func openPreviewGuards(): ?String {
-        match (host) {
-            case Some(existing) =>
-                if (closePending) {
-                    // The previous window's close has not finished settling.
-                    // Keep its host and region until the discard completes; a
-                    // new window must not take over while one is closing.
-                    return "预览窗正在关闭；待本轮回合结算完成后再打开"
+    /// The host executes this factory at its turn boundary when the request is
+    /// issued from a window dispatch, or immediately when the application is
+    /// starting before the loop. The session no longer owns a pending flag.
+    private func requestPreviewOpen(): (Bool, String) {
+        let request = group.requestOpen("preview", { windowId =>
+            let controller = createController()
+            let created = CjguiLinuxApplicationHost(controller,
+                configuration: CjguiMacosApplicationWindowConfiguration("通知预览 · 多样式文本", 760u32, 440u32))
+            controller.bindWindow(created.window())
+            windowController = Some(controller)
+            activeWindowId = windowId
+            created
+        })
+        activeWindowId = request.windowId
+        match (request.status()) {
+            case CjguiLinuxWindowRequestStatus.Applied =>
+                return (true, "预览窗已打开：手写与生成 label 共享草稿与字体 v${fonts.fileVersion}")
+            case CjguiLinuxWindowRequestStatus.Pending =>
+                return (true, "预览窗将在本轮回合结束后打开；主窗与预览窗共用同一草稿与字体 owner")
+            case CjguiLinuxWindowRequestStatus.Superseded =>
+                return (false, "预览窗打开请求被取消：${request.message()}")
+            case CjguiLinuxWindowRequestStatus.Failed =>
+                if (request.message() == "window_already_open") {
+                    return (true, "预览窗已打开；主窗与预览窗共用同一草稿与字体 owner")
                 }
-                if (existing.isOpen()) {
-                    return "预览窗已打开；主窗与预览窗共用同一草稿与字体 owner"
-                }
-                retireClosedHost()
-            case None => ()
+                return (false, "预览窗启动失败：${request.message()}")
         }
-        if (openPending) {
-            return "预览窗正在打开"
-        }
-        return None
     }
 
-    /// Button path: runs inside the main window's dispatch. Creating the
-    /// second host re-entrantly there corrupts the native session state (the
-    /// Vulkan loader then rejects the new session's device handle), exactly
-    /// like the re-entrant teardown the close already defers. Defer the
-    /// creation to the turn boundary.
     private func openPreview(): (Bool, String) {
-        if (let Some(reason) <- openPreviewGuards()) {
-            let alreadyOpen = reason.startsWith("预览窗已打开")
-            return (alreadyOpen, reason)
-        }
-        openPending = true
-        return (true, "预览窗将在本轮回合结束后打开；主窗与预览窗共用同一草稿与字体 owner")
+        return requestPreviewOpen()
     }
 
-    /// Startup path: runs from the application main flow before the loop, not
-    /// inside any window dispatch, so the creation is safe here.
+    /// Startup path: runs before the group loop, so the host applies the
+    /// open immediately. The same request shape is used by the button path.
     public func openPreviewNow(): (Bool, String) {
-        if (let Some(reason) <- openPreviewGuards()) {
-            let alreadyOpen = reason.startsWith("预览窗已打开")
-            return (alreadyOpen, reason)
-        }
-        return createPreviewWindow()
+        return requestPreviewOpen()
     }
 
     private func closePreview(): (Bool, String) {
-        match (host) {
-            case Some(existing) =>
-                if (closePending) {
-                    return (false, "预览窗已在关闭中")
+        let request = group.requestCloseKey("preview")
+        match (request.status()) {
+            case CjguiLinuxWindowRequestStatus.Applied =>
+                if (request.message() == "cancelled_pending_open") {
+                    return (true, "已取消尚未执行的预览窗打开请求")
                 }
-                if (!existing.isOpen()) {
-                    retireClosedHost()
-                    return (false, "预览窗未打开")
-                }
-                // This runs inside the main window's dispatch. Tearing the
-                // second host down re-entrantly left the owner in runtime
-                // teardown while the main window was still mapped, so no later
-                // event was consumed. Defer the close to the turn boundary.
-                // Submitted candidates, ACKs and pending input are settled by
-                // the window's own close path, which retains the window until
-                // the settlement really completed.
-                closePending = true
+                return (false, "预览窗未打开")
+            case CjguiLinuxWindowRequestStatus.Pending =>
                 return (true, "预览窗将在本轮回合结束后关闭；主窗继续使用共享字体")
-            case None => return (false, "预览窗未打开")
+            case CjguiLinuxWindowRequestStatus.Failed =>
+                return (false, "预览窗未打开：${request.message()}")
+            case CjguiLinuxWindowRequestStatus.Superseded =>
+                return (false, "预览窗关闭请求已被替代：${request.message()}")
         }
     }
 
     private func switchFontVersion(): (Bool, String) {
+        if (activeWindowId <= 0 || !group.isWindowOpen(activeWindowId)) {
+            return (false, "预览窗未打开")
+        }
         let active = match (windowController) {
             case Some(value) => value
             case None => return (false, "预览窗未打开")
@@ -428,50 +390,6 @@ class CjguiNotificationPreviewSession {
         if (action == "CLOSE_PREVIEW") { return closePreview() }
         if (action == "SWITCH_PREVIEW_FONT") { return switchFontVersion() }
         return (false, "未知预览动作：${action}")
-    }
-
-    func finishTurn(): Unit {
-        if (openPending) {
-            openPending = false
-            match (host) {
-                case None =>
-                    let (opened, message) = createPreviewWindow()
-                    if (!opened) {
-                        cjguiPreviewLog("CJGUI_PREVIEW_OPEN_FAILED ${message}")
-                    }
-                case Some(_) => ()
-            }
-        }
-        if (closePending) {
-            closePending = false
-            match (host) {
-                case Some(existing) => existing.close()
-                case None => ()
-            }
-        }
-        // Keep the host reference until the window confirmed the discard. A
-        // retained close (unsettled ticket/ACK) leaves the window open and the
-        // next turn retries the same host; the retired region is dropped only
-        // after its window is really gone.
-        match (host) {
-            case Some(existing) =>
-                if (!existing.isOpen()) {
-                    retireClosedHost()
-                }
-            case None => ()
-        }
-    }
-
-    func dispose(): Unit {
-        // Same responsibility as the button path: the window's close settles
-        // what that window owes; a retained close is retried by group.closeAll
-        // below, and the controller/region die with this host reference.
-        match (host) {
-            case Some(existing) => existing.close()
-            case None => ()
-        }
-        host = None
-        windowController = None
     }
 }
 

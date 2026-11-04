@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -136,6 +137,9 @@ class ExportPreviewTest(unittest.TestCase):
                 shutil.copy2(p, runtime / "shared_operation_core" / p.name)
             shutil.copy2(RUNTIME / "shared_operation_core/GENERATED_EDITING.md",
                          runtime / "shared_operation_core/GENERATED_EDITING.md")
+            (runtime / "shared_operation_core/DOCUMENT_CLIENT.md").write_text(
+                "# Public document client\n\n"
+                "[consumer](../examples/shared_document_window_app/README.md)\n")
             for p in (RUNTIME / "preview").glob("*.md"):
                 shutil.copy2(p, runtime / "preview" / p.name)
             for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md", "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md"]:
@@ -146,7 +150,8 @@ class ExportPreviewTest(unittest.TestCase):
             for name in ["composable-beacon.png", "composable-beacon-coral.png"]:
                 (runtime / "resources" / name).write_bytes(b"fixture")
             for name in ["rule_set_application", "tree_outline_consumer", "generated_panel_consumer",
-                         "adaptive_layout_public_consumer", "rule_set_window_app", "generated_collection"]:
+                         "adaptive_layout_public_consumer", "rule_set_window_app", "generated_collection",
+                         "shared_document_window_app"]:
                 example = runtime / "examples" / name
                 (example / "src").mkdir(parents=True)
                 (example / "src/main.cj").write_text("package fixture\n")
@@ -155,13 +160,24 @@ class ExportPreviewTest(unittest.TestCase):
                 for script in ["run.sh", "cjgui_macos_app.sh"]:
                     (example / script).write_text("#!/usr/bin/env zsh\n")
                 for p in (RUNTIME / "examples" / name).glob("*.py"):
-                    (example / p.name).write_text("# fixture\n")
+                    if name == "shared_document_window_app" and p.name == "client.py":
+                        shutil.copy2(p, example / p.name)
+                    else:
+                        (example / p.name).write_text("# fixture\n")
                 (example / "README.md").write_text("# Consumer fixture\n")
+            document_consumer = runtime / "examples/shared_document_window_app"
+            (document_consumer / "cjpm.toml").write_text(
+                '[dependencies]\ncjgui = { path = "../.." }\n'
+                'cjgui_shared_operation_core = { path = "../../shared_operation_core" }\n')
+            (document_consumer / "README.md").write_text(
+                '[Public document client](../../shared_operation_core/DOCUMENT_CLIENT.md)\n')
             (runtime / "templates/macos_application/mixed_form/target").mkdir()
             (runtime / "templates/macos_application/mixed_form/target/must-not-copy").write_text("output")
             for profile in ["full", "macos-dev"]:
                 destination = root / ("Preview " + profile)
                 args = ["zsh", str(runtime / "scripts/export_framework_preview.sh"), str(destination)]
+                closure_lock = root / (profile + "-source-lock.json")
+                args += ["--write-source-lock", str(closure_lock)]
                 if profile != "full":
                     args += ["--profile", profile]
                 exported = subprocess.run(args, capture_output=True, text=True)
@@ -186,6 +202,27 @@ class ExportPreviewTest(unittest.TestCase):
                 self.assertIn('historical proof（仓库参考，未随包）', documentation)
                 self.assertTrue((destination / "consumers/generated_collection/client.py").is_file())
                 self.assertTrue((destination / "consumers/generated_collection/README.md").is_file())
+                document_app = destination / "consumers/shared_document_window_app"
+                self.assertTrue((document_app / "src/main.cj").is_file())
+                self.assertTrue((document_app / "client.py").is_file())
+                document_client = (document_app / "client.py").read_text()
+                self.assertIn('parents[2] / "framework/cjgui/shared_operation_core"', document_client)
+                self.assertNotIn('parents[2] / "shared_operation_core"', document_client)
+                self.assertIn('"--sdk-root"', document_client)
+                self.assertIn('api.replace(target, start, end, text)', document_client)
+                public_readme = (RUNTIME / "examples/shared_document_window_app/README.md").read_text()
+                self.assertIn("DOCUMENT_CLIENT.md", public_readme)
+                self.assertIn("RESOURCE_ID", public_readme)
+                self.assertNotIn("7101", public_readme)
+                self.assertIn('../../framework/cjgui/shared_operation_core/DOCUMENT_CLIENT.md',
+                              (document_app / "README.md").read_text())
+                document_toml = (document_app / "cjpm.toml").read_text()
+                self.assertIn('../../framework/cjgui/shared_operation_core', document_toml)
+                self.assertNotIn(str(RUNTIME), document_toml)
+                self.assertTrue((framework / "shared_operation_core/cjgui_document_client.py").is_file())
+                self.assertTrue((framework / "shared_operation_core/DOCUMENT_CLIENT.md").is_file())
+                self.assertIn('../../../consumers/shared_document_window_app/README.md',
+                              (framework / "shared_operation_core/DOCUMENT_CLIENT.md").read_text())
                 self.assertTrue((destination / "framework/rule_set_application/src/main.cj").is_file())
                 self.assertFalse(any(p.name.endswith('.cj.orig') for p in destination.rglob('*')),
                                  "source editor backups must stay in the checkout")
@@ -196,6 +233,27 @@ class ExportPreviewTest(unittest.TestCase):
                 self.assertNotIn(str(RUNTIME), collection_toml)
                 self.assertFalse(any(p.name in ["target", ".cjgui", "artifacts", "__pycache__"] for p in destination.rglob("*")))
                 manifest = json.loads((destination / "source-manifest.json").read_text())
+                self.assertGreater(manifest["delivery_closure"]["inputs"], 0)
+                locked_inputs = json.loads(closure_lock.read_text())["inputs"]
+                self.assertIn("shared_operation_core/DOCUMENT_CLIENT.md", locked_inputs)
+                self.assertIn("shared_operation_core/cjgui_document_client.py", locked_inputs)
+                if profile == "macos-dev":
+                    caller = root / "Ordinary Caller With Spaces"
+                    caller.mkdir()
+                    shutil.copy2(RUNTIME / "examples/shared_document_window_app/client.py",
+                                 caller / "client.py")
+                    descriptor = root / "invalid descriptor.json"
+                    descriptor.write_text("not json")
+                    descriptor.chmod(0o600)
+                    environment = os.environ.copy()
+                    environment.pop("PYTHONPATH", None)
+                    imported = subprocess.run(
+                        ["python3", "-B", str(caller / "client.py"), "--sdk-root", str(destination),
+                         "--descriptor", str(descriptor), "--resource-id", "42"],
+                        capture_output=True, text=True, env=environment)
+                    self.assertEqual(imported.returncode, 2, imported.stderr)
+                    self.assertIn("unsupported or malformed descriptor", imported.stderr)
+                    self.assertNotIn("Traceback", imported.stderr)
                 files = {p.relative_to(destination).as_posix() for p in destination.rglob("*") if p.is_file()}
                 self.assertEqual({entry["path"] for entry in manifest["files"]} | {"source-manifest.json"}, files)
                 for entry in manifest["files"]:

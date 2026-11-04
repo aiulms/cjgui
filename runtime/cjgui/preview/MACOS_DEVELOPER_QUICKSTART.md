@@ -14,6 +14,22 @@ cd "../My Print Tool"
 
 `run.sh` 从相对path依赖指向的本包构建框架、shared core和原生实现，日志中的 `source_origin` 给出实际输入。首次构建才生成缓存，不需要作者工作区。不要继承其他项目的 `CJGUI_NATIVE_SOURCE_DIR` 覆盖；需要时可显式设置 `CJ_GUI_SDKROOT` 选择自己的系统SDK。重建需要SDK；完成的 `target/release/CJGUIMixedFormStarter.app` 已携带两项Cangjie运行库，可以直接打开，无需源码包或SDK。该App仅本机ad-hoc签名，未公证，不是正式发行安装包。
 
+### 系统文本输入的接入与边界
+
+应用保有唯一的正文／草稿、字段版本和业务动作；窗口适配系统输入，不另建输入法、词库或撤销历史。以下复用现有接口及各自正常消费证据，不表示本包重新运行了全部输入组合。
+
+| 入口 | 接入与已验边界 |
+| --- | --- |
+| 普通单行 TEXT／INTEGER 整值字段 | 使用现有 bound form field 与 owner writer；系统选择、扩选、删除和剪贴板编辑仍作用于当前已接受字段。未启用范围运输时，生成字段继续用原整值 writer。 |
+| mixed 的手写／生成 TEXT | 模板已启用 `rangeTextEditDeltaDelivery: true`；FOCUS 事件先交同一个 region，再调用 form handler。实际绑定的范围会话提交一次增量，整值预览不能再写一次 owner。字段输入版本、表单事务版本及原生焦点分别归属，不互相代用。 |
+| 共享文档多行／source-range | 复用现有 workspace、安装源和历史。公开范围读写使用目标 `documentVersion` 与 UTF-8 字节范围；窗口选择是 UTF-16，聚合 context 版本不能代替正文版本。短 Unicode、换行、系统剪贴板、已声明 Undo/Redo、外改后原焦点续写及精确保存有既有正常消费；见[共享文档](consumers/shared_document_window_app/README.md)。 |
+| 系统 marked text | 预编辑／候选不是已提交 owner 正文；仅按实际系统通道中观察到的提交／取消陈述支持。Unicode 注入、AX 赋值或私有 `insertText` 不代表系统组字。完整输入法、迟到提交等组合未全面验证。 |
+| 关层返回与外部接续 | mixed 的编辑说明使用当前 editing/focus reference 返回，复用窗口的正文／选区恢复；关层后原文字首键不靠补点击或重发。外部写仍执行原 owner／字段 CAS，旧版本、换绑或退休目标按名拒绝，不能回落到另一 owner。 |
+
+Apply、Cancel、保存与应用声明的 Undo/Redo 由业务 owner 决定；Apply 不等于落盘。mixed 只有显式 `--work-session PATH` 才保存卡片 A/B 的业务工作会话，界面文档另存。其他平台、全部输入法和严格输入／呈现性能未由这些消费证明。
+
+当前宿主已用正常 mixed 完成一条单行 TEXT／owned 连续链：微信拼音 marked 取消后保原 owner／选区，说明层关闭后的原文字首键、旧 draft CAS 拒绝、双 owner Apply/Cancel、业务会话精确保存及自然退出。具体编译／运行身份与未扩验范围见[候选说明](MACOS-CANDIDATE.md)。公开 mixed 客户端的正常 `RESULT` 即使 `APPLIED false` 也可运输成功并 exit0；业务成功须读 `card_action.entries` 中的 `APPLIED`／`REASON`，不能把进程退出码或 JSON 返回当作业务已应用。协议 `ERROR` 与客户端异常另行报告。
+
 ### DS49 公共能力（本包新增）
 
 - **多定义一次候选**：一个候选可同时新增/替换多个完整组合定义，每个定义有自己的
@@ -130,7 +146,7 @@ form_state、逐字段 owner、draft/applied、版本、可用性和拒绝/校�
   其中 `MyController.requestWindowClose()` 是消费者**既有的关闭决策入口**；它只返回
   `shouldClose`，不会关闭窗口。真正的窗口关闭由 application 在全部允许后统一执行。
 
-- **仍未验/未完成**：其他平台、严格性能、完整 IME/VoiceOver；原速（0µs）HID 输入分歧仍未
+- **仍未验/未完成**：其他平台、严格性能、完整 IME 和全程无辅助聚焦的 VoiceOver 操作链；已验 VO 范围见[候选说明](MACOS-CANDIDATE.md)。原速（0µs）HID 输入分歧仍未
   归因——本包记录只证明 0µs 自有通道大量未到 native、2ms 通道立即另存 3/3 完整，原件
   “AX 全串→另存少尾两字”未重现；需要 native 收文事实才能完成归属。运行中准备的源不作为
   本包基线。
@@ -229,6 +245,6 @@ python3 client.py keyboard-rearrange --descriptor DESCRIPTOR
 锁集合须覆盖本包发布模板的普通仓颉源；缺少模板主文件或辅助模块会明确拒绝导出，避免交付无法建项的空壳。
 模板测试源可不纳入锁集合。导出不包含 target、native/lib、旧 artifacts 或预置编译缓存。
 
-改业务与布局见 [混合表单一页接入](framework/cjgui/templates/macos_application/mixed_form/README.md)，宿主生命周期与打包配置见 [macOS应用宿主](framework/cjgui/MACOS_APPLICATION_HOST.md)。[本次候选说明](MACOS-CANDIDATE.md)、[包内容说明](preview-manifest.md) 与 `source-manifest.json` 记录支持边界和实际导出身份。所有新增API为experimental；实际VoiceOver仍未验，其他平台、全IME／严格性能及旧native harness失败独立保留，不能由本包建项成功推定通过。
+改业务与布局见 [混合表单一页接入](framework/cjgui/templates/macos_application/mixed_form/README.md)，宿主生命周期与打包配置见 [macOS应用宿主](framework/cjgui/MACOS_APPLICATION_HOST.md)。[本次候选说明](MACOS-CANDIDATE.md)、[包内容说明](preview-manifest.md) 与 `source-manifest.json` 记录支持边界和实际导出身份。所有新增API为experimental；实际 VoiceOver 按候选说明中的版本／实例范围验证，其他平台、全IME／严格性能及旧native harness失败独立保留，不能由本包建项成功推定通过。
 
 本包包含当前表单反馈：手写／生成区的错误与 Apply 状态来自同一 owner 快照；typed client 的 `form_state()`（`client.py read`）直接提供合法／非法／未知、原错误、版本和动作原因，`cancel` 使用原还原动作。非法草稿可保留并修正，不把“可编辑”当成“校验通过”。

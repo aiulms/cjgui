@@ -4,6 +4,7 @@
 package cjgui
 
 import std.collection.*
+import std.time.*
 import std.unittest.*
 import std.unittest.testmacro.*
 
@@ -960,4 +961,299 @@ func generatedCollectionKeyboardUsesOnlyTheEventMount(): Unit {
     let stale = cjguiNavigateGeneratedCollection(collection, viewA, scrollEvent(viewA, "down"), None)
     @Assert(stale.isHandled, false)
     @Assert(collection.selection.focus(), focusBefore)
+}
+
+@Test
+func generatedRevealAtOldMaximumKeepsValidKey(): Unit {
+    let collection = mountableCollection()
+    let scope = CjguiComposableUiIdentityScope("late-height-boundary")
+    let node = collectionMountNode(collection, scope, "table", 1, "table", viewportNodeId: 929001)
+    let view = collection.acceptedView(scope, "table").getOrThrow()
+    let rows = node.variableHeightListSource().getOrThrow()
+    let _ = view.listState().updateVariableMaterializedRange(rows, 30, 0, 60, 2)
+    view.viewport.stageExtents(210, 60, 150)
+    view.viewport.commitStagedExtents()
+    @Assert(view.viewport.acceptedOffset(), 150)
+    @Assert(collection.revealItem("row_5", scope, "table"), true)
+    @Assert(view.viewport.offset(), 150)
+    @Assert(view.viewport.acceptedOffset(), 150)
+    @Assert(view.listState().selectedKey(), "")
+    @Assert(view.listState().focusedKey(), "")
+}
+
+foreign {
+    func cjgui_internal_renderer_test_send_composable_key(
+        session: UInt64, keyCode: UInt16, modifiers: UInt64, outFocusedNodeId: CPointer<UInt64>): Int32
+}
+
+// Two accepted mounts may share a semantic label while their viewport
+// references and numeric accepted node identities remain distinct.
+private class CollectionKeyboardSiblingWindow <: CjguiComposableUiController {
+    let first: CjguiComposableUiNode
+    let second: CjguiComposableUiNode
+    init(first: CjguiComposableUiNode, second: CjguiComposableUiNode) {
+        this.first = first
+        this.second = second
+    }
+    public func uiSceneVersion(): Int64 { return 1 }
+    public func buildUi(): CjguiComposableUiNode {
+        let root = cjguiComposableVertical(929900, "keyboard-sibling-root", CjguiComposableUiStyle())
+        root.add(first)
+        root.add(second)
+        return root
+    }
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@When[os == "macOS"]
+@Test
+func generatedKeyboardFocusesExactAcceptedSiblingNode(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let collection = mountableCollection()
+        let scopeA = CjguiComposableUiIdentityScope("keyboard-focus-a")
+        let scopeB = CjguiComposableUiIdentityScope("keyboard-focus-b")
+        let mountA = collectionMountNode(collection, scopeA, "shared", 1, "table", viewportNodeId: 929101)
+        let mountB = collectionMountNode(collection, scopeB, "shared", 1, "table", viewportNodeId: 929201)
+        let viewA = collection.acceptedView(scopeA, "shared").getOrThrow()
+        let viewB = collection.acceptedView(scopeB, "shared").getOrThrow()
+        @Assert(refEq(viewA.viewport, viewB.viewport), false)
+        let style = CjguiComposableUiStyle(fixedWidth: 300, fixedHeight: 100)
+        let first = cjguiComposableVariableHeightList(929101, "shared-viewport", 929102, viewA.viewport,
+            mountA.variableHeightListSource().getOrThrow(), viewA.listState(), 30, 0, 0, style)
+        let second = cjguiComposableVariableHeightList(929201, "shared-viewport", 929202, viewB.viewport,
+            mountB.variableHeightListSource().getOrThrow(), viewB.listState(), 30, 0, 0, style)
+        let controller = CollectionKeyboardSiblingWindow(first, second)
+        let window = CjguiComposableUiWindow(controller,
+            configuration: CjguiMacosApplicationWindowConfiguration("collection keyboard sibling", 480u32, 320u32))
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+            @Assert(window.start(), true)
+            let deadline = MonoTime.now() + 5 * Duration.second
+            var turns: Int64 = 0
+            while (window.isOpen() && window.windowProgress().acceptedSceneVersion < 1 &&
+                turns < 240 && MonoTime.now() < deadline) {
+                @Assert(budget.begin(), true)
+                try {
+                    let _ = window.refreshIfNeeded()
+                    let _ = window.pump(0u32)
+                    let _ = budget.finishScheduling()
+                } finally { budget.end() }
+                turns += 1
+            }
+            let projection = window.windowProgress().acceptedSceneVersion
+            @Assert(projection >= 1, true)
+            var accepted = CjguiComposableUiLayoutNode.missing()
+            var matching: Int64 = 0
+            for (node in window.acceptedSceneNodes()) {
+                if (node.semanticId == "shared-viewport") { matching += 1 }
+                if (node.nodeId == 929201) { accepted = node }
+            }
+            @Assert(matching, 2)
+            @Assert(accepted.nodeId, 929201)
+            @Assert(refEq(accepted.scrollViewport.getOrThrow(), viewB.viewport), true)
+            let event = CjguiComposableUiEvent(accepted, 35, "down", 0, 0, projection)
+            let result = cjguiNavigateGeneratedCollection(collection, viewB, event, Some(window))
+            @Assert(result.isHandled, true)
+            @Assert(result.didAcceptViewFocus, true)
+            // Existing test-only native key seam returns its actual active
+            // node. F13 has no collection-navigation meaning here.
+            var focusedNode: UInt64 = 0u64
+            let keyStatus = unsafe {
+                cjgui_internal_renderer_test_send_composable_key(window.testSessionToken(), 105u16, 0u64,
+                    inout focusedNode)
+            }
+            @Assert(keyStatus, 0)
+            @Assert(focusedNode, 929201u64)
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func generatedKeyboardRejectsTextAndStaleProjection(): Unit {
+    let collection = mountableCollection()
+    let scope = CjguiComposableUiIdentityScope("keyboard-guard")
+    let _ = collectionMountNode(collection, scope, "list", 1, "list", viewportNodeId: 929301)
+    let view = collection.acceptedView(scope, "list").getOrThrow()
+    let root = cjguiComposableScrollArea(929301, "guard-scroll", view.viewport,
+        CjguiComposableUiStyle(fixedWidth: 200, fixedHeight: 100))
+    root.add(cjguiComposableTextInput(929303, "guard-field", "Name", "draft", 42,
+        CjguiComposableUiStyle(fixedHeight: 30)))
+    let scene = CjguiComposableUiLayoutEngine.layout(root, CjguiComposableUiRect(0, 0, 200, 100), 11)
+    @Assert(scene.isValid(), true)
+    let current = scene.resolveInput(929301, -1, CJGUI_COMPOSABLE_UI_SCROLL_AREA, 11)
+    @Assert(current.nodeId, 929301)
+    let stale = scene.resolveInput(929301, -1, CJGUI_COMPOSABLE_UI_SCROLL_AREA, 10)
+    @Assert(stale.nodeId, -1)
+    @Assert(scene.resolveInput(929301, 42, CJGUI_COMPOSABLE_UI_SCROLL_AREA, 11).nodeId, -1)
+    @Assert(scene.resolveInput(929301, -1, CJGUI_COMPOSABLE_UI_TEXT_INPUT, 11).nodeId, -1)
+    let field = scene.resolveInput(929303, 42, CJGUI_COMPOSABLE_UI_TEXT_INPUT, 11)
+    @Assert(field.nodeId, 929303)
+    let before = collection.selection.focus()
+    let event = CjguiComposableUiEvent(field, 35, "down", 0, 0, 11)
+    @Assert(cjguiNavigateGeneratedCollection(collection, view, event, None).isHandled, false)
+    @Assert(collection.selection.focus(), before)
+}
+
+private class CandidateLateHeightSource <: CjguiComposableUiVariableHeightListSource {
+    public func itemCount(): Int64 { return 20 }
+    public func itemAt(index: Int64): CjguiComposableUiVariableHeightListItem {
+        return CjguiComposableUiVariableHeightListItem("row_${index}", index, "row ${index}", 1,
+            estimatedHeight: 30)
+    }
+    public func indexForKey(key: String): Int64 {
+        for (index in 0..20) { if (key == "row_${index}") { return index } }
+        return -1
+    }
+    public func measurementGeneration(): Int64 { return 1 }
+    public func buildRow(item: CjguiComposableUiVariableHeightListItem, isSelected: Bool,
+        isFocused: Bool): CjguiComposableUiNode {
+        return cjguiComposableText(-1, "candidate-late-row-${item.resourceId}", item.title,
+            CjguiComposableUiStyle(fixedHeight: if (item.resourceId == 19) { 80 } else { 30 }),
+            identity: Some(CjguiComposableUiIdentityScope("candidate-late").child(item.key).local("row")))
+    }
+}
+
+private class CandidateCopyTestSetup {
+    let collection: CjguiGeneratedUiCollection
+    let holder: CjguiGeneratedUiStructureHolder
+    let provider: GeneratedTestProvider
+    let scope: CjguiComposableUiIdentityScope
+    let view: CjguiGeneratedCollectionView
+    init(collection: CjguiGeneratedUiCollection, holder: CjguiGeneratedUiStructureHolder,
+        provider: GeneratedTestProvider, scope: CjguiComposableUiIdentityScope, view: CjguiGeneratedCollectionView) {
+        this.collection = collection; this.holder = holder; this.provider = provider; this.scope = scope; this.view = view
+    }
+}
+
+private func candidateCopyCollectionNode(node: CjguiComposableUiNode): ?CjguiComposableUiNode {
+    if (node.variableHeightListSource().isSome() && node.scrollViewport.isSome()) { return Some(node) }
+    for (child in node.children()) {
+        if (let Some(found) <- candidateCopyCollectionNode(child)) { return Some(found) }
+    }
+    return None
+}
+
+private func candidateCopyLayout(root: CjguiComposableUiNode, version: Int64): CjguiComposableUiScene {
+    let registry = CjguiComposableUiIdentityRegistry()
+    @Assert(registry.beginCandidate(), true)
+    @Assert(registry.resolveCandidate(root), "")
+    let result = CjguiComposableUiLayoutEngine.layoutWithMetrics(root, CjguiComposableUiRect(0, 0, 200, 100),
+        version, CjguiComposableUiFallbackTextMeasurer(), identityRegistry: Some(registry))
+    @Assert(result.scene.isValid(), true)
+    @Assert(registry.prepareCandidate(), true)
+    let _ = registry.commitCandidate()
+    return result.scene
+}
+
+private func candidateCopySetup(): CandidateCopyTestSetup {
+    let source = CandidateLateHeightSource()
+    let filtered = CjguiComposableUiFilteredListSource(source, { item => item.title })
+    let table = CjguiComposableUiTableSource(filtered, "candidate-late-table",
+        [collectionViewColumn("name", "Name", 180)], collectionViewStyle())
+    let collection = CjguiGeneratedUiCollection("mountRows", "mountRowList", filtered, table,
+        CjguiComposableUiCollectionSelection())
+    let catalog = collectionTransactionCatalog(collection, CollectionTransactionProbeFactory())
+    let scope = CjguiComposableUiIdentityScope("candidate-copy-region")
+    let holder = CjguiGeneratedUiStructureHolder(catalog, rootScope: scope)
+    let provider = GeneratedTestProvider()
+    let props = HashMap<String, String>()
+    props.add("collection", "mountRows"); props.add("presentation", "list"); props.add("fixedHeight", "100")
+    let children = ArrayList<CjguiGeneratedUiNodeSpec>()
+    children.add(CjguiGeneratedUiNodeSpec("cardA", "mountRowList", properties: props))
+    let root = collectionTransactionAcceptNode(holder, provider, collectionTransactionRoot(children)).getOrThrow()
+    let scene = candidateCopyLayout(root, 1)
+    @Assert(scene.isValid(), true)
+    let view = collection.acceptedView(scope, "cardA").getOrThrow()
+    view.viewport.commitStagedExtents()
+    @Assert(view.acceptedOffset(), 0)
+    @Assert(view.viewport.maximumOffset(), 500)
+    @Assert(view.revealItem("row_19"), true)
+    @Assert(view.scrollOffset(), 500)
+    @Assert(view.acceptedOffset(), 0)
+    return CandidateCopyTestSetup(collection, holder, provider, scope, view)
+}
+
+private func candidateCopyFindLateRow(scene: CjguiComposableUiScene): CjguiComposableUiLayoutNode {
+    for (node in scene.nodes()) { if (node.semanticId == "candidate-late-row-19") { return node } }
+    return CjguiComposableUiLayoutNode.missing()
+}
+
+@Test
+func generatedCandidateCopyKeepsLateRevealThroughAcceptAndRefresh(): Unit {
+    let fixture = candidateCopySetup()
+    @Assert(fixture.holder.beginCandidateRefresh(), true)
+    let root = fixture.holder.buildRefreshNode(fixture.provider)
+    let stagedViewport = candidateCopyCollectionNode(root).getOrThrow().scrollViewport.getOrThrow()
+    @Assert(refEq(stagedViewport, fixture.view.viewport), false)
+    let scene = candidateCopyLayout(root, 2)
+    let target = candidateCopyFindLateRow(scene)
+    @Assert(target.nodeId >= 0, true)
+    @Assert(target.bounds.height, 80)
+    @Assert(target.bounds.y >= 0, true)
+    @Assert(target.bounds.y + target.bounds.height <= 100, true)
+    @Assert(fixture.view.acceptedOffset(), 0)
+    @Assert(fixture.holder.prepareCandidateRefresh(), true)
+    @Assert(fixture.holder.commitCandidateRefresh(), true)
+    fixture.holder.settleAcceptedRenderViewState()
+    stagedViewport.commitStagedExtents()
+    let accepted = fixture.collection.acceptedView(fixture.scope, "cardA").getOrThrow()
+    @Assert(accepted.acceptedOffset(), 550)
+    @Assert(fixture.holder.beginCandidateRefresh(), true)
+    let next = fixture.holder.buildRefreshNode(fixture.provider)
+    let nextViewport = candidateCopyCollectionNode(next).getOrThrow().scrollViewport.getOrThrow()
+    let nextScene = candidateCopyLayout(next, 3)
+    let nextTarget = candidateCopyFindLateRow(nextScene)
+    @Assert(nextTarget.nodeId >= 0, true)
+    @Assert(nextTarget.bounds.y + nextTarget.bounds.height <= 100, true)
+    @Assert(fixture.holder.prepareCandidateRefresh(), true)
+    @Assert(fixture.holder.commitCandidateRefresh(), true)
+    fixture.holder.settleAcceptedRenderViewState()
+    nextViewport.commitStagedExtents()
+    @Assert(fixture.collection.acceptedView(fixture.scope, "cardA").getOrThrow().acceptedOffset(), 550)
+}
+
+@Test
+func generatedCandidateCopyHonorsNewerWheelOverReveal(): Unit {
+    let fixture = candidateCopySetup()
+    @Assert(fixture.view.viewport.requestOffset(100), true)
+    @Assert(fixture.holder.beginCandidateRefresh(), true)
+    let root = fixture.holder.buildRefreshNode(fixture.provider)
+    let stagedViewport = candidateCopyCollectionNode(root).getOrThrow().scrollViewport.getOrThrow()
+    let _ = candidateCopyLayout(root, 2)
+    @Assert(fixture.view.acceptedOffset(), 0)
+    @Assert(fixture.holder.prepareCandidateRefresh(), true)
+    @Assert(fixture.holder.commitCandidateRefresh(), true)
+    fixture.holder.settleAcceptedRenderViewState()
+    stagedViewport.commitStagedExtents()
+    let accepted = fixture.collection.acceptedView(fixture.scope, "cardA").getOrThrow()
+    println("CANDIDATE_WHEEL staged=${stagedViewport.offset()}:${stagedViewport.acceptedOffset()} " +
+        "accepted=${accepted.scrollOffset()}:${accepted.acceptedOffset()} " +
+        "same=${refEq(stagedViewport, accepted.viewport)}")
+    @Assert(accepted.acceptedOffset(), 100)
+}
+
+@Test
+func generatedCandidateCopyRollbackKeepsAcceptedView(): Unit {
+    let fixture = candidateCopySetup()
+    let originalViewport = fixture.view.viewport
+    @Assert(fixture.holder.beginCandidateRefresh(), true)
+    let root = fixture.holder.buildRefreshNode(fixture.provider)
+    let stagedViewport = candidateCopyCollectionNode(root).getOrThrow().scrollViewport.getOrThrow()
+    @Assert(refEq(originalViewport, stagedViewport), false)
+    let _ = candidateCopyLayout(root, 2)
+    fixture.holder.discardSceneViewState()
+    let accepted = fixture.collection.acceptedView(fixture.scope, "cardA").getOrThrow()
+    @Assert(refEq(accepted.viewport, originalViewport), true)
+    @Assert(accepted.acceptedOffset(), 0)
+    @Assert(accepted.scrollOffset(), 500)
+    @Assert(accepted.isRetired(), false)
 }

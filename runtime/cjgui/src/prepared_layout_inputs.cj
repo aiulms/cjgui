@@ -99,7 +99,11 @@ class CjguiPreparedListData <: CjguiComposableUiVariableHeightListSource {
             let index = indexForKey(key)
             if (index >= 0 && index < count) { let _ = itemAt(index) }
         }
-        let bound = if (node.style.fixedHeight > 0) { node.style.fixedHeight }
+        // The root is laid out in the window's supplied rectangle even when
+        // its declaration has a fixedHeight. Freeze the rows needed by that
+        // actual root allocation; nested nodes keep their declared bound.
+        let bound = if (depth == 0) { height }
+            else if (node.style.fixedHeight > 0) { node.style.fixedHeight }
             else { cjguiPreparedMaximum(height, cjguiPreparedMaximum(node.style.minHeight, node.style.idealHeight)) }
         let innerHeight = cjguiPreparedMaximum(1, bound - node.style.padding * 2)
         let fixedAdapter = CjguiPreparedFixedListSource(this)

@@ -49,8 +49,15 @@ static void WaitingRequestFixture(id<MTLDevice> device) {
     pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
     CHECK(waiting && ctx.pendingInteractions.count==0,
         "prefix_present_real_Pending_request_has_no_event");
-    CHECK(cjgui_internal_renderer_owner_pump_has_unconsumed_input(token)==0,
-        "prefix_present_Pending_request_is_not_unconsumed_input");
+    // A Pending acquisition with wantsEvent holds the refresh gate even though
+    // it owns no FIFO entry; the pure query reports the gate, not the FIFO.
+    CHECK(cjgui_internal_renderer_owner_pump_has_unconsumed_input(token)==1,
+        "prefix_present_Pending_request_missing_from_refresh_gate");
+    // The demanded claim decides and records under one ticket lock.
+    CHECK(cjgui_internal_renderer_owner_pump_claim_refresh_demand(token,1)==1,
+        "prefix_present_Pending_request_does_not_block_refresh_gate");
+    CHECK(cjgui_internal_renderer_owner_pump_has_unconsumed_input(token)==1,
+        "prefix_present_refresh_demand_changed_pure_query");
     CjguiInternalRendererFrameObservation frame={0};
     CjguiInternalRendererStatus status=CjguiPresentComposableSceneOnMain(token,&frame);
     CHECK((status==0 || status==CJGUI_INTERNAL_RENDERER_READBACK_FAILED) &&

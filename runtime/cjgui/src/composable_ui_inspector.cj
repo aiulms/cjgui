@@ -77,10 +77,10 @@ public class CjguiComposableUiInspectorPanel <: CjguiComposableUiController {
         let previous = snapshotValue
         let page = if (pinned && previous.isSome()) {
             let old = previous.getOrThrow()
-            window.diagnosticSnapshot(startIndex: start, maximumNodes: 128, expectedSessionIdentity: old.sessionIdentity,
+            window.diagnosticSnapshot(startIndex: start, maximumNodes: 128, includeNonVisible: true, expectedSessionIdentity: old.sessionIdentity,
                 expectedAcceptedSceneVersion: old.acceptedSceneVersion)
         } else {
-            window.diagnosticSnapshot(startIndex: start, maximumNodes: 128)
+            window.diagnosticSnapshot(startIndex: start, maximumNodes: 128, includeNonVisible: true)
         }
         if (page.status != "ok") {
             notice = "快照 ${page.status}；保留旧读数，点击刷新读取当前第一页"
@@ -94,7 +94,7 @@ public class CjguiComposableUiInspectorPanel <: CjguiComposableUiController {
         let projection = CjguiComposableUiFilteredListSource(CjguiInspectorRows(page), {item => item.title})
         let _ = projection.setQuery(query)
         filtered = Some(projection)
-        notice = "仅已物化且与视口相交的 accepted 节点；不读取业务正文／草稿"
+        notice = "已物化 accepted 节点，含零尺寸／屏幕外项；不读取业务正文／草稿"
         revision += 1
         return true
     }
@@ -344,10 +344,14 @@ public class CjguiComposableUiInspectorPanel <: CjguiComposableUiController {
                     "resource=${node.resourceId} field=${node.fieldId}\naction=${node.actionName} owner=${node.ownerTargetResourceId} incarnation=${node.semanticIncarnation}",
                     body))
             detail.add(cjguiComposableText(19, "inspector-style", "${node.styleSummary}", body))
+            if (let Some(layout) <- node.layout) {
+                detail.add(cjguiComposableText(119, "inspector-constraints",
+                    "声明 / 父内容区\n${layout.constraintSummary()}\n状态 ${layout.stateSummary()}", body))
+            }
         } else {
             detail.add(
                 cjguiComposableText(15, "inspector-help",
-                    "选择左侧节点查看几何、裁剪与绑定。\n列表来自同一 accepted 快照；不采样屏幕外内容。\n旧快照只能查看，不能框到新场景的其他节点。",
+                    "选择节点查看约束、几何、裁剪与状态。\n列表包含同一 accepted 场景的零尺寸和屏幕外节点，不复制正文。\n旧快照只能查看，不能框到新场景的其他节点。",
                     body))
         }
         columns.add(detail);
@@ -366,7 +370,7 @@ public class CjguiComposableUiInspectorPanel <: CjguiComposableUiController {
                 body))
         root.add(
             cjguiComposableText(23, "inspector-scope",
-                "page ${page.startIndex}..${page.nextIndex}/${page.totalNodes}; 返回${page.nodes.size}个相交节点。${notice}",
+                "page ${page.startIndex}..${page.nextIndex}/${page.totalNodes}; 返回${page.nodes.size}个已物化节点。${notice}",
                 body))
         return root
     }

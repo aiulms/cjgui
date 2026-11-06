@@ -35,7 +35,7 @@
 
 ### E · macOS
 
-**2026-11-04 E当前（DS4.1 Flash）：**输入/SDK包[限域复核](../../docs/plans/2026-11-04-macos-first-version-input-sdk-package.md#guidance-input-sdk-review-20261104)：native `06a30fcf…`新增Return消费分支；代理级反例成立，真实Return后不补焦续键仍未验，键盘无增量原因未明。mixed外改→旧draft拒绝全文不变→Apply→814B保存→自然exit0已核。唯一冻结SDK d content `6208a685…`，646载荷/622输入及451项包外来源核回；根公共说明已校准，随下包携带。原“三包实际O2”撤回，仅native O2可核，功能证据保留。按用户决定回到性能主线，将唯一Return短链并入正常输入准备；32ms未过，raw0 unknown，不续造输入矩阵/参数扫描。R2f1000条、7f54、S1、VO/动态/批量按原身份复用。资源沿原账，本包报新增≈387MiB、估计峰≈440MiB、宿主≈145GiB；无新构建/桌面/Git写，旧线不恢复。
+**2026-11-06 E当前（Sol 6.1主执行，Terra 6.1/Luna 6实际分包）** 布局/样式/只读诊断已交付macOS experimental候选：单grow剩余高度、自然横排限宽、scroll单内容校验，暖纸及公共角色，Inspector约束/裁剪/状态与真实contentBounds。隔离小说1280/1080/1396窗、输入保存重启v5，包外普通工具和通知错误/禁用/亮暗主题已验；相关定向测试和skip-script构建通过，根全套仍受既有foreign重复声明阻挡。锁定SDK621文件/596输入，未发布。原小说源码持续并行修改，另交UI重放补丁（dry-run通过、未编译/未应用），不覆盖原件。自有实例/重复包已收尾；详见[阶段结果与边界](../../docs/plans/2026-11-06-layout-theme-usability.md)。正式05b（App `59cca9dc…`、SDK锁 `e375f1d8…`、renderer `1d260dfc…`）及旧16/32ms未过门保留；accepted换槽成本门退役，H/W/Linux状态不变，不恢复旧专项。
 
 **旧线状态（2026-10-28）：**Sol 01a16db2-14c6-7540-bf23-0048536bc8cd已由用户暂停（idle/interrupted）；DS 01a17bea-9bcd-7872-a89b-2e357baf2311已完成冻结并结束（idle/completed），源写集/前台已释放。[DS交接](artifacts/ds51-normal-workspace-delivery-20261024/section-18-20261028/mixed-routing/README.md)及旧Sol原件由上方新整包线接管；旧两线不再分派、不自动恢复，转交不等于最终验收完成。
 

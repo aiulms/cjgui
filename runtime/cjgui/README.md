@@ -873,11 +873,23 @@ text measurement、native staging/present 四项单调时钟诊断，`WINDOW_MEA
 
 ## 开发者诊断（experimental，macOS）
 
+普通应用的主题、导航、资料行、操作和反馈可先用 [桌面样式角色](STYLE_ROLES.md)，
+布局组合见 [工作区配方](LAYOUT_PRIMITIVES.md)。`boundStyle()` 整组安装基础样式与交互态；
+`alignX/alignY` 仍是节点在父容器中的位置。
+
 普通窗口可调用 `window.diagnosticSnapshot(maximumNodes: 128)` 读取有界只读值，
 用 `window.setDiagnosticOverlay(CjguiComposableUiDiagnosticOverlayOptions(true,
 selectedIdentityKey: "semantic:..."))` 显示布局、祖先裁剪、效果输出与实际背景采样框；
 传入 `CjguiComposableUiDiagnosticOverlayOptions(false)` 关闭。叠加层默认隐藏，
 位于原生业务画面和文字之上，不建立业务节点或 AX 元素，不参与命中、焦点与背景采样。
+
+需要定位零尺寸或屏幕外节点时，传 `includeNonVisible: true`（Inspector 已采用），
+仍按 accepted version 有界分页。节点的 `layout` 给出原声明 fixed/min/ideal/max、
+grow/位置对齐、父内容区、矩形溢出/裁剪，以及 selected/checked/focused/hover/pressed/disabled。
+`labelAndValueEmpty` 只表示投影标签和值都空，不查询业务正文。可用 `constraintSummary()`
+和 `stateSummary()` 输出短解释；读取不触发 build/layout，不复制文本。
+默认筛选是布局/效果输出与视口的矩形相交候选，不能当作严格可见性；圆角、变换、
+兄弟遮挡和最终像素另按对应证据判断。滚动内容超出父矩形本身也不表示错误。
 
 快照分页上限为每次 256 个可见节点，携带窗口 session 与 accepted scene version；
 后续页传入 `expectedSessionIdentity`、`expectedAcceptedSceneVersion`，过期返回

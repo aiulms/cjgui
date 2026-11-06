@@ -16,6 +16,14 @@ cd "../My Print Tool"
 
 ### 系统文本输入的接入与边界
 
+常规界面修改先看 [布局配方](framework/cjgui/LAYOUT_PRIMITIVES.md) 和
+[主题角色](framework/cjgui/STYLE_ROLES.md)。`ui-only` 创建后的输入框和操作按钮已使用
+`theme.fieldStyle().boundStyle()` 与 `theme.actionStyle(...).boundStyle()`；换成
+`CjguiComposableUiTheme.warmPaper()` 可连同交互状态一起换主题。导航使用
+`theme.navigationRow().boundStyle()` 和 owner 的 SELECTED，保留键盘焦点的独立状态。
+布局用 grow/约束分配内容区，不从 windowScreenFrame 猜标题栏高度；需要宽度输入的
+编辑器适配可只读 `window.contentBounds()`，不可用时返回 None。
+
 应用保有唯一的正文／草稿、字段版本和业务动作；窗口适配系统输入，不另建输入法、词库或撤销历史。以下复用现有接口及各自正常消费证据，不表示本包重新运行了全部输入组合。
 
 | 入口 | 接入与已验边界 |

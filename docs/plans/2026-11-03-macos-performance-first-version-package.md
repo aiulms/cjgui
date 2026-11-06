@@ -547,3 +547,382 @@ CUA按bundle曾读到另一个同字节空白自有PID82429；正常链未在错
 正式SDK实际为646载荷24,795,481B，另加manifest共647文件25,074,263B；所有载荷SHA/长度、无extras及622根输入核回。源锁SHA `4cdcb808…`、closure `f06c473e…`、内容 `4c590433…`保持原件，不为计数文案更名或重导。shared原8c752296保存/退出证据按未改分支复用，不宣称新跑。现存final consumer、SDK及l/m/n/o/p合计343,584KiB与报告各路径读数相符，仅为所列路径分配量，不当累计全线净增或卷净回收；指导当前宿主可用155,416,625,152B，未清理产物。
 
 本次完成的是批量优化的安全接入和真实消费交付，没有建立最终新二进制的稳定时延收益。旧4354候选的真实呈现数据、缺项与32ms未过结论继续保留原身份；16ms仅有旧ON两类责任边界证据，不扩大为全类别/default OFF通过。后续回到首版支持范围和公共SDK整体取舍，不自动重开显示参数、旧矩阵或性能日志阶段；旧Sol及自动追工保持暂停。
+
+<a id="current-source-o2-pair-20261104"></a>
+### 当前源全链 O2 基线、P1 候选与 Return 真实窗口（2026-11-04 DS4.1 Flash；P1 拒绝采用）
+
+本段是用户“Mac 当前源输入到提交性能改进整包”的执行结果。证据目录 `work/macos-performance-20261104/input-commit/`，性能配对在 `work/macos-performance-20261103/frame-opportunity/pairs/`。
+
+**基线（当前最终生产源码，全链 O2）。** prepared consumer 顶层 `override-compile-option="-O2"` 使应用/框架/shared core 实际 5 包均 `-O2`、0 处 `-O0`，默认项目配置未改；native `-O2`。实际命令见 `build-base.log` 136–140 行：`demo_support`、`shared_operation_core`、`rule_set_application`、`cjgui`、`rule_set_window_app` 的 `cjc` 均带 `-O2`，全日志 `-O0` 计数 0；native identity flags `-O2 -fobjc-arc …`。当前根 `composable_ui_window.cj`（`79eb19a0…`）、`macos_application_host.cj`（`fbb53d56…`）、`owner_turn_budget.cj`（`6f3cb41a…`）、`runtime_renderer_session.cj`（`582686c6…`）、`runtime_state.cj`（`7e82fdeb…`）与基线 source-index 逐哈希一致。签名 EXE `675bdc55…`（42,064,592B）、签前 `2536aa55…`、native archive `9f87179e…`、native 源 `06a30fcf…`、provenance `517a9160…`、build_key `c526942f…`、source-index `8e26761f…`、`cjpm.toml` `276e53f0…`。该二进制与旧 R2f `fd2ae2f1…`/4354ac35 不同，不混算、不改名。
+
+**基线样本 `P1-base-current-o2-r3`。** 1000 条夹具、980×652、filter20/name20 各 20 键、名义 100ms、三 ON 门；`analysis.json` gate PASS，planned/receipts/joined/presented 均 40/40，terminal exit 0；prefix-filter/prefix-name 各 2 样本 PASS；Apply version 21、Cancel version 21、保存 `1a5730fd…`、自然 exit0、端点清空。filter p95（nearest-rank）：raw→authority 3,475,209ns、authority→accepted 10,137,167ns、raw→enqueue 12,115,625ns、authority→enqueue 9,254,917ns、raw→present 37,890,793ns、enqueue→present 25,661,125ns；name：3,361,250 / 30,391,958 / 32,573,167 / 29,794,583 / 57,880,418 / 27,044,709ns。同一 raw 的派生事件在 r2 被合并成 `input_count=2` 导致 39/40，按原规则记 unknown 并保留；r3 重采 40/40，不放宽门。
+
+**候选 C1 与拒绝。** native 在准备操作 admit 后以 `dispatch_sync(main)` 当轮服务并结算票据（native 源 `3ccc9ff1…`、EXE `87aeba77…`、archive `6b69f4e5…`、build_key `c9914b64…`）。`P1-c1-sync-owned-preparation-r3` 功能短链通过（40/40 身份与真实 present、Apply/Cancel、exit0、端点空），但 filter p95：authority→accepted 27,006,125（+166.4%）、raw→enqueue 28,705,667（+136.9%）、authority→enqueue 26,236,458（+183.5%）、raw→present 48,368,334（+27.7%）、enqueue→present 25,213,209（-1.7%）；name：48,498,750（+59.6%）、50,594,334（+55.3%）、47,789,875（+60.4%）、74,818,501（+29.3%）、26,821,334（-0.8%）。源码证明同步调用会等待主线程；当前对照证明这两组样本时延变差，尚未以同票据的服务排队/执行/消费边界隔离其全部因果，不将“等待搬到worker”写成已定位的唯一根因。**决定：拒绝 C1，P2/P3 不运行；工作树恢复 native `06a30fcf…`。** 退役的是 `candidate-build/`，`base-consumer` 工作槽仍保留 C1 EXE及provenance，不能当作恢复后的基线；真实基线消费路径为 `input-commit/baseline-build/target/release/CJGUIRuleSetO2Final.app`。候选身份/源码及失败原件保留在 `candidate-retired/`、`native-fixed.m` 与原 pairs。r2 激活竞态/0输入、invalid-focus及forced-exit样本保持原状态。
+
+**16ms/32ms。** 本 ON 样本 raw→authority p95 两类均 <16ms（3.48/3.36ms），仅限该 ON 负载与责任边界；raw→真实非零 presentedTime p95 37.89/57.88ms，**32ms 未通过**，C1 更差。raw0 仍为 unknown，不扩大为严格默认 OFF 或所有输入类别。
+
+**Return 真实窗口短链。** `return-case/RESULT.md`：`CJGUIMixedFormStarter`（EXE `dc6e23fc…`、native `06a30fcf…`）中先 `type X` + `key 1` 正控进入 `preset-detail-jobName`；Tab 到 `copies` 后连续 `Return`→`3`，AX 读回 jobName `外部更新XX1` 无换行、copies `423`、caret 3..3、焦点未变；截图 SHA `4338ca42…`。该次由 300s 超时回收，只作输入短链证据，不作自然退出证据。
+
+**默认诊断 OFF 正常消费 `F1-final-source-default-off`。** 基线 EXE、真实 filter20/name20、selection 6→26、version 0→20→Apply 21→Cancel 22；1000 条保存 `32b93a15…`/60,802B，与由原夹具独立构造的全文期望逐字节一致；`close_permitted_last_window` 自然 exit0，端点 `left_after_cleanup=[]`，`diagnostic_environment={}`。证明功能与交付链闭合，不是性能对照。
+
+**交付身份。** 本包无采用源码改动，当前根 native `06a30fcf…`、source-index `8e26761f…`；唯一正式 SDK 仍为 `backport-20261104/sdk-official-20261104d`（content `6208a685…`、锁 `b10e0eec…`、646 载荷/622 输入），只读复用，不重导。收尾用 `verify_final_sdk_lock.py` 对当前三源与冻结包复核：622 锁输入、646 交付文件 24,797,679B、source_missing 0、source_mismatch 0、delivered_content_problems 空、identical_payload_mismatch 空、extra_unlisted_files 空、source_drift 空，`FINAL_SDK_LOCK_PASS`（exit 0）。authority→accepted 与 enqueue→真实 present 是阶段成本，不是已定位根因；原“下一方案应做非阻塞同轮完成交接”改为待区分假设，具体取舍见下方指导复核。空间由执行者报告：新增保留约261MiB（baseline-build 53M、仍含C1的base-consumer 192M及证据等）、退役candidate-build约48M，宿主约251GiB；本次指导未另做空间回收。
+
+<a id="guidance-current-o2-c1-review-20261104"></a>
+### 指导复核：接受明确O2基线与C1弃用，不将审计收口当性能完成
+
+1. **编译与交付身份已独立核回。** `build-base.log:136–140` 五个实际 `cjc` 调用均含 `-O2`，日志无 `-O0`；A/B的Cangjie编译配置、source_files和prepared_sources全等，C1日志为复用该配置后重编应用的O2命令。基线provenance SHA `517a9160…`、保留的native archive `9f87179e…`、签名App `675bdc55…`一致；469项指向根的构建来源与当前文件一致，native-base与当前根均 `06a30fcf…`。独立检查冻结SDK的622输入及646载荷长度/SHA、额外文件均无问题。provenance中的原工作槽绝对路径已被C1复用，须按保留的baseline-build实物核回，不能直接沿该旧路径声称还在读基线。
+2. **两组r3结果真实，但重复采样边界保留。** 每组860处去重原始记录逐字节匹配日志，40个事件的writer/dispatch、accepted/frame、drawable/layer和实际非零present关联核回；两组manager均exit0/日志SHA匹配/端点空。独立nearest-rank重算基线filter/name的raw→present p95为37.890793/57.880418ms，C1为48.368334/74.818501ms；raw→authority基线为3.475209/3.361250ms。只接受这两组ON观察及拒绝C1的决定。原baseline r2已投40动作且自然退出，仅因一笔同raw派生batch的`input_count=2`留下39/40后又重采r3，不能把它写成零输入准备失败或无重采的预声明首对；保留失败文件并不消除样本选择边界。原forced-exit的40笔也不删除。不追加P2/P3或另跑一次来补齐“干净对照”。
+3. **默认OFF功能交付成立。** F1使用实际基线App，manager exit0、诊断空、日志SHA匹配；五字段版本0→20→Apply21→Cancel22已核。指导由原1000条夹具独立修改RECORD1标签追加20个`1`，所得全文与60,802B/SHA `32b93a15…`保存件逐字节相同，其余记录不变。Return补证范围按原件限copies整数框的连续Return→3及AX焦点/选区读回；jobName有字符正控，但未在该字段发送Return，不扩大为TEXT新增分支的独立实测或owner全文链。该会话超时回收，不补自然exit0；不因此再开输入矩阵。
+4. **下一步优先级按现有数据收窄。** 从同一r3原件重算：基线name的authority→candidate_create p50/p95为1.753/21.678ms，candidate_create→acquire_request为5.313/6.539ms，drawable ready→consume为1.771/1.904ms；C1对应为2.408/39.432、5.555/5.929、1.818/2.040ms。filter的authority→candidate_create p95也由1.968增至19.295ms。各段分位数不相加，ready→consume还含owner工作，不能当纯等待。这说明当前创建前尾部值得优先区分，不能把所有差额都归为drawable完成后的轮次交接。
+5. **不重复已有非阻塞机制。** 当前native admit已`dispatch_async(main)`，`CjguiServiceOwnedPreparation`发布完成票据后调用`cjgui_internal_renderer_owner_notify_work()`；共同owner预算已有prepared owner、ready continuation和共享等待，宿主也已有等待尾部推进。下一方案须指出这些路径中尚存的具体多余边界；先区分权威处理后到candidate创建前的同步构建/布局/绘制准备与执行被推迟，不直接新建continuation协议或再把dispatch_sync换成原来的dispatch_async称优化。只有同候选证据证明结果已就绪而消费仍被不必要推迟，才做既有预算/FIFO/多窗公平约束内的有界接续修复。32ms仍未过，旧显示参数负例、批量正确性与本次已核身份不再重复。
+
+本次指导只读原件与源码、校准阶段/ACTIVE，无新运行、构建、测试、源实现、SDK重导或Git写。下一整包应以候选创建前尾部及有据的共同修复推进，不再次启动“完成度审计”或同义性能日志轮次。
+
+<a id="current-candidate-create-tail-20261104"></a>
+### 候选创建前尾部整包：无采用源码变化（2026-11-04 DS4.1 Flash）
+
+**主问题与诊断会话（指导按原件校准，2026-11-05）。** 主指标为 name authority→candidate_create 及 raw→enqueue、raw→actual present；filter 同负载对照。D1（`pairs/D1-cost-split-baseline`，基线 EXE `675bdc55…`、native 源 `06a30fcf…`）开启 INPUT_LINK/OWNER_WRITE_DIAGNOSTICS/FRAME_CADENCE/OWNER_TURN_COST，无 projection gate 跟踪。D2 的 gate 输出达到 96 条上限，随后 D3/D3b/D4 复用诊断 EXE `7336690f…`、native archive `a813bbd0…`、build_key `b7e329b3…`；诊断差异存于 D4 的 `DIAGNOSTIC_SOURCE_DIFF.patch`。**D3 实际完成 filter20/name20，prefix-name PASS、CASE_RESULT 40 inputs/gates PASS、manager exit0、保存件与夹具一致；319 条 gate 记录未触 512 上限。** D3b、D4 才是在 name 前缀 STOP：两次各已投 filter20 和 name 前两次，第二次为 `grouped_batch_no_per_action_accepted_time`；不能写成未投 name 或三次均 STOP。两者 manager exit_code 为 null、无 CASE_RESULT 和 owner-turn-cost 终态导出，不补自然退出。各会话日志 SHA 已与 manager 核回。未新增 filter 性能 A/B，不等于没有再次执行 filter20；逐事件 accepted 未知仍保留，不能把批次终态补给每个成员。
+
+**D1 慢样本（原件与精度边界）。** `D1-cost-split-baseline/normal/light8769.log:1277–1292` 中 raw53 的 writer serial5 `observed_returned_us=957321681984`（681983 是 started 点），到 candidate_create `957321701873666` 的量化点差为 19.889666ms，真实采样点另有不足 1µs 的共享量化不确定度。batch_tail `957321682017041` 已 request27→28、`refresh_requested=true`；owner turn1052 `begin=957321682024583/end=957321700217083`，`credited_idle_ns=18157791`。REFRESH_COST `begin_turn=1053/begin_ns=957321700250375`；列出的 build239、identity13、clone16、layout457、prepare3、commands2、compare4µs 合计 734µs，**只是这些计时器的合计，不是完整候选创建工作的上界**；sync begin 到 candidate_create 实际仍有 1.623291ms，并跨后续 owner turn。原件支持该样本主导区间在 syncProjection 开始之前，不支持排除所有旧尾部的构建/准备成本。credited_idle 是该轮累计等待计量，不能据此命名一次 completion 唤醒、确定 cond wait 次数或把 turn 终点当成精确 wake 点；raw54 keyup 到达与上一帧 present 也不能单独证明未唤醒或排除所有 pending transaction。D4 的另一实际请求在 turn814 明确记录 `reason=owner_input/prepared=false/static=false/pending_present=false`，turn815 在 23.542µs 后进入 sync_begin；该请求/批次事实可以复用，但不填补该样本逐事件 accepted 的 unknown，也不将它的 gate 反推给 D1。
+
+**决定：保留原交付，尚无采用的性能修复。** D1 缺少当次 gate 与 wait 退出原因，不能认定为必要的 static/原生准备等待，也不能直接改预算或忙轮询。D3 成功完成但没有复现所述尾部，与 D3b/D4 的关联 STOP 分开记录；原件保留，不以再跑一次凑完整门。正式 SDK 与 baseline-build 未动，诊断改动未采用；base-consumer 现为 `7336690f…`，旧 C1 只按其原件引用。空间由执行者报告：D3b/D4 案例与日志约 1.1MiB，复用 base-consumer 槽约 192MiB、诊断 target 约 153MiB，宿主约 251GiB；这些分项不当全部累计账，本次指导未做空间清理或重新测量。
+
+**剩余与下一步。** 整体 16/32ms 未完成；基线 name/filter raw→真实 presentedTime p95 57.88/37.89ms 只按 r3 原身份引用，本包没有源码收益对照。已证 D1 这笔慢样本主要发生在 syncProjection 之前，具体 gate/唤醒源仍未证。下一步按下方指导收窄到现有 Pending→Ready-NONE 完成与共享等待谓词的衔接，先做可控反例；不继续以一整轮 40 动作来碰慢样本，不放宽逐事件性能关联门。
+
+<a id="guidance-tail-wakeup-review-20261105"></a>
+### 指导复核与返工：Pending→Ready-NONE 的进度通知
+
+本次只读新增原件及直接相关源码，校准本段与 ACTIVE；没有测试、构建、窗口操作、生产实现、SDK 重导或 Git 写。接受继续保留原交付，不接受“completion 驱动等待已证”“全部构建收益上界小于1ms”或“D3也STOP”的结论。下一整包推进的是共同 owner 在输入获取完成后的及时续进，保留仓颉 owner、FIFO 与窄 native 桥责任，不重建候选协议。
+
+1. **已找到可做反例的具体源码链。** 当前根 native 与 `work/macos-performance-20261104/input-commit/native-base.m` 字节相同，SHA `06a30fcf0872b7326e27a9f8fa6150dd5fec06b3010108c364037d938b0cf771`。`composable_ui_window.cj` 的 refresh 门调用 `internalRendererOwnerPumpHasUnconsumedInput`；native `cjgui_internal_renderer_owner_pump_has_unconsumed_input` 实际把 `Pending && wantsEvent` 当作阻塞。`CjguiOwnerPumpTicketService` 在同一 ticket 的空 FIFO 检查完成后发布 `Ready + EVENT_NONE`，该状态会解除此阻塞，却仅 cond broadcast，不推进全局 work revision。`CjguiOwnerWaitForWork` 被唤醒后只认可 revision 变化或 live Ready 的非 NONE 事件，否则再次等待截止期。**源码存在“刷新门已解除，等待谓词却仍认为无进度”的衔接疑点；这是待运行验证的机制，不冒称已经证明 D1 的根因。**
+2. **先保留确定性生产路径 RED，再做最小修复。** 复用 `owner_wait_any_native_test.m`、`owner_pump_async_ticket_native_test.m` 的真实 ticket/共享 wait 接缝，构造已有 refresh 需求、Pending+wantsEvent 挡住刷新、main 发布合法 Ready-NONE、owner 在等待中的顺序。必须证明该完成已经可被消费或使刷新继续，而旧 wait 仍睡到 deadline；用 barrier/明确状态序列避免靠 sleep 碰时序。既有 `CJGUI_OWNER_WAIT_TRACE` 已能记录 wait ID、observed/entry revision、deadline、cond 返回和退出原因，原 manager 也允许该门，优先复用，不加第二记录器。必要时补最小仅测试钩子；测试宏留在根完整测试入口，不因 SDK 无夹具扩大公共 API。
+3. **修复方向是现有完成通知，不是放开 FIFO。** 优先在匹配 session/generation/nonce 的实际完成发布处，让这次 owner 可见进度进入现有 revision/唤醒机制；精确约束作用范围，不能给每次空闲检查制造新工作。保留工作在空检查与发布间到达时的同票据 reservice、原真实事件消费责任、空结果 proof 的复用/失效，以及等待进入前已经完成的无丢唤醒语义。不得直接删除 Pending 门、反复减小 timeout、取消公平让出、加入同步 main 等待或重建 continuation。若反例否定该机制，应以明确时序/谓词说明为何不能发生并收束它，不在同一假设上继续换轮号。
+4. **受影响边界合并验证。** 同一针对性测试组至少区分完成发生在等待前/中、真实 Ready 事件仍由 owner 按原 FIFO 消费、新工作与空完成竞态、旧 generation/关闭后的回调、安静空结果复用不产生持续轮询，以及受影响的多窗等待服务。复用现有真实事件/关闭/多窗测试，仅新增本差分缺少的反例。`owner_pump_async_ticket_native_test.m` 的 Pending 期有真实排队 sentinel，`composable_prefix_present_handoff_test.m` 的 WaitingRequestFixture 则为空 FIFO，其对 has_unconsumed_input 的期望与当前 Pending 谓词存在待解释差异；要区分原场景/Present/refresh 的责任，不删断言、把测试期待反改成当前实现或据符号相似放开所有路径。本次未运行这些测试，不把源码疑点写成已发生的 FAIL。
+5. **实现、收益与普通消费在一包内完成。** 真实 RED 成立并修复后，在同一可控序列核 GREEN 和无新增空转，再冻结当前源全链 O2/native O2 作原1000条/filter20/name20、原几何/频率/完成条件的有限对照，优先第一对判定是否减少真实尾部；只有有收益且需要稳定性认证才按事前顺序补至最多3对。原成功、慢值、合并、失败均保留，不重投凑40；request/batch层事实可解释机制，逐事件 accepted/actual present 不可关联仍 unknown，不把两种统计混在一起。若只证修复一个独立的进度缺陷而未证整体p95下降，分开报告，32ms不补绿。仅当必要归因字段仍缺才做一次有界实窗等待跟踪；停止性能统计后仍要正常收尾诊断导出，不能把无 exit/无导出变成重复整段的理由。最后一次默认OFF正常消费核完整owner/版本/selection、Apply/Cancel、独立1000条保存及实际自然退出；共享等待受到影响时只补受影响的既有shared或mixed短链。
+6. **交付与资源沿原规则。** 小问题自主处理，按整包实现、自验、交付后集中回报，不逐补丁停工；真正状态归属/并发安全方案仍不明确时才集中升级依赖项。适用的O2编译基线、SDK d、批量/输入/VO/IME/动态等旧绿证按身份复用，不重开矩阵。只有采用实现后才汇合根共同源并一次导出唯一源锁SDK；无采用改动则保原交付和决定性原件。遵循 `AGENTS.md#artifact-space-budget`，先核当前累计留存/全部路径及峰后宿主≥20GiB，复用一个构建槽、最多必要两对照实物；不得将旧预算清零成新10GiB。保必要原件后准确退役自有可再生产物，报告新增/保留/释放及最终宿主余量；不删除用户实例、唯一原件或冻结SDK。ACTIVE E只维护一段≤600字，结尾先交实际修复及同条件结果，再列未过与剩余，不再追加同义完成度审计。
+
+<a id="current-refresh-demand-wake-20261105"></a>
+### 当前整包：Pending→Ready-NONE 共享等待续进（2026-11-05 DS4.1 Flash）
+
+**确定性反例成立，采用现有进度通知的最小修复。** 新增测试用三个真实 session、共享串行 ownerQueue、barrier 与等待进入计数构造生产路径顺序；RED 为同源快照仅去掉发布唤醒。RED 下完成先于等待时睡满 252.069ms、完成发生在等待中时睡满 255.029ms，两者均门已开、票据 Ready+NONE、revision 未变；无 demand 的安静空完成 163.122ms 不唤醒；空结果复用不变。GREEN 对应 1.875µs 与 131.3µs 返回（entry 即见 revision 变化/既有广播），安静空完成仍 165.011ms 不 bump，复用保持。证据与 RED/GREEN 差分在[本包结果](../../work/macos-performance-20261105/owner-ready-none-wake/RESULT.md)。
+
+**修复沿用原有 revision 与唤醒。** 刷新门和交互绘制门在有刷新、恢复、延迟或保留场景需求时记录 acquisition 的 demand。native 对匹配 session/generation/nonce 且已登记需求的普通空完成，在发布处推进一次既有全局 revision 并清标志，观察类别为 `refresh_demand`（phase 415）。真实事件使用 `ready_event`。空检查后有新工作则同票据 reservice 并保留 demand。晚到登记和错误终态另见下方指导段。四个共同源合计84插3删，native `e6f96348…`、header `493a9976…`、窗口 `18f05b79…`、session `638deabe…`。
+
+**受影响回归。** `owner_pump_async_ticket`（FIFO/重复轮询/退役/槽复用/替换/坐标纪元）PASS，`owner_pump_empty_proof` `failures=0 occupied=0`；`owner_wait_any` 4 条 FAIL 与基线 `native-base.m` 同文同现象，`prefix_present` 1 条 Pending 期望 FAIL 亦与基线同文，均未改断言。`owner_wait_any` 本次与基线都通过 `READY_NONE` 安静及第二宿主真实事件唤醒两条语义。
+
+**同 O2 负载与旧基线的比较。** 基线为已接受的 P1-base-current-o2-r3。D5、D5b 是同一修复二进制的两次新会话，EXE `f6d95b08…`、native archive `58115ad4…`、build_key `4c1ab760…`。D5 完整关联40/40。name authority→candidate p50/p95 为1.933/2.977ms（基线1.753/21.678），authority→accepted p95 30.392→12.114ms，raw→enqueue p95 32.573→15.149ms，raw→actual present p95 57.880→38.466ms。filter raw→present p95 37.891→42.714ms。D5b 完整关联39/40，name 第10笔因合批保留 unknown，19笔可算 raw→present p50 37.791ms，全类 p95 保留未知。filter p95 36.764ms。两次新会话共用一份历史基线，结论限于这些观测。32ms 门仍未通过。
+
+**默认 OFF 正常消费。** F2 的 name 阶段在驱动调用 `key 18`（键码）返回非零、输出为空时中止，manager 记 forced_exit_code=-15，保留原件。F2b 是独立重试，完成 filter20/name20。五字段版本0→20→Apply21→Cancel22。启动保存60,762B，Apply 后全文件60,802B/SHA `32b93a15…` 与独立构造的1000条逐字节相等，Cancel 后 draft/applied 均20，close_permitted/destroy/holds0、自然exit0、端点清理成立。D5、D5b 各已投40次、自然exit0、端点空、保存件同夹具。D5b 业务结束门通过，逐事件性能关联门为 STOP（39/40）。
+
+**交付与资源。** 执行者记录 `cjpm build --skip-script` 与 `git diff --check` 通过。唯一源锁 SDK 为 `backport-20261104/sdk-official-20261105a`（646载荷/24,802,669B、622输入、lock `cda0042f…`、内容 `4b3239cf…`、`FINAL_SDK_LOCK_PASS`）。无锁首导件已退役，base-consumer 同槽重建。指导采样证据根44,396KiB、四个外置案例6,348KiB、SDK目录25,908KiB，宿主可用约239.7GiB。
+
+**剩余。** 总体 16/32ms 未完成；name/filter 的 raw→actual present 仍是主尾部（D5 p95 38.5/42.7ms），filter 未形成一致收益；旧基线同现象失败未归因。下一轮应按现有数据区分 raw→enqueue 与 enqueue→actual present 的共同归属，不重复本反例、不重跑 40 碰慢样本、不以单样本补 p95。
+
+<a id="guidance-refresh-demand-adoption-20261105"></a>
+### 指导复核与接续 · 接受空完成唤醒，收束票据边界和提交前成本
+
+**接受的修复。** 已登记刷新需求的票据在 main 发布 Ready-NONE 后，owner 的共享等待能够及时返回。原生反例的 RED 与 GREEN 只差完成发布处的 revision bump。先完成、后等待的原件是252.069ms→1.875µs，等待中完成是255.029ms→131.334µs。测试截止时间为250ms。无需求的空完成保持 revision，立即复用空证明的检查通过。此证据限于实际登记了 demand 的测试时序。D1 那一笔18.158ms的具体唤醒源仍未知。
+
+**普通应用已有可见进展。** 指导按 D5/D5b 的860/847处去重日志字节核回关联，逐笔核对 request、scene、frame、drawable、layer 和非零 presentedTime。复算出的 name/filter p95 见上段。D5 和 D5b 使用相同夹具、驱动、名义100ms、8s完成门与3个诊断开关。旧 r3 到 D5 的 name raw→present p95 下降19.41ms。D5b 保留第10笔 unknown，不能认证第二个完整分位数。默认 OFF 的 F2b 保存件从原始夹具独立重构，仅 RECORD 1 标签追加20个“1”，其余999条及头部一致。
+
+**构建与 SDK。** 保留的签名EXE、native archive 和非 testing verified provenance 的 SHA 分别为 `f6d95b08…`、`58115ad4…`、`fa7aadf3…`。本次 build-fix.log 第136、137行为 framework 和应用的实际 O2 重编，其余包复用原已验配置。469个指向根的构建输入全等，native 指纹匹配 renderer/header。05a 的622输入与根一致，相对 d 仅四项共同源变化。646载荷/24,802,669B的SHA、长度和额外文件核回，另有一份 manifest。继续以05a为交付基点。普通 Rules 链和锁已核，本报告所附新源正常窗口原件仅覆盖 Rules。
+
+**仍需收束的代码边界。** `cjgui_internal_renderer_owner_pump_has_unconsumed_input` 与 `…_note_refresh_demand` 各自加锁，后者只收 session。若 main 在两次调用之间发布，后者见到 Ready-NONE 即 bump。该分支没有“此 nonce 已通知”的记录。若此前同票据已有一次 demand，第二次查到 Pending，随后在第二次记录前发布，就存在发布和晚到记录各 bump 一次的源码交错。现有反例固定让 main 等到首次登记结束，未覆盖这个窗口。发布分支的 `else if (refreshDemandNoted)` 也涵盖某些错误终态。源码支持“匹配发布处的一次 bump”，整张票据任意交错下的精确一次、成功空完成与错误终态的区分仍须定界。尚无普通应用重复唤醒或错误写入的运行证据。
+
+**已有数据已把下一处成本拆开。** D5 的 filter/name 共27/40笔超过32ms，D5b 精确关联的39笔有28笔超过。总计78/79笔的 enqueue→present 比 raw→enqueue 长。D5 有两个性质不同的慢 filter 动作，第4笔分别为8.321+34.393ms，第1笔为22.920+24.531ms（每项都取同一事件）。在应用可控的提交前部分，name 的 candidate_create→acquire_request 中位为5.739ms、6.114ms（D5、D5b），D5 p95为6.468ms。D5 的 name GPU end→实际 present 中位为18.561ms。这些数据确定了区间，具体执行成本要由对应候选的工作与推进顺序解释。
+
+**交 DS4.1 Flash 的整包。** 沿用当前工作区和累计空间账，按以下顺序完成，最后集中报告。
+
+1. 先用现有 owner 接缝检验“已标记的同票据再次观察 Pending，发布后才作第二次登记”的交错，并核实单 owner 下生产调用的可达条件。若能重复发进度，优先让有需求的刷新门在一次票据锁内完成判断和标记，Ready-NONE 已可继续就沿原刷新路径继续。保留纯查询给旧调用者，真实 Ready 事件由 owner 按 FIFO 消费，服务端继续核 session/generation/nonce。把成功空完成、错误交还及关闭后迟到回调按实际责任区分。若生产约束已排除该交错，以调用路径收束。将现有可控反例接回根 native 测试入口，RED 原件留在本包目录。
+2. 用一个现有 shared 或 mixed 的普通双窗短链补共同等待在当前 SDK 下的消费，核一次跨窗服务、旧窗口关闭后的请求边界、保存与自然退出。对既有四个 wait-any 断言先看第一个失败：夹具在 B 的真实 Ready 事件尚未消费时要求 destroy 成功，而 `CjguiPreflightSessionDestroy` 明确要求该事件先结算。后续 stale/worker 步骤在该前置失败后继续运行。按真实顺序分开验证“拒绝过早关闭、事件仍在”和“合法退役后迟到结果不作用于新窗”。worker 在干净前置下检查真实完成再读结果。prefix-present 的 Pending 保守挡刷新与 Present 对实际 FIFO 的准入分别断言，保留同一真实事件的所有权和旧画面。只处理这次改动所触及的边界。05a 公共说明中的 Return 待验文字随下次必要导出校准，沿用已接受的 `copies` 整数框 Return→3 原件及其超时退出边界。
+3. 性能只跟进 candidate_create→acquire_request 内的一条有依据的共同改善。入口是创建处的 `retainPreparedOwner/needsReadyContinuation`、消费处的 `preparedTurn/servicingSharedWaitTail`、`advancePreparedCandidate` 和 `CjguiRequestDrawableLease`。先沿同候选核首个允许执行的准备步骤、实际执行工作和让出原因。仅在已有原件缺少足以改变方案的边界时，复用现有门做一次有界观察。若能复现可消除的重复准备或空轮次，先留成本 RED，再用现有预算、FIFO、owner、旧画面与 GPU 生命周期做最小修复；若主要是必要准备，记录排除依据即可。D5两次真实呈现数据及旧显示方案取舍直接复用。只有新性能差分才做事前声明的同 O2 有限对照，保留旧基线和所有失败、慢样本与 unknown。相关源码变化合流一次验证、一次交付。编译闭包相同即复用 F2b 等绿证。按 [容量规则](../../AGENTS.md#artifact-space-budget) 复用构建槽、保护唯一原件，保持宿主峰后至少20GiB。指导本轮只作离线复核与文档校准。
+
+<a id="refresh-demand-boundary-result-20261105"></a>
+### 执行结果 · 票据精确一次、双窗消费与提交前成本（2026-11-05 DS4.1 Flash）
+
+**同一票据重复通知：RED→单锁判断/登记。** 固定“已登记需求的票据再次被 owner 看到 Pending、main 在第二次登记前发布 Ready-NONE”的顺序后，旧两锁序列实测 `revision_delta=2`、`exact_once=0`（[RED](../../work/macos-performance-20261105/refresh-demand-boundary/red/20261105150934-26832/result.log)）；改为 `cjgui_internal_renderer_owner_pump_claim_refresh_demand` 在同一票据锁内判断并登记需求（0 开放/1 Pending/2 Ready 真实事件/3 Ready 空完成）后，同源序列为 `revision_delta=1`、`exact_once=1`，真实事件仍归 owner FIFO（`second=2 gate_extra=0`）、无需求空完成仍安静并复用空证明、关闭后迟到不影响新 generation、错误终态一次通知（[GREEN](../../work/macos-performance-20261105/refresh-demand-boundary/green/20261105150940-27100/result.log)）。纯查询 `…_has_unconsumed_input` 保留；窗口刷新门与交互绘制门改走原子 claim。反例与驱动已入根 native 入口（`owner_refresh_demand_boundary_native_test.m` / `verify_owner_refresh_demand_boundary.sh`，RED 可用环境变量复算）。共同源改动见 `cjgui_internal_renderer.m`、`cjgui_internal_renderer.h`、`composable_ui_window.cj`、`runtime_renderer_session.cj`。
+
+**直接相关回归。** `owner_wait_any` 按真实顺序 PASS：B 持真实 Ready 时关闭被拒→原事件消费→合法退役→替换 generation 唤醒（`premature_reject=1 consumed=1 retired=1 replacement_ready=1`），worker 干净前置完成；`prefix_present` 分开断言 Pending 挡刷新门与 Present 查实际 FIFO，`failures=0`。证据见[本包结果](../../work/macos-performance-20261105/refresh-demand-boundary/RESULT.md)。
+
+**普通消费。** 根目录 shared 消费者的单窗保存为 `原文外部`（12B），自然退出 0。公共 CAS 把同文档 A/B 两个视图的 owner 从 v0 推到 v1，接受场景分别从 2/1 到 3/2。关闭 A 后旧目标拒绝，B 仍返回完整新正文，多窗自然退出 0。负载公平性和 response 失败另按下方指导复核处理。[运行原件](../../work/macos-performance-20261105/refresh-demand-boundary/two-window-chain/run-20261105153016/)
+
+**提交前成本。** 05a 的 name 样本在 `candidate_create→acquire_request` 的中位为 5.739/6.114ms，D5 p95 为 6.468ms。轻量记录可定位同一候选的两个端点，内部可用预算、排队和实际工作占比仍未知。05b 只有票据通知次数的反例，没有新的时延对照。
+
+**汇合回归与默认 OFF 消费。** 受影响 O2 消费者以当前共同源重建（EXE `59cca9dc…`、native archive `4e4079da…`），独立 1000 条链 PASS：初始字段精确、filter20/name20、selection 26、启动保存60,762B；Apply 后版本0→21、draft/applied=20；保存60,802B/SHA `32b93a15…`、RECORD 1 仅追加20个“1”；Cancel 保持20；自然退出0、端点清理（`pairs/R2h-refresh-demand-final-20261105`）。
+
+**唯一 SDK 与空间。** `sdk-official-20261105b` 有 646 个清单载荷/24,803,093B，另有 manifest。内容 `f5690f66…`，622 个锁输入，锁 `e375f1d8…`。05b 导出时的 Return 文字与根内后续文档校准分列。执行者估计新增约 70MiB、宿主可用约 239GiB。保留的双窗通过与失败材料见[本包结果](../../work/macos-performance-20261105/refresh-demand-boundary/RESULT.md)。
+
+**呈现边界。** 05a 的 D5 有 40/40 个精确关联，D5b 有 39/40 个，余下一笔保留 unknown。32ms 门仍未通过。05b 的 R2h 是默认 OFF 功能链。
+
+<a id="guidance-05b-boundary-review-20261105"></a>
+### 指导复核与接续 · 接受 05b 票据修复，推进首步准备与多窗反馈
+
+**采用范围。** 旧 renderer 快照与冻结 05a 的 SHA 全等。RED 在同一票据得到两次 revision 增量，05b 两个实际刷新门均在同一票据锁内判断和登记，GREEN 为一次。真实 FIFO、静默空证明、退役与错误交还的原件成立。prefix-present 用例把 Pending 刷新门期望从 0 校正为 1，Present 对真实 FIFO 的准入另有断言。R2h 的签名 EXE `59cca9dc…` 和 native archive `4e4079da…` 与运行记录吻合，两个本次重编的 Cangjie 包实际为 O2。默认 OFF 时，从原夹具独立重构的 1000 条全文与保存件 60,802B 逐字节一致，manager exit 0、日志 SHA 匹配、端点清空。05b 的 646 个载荷、622 个根输入及额外文件已核，相对 05a 只变四个共同源码输入。shared 使用仓库根的普通构建，native `176f3430…`。源码中的 Return 说明已按旧 mixed 整数框 42→连续 Return、3→423 及超时退出校准，随下一次必要导出带出。冻结 05b 保持其发行时内容。
+
+**多窗证据的分界。** 指导按 CAS 的 0..<3 字节替换和旧正文，独立重构 A/B 修改后的全部 140B，含关 A 后的 B，均一致。动效按钮回执同时为 `started=1` 和 `active=0`。普通消费通过了跨窗数据传播，A 在 B 获服务时仍有活动负载则未证。单窗尝试次数因脚本可重新聚焦发字并覆写回执而未知，只接受最终 12B 保存。独立 response 原门返回 1，567 行中第 239 轮 owner 已到 v120、B scene 0，第 255 轮 scene 1 读到 `#120#`，第 356 轮才关 A。每次写入覆盖待核 marker，`humanAppendText` 还递增 `localRevision`，`uiSceneVersion()` 读取文档版本和本地修订。现有数据同时存在首帧前突发和单标记覆盖，尚不能定为 owner 写入未触发重绘或 119 笔正文丢失。[原始 response 流](../../work/macos-performance-20261105/refresh-demand-boundary/two-window-chain/run-20261105153016/response/20261105153042-49268/no_effect.response.log)
+
+**下一整包交 DS4.1 Flash，优先性能，最后集中报告。**
+
+1. 以冻结 05b 全链可选 O2/native O2 为基点。D5/D5b 已经分开 raw→enqueue 和 enqueue→真实 present。接下来只判别候选创建的当轮是否还有公平可用的预算，能否先完成一小步本地准备。`syncProjection` 创建时直接登记 `preparedTurn` 并请求续行。`advancePreparedCandidate` 中 phases 97/98 对应声明遍历和节点冻结，有已有游标。先用现有可对应的原件，确缺数据时只用一次有界观察，复用 `CJGUI_PREPARATION_CORRELATION`、现有 turn/phase 和同一 preparationId、request epoch、scene。记录创建→首个有进展步骤→租约请求，区分未轮到本窗、剩余预算不足、本地工作可做和等待真实异步资源。准备区间的 5.7–6.1ms 是旧 name 中位墙钟，不是可直接回收的预算。
+2. 若证实预算和公平性均允许、已有可做的局部工作却无条件跨轮，先在原 owner 接缝留成本 RED，再让已有游标在创建当轮完成一份有上限的本地工作。沿用原预算/refresh 优先级，保留输入与其他窗口的服务机会、候选失效、旧画面和 GPU 资源责任。不得直接从创建处分派整个 advance/submit、同步等 main、预租 drawable 或重开显示参数实验。若未定位可消除成本，给出同候选首步、实际约束和可回收时间上界或尚缺的量，一次判别即收束。只有产生新的性能差分才做事前限定的同 O2 对照，先一对、总数最多三对并预先写明停止规则。保持 1000 条、filter20/name20、名义 100ms、原完成门与最小观察，保留失败/慢值/合并/raw0。按输入类别分别比较接收至提交、接收至真实非零呈现的用时，并报告 p95 和有效笔数。
+3. 用同包一个判别解决多窗缺口。保留当前 120/1 失败及原门。复用首帧、version、accepted 字段和活动工作读回，在已接受首帧的 A/B 上，只向 B 的原路径投一次有唯一身份的写入，核前后完整正文、owner/scene，并在 B 获服务时核 A 是否真有活动或待处理工作。把准备阶段与响应计时分开。原负载仍按原动作、频率和门限记录，在已有原始流先离线区分首帧前写入、合并/覆盖和确有更新遗漏。没有证据不改全局调度。确认漏刷才沿原 owner/窗口失效责任修复，确认逐笔跟踪丢失才修已有驱动并保留合并的真实归属。不得重投同一输入或把首帧后的新条件替代旧结果。
+4. 只做受影响的正常消费，比较与构建串行。新生产改动合流后按最终源锁统一导出一次，再从这个正式 SDK 的包外入口验证受影响的消费路径。没有生产差分就复用 05b 和 R2h，公共文字随下次必要发包。不要复跑已经接受的 ticket、完整旧性能/VO/IME/跨平台矩阵。按[现有容量规则](../../AGENTS.md#artifact-space-budget)承接原账，复用工作槽，把失败的最小原件、输入次数及实际退出码先保全再退役可再生产物。整包只交实际修复或决定性排除、同条件收益和剩余边界。
+
+<a id="prepared-first-step-and-multiwindow-unique-write-result-20261105"></a>
+### 执行结果 · 候选创建当轮与多窗首帧后唯一写入（2026-11-05 DS4.1 Flash）
+
+**创建当轮判别。**05b 名称键入会话的候选 11 在第 370 轮创建，16ms 预算剩余 15,193µs，游标 `0:0`。第 371 轮记下首个本地进展 `141:0`，两条记录相距 0.403ms。第 381 轮原生游标到 `141:141`，第 387 轮报告 `progress_1`，此时 `ready=false`，随后进入 drawable 资源准备。`trace_begin/trace_end` 均为 0，阶段 97 与 98 的独立用时、其他窗口的公平准入均未由这次采样测出。启动观察与键入观察来自不同进程。[创建与推进原件](../../work/macos-performance-20261105/preparation-turn/obs-name2-20261105162413/normal/light8769.log)
+
+**局部首步与同 O2 对照。**私有候选在创建轮调用原游标的本地准备。GREEN 会话七个候选均在创建轮取得本地游标进展，当时 `native=false`。在同 O2、1000 条、名义 100ms、相同的三个观察开关下按预声明先跑 05b 再跑候选。两臂各 20 次筛选、20 次名称输入，真实呈现均为 40/40。名称接收至提交的 p95 下降 0.444ms，接收至呈现增加 0.801ms。筛选两项分别增加 0.740ms 和 0.818ms。依据原 0.2ms 回退限值停止，源码恢复 05b。[GREEN 游标记录](../../work/macos-performance-20261105/preparation-turn/obs-green-20261105163744/normal/light8769.log) · [事前判据](../../work/macos-performance-20261105/preparation-turn/PAIR_DECLARATION.json) · [对照结果](../../work/macos-performance-20261105/preparation-turn/PAIR_SUMMARY.json)
+
+**多窗唯一写入。**旧 response 流 567 行，120 次写入均早于 B 的首帧，第 255 轮已看到 v120 和 `#120#`，驱动每次覆盖待核标记。首帧后的新样本走公共 `REPLACE_RANGE`，旧负载走进程内 `applyNextTypedRequest→humanAppendText`，原 120/1 门仍失败。新样本中 A/B 已接受 36B 种子，A 收到一次真实 AX 激活，公共客户端向资源 7101 写入唯一 36B 标记一次，owner 从 v0 到 v1。两窗均从场景 1 推进至 2，读回逐字节等于预期 72B，进程自然退出 0。0.622ms 是客户端调用往返，27.949ms 是收到回复后到轮询读回两窗的上界，包含串行查询、间隔和期间可能发生的准备。A/B 第一组查询时各有待处理的刷新。动画回执 `started=1 active=0`，证据限于同一观察区间的输入与刷新。旧 `--response-public-client` 片段记录了 `active=0` 和 B 的场景；没有直接的 A 场景序列可归因其首帧行为或高频读取的影响。[旧流归类](../../work/macos-performance-20261105/refresh-demand-boundary/two-window-chain/response-offline-classification.json) · [新写入与完整正文](../../work/macos-performance-20261105/refresh-demand-boundary/two-window-chain/item3-20261105165430/verdict.json)
+
+**消费、SDK 与空间。**继续使用正式 `sdk-official-20261105b`（646 个载荷、24,803,093B，622 个源锁输入，锁 `e375f1d8…`）及 R2h 默认 OFF 正常消费。Q1 两臂和首帧后公共写入均有实际 exit 0。独立首步诊断的 `obs-name2` 和 `obs-green` 未在管理器回执中记录退出码。指导取样时 `preparation-turn`、Q1 两臂与唯一写入目录合计约 54MiB 分配，宿主余约 238GiB。执行者报告另退役约 54MiB 临时输出。
+
+<a id="guidance-preparation-q1-review-20261105"></a>
+### 指导复核 · 保留 05b，下一包核实回退时能否省掉整段准备
+
+从两臂原始记录逐笔关联输入、候选、受理、租约、提交、GPU 完成和实际非零呈现，按每类 20 笔中的第 19 笔复算 p95。筛选从 37.230ms 到 38.048ms，名称从 39.126ms 到 39.928ms。两类中位数均下降，超过 32ms 的笔数合计从 29/40 降至 22/40。按事前 p95 判据退役 Q1，这一对只说明本次比较。两臂的每笔提交至呈现都长于接收至提交，同一 layer 的记录也未显示有另一帧在其提交至呈现间入队。系统固定延迟及窗口服务的占比仍未知。[基线运行](../../work/macos-performance-20261103/frame-opportunity/pairs/Q1-localstep-baseline-20261105/) · [候选运行](../../work/macos-performance-20261103/frame-opportunity/pairs/Q1-localstep-fixed-20261105/)
+
+**下次比较用已冻结的 05b App。** 共同四源匹配正式 SDK，Q1 的 native archive 两侧均为 `4e4079da…`。基线签名 EXE 为 `59cca9dc…`，而可复用的 `final-o2-consumer` 槽目前仍放着 Q1 的签名 EXE `5a21f213…` 及其构建快照。落选源码差分已从快照留存。复用槽前保好唯一的候选二进制与构建凭据，按实际运行 EXE 核身份。[05b App](../../work/macos-performance-20261105/preparation-turn/baseline-app/CJGUIRuleSetO2Final.app) · [Q1 的 3,138B 源码差分](../../work/macos-performance-20261105/preparation-turn/q1-local-only-rejected.patch)
+
+**下一整包给 DS4.1 Flash，最后集中报告。**
+
+1. 只处理正常名称键入中可能被丢弃并重做的一段准备。05b 候选 11 在 372–381 轮将原生游标由 0 推至 141，分九次推进，两个游标记录之间约 2.69ms 墙钟。随后 `native=false`，转入 drawable 资源准备。先沿 `advancePreparedCandidate`、`CjguiPreparationActiveNodeReuseRefusal` 与 `advancePreparedFallbackFrameResources` 核对同一候选的终态，明确已做、被保留、被丢弃和后续重做的具体工作。先用现有原件。只有拒绝原因会改变实现决策且现有记录缺失时，才用既有 `CJGUI_PREPARATION_SOURCE_FIRST_REFUSAL` 等有界观察补一个真实键入例，按 session/generation、候选、request、scene 和原生完成结果关联。旧 8769 已解决首个无用光栅单元，直接复用。游标走满或返回 fallback 本身都不足以证明重复工作。
+2. 只有可避免的整段工作能在保留实际输入语义的条件下辨明，才留同一输入的成本 RED，并在现有路径实施一项共同修复。优先消除重复传送或复用同一候选已验证的数据。若拟提前走既有拒绝分支，必须在所需源与候选字段、selection/marked、身份、预算和硬错误优先级均已确定的位置判断。保留取消、FIFO、旧 accepted、其他窗口服务机会与 GPU/FFI 退役。用同源计数与结果核实际省掉的工作，再看反馈时间。若该工作必要、收益很小或需要改变状态归属，列出决定取舍的一条证据即收束此支。停止复试创建轮首步、轮换显示参数和追加仅为等慢样本的运行。
+3. 有新的生产候选才做事前声明的同 O2 对照，使用上方 05b 基线、1000 条、filter20/name20、原几何、名义 100ms、完成门与轻量观察。事前给出主指标与可接受回退，先一对，达到门槛且需要确认稳定性才按预声明最多三对。每类分别报告 raw→enqueue 与 raw→实际非零 present 的 p95、有效数，保留失败、慢值、合并与 unknown。只在采用后做受影响默认 OFF 的编辑/Apply/Cancel/独立 1000 条保存/自然退出和一次正式 SDK 交付。多窗只随真实调度或所有权影响补对应短链，已接受的 05b 票据及 R2h 保存、VO/IME 沿用原身份。无采用即保持 05b，并说明 32ms 实际缺口。[容量规则](../../AGENTS.md#artifact-space-budget)要求复用工作槽，高写盘前核预算与宿主峰后 20GiB 余量，唯一原件保全后退役自有临时输出。
+
+<a id="begin-refusal-preparation-result-20261105"></a>
+### 执行结果 · 键入候选整段准备与 begin 拒绝（2026-11-05 DS4.1 Flash）
+
+**同一候选终态。**冻结 05b 的诊断进程 PID 82010 记录了三条名称字段事件，长度为 15、16、17。候选 7/9/11 各传完 141 个槽、9 个包，随后首次 advance 均为 0→0、status 32、`active_raster_source_changed`。候选 13 出现在未保存关闭保护之后，共 142 个槽，同样传 9 包才拒绝。四例的包计费字节分别为 195,837、195,839、195,841 和 197,296B。每例首包登记至末包服务完毕跨 0.964–2.994ms，各包事件 2→3 合计 0.691–2.551ms 墙钟。事件 2 发生在 `CjguiCopyOwnedPreparation` 和登记票据之后，事件 3 在主线程处理返回时记录。字节数包含操作对象、结构、指针和字符串。因而上述区间不能拆出纯拷贝 CPU。取消的是本次私有节点准备，后续普通路径仍负责该画面的提交。3/5/14 各消费九包并 0→141、ready=1。kind 10 是 `DRAWABLE` 票据，在成功例也出现；回退路径另调用 `internalRendererPrepareFrameResources`。候选号仅在各自进程与会话内关联。[基线原始日志](../../work/macos-performance-20261105/preparation-turn/obs-refusal-20261105172956/normal/light8769.log) · [执行者派生记录](../../work/macos-performance-20261105/preparation-turn/refusal-terminal-state.json)
+
+**提前走既有拒绝分支与同源计数。**候选 EXE `e414ecc7…`、native archive `cc62a8c5…` 在 begin 读取旧场景活动槽的凭据，与在旧槽几何上冻结的 live 源比较。PID 18245 的 7/9/11 和关窗保护后的 13 均在发包前以原因为 `active_raster_source_changed` 的 status 32 返回，各为零包。3/5/14 仍各发九包并达到 ready。两个诊断进程各有三条 `RULE_SET_TEXT_EVENT`。驱动支持按失败或选区读回重发，两个终态目录都无 `STEPS.json`，这份材料可核候选数和真实字段事件，不能还原每次实际投键或把 13 另算一键。两个诊断管理器均未记录实际退出码。下方 Q1 之后的新同条件对照另有完整的动作回执与实际退出码。[候选原始日志](../../work/macos-performance-20261105/preparation-turn/obs-beginrefusal-20261105-3/normal/light8769.log) · [候选差分](../../work/macos-performance-20261105/preparation-turn/PATCH-begin-refusal-rejected.patch)
+
+**同 O2 一对与判据。**基线为冻结 05b App `59cca9dc…`（native `4e4079da…`），候选为 `e414ecc7…`（native `cc62a8c5…`）。1000 条、980×652、filter20/name20、名义 100ms、原 8s 完成门与三个轻量观察门；两臂均 identity PASS、20/20+20/20 关联，实际非零呈现 40/40，无 errors；各 40 次输入、`gates=PASS`、`cancel_version=21`、启动保存 60,762B/SHA `1a5730fd…`（与原 1000 条夹具一致）、自然 exit 0、端点清空。p95（每类第 19/20 笔）：filter raw→enqueue `12.923→10.792ms`（−2.131），raw→present `37.552→38.043ms`（+0.491）；name raw→enqueue `13.895→9.647ms`（−4.248），raw→present `38.731→32.951ms`（−5.780）。present p50 filter `32.807→32.131ms`、name `32.890→30.251ms`；present max filter `45.058→41.203ms`、name `39.505→35.745ms`。事前规则要求两类在 enqueue 和 present 的 p95 回退均不超过 0.2ms；filter present 的 +0.491ms 超出，name 的大幅改善不能抵消该条件。按一对即停的预声明，候选**未获认证、不采用**，不再补第二对，默认 OFF 链与 SDK 交付不启动；源码 hunk 已恢复为 05b，候选二进制身份、构建日志和差分保留在可复用槽。[事前判据](../../work/macos-performance-20261105/preparation-turn/PAIR_DECLARATION_BEGIN_REFUSAL.json) · [对照结果](../../work/macos-performance-20261105/preparation-turn/PAIR_SUMMARY_BEGIN_REFUSAL.json) · [判定](../../work/macos-performance-20261105/preparation-turn/PAIR_DECISION_BEGIN_REFUSAL.json)
+
+**剩余 32ms 与空间。**本对照中正式 05b 的实际呈现 p95 为筛选 37.552ms、名称 38.731ms，实验候选分别为 38.043ms、32.951ms。执行者报告新增约 10.6MiB、宿主当时可用约 238GiB。正式 SDK 及默认 OFF 的编辑、Apply、Cancel、1000 条保存和退出沿用已验 05b/R2h 的身份。本对照保存的是已知 60,762B 启动夹具。
+
+<a id="guidance-p2-candidate-proof-20261105"></a>
+### 指导复核 · 保留 05b，按新场景决定是否省掉整段传送
+
+**P2 结案。** 05b 的四个共同源与冻结包吻合。对旧 renderer 按唯一上下文重放候选差分，得到与构建凭据相同的 `85c8d99e…`。两份签名 EXE 及候选归档 SHA 核回，当前构建的 481 个源索引条目吻合，实际重编的两个 Cangjie 包均为 O2。正式基线仍取 [05b App](../../work/macos-performance-20261105/preparation-turn/baseline-app/CJGUIRuleSetO2Final.app)，签名 EXE `59cca9dc…`。可复用槽 `final-o2-consumer` 当前是 P2 的 `e414ecc7…`。Q1 在该槽的旧文件已被替换，可追溯其差分、构建日志与签名哈希。下一次占用该槽之前先保全 P2 的实际签名 EXE、native archive、必要的 provenance 和差分，核回身份后再复用。无需为已退役的 Q1 补建。
+
+按原始字节逐笔核了两臂共 80 次输入和真实呈现、场景/帧/drawable 身份、manager 退出 0 与日志 SHA。各类第 19/20 个有序样本决定 p95。筛选基线的这一笔是动作 19，接收至提交 11.425ms、提交至上屏 26.127ms；候选对应动作 9，两段为 10.043ms 与 28.000ms。四个分段数字分别属于这两笔，不能相减来归因代码或合成分位数。名称超过 32ms 的数量从 17/20 降到 8/20，筛选从 13/20 到 12/20。按事前 0.2ms 约束结束 P2，不补第二对。这些读数支持继续研究可消除的准备成本，尚不足以认证稳定收益或解释显示系统的固定耗时。[P2 基线](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-baseline-20261105/) · [P2 候选](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-fixed-20261105/) · [事前判据](../../work/macos-performance-20261105/preparation-turn/PAIR_DECLARATION_BEGIN_REFUSAL.json)
+
+**影响采用的源码边界。** 原先的提前判别在正 deadline 的首个 advance，使用新候选节点的 id/resource/kind、`CjguiStagedNodeIsFocusedInput`、runs、正文以及新几何算出的覆盖与瓦片，并先检查源、预算及帧资源。P2 begin 只知道旧活动槽仍落在新节点数量以内。同槽换节点、焦点移除或多行源待安装时，两个条件可以不同。begin 也早于后到包的硬错误和零 deadline 逐单元调用。这是源码推导出的兼容风险，本轮观察只证普通输入与关闭保护四例的实际分支。[活动输入资格](../../runtime/cjgui/native/cjgui_internal_renderer.m#L23158) · [实际源与新候选判别](../../runtime/cjgui/native/cjgui_internal_renderer.m#L38671) · [原正 deadline 入口](../../runtime/cjgui/native/cjgui_internal_renderer.m#L39326)
+
+**下一整包给 DS4.1 Flash，目标是让符合条件的普通输入省掉整段无用传送，同时让结构变化和拒绝路径保有正确结果。**
+
+1. 从 05b 开始。先在既有 native/owned 夹具构造最能区分两种判定的一例：旧聚焦输入的光栅凭据与 live 已分离，新候选保持相同节点数，但该位置被移除或换成尚可准备的非输入节点。对照 05b 与 P2 的 begin、后续完成结果和旧 accepted 内容。再针对实际差分保留一个应报硬错误或 stale 的边界。只使用能改变设计的用例；已有三条键入与 9→0 的成本原件直接复用。
+2. 复用 `freezePreparedNode` 已冻结的**新候选**资料和既有 owned 请求。尝试只在普通正 deadline 的准备路径中，用同一 session/generation、base/target、真实新目标及其绑定、正文/runs、几何/coverage、选择和 marked 等实际依赖判定这段私有工作能否省掉。应能解释为何仍会走相同的合法回退，且后续无效包、过期源及错误优先级会得到原有处理。信息不足的结构变化、焦点切换等继续走 05b 路径，直接 begin/零 deadline 调用保有原语义。不得按 Rules 字段名、旧槽位或仅有焦点来放行。实现选择可由执行者在现有契约内调整；如果获得充分依据的代价接近要省的工作，或必须另建状态机，应保留反例并收束该方案。不要复投 P2、改旧判据或轮换显示参数。[候选冻结](../../runtime/cjgui/src/composable_ui_window.cj#L11423) · [普通准备入口](../../runtime/cjgui/src/composable_ui_window.cj#L11785)
+3. 只有形成**行为不同且通过边界反例**的新候选，才预声明同 O2 比较。固定 05b 对照、相同 1000 条/几何、原 filter20/name20、名义 100ms、8s 完成门和最低观察，保留原 p95 回退限值。预定样本顺序与停止条件，先一对，前置门未过即停，认证上限三对。分别报告两类 raw→enqueue、raw→真实非零 present、>32ms 数和所有慢值/失败/unknown。任何单次采样不为凑数或改结论而重投。采用时合流一次受影响默认 OFF 的 owner/选择/Apply/Cancel/独立 1000 条保存/自然退出、一次正式 SDK 导出和包外消费。无采用即沿用 05b，不重复 R2h、VO、IME、多窗旧绿证或另开性能日志阶段。按[容量规则](../../AGENTS.md#artifact-space-budget)保护唯一原件，复用现有工作槽，高写盘前核实宿主峰后至少 20GiB。最后集中报告实际改善、采用结果和剩余差距。
+
+<a id="candidate-aware-preparation-retirement-20261105"></a>
+### 执行结果 · 同槽换控件与 begin 提前拒绝退役（2026-11-05 DS4.1 Flash，指导按原件校准）
+
+**同槽换控件。** 原生夹具直接调用 begin 与逐节点准备接口。旧场景 3 的索引 1 是聚焦输入 401/1/TEXT_INPUT，accepted 正文为 `Seed Ω`，live 代理为 `Seed Ω1`。候选 880 保持两个节点，把该槽换成非输入控件 901/91/TEXT。05b 的 begin 返回 0，两个节点准备到 ready，promote 与提交均返回 0。P2 的 begin 返回 32，放弃了在 05b 可完成的准备路径。P2 臂由夹具手工填充 staged 场景后调用共同提交函数。两臂提交后读回的 id、resource、kind 与正文 `replacement, no focused input` 相同。旧 accepted/overlay 断言比较的是夹具持有的数组与场景版本。两臂的完整节点声明、普通应用回退以及这次换控件的真实上屏均在此证据范围之外。[夹具](../../work/macos-performance-20261105/preparation-turn/candidate-aware-retirement/replacement_counterexample_test.m) · [05b 原始输出](../../work/macos-performance-20261105/preparation-turn/candidate-aware-retirement/run-05b.err) · [P2 原始输出](../../work/macos-performance-20261105/preparation-turn/candidate-aware-retirement/run-p2.err)
+
+**硬错误与运输成本分开判断。** 独立候选 881 保留原输入控件，夹具只向索引 0 的几何注入错误节点 ID。05b 的 begin 返回 0，第一次逐节点调用即返回 99（`INTERNAL_ERROR`）。P2 的 begin 返回 32，夹具随后跳过该调用，输出中的 777 是预置哨兵。由旧槽或新候选的活动身份提前结束，无法单凭该身份保证后续几何等数据的错误仍会按原顺序报告。据此接受退役。另一次 05b 普通键入观察中，141/142 节点的准备各发九个 owned 操作，计费 195,837–197,296B，首包登记至末包服务完成跨 0.964–2.994ms。这是现行实现的运输量与墙钟区间。逐节点夹具没有比较其他等价的运输方式，不能据此推出九次交接、相同复制量或相同耗时是校验下限。[几何校验](../../runtime/cjgui/native/cjgui_internal_renderer.m#L38755) · [逐节点入口](../../runtime/cjgui/native/cjgui_internal_renderer.m#L38873) · [普通键入原件](../../work/macos-performance-20261105/preparation-turn/obs-refusal-20261105172956/normal/light8769.log)
+
+**性能与交付。** 本包没有新的生产候选、性能读数或 SDK。正式 05b 身份为签名 EXE `59cca9dc…`、native `4e4079da…`、SDK 锁 `e375f1d8…`，默认 OFF 的 R2h 编辑、Apply/Cancel、1000 条保存和自然退出继续按原身份引用。上一对同 O2 轻量观察开启时，05b 输入至实际非零呈现 p95 为名称 38.731ms、筛选 37.552ms，分别超过 32ms 门槛 6.731ms 和 5.552ms。落选的 P2 对应为 32.951ms 与 38.043ms，筛选回退 0.491ms，超过预声明的 0.2ms。P2 签名 EXE `e414ecc7…`、native `cc62a8c5…` 与构建凭据已单独保全，源码差分位于其父目录。[P2 判定](../../work/macos-performance-20261105/preparation-turn/PAIR_DECISION_BEGIN_REFUSAL.json) · [保全清单](../../work/macos-performance-20261105/preparation-turn/p2-preserved/SHA256SUMS) · [源码差分](../../work/macos-performance-20261105/preparation-turn/PATCH-begin-refusal-rejected.patch)
+
+**夹具与空间。** 两臂编译日志均记录夹具第 188 行将 Objective-C 字符串常量传给 `const char *` 的类型告警。05b 在读取该字符串之前已因几何 ID 返回 99。若后续要测有效几何或走 owned 字符串复制，应在工作副本改用 C 字符串，冻结原件照存。本轮新增留存约 46.8MiB，含 P2 保全约 45MiB。临时夹具二进制已退役，执行者收尾时宿主余约 235GiB。指导核回反例与 P2 原件清单，当前根四份共同源与冻结 05b 逐字节一致，renderer SHA 为 `1d260dfc…`。[反例原件清单](../../work/macos-performance-20261105/preparation-turn/candidate-aware-retirement/SHA256SUMS)
+
+<a id="guidance-05b-fallback-declarations-20261105"></a>
+### 指导取舍 · 优先判断普通回退是否重复构造同一候选的声明
+
+1. 保留 05b 的九包及其错误顺序，关闭本次 begin 提前拒绝方案。下一步只看首次 advance 拒绝之后的普通回退。源码中 phase 97 已从同一候选的 root 按序冻结每个节点的文本样式声明（含空值），取消原生准备时仍可找到该候选的声明数组。普通提交在 configure 成功后，可能再次从 root 计数、遍历、编码，再交给同一批量安装入口。先用已有同候选记录确定实际分支和这段可避免工作的成本，只在无法据此取舍时补一次有界计数。区分重复构造与本来就要执行的原生安装、活动文本同步、提交和呈现。[首次冻结](../../runtime/cjgui/src/composable_ui_window.cj#L11801) · [取消原生准备](../../runtime/cjgui/src/composable_ui_window.cj#L11644) · [回退提交](../../runtime/cjgui/src/composable_ui_window.cj#L12547) · [两种安装入口](../../runtime/cjgui/src/composable_ui_window.cj#L27943)
+2. 成本确有分量，且同一候选、同一投影的完整声明在两处逐项等价时，才在原入口复用已经冻结的数据。针对实际差分留一个成本反例，同时核顺序、空声明清除旧样式、未开始或部分冻结时的正常路径，以及原装载错误的返回与回滚。保留原生包检查、活动正文和选择、marked、owner 版本、公平让出与资源退役。若实际走不到、成本很小或复用需改权威归属，即据此结束这个方向，避免投入另一轮小优化或性能日志。
+3. 只有出现通过上述边界且有实质成本收益的新候选，才预声明一对同 O2 比较，使用 05b 冻结 App、1000 条、980×652、filter20/name20、名义 100ms、8s 完成门与同一轻量观察。沿用原判据，两臂各 40 笔身份与实际非零呈现齐全，至少一类输入至上屏 p95 改善 ≥0.1ms，两类输入至 enqueue 与至实际呈现 p95 的任何回退均 ≤0.2ms。一对即停，保留失败、慢样本及未知。采用后才合流一遍受影响的默认 OFF 正常消费、独立全文保存、自然退出与正式 SDK 交付。现有票据、同槽换控件、P2、R2h 和未受影响平台的证据按原身份复用。前台与构建槽串行，遵守[容量规则](../../AGENTS.md#artifact-space-budget)，阶段结束集中报告。
+
+<a id="fallback-run-declarations-20261105"></a>
+### 执行结果 · 回退提交的 run 声明第二遍构造（2026-11-05 DS4.1 Flash，指导按原件校准）
+
+**回退分支已定位。** 05b 候选 7/9/11 各传 141 个场景槽，候选 13 传 142 个。四次首次 advance 都因 `active_raster_source_changed` 返回 32。结合源码，phase 97 已从候选 root 冻结文本样式声明，取消原生准备后，提交分支会再次从 root 计数、遍历、编码。两条声明供应路径最终进入同一个批量安装函数，均须保留空声明清除旧样式的行为。每个成功发出的声明在该入口执行一次 `mallocCString`。九包的计数对象是原生准备的场景槽，这份记录没有直接列出 root 声明总数、非空条数与编码字节。[05b 键入原件](../../work/macos-performance-20261105/preparation-turn/obs-refusal-20261105172956/normal/light8769.log) · [冻结入口](../../runtime/cjgui/src/composable_ui_window.cj#L11801) · [回退分支](../../runtime/cjgui/src/composable_ui_window.cj#L12547) · [共同批量安装](../../runtime/cjgui/src/runtime_renderer_session.cj#L5763)
+
+**微基准的计时范围。** 独立程序构造 1 个根和 140 个直接子节点，热循环反复遍历节点的 `kids` 列表，编码固定返回空串，输出累计计数。报告记录的三次进程总墙钟 0.489/0.450/0.460s 除以各 2,000,000 次迭代，分别为 244.5/225/230ns。220–235ns 对应所列 user CPU。正式 `children()` 每次构造 `ArrayList(childNodes)` 快照，访问时还会读取样式并发出节点 ID 与编码值。指导在冻结 05b O2 EXE `59cca9dc…` 的机器码中核回，计数与访问分别在 `0x10068ce10`、`0x10068d534` 调用 `children()`，访问路径还调用实际编码器和回调。微基准省略了这些操作。墙钟均值乘 100 得 22.50–24.45µs，距 100µs 约 4.1–4.4 倍，这一乘数没有生产测量依据。05b 真实回退重建声明相对遍历冻结数组的增量耗时仍未知。0.1ms 是同条件上屏 p95 的采用门，局部循环不能直接给出该指标。[微基准源码](../../work/macos-performance-20261105/preparation-turn/fallback-run-declarations/walk_bench.cj) · [原计时记录](../../work/macos-performance-20261105/preparation-turn/fallback-run-declarations/README.md) · [生产 children](../../runtime/cjgui/src/composable_ui.cj#L4964) · [实际计数、访问与冻结数组入口](../../runtime/cjgui/src/composable_ui_window.cj#L27931)
+
+**采用与剩余。** 本包采用的生产改动为零，实际节省为零。正式版本仍为 05b，签名 EXE `59cca9dc…`、native `4e4079da…`、SDK 锁 `e375f1d8…`。上一对同 O2 轻量观察的 05b 臂，名称、筛选的输入至真实呈现 p95 分别为 38.731ms 与 37.552ms，超过 32ms 门槛 6.731ms 与 5.552ms。本包只编译过独立微基准，沿用原正式 App 与 SDK。指导复核前证据目录实际分配 12KiB，执行者收尾时报告宿主可用约 235GiB。[旧 05b 基线](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-baseline-20261105/light-analysis.json)
+
+<a id="guidance-run-declarations-cost-20261105"></a>
+### 指导取舍 · 结束独立遍历实验，优先定位慢帧中的毫秒开销
+
+旧 A3b 筛选诊断提供了实际提交的参照。指导从原始记录按 PID 81445、session 1、owner 线程、turn 和匹配的 phase 108 span 对齐开始与结束。每个范围内只有一次同线程同步调用，主线程进入和退出按该调用的 dispatch ID 配对。下表单位为毫秒，最后一列是外层总墙钟扣去同一次同步调用后的剩余，包含调用外的其他工作。
+
+| A3b 候选 / turn / dispatch | phase 108 全段 | 同步调用 | 其中主线程进入至退出 | 同步调用外 |
+| --- | ---: | ---: | ---: | ---: |
+| 39 / 439 / 13140 | 0.743250 | 0.722084 | 0.714459 | 0.021166 |
+| 41 / 449 / 13703 | 0.923583 | 0.906375 | 0.898625 | 0.017208 |
+| 43 / 471 / 14269 | 0.762250 | 0.745416 | 0.736250 | 0.016834 |
+| 45 / 480 / 14831 | 1.025625 | 1.007458 | 0.999500 | 0.018167 |
+
+这些是旧 EXE `cc976614…` 开启 owner trace 的四个筛选样本，只用于排定调查顺序。05b 名称输入、具体回退分支和采用收益均需各自的证据。接受继续使用 05b，结束为遍历单独造基准或跑 40 键的工作。以后若慢帧确实指向样式安装，只在一次有区分力的 05b 正常回退中，按同候选及 dispatch 拆开调用外、等待和主线程安装。需比较声明供应时使用同一真实 root 和完整冻结数组，两边发出相同的有序 ID 与编码字节（含空声明），共享安装只计一次。已有 R2h、P2、SDK 和其他已验能力按原身份复用。[A3b 身份](../../work/macos-performance-20261103/frame-opportunity/pairs/A3b-phase-trace-close/launch-identity.json) · [A3b 原始 trace](../../work/macos-performance-20261103/frame-opportunity/pairs/A3b-phase-trace-close/normal/light8769.log)
+
+下一轮若推进性能，从已关联的正式 05b 慢帧入手。决定各类上屏 p95 的名称第 5 笔，其创建候选至申请 drawable 为 5.130ms。筛选第 19 笔，其 drawable 就绪至消费为 3.024ms。这是两笔不同事件各自的墙钟，覆盖 owner 和可能的回退准备。优先选择其中有明确证据可避免的一段，保留 P2 退役和已验证的原生包错误顺序。只有形成不同的新候选才按既有同 O2 门比较和交付。[逐笔原件索引](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-baseline-20261105/light-analysis.json)
+
+<a id="slow-frame-candidate-drawable-20261105"></a>
+### 执行结果 · 普通输入慢帧的候选准备与 drawable 消费（2026-11-05，指导按输入原件复核）
+
+**采用决定。** 保留正式 05b，签名 EXE `59cca9dc…`、native `4e4079da…`、SDK 锁 `e375f1d8…`。本包新增两次完成的诊断观察和两次未完成的尝试，生产改动与交付提速均为零。以下三次进程的场景编号和时间轴各自独立。
+
+| 05b 轻量 ON 基线，PID 22762 | 候选 → 场景 / 帧 / 租约 | 候选创建→申请 | 就绪→消费 | 输入→enqueue | enqueue→真实呈现 | 输入→真实呈现 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 名称第 5 键 raw 71 | 83 → 88 / 89 / 91 | 5.130ms | 1.598ms | 12.301ms | 26.430ms | 38.731ms |
+| 筛选第 19 键 raw 57 | 71 → 58 / 58 / 60 | 3.366ms | 3.024ms | 11.425ms | 26.127ms | 37.552ms |
+
+这两笔各为该类 20 笔真实呈现的 nearest-rank p95，分别超出 32ms 门 6.731ms、5.552ms。名称 5.130ms 发生在申请租约之前。该次轻量记录未给出候选 83 的 promote / 回退事实，筛选的 3.024ms 也没有内部文本资源分段。回退重走 root 相对读取冻结声明的生产增量仍未知，22–24µs 源于简化循环的任意倍数。租约身份按原记录接回：名称租约 91 在 scene 87 申请、scene 88 消费，layer `35215037984`，present 记录 `submit_drawable_id=90`、`scene=88/frame=89`；筛选租约 60 在 scene 57 申请、scene 58 消费，同 layer，`submit_drawable_id=59`、`scene=58/frame=58`。两笔均按 request/layer/提交 drawable/最终 scene+frame 接回，不按时间邻近。P2 日志除目录路径名外没有 fallback/refusal 行，但轻量门未记录准备分支，因此候选 83 只能判为未知，不能写成已回退或已走冻结安装。[同一笔输入与呈现原件](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-baseline-20261105/light-analysis.json) · [租约与真实呈现](../../work/macos-performance-20261103/frame-opportunity/pairs/P2-beginrefusal-baseline-20261105/cadence.log) · [此前微基准的适用边界](#fallback-run-declarations-20261105)
+
+**名称诊断纠正。** PID 31309 的第 5 次名称键入来自驱动 PID 31401，raw 30、keycode 18、kind 28，`field-label` 的 writer 以 cookie 15 / ordinal 31 将 draft 4→5、选择 10→11。batch 推进 request epoch 16，对应候选 **31**、场景 64、帧 65。候选 31 可见两条 phase 3 退役观察（当时记录的票据为空）和 kind 10 票据 202。环形记录未覆盖它的完整原生准备序列，这些票据也没有给出拒绝原因。[第 5 笔驱动回执](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/segments/name-01/actions.jsonl#L5) · [writer、候选与受理](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/normal/light8769.log#L734) · [退役观察的源码](../../runtime/cjgui/native/cjgui_internal_renderer.m#L39299)
+
+同一进程的候选 **34** 对应收尾的 **Cancel 按钮**。raw 35 是鼠标释放，ordinal 38 发出 kind 27 ACTIVATE，目标 300000005，request epoch 18。其 154 个原生单元合计约 2.481ms，phase 108 安装约 0.520ms。该候选有 phase 44 promote 的正向证据（dispatch 1979），随后 scene 84 / frame 85 受理，租约 87 被消费。phase 108 同时包住冻结数组与 root 两种安装路径。上述分段只归这笔 Cancel，名称输入的第 5 笔及其九包终态仍取各自原件。[收尾按钮回执](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/run_trace.json#L199) · [按钮事件与候选](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/normal/light8769.log#L1273) · [promote 原行](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/normal/light8769.log#L27583) · [两个安装分支](../../runtime/cjgui/src/composable_ui_window.cj#L12546)
+
+**筛选诊断。** PID 39826 中，筛选第 1 键 raw 3（驱动 PID 39989），候选 7、epoch 4、scene 29 / frame 29 / 租约 29。ready→consume 为 4.158834ms。同主线程 TID 44106510 的 commit 为 4.049333ms，内含文本资源 phase 110 墙钟 **3.985125ms**，该线程 CPU 时钟增加 **3.612ms**。原件没有将资源准入、凭据构造、布局、光栅及上传逐项计时。cadence 的 consume→present_enqueued 为 **0.401708ms**（1045102648336625→1045102648738333ns）。wait 94 在 ready 前 116.083µs 进入条件等待，在 ready 后 6.834µs 以 revision_changed 退出。同一租约的 present_enqueued→真实 presentedTime 为 **22.288501ms**（1045102648738333→1045102671026834ns）。这些时间分别对应租约消费、提交入队和实际呈现，原报告中约 0.9ms 的表述缺少准确终点，删除该项。nextDrawable 在 ready 前完成，不在这段缺口内。此进程 203 个 wait ID 的终态都是 revision_changed，其中 177 个 ID 记录了 cond_begin。结论限于这次观察，支持把优化优先级转向实际主线程工作。[按键回执](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c/segments/filter-01/actions.jsonl#L1) · [等待终态](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c/normal/light8769.log#L13791) · [同线程嵌套区间](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c/normal/light8769.log#L13868) · [同租约消费与入队](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c/cadence.log#L317)
+
+**执行边界。** 四个诊断目录合计分配 43,000KiB，约 42.0MiB。首次 14 动作后关闭失败，manager 记录 forced −15。另一次计划缺 `main_window_title`，未发测量动作、未取得自然退出码。b 的 14 动作和 c 的 2 动作各自完成并自然退出 0。实际超出上一包约定的一次额外有界观察。失败件保留，结束此项采样，不为补失去的环形记录再启实例。已有 R2h 正常消费、P2 退役反例、05b 全链 O2 和 SDK 按原身份复用。[首次失败](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105/run_trace.json) · [计划失败](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c-failed-plan/run_trace.json) · [b 完成](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105b/run_trace.json) · [c 完成](../../work/macos-performance-20261103/frame-opportunity/pairs/TRACE-phase-05b-20261105c/run_trace.json)
+
+<a id="guidance-static-text-admission-20261105"></a>
+### 下一整包 · 减少同一场景提交中重复的静态文本准备
+
+1. **从同一调用内的实际成本开始。** 基线为上述 05b 全链 O2。筛选诊断已证明一次文本资源准入耗费数毫秒。源码中 `CjguiPrepareComposableTextResources` 对可见静态文本求覆盖区、纹理 key、tile 计划及字节数，部分路径还求 retained raster source。需要更新纹理时，它调用 `CjguiComposableTextTexture`，内层再求覆盖区、key、tile 计划与当前来源凭据。先区分直接复用、实际需要栅格化、活动输入、COW 克隆和错误返回。使用已有原生夹具走真实生产函数和真实筛选行的资源形状，只计同一节点在同一提交里输入相同的重复计算及其实际耗时。按需用既有测试门内的计数或范围，不另开前台 trace 会话。这个源码线索尚无节省量。若重复部分太小或参数不可等价，给出同路径成本与理由，结束此支。[外层准入](../../runtime/cjgui/native/cjgui_internal_renderer.m#L16534) · [需要纹理的调用点](../../runtime/cjgui/native/cjgui_internal_renderer.m#L16712) · [内层纹理准备](../../runtime/cjgui/native/cjgui_internal_renderer.m#L15768)
+2. **有成本反例就做一个共同修复。** 只在同一主线程、同一私有候选、同一节点输入有效期间，把已算好的不可变结果交给实际消费者。外层默认正文与内层显式正文、覆盖区、样式、scale、tile 几何、预算和 COW 后身份须逐项相符。凭据依赖的布局、属性、外观或活动输入可能变化时保留重新计算。保留原包校验与硬错先后、候选失败回滚、旧 accepted 画面、选择/marked、字节准入以及 GPU 完成释放。其他直接调用者继续走原入口。用同一真实函数给出 RED→GREEN 的调用次数、实际成本，以及受影响的像素/几何/错误边界。限当前提交作用域，不引入跨帧缓存或新公共协议，不变更线程及 drawable 所有权。
+3. **新候选才做一次采用对照。** 先冻结双方源码/EXE/native、实际全链 O2、同窗几何、同样 1000 条和轻量观察门。按原 100ms 计划两臂各筛选 20、名称 20，沿每笔驱动→raw→权威操作→request epoch→accepted→同 drawable/layer/frame 非零呈现核对 40/40。预声明沿用原门，nearest-rank 分类别，至少一类输入→真实呈现 p95 改善 ≥0.1ms，且两类输入→enqueue、输入→真实呈现 p95 均不得回退 >0.2ms。采用门与最终 32ms 门分别报告。保留失败、慢值、合并和 raw0，缺失保 unknown，首对即判，不补投。通过才合流一次默认 OFF 的 1000 条 owner/选择/Apply/Cancel/独立全文保存/自然退出，以及受影响的构建回归和唯一源锁 SDK。未通过就保反例、恢复 05b，停止这个优化方向。[原采用判据](../../work/macos-performance-20261105/preparation-turn/PAIR_DECLARATION_BEGIN_REFUSAL.json)
+4. **最后集中报告。** 写明实际消掉的工作量、两类输入各自距 32ms 多少、采用或退役、剩余最大开销与空间。一次使用现有构建槽，峰后宿主至少 20GiB，保护冻结 SDK、P2 和所有唯一原件，只按归属清理临时产物。沿用本阶段容量账，前台与 target 串行，无 Git 写、外部顾问或新增监控。不重开 wait、九包提前拒绝、run 遍历、显示参数及 VO/IME/跨平台验证。结果更新本阶段与 ACTIVE E 一段；遇到必须改变 AppKit/owner/GPU 归属的重大取舍，集中交指导。[容量与收尾](../../AGENTS.md#artifact-space-budget) · [验证投入](../../AGENTS.md#verification-value)
+
+<a id="static-text-admission-result-20261106"></a>
+### 结果（2026-11-06）· 静态文本准入重复计算
+
+**重复量（指导按最终原件校准）。** O2 夹具使用真实 session、Metal view 和 `CjguiPrepareComposableTextResources`→`CjguiComposableTextTexture`，节点是 420×28/14pt 的合成静态行。每轮克隆已受理节点，主动释放纹理并保留布局后再次准入；这是强制重整资源的生产函数夹具，不是 Rules 中每键实际失效节点的采样。每节点外层先算覆盖区、key、tile 计划、retained source，需要纹理时内层再算同样四项。最终 RED 的 20 节点×3 次三份原件分别为 **17.667、22.817、18.467µs/节点**，1 节点×20 次三份为 **22.300、19.150、25.000µs/节点**。20 节点第一份合计 1,060µs/60，完整准入 14,467µs/60=241.117µs/节点；241µs 是按节点归一的值，不是整个场景。四项约占该份完整准入的 7.3%，不能改称实测整帧提速。20 节点三份完整准入分别为 RED 241.117/271.250/243.650、GREEN 244.683/233.400/227.550µs/节点，首份完整准入未加速。该形状每次 20 节点可去掉的四项计算约 0.353–0.456ms，尚未证明应用一次输入会重整这 20 个节点。保留布局的夹具也不能证明应用关键路径由 TextKit 排版主导。[夹具源码](../../work/macos-performance-20261106/static-text-admission/static_text_probe.m) · [RED 最终原件](../../work/macos-performance-20261106/static-text-admission/RED-final/) · [GREEN 最终原件](../../work/macos-performance-20261106/static-text-admission/GREEN-final/)
+
+**修复与边界。** 候选在同一提交、同一节点指针且声明 run 在 rect 前后对“是否改变度量”的判定相同时，把外层已算好的纹理矩形/key/tile 计划/字节数/retained source 交给真实纹理消费者；其余直接调用者仍走原入口。20 节点×3 次的同路径 RED→GREEN 是内层四项**每项**调用 60→0，四项合计 240→0。像素摘要相同（1 节点 `16809398075478080135`；20 节点 `3671272777371496420`）；将 run 改为改变度量的 18pt 时按预期回退，内层调用 2 次且像素摘要仍为 `13781686550364638915`，与 05b 一致。这些是所列夹具的结果，不扩大成全部输入/样式/COW/错误路径验收；候选未采用，无须为退役候选补跑整套。[GREEN 20 节点](../../work/macos-performance-20261106/static-text-admission/GREEN-final/twenty-node-3-1.log) · [修复差分 134 行](../../work/macos-performance-20261106/static-text-admission/PATCH-static-text-admission.patch)
+
+**同 O2 一次对照。** 声明与结果冻结在[声明](../../work/macos-performance-20261106/static-text-admission/PAIR_DECLARATION_STATIC_TEXT_ADMISSION.json)和[汇总](../../work/macos-performance-20261106/static-text-admission/PAIR_SUMMARY_STATIC_TEXT_ADMISSION.json)。两臂 40/40 identity/actual-present 全过、自然退出 0、保存文件与固定件一致。baseline（05b `59cca9dc…`）筛选 raw→enqueue p95 11.912ms、raw→actual present 36.517ms，名称 14.645/40.255ms；fixed（`05dab7d4…`、native `7e8f7278…`）筛选 14.136/37.146ms，名称 14.563/38.634ms。差值：名称 actual present **−1.620ms**、名称 enqueue −0.082ms；筛选 enqueue **+2.224ms**、筛选 actual present **+0.629ms**。至少一类改善 ≥0.1ms 成立，但筛选两类回退均超过 0.2ms，按预声明采用门判**未通过**；首对定局，不补投。最终 32ms 门同样未过（fixed 筛选 37.146ms、名称 38.634ms，分别超出 5.146ms 和 6.634ms；本对 baseline 臂自身为筛选 36.517ms、名称 40.255ms，运行间波动已保留）。
+
+**决定与剩余。** 指导限域接受退役决定，本轮没有生产交付提速。renderer 已恢复 05b（`1d260dfc…`），不建 SDK、不做默认 OFF 正常消费；反例、差分、候选 EXE/native 和两臂原件保留。复核两臂各 860 处逐笔原字节，按同 session/generation/scene/frame/request/layer/drawable 的原始时间独立重算上述四项 p95，均吻合；40/40 非零真实呈现、实际 exit 0、日志 SHA 与端点清理成立，fixture/UI seed/driver/manager 当前实物均与声明 SHA 相符。候选实物 EXE `05dab7d4…`/native `7e8f7278…` 核回，构建日志五条 Cangjie 实际编译命令均为 O2。该对按原门未获采用认证；单对 20 笔的分位差不能单独证明代码造成稳定回退，也不能挑名称改善宣称稳定收益，不据此改门或加跑。
+
+静态资源阶段仍是已有独立筛选观察里的毫秒级成本，但本包未把其中必要排版、光栅、上传、失效与可省重复量在真实输入中拆清，不能据夹具宣布它们是整个输入到呈现链的剩余最大瓶颈。本方向结束；指导下一次接续先选择有证据支持的整段成本和实施方案，不直接续派四个 helper 或 TextKit 的细碎优化，也不启动新的诊断会话。验证上，`prepare_reuse` 与 scroll raster reuse 的所列夹具 PASS；更大的 scene preparation 两臂同为 22 失败/18 通过、失败名单相同，原因未在本包归因，不称环境已确诊，也不当新绿门。本轮执行者报告新增约 86MiB、退役 192MiB 构建树、宿主余约 230GiB及无残留进程；指导不为退役结论重启或重建。[prep reuse](../../work/macos-performance-20261106/static-text-admission/native-tests/preparation_reuse_fixed.log) · [scroll reuse](../../work/macos-performance-20261106/static-text-admission/native-tests/scroll_reuse_fixed.log)
+
+<a id="guidance-static-text-working-set-20261106"></a>
+### 指导下一整包（2026-11-06）· 静态文本资源离场后的有界复用
+
+**阶段取舍与证据。** 用户要求先选择有数毫秒空间的整段优化，再由 DS 整包实现。指导本轮只读核过：当前 CjguiCandidateWithStaticTextSource 只搜索 ctx.composableNodes；节点离开当前 accepted 集合后，没有独立于场景的近期静态资源工作集。已有 CjguiStaticTextRasterPixelsEqual、CjguiReusableReadonlyGeometry 与 CjguiAdoptRetainedTextRasterSource 能区分局部像素、排版与当前完整来源凭据。实际 STATIC-TEXT baseline 的原筛选 20 动作是“1/BackSpace”交替，存在同一批行离场、返回的具体复用机会。独立筛选租约 29 已测资源阶段 3.985ms 墙钟/3.612ms线程CPU，但其中能由本方案消除的比例尚未测定。本包选择保住近期已受理静态行的排版和纹理，消除返回时整段重新排版/光栅/上传；目标至少 2ms 的输入到入队收益，不把 3.985ms 全计为预期收益。候选回退重传虽在源码存在，旧九包耗时是必须保留的第一次校验运输，不能据此宣称第二次可省同样时长，本包不同时改它。
+
+**执行方式。** 工作目录 /Users/jiangxuanyang/Desktop/cangjie。执行者为用户交接的 DS；本段是完整实施任务，提示词由用户发出，不由指导启动新聊天或监控。先读 AGENTS、ACTIVE E、本段和直接入口，按需读仓颉编码技能。普通实现、构建、路径和工具问题自行解决，相关修改合流验证，最后集中报告；重大正确性/资源/归属风险才集中回指导。保持仓颉核心、macOS 自绘与人/AI 共用真实 owner。无 Git 写、外部顾问、系统设置修改或其他平台任务。
+
+1. **继承版本，停止旧分支。** 正式基线 05b，O2 EXE 59cca9dc…、native 4e4079da…、SDK 锁 e375f1d8…；根 renderer 1d260dfc…。候选源、编译命令与可复用槽先核身份和并行写集，不覆盖别线。Ready-NONE 唤醒、bounded batch、输入/保存/共享 owner/VO/IME 已接受部分按原身份复用。P2 begin 提前拒绝、创建轮首步、run 遍历、静态四项准入候选、显示参数和 Metal display link 均不复活，不重做其对照。最近一次 05b 对照筛选/名称呈现 p95 为36.517/40.255ms，只是该次 ON 结果，32ms 仍未过。
+
+2. **先保一个真正的新成本 RED。** 沿既有 1000 条 Rules 筛选与真实候选，复现已受理 A→已受理 B→返回 A。核返回行的正文/样式/scale/局部 tile 与旧 A 相同，确因不在当前 accepted 集合而失去可用静态资源。记录需要重建的实际节点、排版/光栅/上传次数、字节和同一候选内互斥成本；不得主动清空纹理、凭空构造20个重复节点或把必要的新内容绘制算入可省量。优先复用已有场景和原件；确缺生产成本，只允许一次有界 A→B→A 取证，诊断在原门下默认 OFF，不再跑一套40动作诊断。此成本核对是实现的前置反例，不单独交一个日志包。若实测完整可复用段不足1ms或像素依赖不能证明，停止本方案并集中报告具体反证，不改做另一个小优化；有毫秒级依据即在同包继续实现。2ms 是本包实际采用目标，不是从节点数外推的已获收益。
+
+3. **实现一个有界的静态资源工作集。** 在现有 native 资源归属中保留近期“已经 accepted”的不可变静态 TEXT/BUTTON 资源；优先按离场资源保留，已有同物去重。条目只含派生排版、不可变光栅凭据/局部 tile/纹理与查找所需键，不保留旧业务 owner、活动输入代理、整场景、窗口或可写模型。每 session/generation/device 隔离。新候选仍完整构造、接收和校验节点、run、geometry、semantic/help，硬错优先级不改；只在原资源准备处查找可复用派生资源，绝不拿旧节点替换新候选的正文、版本、身份、选择或语义。
+   - 优先扩展现有 CjguiCandidateWithStaticTextSource / readonly layout / raster credential 路径。private preparation 与普通最终资源准备共用一套内部查找与领取，不做两份缓存。
+   - 索引/hash 仅筛选候选；领取前核当前正文、属性/run、字体及来源、宽度/排版、scale、局部 tile、颜色/外观和完整像素依赖。使用现有精确谓词，不弱化 CjguiTextRasterSourceCredentialsEqual。shader 负责的位置/clip差异只沿已证实的局部像素规则复用，当前完整来源凭据和摆放信息重新生成。
+   - 活动 TEXT_INPUT/INTEGER_INPUT/MULTILINE、marked/IME、可变 TextKit 源不进入本工作集。未知属性、不可证明依赖、miss/淘汰都走原路径。冷启动、首次新内容不预热，业务输入和显示内容不改变。
+   - 新能力允许这一处跨已受理场景的派生资源保留，取代旧小包“不加跨帧缓存”在本工作集内的限制；不授权跨候选业务值缓存、全局资源镜像、glyph atlas 重写或第二渲染后端。
+
+4. **资源生命周期随实现完成。** 初始上限每 session 128 条、纹理8MiB；这是既有24MiB文本纹理准入的子范围，不新增8MiB到总帽。排版/正文/属性元数据也须有有限条目/字节约束，沿现有资源预留方式记账，不能只限制GPU字节而留无界TextKit对象。CjguiComposableRetainedTextTextureBytes 按实际纹理对象在 accepted、pending/preparation、GPU在途和工作集之间去重。准入压力先淘汰可淘汰工作集引用；缓存不得让原先合法场景因它而失败，也不得触动GPU尚在用的资源。查找结果移出后索引不得仍指向旧资源；关闭/session失效/device变更清对应工作集，迟到完成不能重新插回。候选拒绝/取消/失败不能把未受理资源作为可用条目发布。复用既有COW与command完成释放，必要内部字段和窄接口可在本包修改，不扩大公共API。
+   只读参考本机 Zed 1a28cff4b409 的 metal_atlas.rs：get_or_insert_with、remove 及 stale-key/last-tile tests，借鉴资源查找和释放后索引失效，不搬 atlas、依赖或“资源丢失就跳过绘制”的策略。CJGUI miss 必须原路径补备或保旧 accepted。
+
+5. **只补这次新边界的反例。** 使用现有 native preparation/scroll-raster 夹具扩展，不重跑已绿全套：
+   - A→B→A 真正离场返回后，返回资源的排版/光栅/上传重建消失，像素与独立冷路径一致，当前位置/clip和新身份正确；冷oracle仅用于像素期望，不能作成本RED。
+   - 同ID但正文/字体或run/scale/颜色变化必须miss，精确沿旧路径准备；用少量表驱动验证真正影响领取的依赖，不展开全字体矩阵。
+   - 中途拒绝/取消、未accepted条目、close后迟到回调、两个session同ID不同内容都不能错误命中。
+   - 工作集淘汰时仍在途GPU资源有效；再请求被淘汰键可重新构造，无悬空键；8MiB子帽与24MiB总帽实际生效，清缓存后原合法负载仍可用。
+   已接受的同槽换控件、包硬错、FIFO、批量公平性、selection/marked等旧证据按不变路径复用；如本补丁实际影响其责任点，只补对应交叉用例。旧22项同现失败不称全绿或环境已确诊，也不为本包重开全套旧修复。
+
+6. **真实收益按新方案事前冻结，最多三对。** 这是新方案的前瞻性判据，不重判任何旧退役候选。先正确性与成本反例，源码冻结后一次声明三对顺序 A1/B1、B2/A2、A3/B3（全序 ABBAAB），两源全链O2/nativeO2，其余输入、1000条、980×652、原20筛选/20名称、名义100ms、完成门及最小观察一致。两边从正常启动开始，不人为预热工作集；冷miss、首次出现和慢样本全计入。复用原driver/manager/cadence/同event与owner关联；测量段不夹AX轮询、截图或模型停顿，不新建追踪系统。三对须在首对前声明，不能看结果再扩样本，功能失败立即回修，工具/关联失败原件保留，不重投补满或加第四对。
+   - 预选主收益是筛选 raw→enqueue p95，三对逐对差值的中位改善至少2ms，且至少两对同向；筛选 raw→真实present p95 的逐对改善中位至少1ms，至少两对同向。
+   - 名称 raw→enqueue/真实present p95 的逐对回退中位不得超过0.2ms；逐对p50/p95/max与所有失败都报告，不通过合并120笔隐藏某臂退化。任何真实功能失败都不能以性能抵消。单对明显恶化须检查原件和因果，不能当噪声删掉。
+   - 分段按同一输入/session/request/scene/frame/drawable独立核，资源阶段必须有对应计数/字节减少，不能拿内存换到未计时阶段或只报命中率。两类32ms门单列；每臂40/40真实非零present方可完整报呈现p95，raw0/关联缺失保unknown，不能用accepted/GPU完成/截图替代。
+   三对是此条件下的工程采用依据，不宣称跨机器稳定保证。若成本门失败不启动三对；若最终采用门失败，保原件和最小差分、恢复05b，整包结束，不扫下一组参数。
+
+7. **采用就完成交付，不留下一轮补尾。** 合流必要测试后只做一次最终源码默认关闭诊断的普通包外消费：原1000条、真实filter/name、owner/版本/选择、Apply/Cancel、独立全文件保存期望、实际自然退出与端点清理。由于新增资源跨帧寿命，补一个现有shared或mixed双窗短链，核A/B正文与版本隔离、一个关闭另一个继续及资源释放；不重跑VO/IME/动态/跨平台矩阵。实际O2命令/provenance、相关cjpm build --skip-script、git diff --check按同一次合流产物核。通过后一次导出唯一源锁SDK，核最终源码/编译输入/载荷，普通创建入口实际消费；默认编译选择不改，optional O2和experimental边界保留。未采用则不建SDK、不补无关OFF全链。保护原件，不覆盖别线差分。
+
+8. **容量与集中报告。** 沿用AGENTS容量与验证投入规则，现有累计不清零。指导只读采样宿主可用232,303,284KiB，约221.5GiB；执行前重查。本包新增留存上限384MiB、同时新增峰预估≤768MiB，复用一构建槽与A/B必要二进制，峰后宿主至少20GiB；确需超额先核具体留存/退役方案，不自动新增10GiB。成功/失败/取消均按准确归属finally保必要原件并退役可再生产物。最后一次集中报告：实际避免了哪些整段工作、冷/热及资源代价、三对逐对结果与32ms距离、采用或退役、正常消费/SDK身份、失败未知和空间。更新本阶段及ACTIVE E≤600字，不另建逐轮台账、不要求指导再回复同义收口确认。
+
+入口： [静态来源查找](../../runtime/cjgui/native/cjgui_internal_renderer.m#L15950)、[像素等价与来源凭据](../../runtime/cjgui/native/cjgui_internal_renderer.m#L13548)、[只读排版复用](../../runtime/cjgui/native/cjgui_internal_renderer.m#L15018)、[物理纹理记账](../../runtime/cjgui/native/cjgui_internal_renderer.m#L16030)、[现有反例](../../runtime/cjgui/native/tests/composable_preparation_scroll_raster_reuse_test.m)、[Metal资源参考](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui_apple/src/metal_atlas.rs>)、[容量规则](../../AGENTS.md#artifact-space-budget)、[验证投入](../../AGENTS.md#verification-value)。
+
+<a id="static-text-working-set-result-20261106"></a>
+### 结果与指导复核（2026-11-06）· 静态文本资源离场后的有界复用（退役）
+
+**裁决：保留退役，零生产交付提速；“完整可复用段严格小于1ms”未获证明。** 指导只读核对了两臂原始日志、输入关联、cadence、派生器和当前源码，未构建、运行应用或重跑测试。本包没有证明要求的毫秒级净收益，因此不采用、不补三对、不重启候选。停止依据校准为收益证据不足与投入收益取舍，不能把错误上界保留为“决定性排除”。正式05b与旧验收范围不变。
+
+**可核的真实行为。** 原1000条、980×652、4个真实筛选动作（1/BackSpace交替）下，RED/GREEN运行记录为PID 68731/69749、自然exit0，原日志SHA分别为 `9541af8b62236d02c0facbfeab6ed4ce557ccdee35cdd5eb045d6c42ebb1a8f2` / `c3fa1d28acb7eafe747e7fd820912c188f3015e3d596c4ce0d6df1625ad34333`，指导已按原字节核回。launch-identity明确设置INPUT_LINK、TEXT_PREPARE、OWNER_WRITE、PHASE、LIGHT及cadence等诊断，**两臂是ON取证，不是默认OFF性能验收**；SESSION_PLAN中“same binary”“minimum3 gates”“PHASE/LIGHT unset”等继承文字与实际字段冲突，不作为运行事实。
+
+候选prepare记录为9/8/9/8→9/8/7/7；第三动作少了node26与node3302(13 UTF-16 units)，第四动作少了3302(5)，共3条、覆盖33个UTF-16单元。3个TAB_TITLE和4个输入节点仍在记录中，未纳入此次TEXT/BUTTON工作集。[RED原件](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-RED-20261106/normal/light8769.log) · [GREEN原件](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-GREEN-20261106/normal/light8769.log)
+
+**成本与字节结论校准。** `CJGUI_TEXT_PREPARE` 在needsPreparation判定后、后续保留/准备分支之前打印；它不是实际排版、raster或上传完成计数。内部纹理函数仍可复用readonly layout与retained tile。因此可确认3条准备判定记录消失，不能仅据此断言3次完整排版/光栅/上传均已消失。原104,752B来自节点矩形110×30、122×17、69×17乘scale²×4的估算，并非实际tile矩形、MTLTexture分配或净驻留字节的测量；不得称“实省102KiB纹理”。
+
+142节点暖preparation的1.476/1.460ms平均值，和不同scalar路径的7–175µs服务时间，都没有关联到上述3个typed静态节点的完整准备成本。用175µs×3得0.525ms不是它们的有效上界。其逐节点时间、实际净资源节省与3.985ms旧独立资源阶段中可消除的份额仍未知。指导此前把当前accepted查找限制与旧整段资源成本作为毫秒级选题依据，未先确认实际重复节点构成，选题依据不足；执行也未落实“先成本RED、后实现”，在成本判定前已实现/构建并完成大量夹具工作。本包不为补足这个结论再追加运行。
+
+**派生时延归因错误及离线纠正。** [原派生器](../../work/macos-performance-20261106/static-text-working-set/analyze_bounded.py)把batch_tail.last_ordinal当作raw号，又把batch_tail时刻命名为enqueue；实际ordinal 4/6/8/10对应keydown raw 3/5/7/9，raw 4/6/8/10是key-up。这导致原ANALYSIS/COST_VERDICT出现负raw→enqueue、错误raw→accepted及错误的“第2/4动作回退2.45/2.34ms”。这些字段和依赖它们的结论作废；原件保留，不修改原JSON或日志。
+
+指导按同session/generation、dispatch scope/ordinal/raw→batch.request_after→candidate.request_epoch→accepted.request_consumed/scene/frame→cadence drawable/layer接回；8笔均有真实非零present。下表仅纠正已有4动作取证，不新增样本，不作p95或稳定收益认证。两臂raw/ordinal/preparation分别相同为3/4/7、5/6/9、7/8/11、9/10/13；RED scene/frame为29/30、30/31、31/32、32/33，GREEN为28/29、29/30、30/31、31/32。
+
+| 动作 | prepare条数 RED→GREEN | raw→accepted ms | raw→真实enqueue ms | raw→真实present ms |
+| --- | --- | --- | --- | --- |
+| 1：1 | 9→9 | 28.198→22.371 | 27.337→21.445 | 45.792→43.739 |
+| 2：BackSpace | 8→8 | 10.308→10.059 | 9.302→9.200 | 31.707→38.346 |
+| 3：1 | 9→7 | 14.446→12.577 | 13.470→11.838 | 38.465→30.066 |
+| 4：BackSpace | 8→7 | 12.902→10.253 | 11.896→9.422 | 34.047→34.491 |
+
+第1动作尚无返回命中，两臂create→accepted已为12.140/9.372ms，说明两次运行存在未归因差异；不能把后两动作全部差值算作工作集收益，也不能反过来断言差值已全部确诊为噪声。名称未测，三对未启动，不能判定名称保护门或2ms/1ms采用门通过。
+
+**实现、退役与身份。** 执行报告记载候选EXE `8c97fe20…`、native `267e842b…`，实现过128条/8MiB纹理子帽/4MiB元数据及98 PASS夹具；它们仅为退役候选记录，本次未重复审全套生命周期或将其认证为正式交付。[renderer差分](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-RED-20261106/workset_renderer.patch) · [fixture差分](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-RED-20261106/workset_fixture.patch) · [原成本判定（上述上界与时延字段已校准）](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-RED-20261106/COST_VERDICT.json)
+
+指导现场核回根renderer SHA `1d260dfcf971f68a02be48cd69d598fcaca9e65a8faf33aba3114258b97f041e`，无StaticTextWorkingSet/textWorkingSetClaimed残留，scroll-raster fixture相对HEAD无差异。正式仍用05b EXE `59cca9dc…`、native `4e4079da…`、SDK锁 `e375f1d8…`；旧筛选/名称呈现p95 36.517/40.255ms仍只属于旧ON样本，32ms未过。本包不导SDK、不补OFF全链、不启动下一方向。执行报告的空间账为退役191MiB、保留约24MiB、宿主约205GiB；本次只改阶段说明与ACTIVE，不重新清理产物，不把旧采样称当前实测。
+
+<a id="guidance-current-scene-text-identity-20261106"></a>
+### 指导选题与下一整包（2026-11-06）· 重排时保留当前场景非活动控件的文字资源
+
+**选择与证明边界。** 用户要求先从现有原件和源码找准数毫秒整段，再交DS，禁止继续低收益微优化或重验旧绿线。指导本轮只读源码和原日志、离线重算，没有启动实例、构建或测试。选定的责任段是当前场景中持续存在的非活动控件在槽位变化后丢失已准备文字资源，目标是避免其再次排版、生成光栅和上传。它不保留离场资源，不恢复上一包工作集。现有原件证明资源阶段本身为毫秒级，并支持槽位失配的具体源码机制；**没有逐控件独占成本和完整旧新像素凭据，尚不能证明净省至少2ms**。下述小型成本反例是全链实现投入的前置门，不得把本段写成“已确认可省2–6ms”。若门不成立，不再做大构建、40动作对照或另换微优化。
+
+**现有原件的同事件重算。** 沿前节已核的RED PID68731、session/generation1、keydown raw3/5/7/9 → ordinal4/6/8/10 → request_epoch4/5/6/7 → preparation7/9/11/13 → accepted scene29/30/31/32、frame30/31/32/33。原生phase110的request是scene号，不能当Cj preparation号。按seq去重、span配对、同TID48992045的开始/结束，四个资源区间如下；CPU包含该区间内运行时和诊断开销，不另猜纯TextKit份额。
+
+| 筛选动作 | Cj preparation / scene | phase110 span | 原始起始行 | 墙钟 ms | 主线程CPU ms | prepare记录 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 7 / 29 | 30748 | 24968 | 6.083959 | 4.860 | 9 |
+| BackSpace | 9 / 30 | 35423 | 29643 | 2.353791 | 2.356 | 8 |
+| 1 | 11 / 31 | 37732 | 31952 | 3.570833 | 3.560 | 9 |
+| BackSpace | 13 / 32 | 38817 | 33037 | 2.627625 | 2.630 | 8 |
+
+同一日志键入前scene15–28的资源区间为0.375583–0.405417ms。它说明未发生这些重整的场景存在较便宜路径；不是同事件反事实，不能直接相减当收益。原环覆盖开始前有6493条覆写；上述四区间的双边界均存在。输入与物理呈现关联沿前节8笔纠正，不使用错误ANALYSIS/COST_VERDICT中的ordinal/伪enqueue字段。[原日志](../../work/macos-performance-20261103/frame-opportunity/pairs/STATIC-TEXT-WORKSET-ABA-RED-20261106/normal/light8769.log)
+
+四次均出现相同的七个控件：TAB_TITLE `8000000000000000005/6/7`，208×30、247×30、229×30，显示长度2/4/4；非活动输入 `200000016/18/19/20`，684×38、140×38、684×38、684×38，显示长度11/6/10/5。它们每次均key_same=0、width_match=0；prepare记录不是实际raster/upload计数，长度相同也不独立证明完整正文/属性相同。实际筛选目标是24，未编辑上述四字段；`applyListFilter`保留业务选择，标题由固定tab声明产生，filter count节点26随非空查询插入/移除，后续前序槽位可以改变。需要用下述真实声明反例核最后一步，而非依靠相同长度放宽凭据。
+
+**源码责任已定位。** `CjguiConfigureComposableSceneOnMain`按当前数组index承接节点；`CjguiCandidateWithStaticTextSource`只为TEXT/BUTTON按nodeId/resourceId/kind找回当前accepted来源，TAB_TITLE和非活动TEXT_INPUT/INTEGER_INPUT不走此补救。新声明写入旧槽对象的COW副本后，可能携带其他控件的纹理/布局；原资源准入中的精确key、宽度和完整来源检查随后要求重整。`CjguiPrepareComposableNodeOnMain`和同步`CjguiSetComposableSceneNodeOnMain`共用该入口。现有`composable_passive_label_raster_test.m`已经表达同槽不变的被动输入可复用，缺口是新旧槽位不同。现有静态滚动复用不授权把活动输入整体归为immutable。只读参考本地GPUI `window.rs::with_element_state/take_element_state`按GlobalElementId和TypeId接续当前/上一帧资源归属；仅借鉴身份与位置分离，不搬状态机或依赖。
+
+**完整实施任务（由用户交给DS后执行）。**
+
+1. **承接与范围。** 工作目录`/Users/jiangxuanyang/Desktop/cangjie`，先读AGENTS、ACTIVE E、本段及直接源码。正式基线05b，EXE `59cca9dc…`、native `4e4079da…`、SDK锁 `e375f1d8…`；当前根renderer `1d260dfc…`、window `11bdfedd…`、session `b1b7d91f…`。旧源身份用于继承，不重跑全套哈希审计/测试。先核并行写集、实际构建输入与复用槽，保护冻结包。执行者DS完成成本反例、必要实现、受影响验证、正常消费与最终交付，不逐补丁请示；只有实质正确性/资源/归属风险集中升级。指导不自动启动聊天、顾问或监控。无Git写、不改系统设置、不接其他平台。
+
+2. **成本RED必须先于生产补丁和全链构建。** 复用已有native preparation/被动文字/重排夹具，用上述实际七控件的声明、类型、尺寸、正文与样式，以及真实筛选前缀节点插入/移除造成的索引变化，走原setter/prepare/commit，不手动清空纹理、增殖控件或伪造冷miss。A/B中这七个控件始终存在，不能改成离场返回。核当前accepted中相同完整身份的旧节点仍有可用资源，而新槽接到了其他来源；再核完整显示正文、字体/属性/run、布局、scale、tile/coverage及来源是否真的相容。计数用真实layout创建、sealed layout、raster、upload及实际纹理对象/字节，不能数日志行。按同一场景转变、同TID范围记录该组的互斥耗时，原资源扫描与活动输入成本分开。可用现有测试门中的仅供对照的正确资源来源选择形成成本反事实；仍须运行全部新声明校验与原精确准入，不能直接跳过函数作为“零成本”。次数和顺序事前固定，按每次真实场景转变归一，不拿20倍合成重复放大收益。成本门：安全可复用组净减少达到约2ms，且实际重建链条消失；不足、字段缺失或安全条件不成立则停止本方案，不启动App重采或40动作性能轮。正文完整相等和实际净成本都要有原件，不能先写实现再补依据。
+
+3. **门通过后同包实现当前accepted内的派生资源连续性。** 沿现有source查找/COW/准入最小实现。优先同槽快路，仅身份错位时在有界的当前accepted集合中按完整nodeId/resourceId/kind找来源；来源与候选必须属同session/generation/device。新增覆盖先限TAB_TITLE、非活动TEXT_INPUT/INTEGER_INPUT，其他kind沿原路径。复用的只能是不可变派生布局、纹理、tile和来源凭据；候选正文、值、语义/绑定、版本、geometry、selection/marked/焦点均来自新候选，不能整节点覆盖新声明或移动inputProxy。不要直接扩大`CjguiComposableHasImmutableTextPixels`把输入变为静态文本。
+   - 活动/parked/源安装中、preservesActiveLocalText、live TextKit来源、曾有未闭合组合/选择责任等无法证明已冻结的来源保守miss；到实际领取/资源准入时仍核当前责任，不能只看早先isFocused快照。
+   - 领取后仍走原纹理key、完整source等价、宽度/scale/属性/run/颜色/覆盖准入。第一版不放宽输入的完整来源等价、不新增输入的局部坐标像素等价；新声明变化或仅位置变化不满足原谓词时照常重备。错位仅是查找原因，不是跳过校验的理由。
+   - prepared与普通同步fallback复用一份内部实现，必要的元数据到齐后才资格判定。包/run/geometry/semantic硬错及顺序不改，不重开P2 begin提前拒绝。COW不得改旧accepted/在途帧；取消、失败、关闭按现有引用和command完成回收。
+   - 只借用当前accepted已有资源，不新建离场工作集、跨窗口缓存、资源保留帽或公共协议。沿既有物理纹理去重与总容量检查；不能用新增驻留换取未计账收益。不改变owner/FIFO/CAS、多窗公平性、待提交/接受责任或显示策略。
+
+4. **验证只覆盖新增交叉边界。** 在同一现有夹具补少量针对性用例并合流运行：七控件前缀插删/换槽后身份及完整值正确、纹理与布局真正复用、像素与独立冷路径一致；同槽换不同控件/同ID更换resource或正文/关键字体属性/scale必须miss；活动输入或marked/源安装交错不能领取被动资源；中段失败/取消保旧accepted及可再消费，两个session相同ID不串。冷路径只作像素oracle，不作成本RED。根据实际改动组合用例，复用旧包硬错、批量公平性、同槽被动资源、VO/IME/动态文档与生命周期绿证，不重跑98项或旧平台矩阵，不为旧22个同现失败制造本轮修复。
+
+5. **只有成本门和正确性通过才构建一次全链O2候选。** 最终源码冻结后、首对前一次预声明最多三对ABBAAB，复用原1000条、980×652、filter20/name20、名义100ms及实际迟到、原完成条件和最低观察。原驱动、manager、receipt/scope/owner/candidate/cadence关联足够即复用；修正派生器的ordinal/raw与batch_tail/enqueue映射是离线任务，不再建追踪器或重型前台诊断。计时段无AX轮询、截图、模型停顿、重投或人为预热；所有失败、慢值、raw0、取消/合并保留。功能失败立即回修，关联不足只停依赖采样，不能换轮号补满。
+   采用目标沿上一整包的前瞻性量级：三对筛选raw→enqueue p95逐对改善中位≥2ms，筛选raw→实际present p95改善中位≥1ms，两者至少两对同向；名称enqueue/present p95逐对回退中位≤0.2ms。逐对p50/p95/max全报，不合并样本掩盖退化；不以后验改阈值挽救候选。成本门失败不启动对照；预声明的三对不是失败后逐次加样本，最多三对且不增第四对。每类20个真实非零present及精确关联齐备才报该类完整呈现p95；缺项保unknown，accepted/GPU完成不代上屏。旧32ms目标单列，局部采用不等于首版达标。若最终采用门失败，保原件/最小差分、恢复05b并结束本包。
+
+6. **采用后完成一次合流交付。** 只在采用路径做最终源默认OFF普通包外消费：1000条真实筛选/名称输入、完整owner/版本/选择、Apply/Cancel、独立全文件期望/保存、自然exit0及端点清理。把新增换槽后返回输入控件的真实首键接进这条链；焦点目标和完整正文都须正确。仅按改动影响补一个已有mixed/shared的双窗隔离或窗口切换短链，不重做旧VO、IME全矩阵和动态文档。复用实际同源同O2构建的provenance和可用二进制，相关build --skip-script/diff --check只做合流检查；一次导出唯一锁SDK、核新增闭包及普通创建/消费入口，默认构建级别不改。无采用差分则不重新导SDK、不补OFF旧全链。
+
+7. **容量与集中报告。** 遵守AGENTS容量和验证投入规则，累计不清零。指导本轮只读宿主采样217,995,856KiB（约207.9GiB）；高写盘前由执行者重核。沿用新增保留≤384MiB、同时新增峰预估≤768MiB、峰后至少20GiB；一复用构建槽和必要A/B原件，成功/失败/取消finally按准确归属收尾，不能递归复制旧target/SDK或删除唯一证据。必要超额先给精确留存与退役方案，不自动扩成10GiB。最后一次集中报告：哪组控件为何被重备、实际消除了哪些完整步骤及毫秒/字节，逐对收益和32ms距离，采用/退役，完整正常消费/唯一SDK身份，失败未知和空间。阶段页记录证据，ACTIVE E单段≤600字。普通问题自行完成；没有毫秒级依据就明确无交付，不改做小修凑包，也不把本包变成新的日志阶段。
+
+直接入口：[当前accepted按槽承接](../../runtime/cjgui/native/cjgui_internal_renderer.m#L40452)、[来源找回](../../runtime/cjgui/native/cjgui_internal_renderer.m#L15956)、[私有prepare](../../runtime/cjgui/native/cjgui_internal_renderer.m#L38872)、[同步setter](../../runtime/cjgui/native/cjgui_internal_renderer.m#L40816)、[文字准入](../../runtime/cjgui/native/cjgui_internal_renderer.m#L16296)、[完整凭据](../../runtime/cjgui/native/cjgui_internal_renderer.m#L13548)、[当前焦点责任](../../runtime/cjgui/native/cjgui_internal_renderer.m#L23158)、[同槽被动资源反例](../../runtime/cjgui/native/tests/composable_passive_label_raster_test.m)、[既有prepare/像素夹具](../../runtime/cjgui/native/tests/composable_preparation_scroll_raster_reuse_test.m)、[Rules筛选与保持选择](../../runtime/cjgui/examples/rule_set_window_app/src/main.cj#L3929)、[GPUI身份参考](</Users/jiangxuanyang/Desktop/仓颉GUI 开发工具仓库/ZED/zed/crates/gpui/src/window.rs>)、[容量规则](../../AGENTS.md#artifact-space-budget)、[验证投入](../../AGENTS.md#verification-value)。
+
+<a id="current-scene-identity-cost-red-result-20261106"></a>
+### 成本RED结果（2026-11-06）· 当前accepted换槽文字连续性退役
+
+**结论：未取得采用所需的真实收益证据，停止本方案，零生产交付提速；2026-11-06用户明确暂停后续性能工作。** 在05b未改生产源码、未做全链构建、未导SDK。新增原生反例[composable_current_scene_reorder_cost_test.m](../../runtime/cjgui/native/tests/composable_current_scene_reorder_cost_test.m)，用七控件代表夹具（3 TAB_TITLE 208/247/229×30、显示长度2/4/4；4非活动输入684/140/684/684×38、长度11/6/10/5）在1000×700、scale2.0下经真实configure/set/prepare/commit完成前缀插入/删除换槽；每臂1次冷建、2次预热、6次测量。正文、resourceId、位置和部分kind并非真实应用声明，不能称实际七控件的完整重放。
+
+**机制与重建证据。** 05b下插入时6个新槽接的是其他控件来源、1个为空；删除时7个全部接其他来源。当前accepted中同身份旧节点仍持纹理/布局/凭据，且完整正文/字体/属性/run/scale/tile/coverage/来源检查均相容。但基线每次转变真实产生7次layout、7次sealed layout、7次raster、7次upload，实际纹理1,347,328B；prepare日志之外的重建确实发生。测试门内按身份预置正确来源作反事实，仍执行完整新声明校验与原精确key/宽度/scale/来源准入：7/7复用、0次重建，复用像素与基线独立冷光栅逐字节一致，纹理字节记账一致。
+
+**成本口径（指导离线复核，未重跑）。** 原汇总1.591/1.616ms是两臂各6个值排序取第4项后相减，即“上中位数之差”；不是普通偶数样本中位数，也不是逐转变差值的中位数。由原行独立重算，普通中位数之差为1.5545/1.5875ms，逐转变差值的普通中位数为1.5305/1.5700ms。原资源段1.751→0.160、1.715→0.099ms及整转变1.970→0.459、1.921→0.279ms保留为原上中位口径；最大单笔差2.052ms不替代整体结果。两份原日志SHA与RESULT一致，每份6行的layout/sealed/raster/upload均为7→0，像素与字节检查通过；这些支持该代表夹具中的重做机制，不能直接外推真实输入到呈现收益。
+
+**保真限制。** 原应用记录中节点200000018是kind6（INTEGER_INPUT）、200000020是kind5（TEXT_INPUT），夹具及RESULT却分别为kind5/kind6；除了替代正文，还存在类型对调、代表resourceId/几何/字体和标签组合。RESULT的复现clang命令未列-O2，现有记录不能证明该成本已按生产nativeO2测得。因此“即使查找/clone零成本也达不到2ms”只凭当前代表夹具不能成为真实应用的严格上界，予以撤回；本包停止的依据是采用证据不足及用户当前暂停，而非证明该机制没有价值。原JSON、日志和夹具保留，不为文字校准修改原件或补测。现场核根renderer仍为`1d260dfcf971f68a02be48cd69d598fcaca9e65a8faf33aba3114258b97f041e`，两份夹具SHA均为`2487ef7f25487871b494edd7e3b3b85125a4e28b2781974974cee0f33b1911db`。证据：[RESULT.json](../../work/macos-performance-20261103/frame-opportunity/pairs/CURRENT-SCENE-IDENTITY-COST-RED-20261106/RESULT.json)、[run1.log](../../work/macos-performance-20261103/frame-opportunity/pairs/CURRENT-SCENE-IDENTITY-COST-RED-20261106/run1.log)、[run2.log](../../work/macos-performance-20261103/frame-opportunity/pairs/CURRENT-SCENE-IDENTITY-COST-RED-20261106/run2.log)。
+
+**暂停与归属。** 用户要求性能先停、等新指示；不实现补丁、不继续选题、不派返工，不启动构建、性能对照或SDK导出。`cjgui-mac`已保持PAUSED并更新为本次停令。组件、界面空白与AI使用体验由用户指定的[组件排查线程](codex://threads/01a1b04f-038a-7d71-b59a-d6919373b8f3)安排，本线程不接管或干预。05b保留为最近采用的性能基线，16/32ms仍未完成；将来恢复须先承接组件线届时的实际修复和源身份，不能按旧性能快照回滚他方工作。不要求执行者再回传同义收口确认。

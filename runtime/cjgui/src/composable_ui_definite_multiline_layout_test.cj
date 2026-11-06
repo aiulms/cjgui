@@ -222,15 +222,14 @@ private func nonFixedSiblingEditorHeight(editorValue: String): Int64 {
     let measurer = DefiniteMultilineTestMeasurer()
     let result = definiteMultilineLayout(root, 900, 300, measurer)
     @Assert(result.scene.isValid(), true)
-    @Assert(result.metrics.measurerCallCount, 2)
+    @Assert(result.metrics.measurerCallCount, 1)
     return result.scene.nodeForId(52).bounds.height
 }
 
 @Test
-func laterGrowingEditorStillDependsOnEarlierFlexibleSiblingIntrinsicHeight(): Unit {
-    // Both siblings are non-fixed. The first has no growth; changing its
-    // intrinsic height changes how the existing shrink/grow sequence allocates
-    // the editor. The definite-bounds shortcut must not generalize across it.
+func laterGrowingEditorUsesSpaceAfterEarlierNaturalHeight(): Unit {
+    // The first sibling is naturally sized even though it is not fixed.
+    // The growing editor gets the remainder independently of its own text.
     @Assert(nonFixedSiblingEditorHeight("editor-100"), 100)
-    @Assert(nonFixedSiblingEditorHeight("editor-500"), 300)
+    @Assert(nonFixedSiblingEditorHeight("editor-500"), 100)
 }

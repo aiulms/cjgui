@@ -208,7 +208,7 @@ add(runtime / 'native/scripts/lib_cjgui_source_set.sh', framework / 'native/scri
 add(runtime / 'native/scripts/verify_cjpm_mac_testing_link.py',
     framework / 'native/scripts/verify_cjpm_mac_testing_link.py')
 add(runtime / 'MACOS_APPLICATION_HOST.md', framework / 'MACOS_APPLICATION_HOST.md')
-for name in ['LAYOUT_PRIMITIVES.md', 'FIELD_CONTROLS.md', 'CARD_GRID.md', 'ACCESSIBILITY.md', 'FONT_RESOURCES.md', 'STYLED_TEXT.md']:
+for name in ['LAYOUT_PRIMITIVES.md', 'FIELD_CONTROLS.md', 'CARD_GRID.md', 'ACCESSIBILITY.md', 'FONT_RESOURCES.md', 'STYLED_TEXT.md', 'STYLE_ROLES.md']:
     add(runtime / name, framework / name)
 add(runtime / 'preview/MACOS_CANDIDATE.md', 'MACOS-CANDIDATE.md',
     (runtime / 'preview/MACOS_CANDIDATE.md').read_text())

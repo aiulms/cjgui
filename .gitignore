@@ -129,3 +129,16 @@ sources/
 /--out/
 /.omo/
 /labs/ohos_thermo_asm_r3/
+
+# Performance/package evidence trees (2026-11-06): multi-GiB logs, fixtures,
+# measured runs and SDK exports regenerated per round. Keep them in the
+# workspace; the stage page links them instead of storing them in history.
+/work/
+
+# Local scratch and failed-patch leftovers.
+/.slidep/
+*.rej
+*.orig
+
+# OHOS core-sync identity marker written by the local sync flow.
+/labs/ohos_cjgui_app/entry/.cjgui_core_identity

@@ -1996,6 +1996,10 @@ foreign {
     @When[os == "macOS"]
     func cjgui_internal_renderer_owner_pump_has_unconsumed_input(session: UInt64): UInt32
 
+    @When[os == "macOS"]
+    func cjgui_internal_renderer_owner_pump_claim_refresh_demand(
+        session: UInt64, demanded: UInt32): UInt32
+
     func cjgui_internal_renderer_pumped_pointer_geometry(
         session: UInt64,
         outGeometry: CPointer<CjguiInternalRendererPointerEventGeometry>
@@ -2303,6 +2307,21 @@ func internalRendererOwnerPumpHasUnconsumedInput(session: UInt64): Bool {
 
 @When[os != "macOS"]
 func internalRendererOwnerPumpHasUnconsumedInput(session: UInt64): Bool { return false }
+
+// Atomic refresh-gate claim: 0 open, 1 pending acquisition (demand recorded
+// when demanded), 2 ready real event, 3 ready empty completion.
+@When[os == "macOS"]
+func internalRendererOwnerPumpClaimRefreshDemand(session: UInt64, demanded: Bool): UInt32 {
+    return unsafe {
+        cjgui_internal_renderer_owner_pump_claim_refresh_demand(
+            session, if (demanded) { 1u32 } else { 0u32 })
+    }
+}
+
+@When[os != "macOS"]
+func internalRendererOwnerPumpClaimRefreshDemand(session: UInt64, demanded: Bool): UInt32 {
+    return 0u32
+}
 
 @When[os == "macOS"]
 func cjguiInputLinkTraceAvailable(): Bool { return true }

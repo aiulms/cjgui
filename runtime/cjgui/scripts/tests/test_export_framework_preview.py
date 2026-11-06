@@ -137,6 +137,8 @@ class ExportPreviewTest(unittest.TestCase):
                 shutil.copy2(p, runtime / "shared_operation_core" / p.name)
             shutil.copy2(RUNTIME / "shared_operation_core/GENERATED_EDITING.md",
                          runtime / "shared_operation_core/GENERATED_EDITING.md")
+            shutil.copy2(RUNTIME / "shared_operation_core/DOCUMENT_CLIENT.md",
+                         runtime / "shared_operation_core/DOCUMENT_CLIENT.md")
             (runtime / "shared_operation_core/DOCUMENT_CLIENT.md").write_text(
                 "# Public document client\n\n"
                 "[consumer](../examples/shared_document_window_app/README.md)\n")
@@ -337,15 +339,17 @@ class ExportPreviewTest(unittest.TestCase):
                 shutil.copy2(p, runtime / "shared_operation_core" / p.name)
             shutil.copy2(RUNTIME / "shared_operation_core/GENERATED_EDITING.md",
                          runtime / "shared_operation_core/GENERATED_EDITING.md")
+            shutil.copy2(RUNTIME / "shared_operation_core/DOCUMENT_CLIENT.md",
+                         runtime / "shared_operation_core/DOCUMENT_CLIENT.md")
             for p in (RUNTIME / "preview").glob("*.md"):
                 shutil.copy2(p, runtime / "preview" / p.name)
             for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md",
-                         "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md"]:
+                         "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md", "STYLE_ROLES.md"]:
                 (runtime / name).write_text("# Fixture\n")
             for name in ["composable-beacon.png"]:
                 (runtime / "resources" / name).write_bytes(b"fixture")
             for name in ["rule_set_application", "tree_outline_consumer", "generated_collection",
-                         "rule_set_window_app"]:
+                         "rule_set_window_app", "shared_document_window_app"]:
                 example = runtime / "examples" / name
                 (example / "src").mkdir(parents=True)
                 (example / "src/main.cj").write_text("package fixture\n")

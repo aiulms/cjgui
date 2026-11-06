@@ -165,6 +165,7 @@ enum {
     CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_TICKET_REVISION = 412,
     CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_GLOBAL_REVISION = 413,
     CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_READY_REVISION = 414,
+    CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_REFRESH_DEMAND_REVISION = 415,
 };
 typedef struct CjguiOwnerTraceRecord {
     _Atomic(uint64_t) publishedSequence;
@@ -426,6 +427,13 @@ static _Atomic(uint64_t) gCjguiOwnerTraceSharedIdleNs;
 
 static _Atomic(uint64_t) gCjguiOwnerWaitTraceNextId = 0;
 static _Atomic(uint64_t) gCjguiOwnerWaitTraceActiveId = 0;
+#ifdef CJGUI_OWNER_PUMP_TESTING
+// Test-only observation that the owner reached the real cond wait seam.
+static _Atomic(uint64_t) gCjguiOwnerPumpTestWaitEntries = 0;
+static void CjguiOwnerPumpTestWaitEntryPoint(void) {
+    atomic_fetch_add_explicit(&gCjguiOwnerPumpTestWaitEntries, 1, memory_order_acq_rel);
+}
+#endif
 static _Atomic(uint64_t) gCjguiOwnerWaitTraceActiveSession = 0;
 static _Atomic(uint64_t) gCjguiOwnerWaitTraceActiveTurn = UINT64_MAX;
 static _Atomic(uint64_t) gCjguiOwnerWaitTraceActiveGeneration = UINT64_MAX;
@@ -481,7 +489,7 @@ static BOOL CjguiOwnerTraceIsFixedPreparationSummary(uint32_t kind, uint32_t pha
 static BOOL CjguiOwnerTraceIsFixedWaitSummary(uint32_t kind, uint32_t phase) {
     return kind == CJGUI_OWNER_TRACE_OBSERVATION_SCALAR && phase >=
         CJGUI_OWNER_PHASE_OWNER_WAIT_ABSOLUTE_DEADLINE && phase <=
-        CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_READY_REVISION;
+        CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_REFRESH_DEMAND_REVISION;
 }
 
 static BOOL CjguiOwnerTraceCopyToRetention(CjguiOwnerTraceRecord *source, uint64_t sourceSequence,
@@ -1198,6 +1206,7 @@ static const char *CjguiOwnerTracePhaseName(uint32_t phase) {
         case CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_TICKET_REVISION: return "owner_wait_notify_ticket_revision";
         case CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_GLOBAL_REVISION: return "owner_wait_notify_global_revision";
         case CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_READY_REVISION: return "owner_wait_notify_ready_revision";
+        case CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_REFRESH_DEMAND_REVISION: return "owner_wait_notify_refresh_demand_revision";
         case 170: return "sync_proxy_caret";
         case 171: return "declare_visual_caret";
         case 172: return "progress_call";
@@ -50600,6 +50609,10 @@ typedef struct CjguiOwnerPumpTicket {
     uint32_t tracePhase;
     BOOL wantsEvent;
     BOOL canReuseEmptyProof;
+    // Set only when the refresh gate observed this pending acquisition as
+    // blocking a demanded refresh. The empty completion is then owner-visible
+    // progress and advances the shared wait once; idle polls never set it.
+    BOOL refreshDemandNoted;
     CjguiInternalRendererStatus status;
     CjguiInternalRendererEvent event;
     CjguiInternalInputTrace inputTrace;
@@ -50678,7 +50691,7 @@ static NSUInteger CjguiOwnerPumpTicketIndex(uint64_t session) {
 }
 
 enum { CjguiOwnerWaitNotifyTicketWork = 1, CjguiOwnerWaitNotifyGlobalWork = 2,
-       CjguiOwnerWaitNotifyReadyEvent = 3 };
+       CjguiOwnerWaitNotifyReadyEvent = 3, CjguiOwnerWaitNotifyRefreshDemand = 4 };
 typedef struct CjguiOwnerWaitNotifyFact {
     uint64_t revision;
     uint64_t monoNs;
@@ -50758,7 +50771,9 @@ static void CjguiOwnerWaitTraceEmitNotify(const CjguiOwnerWaitNotifyFact *fact) 
         ? CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_TICKET_REVISION
         : (fact->category == CjguiOwnerWaitNotifyGlobalWork
             ? CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_GLOBAL_REVISION
-            : CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_READY_REVISION);
+            : (fact->category == CjguiOwnerWaitNotifyReadyEvent
+                ? CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_READY_REVISION
+                : CJGUI_OWNER_PHASE_OWNER_WAIT_NOTIFY_REFRESH_DEMAND_REVISION));
     uint32_t sourceSession = fact->sourceSession <= kCjguiSessionCapacity
         ? (uint32_t)fact->sourceSession : 0;
     CjguiOwnerWaitTraceEmit(phase, fact->waitId, sourceSession, fact->revision,
@@ -50956,6 +50971,9 @@ static int32_t CjguiOwnerWaitForWork(uint64_t observedRevision,
                 remainingNs, waitStartedNs, ownerSession, ownerTurn, ownerGeneration, ownerThreadId);
         }
         uint64_t waitStartedTicks = mach_absolute_time();
+#ifdef CJGUI_OWNER_PUMP_TESTING
+        CjguiOwnerPumpTestWaitEntryPoint();
+#endif
 #ifdef CJGUI_INTERNAL_TESTING
         // Deterministic resource completion at the actual existing wait seam;
         // no new event pump, production timer or synthetic business input.
@@ -51021,6 +51039,35 @@ uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t sessio
           ticket->event.kind != CJGUI_INTERNAL_RENDERER_EVENT_NONE));
     pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
     return held ? 1u : 0u;
+}
+
+// Atomic refresh-gate claim. The gate must decide whether the acquisition
+// blocks and record the demand under one ticket lock; a separate query then
+// record would let a publication land between them and bump the same empty
+// completion twice. Status: 0 open, 1 pending acquisition (demand recorded
+// when demanded), 2 ready real event (owner still owns FIFO delivery),
+// 3 ready empty completion (gate is already open, no second notification).
+uint32_t cjgui_internal_renderer_owner_pump_claim_refresh_demand(uint64_t session,
+                                                                uint32_t demanded) {
+    NSUInteger index = CjguiOwnerPumpTicketIndex(session);
+    uint64_t generation = CjguiOwnerPumpLiveSessionGeneration(session);
+    if (index == NSNotFound || generation == 0) return 0;
+    uint32_t claim = 0;
+    pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
+    CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
+    if (ticket->session == session && ticket->sessionGeneration == generation) {
+        if (ticket->state == CjguiOwnerPumpTicketPending && ticket->wantsEvent) {
+            if (demanded) ticket->refreshDemandNoted = YES;
+            claim = 1;
+        } else if (ticket->state == CjguiOwnerPumpTicketReady &&
+            ticket->event.kind != CJGUI_INTERNAL_RENDERER_EVENT_NONE) {
+            claim = 2;
+        } else if (ticket->state == CjguiOwnerPumpTicketReady) {
+            claim = 3;
+        }
+    }
+    pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
+    return claim;
 }
 
 static CjguiPresentInputDisposition CjguiPresentInputDispositionOnMain(
@@ -51461,7 +51508,14 @@ static void CjguiOwnerPumpTicketService(uint64_t session, NSUInteger index,
                 event.kind != CJGUI_INTERNAL_RENDERER_EVENT_NONE) {
                 (void)CjguiOwnerPumpGlobalWorkRevisionBumpLocked(CjguiOwnerWaitNotifyReadyEvent,
                     session, &readyNotifyFact);
+            } else if (ticket->refreshDemandNoted) {
+                // The refresh gate was held by this exact acquisition request.
+                // Its empty completion releases that gate, so it belongs to
+                // the existing global revision/shared-wait wake mechanism.
+                (void)CjguiOwnerPumpGlobalWorkRevisionBumpLocked(
+                    CjguiOwnerWaitNotifyRefreshDemand, session, &readyNotifyFact);
             }
+            ticket->refreshDemandNoted = NO;
         }
         pthread_cond_broadcast(&gCjguiOwnerPumpTicketCondition);
     }
@@ -51697,6 +51751,7 @@ static CjguiInternalRendererStatus CjguiPumpEventWithTrace(uint64_t session, uin
             ticket->traceTurn = traceTurn;
             ticket->tracePhase = tracePhase;
             ticket->wantsEvent = outEvent != NULL;
+            ticket->refreshDemandNoted = NO;
             ticket->status = CJGUI_INTERNAL_RENDERER_OK;
             memset(&ticket->event, 0, sizeof(ticket->event));
             ticket->event.kind = CJGUI_INTERNAL_RENDERER_EVENT_NONE;

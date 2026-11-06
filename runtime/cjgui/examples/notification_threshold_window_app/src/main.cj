@@ -283,6 +283,7 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         let bodyStyle = presentationTextStyle(theme.body)
         let inputStyle = interactiveInputStyle(theme.input)
         let actionStyle = presentationTextStyle(theme.primaryAction)
+        let roleFont = if (usesMonospacedText) { "monospaced" } else { "system" }
         let beaconPath = if (usesCoralBeacon) {
             "composable-beacon-coral.png"
         } else {
@@ -294,6 +295,7 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
             1
         }
         let declarations = domain.formBinding()
+        let feedback = CjguiFormFeedbackProjection(draft, declarations, CjguiNotificationThresholdDomain.resourceId)
         let channelField = declarations.fieldAtControlIndex(0)
         let thresholdField = declarations.fieldAtControlIndex(1)
         let enabledField = declarations.fieldAtControlIndex(2)
@@ -316,6 +318,16 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
                 CjguiComposableUiStyle(fixedWidth: 76, fixedHeight: 76), imageResourceId: "notification-beacon",
                 imageResourceVersion: beaconVersion))
         root.add(hero)
+        if (!feedback.canApply) {
+            let message = match (feedback.formMessage) {
+                case "threshold_out_of_range" => "阈值超出允许范围，请按字段提示修改。"
+                case "invalid_channel" => "请输入有效的投递通道。"
+                case _ => feedback.formMessage
+            }
+            root.add(CjguiStatusFeedback.buildMessage(2210, "notification-form-error", 2211, 2212, -1,
+                CjguiStatusMessageSpec(CJGUI_STATUS_ERROR, message),
+                style: CjguiStatusMessageStyle.themed(theme, CJGUI_STATUS_ERROR)))
+        }
         let accentRed = if (warmAccent) { 0.98 } else { 0.22 }
         let accentGreen = if (warmAccent) { 0.48 } else { 0.52 }
         let accentBlue = if (warmAccent) { 0.20 } else { 0.95 }
@@ -329,7 +341,8 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         channelCard.add(cjguiComposableText(12, "channel-heading", "投递通道", fixedTextStyle(headingStyle, 24)))
         channelCard.add(
             cjguiComposableTextInput(13, "delivery-channel", channelField.label, draftChannel, channelField.resourceId,
-                inputStyle, fieldId: channelField.fieldId,
+                notificationBoundInteractive(theme.fieldStyle().boundStyle(fontFamily: Some(roleFont))),
+                fieldId: channelField.fieldId,
                 operationActionName: form.fieldSpec(channelField.fieldId).getOrThrow().writeActionName,
                 operationResourceId: CjguiNotificationThresholdDomain.resourceId, displayValueRole: "draft"))
         channelCard.add(
@@ -388,7 +401,7 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
                     CjguiComposableUiTabPage("threshold", "阈值", thresholdPage),
                     CjguiComposableUiTabPage("help", "说明", thresholdHelpPage)
                 ]),
-            thresholdTabsState, CjguiComposableUiStyle(growX: 1), titleHeight: 26, containerNodeId: 29))
+            thresholdTabsState, CjguiComposableUiStyle(growX: 1), titleHeight: 30, containerNodeId: 29))
         thresholdCard.add(
             cjguiComposableText(24, "applied-summary",
                 "当前已应用：${current.channel} / ${current.threshold} / ${if (current.enabled) { "已启用" } else { "已停用" }}",
@@ -398,7 +411,7 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         // the handle writes the shared split state. No app-side size machine.
         root.add(cjguiComposableScopedSplitView(splitScope, "notification-cards", channelCard, thresholdCard,
             CjguiComposableUiSplitAxis.HORIZONTAL, splitState.firstSize(), splitState.firstMinimum(),
-            splitState.secondMinimum(), CjguiComposableUiStyle(fixedHeight: 230), handleThickness: 10,
+            splitState.secondMinimum(), CjguiComposableUiStyle(minHeight: 320), handleThickness: 10,
             splitState: splitState, containerNodeId: 10))
         // Toolbar and menu consume one declaration holder; both route through
         // the shared command entries rather than a second action table.
@@ -450,16 +463,14 @@ private class CjguiNotificationThresholdController <: CjguiComposableUiControlle
         actions.add(
             cjguiComposableButton(31, "apply-notification", "应用配置", "APPLY",
                 CjguiNotificationThresholdDomain.resourceId,
-                notificationInteractiveStyle(CjguiComposableUiStyle(fixedWidth: 104, fixedHeight: 34,
-                    background: actionStyle.background, textColor: actionStyle.textColor,
-                    fontFamily: actionStyle.fontFamily)),
+                notificationBoundInteractive(theme.actionStyle(primary: true).boundStyle(fixedWidth: Some(104),
+                    fontFamily: Some(roleFont))),
                 enabled: form.actionAvailable("APPLY_DRAFT"), operationActionName: "APPLY_DRAFT"))
         actions.add(
             cjguiComposableButton(32, "reset-notification", "恢复已应用值", "RESET",
                 CjguiNotificationThresholdDomain.resourceId,
-                notificationInteractiveStyle(CjguiComposableUiStyle(fixedWidth: 140, fixedHeight: 34,
-                    background: theme.card.background, border: theme.card.border,
-                    textColor: bodyStyle.textColor, fontFamily: actionStyle.fontFamily)),
+                notificationBoundInteractive(theme.actionStyle().boundStyle(fixedWidth: Some(140),
+                    fontFamily: Some(roleFont))),
                 operationActionName: "CANCEL_DRAFT"))
         actions.add(
             cjguiComposableButton(33, "close-notification", "关闭", "CLOSE", CjguiNotificationThresholdDomain.resourceId,
@@ -874,12 +885,24 @@ private func notificationInteractiveStyle(base: CjguiComposableUiStyle): CjguiCo
         growX: base.growX, growY: base.growY, borderWidth: base.borderWidth, fontSize: base.fontSize,
         fontWeight: base.fontWeight, fontFamily: base.fontFamily, minWidth: base.minWidth, maxWidth: base.maxWidth,
         idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
-        alignX: base.alignX, alignY: base.alignY, pointerInteractive: true)
+        alignX: base.alignX, alignY: base.alignY, cornerRadius: base.cornerRadius, cornerRadii: base.cornerRadii,
+        clipsContent: base.clipsContent, textMaxLines: base.textMaxLines, textOverflow: base.textOverflow,
+        letterSpacing: base.letterSpacing, lineHeight: base.lineHeight, pointerInteractive: true)
 }
 
 @When[os != "Linux"]
 private func notificationInteractiveStyle(base: CjguiComposableUiStyle): CjguiComposableUiStyle {
     return base
+}
+
+@When[os == "Linux"]
+private func notificationBoundInteractive(bound: CjguiComposableUiBoundStyle): CjguiComposableUiBoundStyle {
+    return CjguiComposableUiBoundStyle(notificationInteractiveStyle(bound.style), bound.interaction)
+}
+
+@When[os != "Linux"]
+private func notificationBoundInteractive(bound: CjguiComposableUiBoundStyle): CjguiComposableUiBoundStyle {
+    return bound
 }
 
 private func authorization(): CjguiSharedOperationExternalAuthorization {

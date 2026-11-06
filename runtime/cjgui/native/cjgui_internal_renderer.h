@@ -3217,6 +3217,16 @@ cjgui_internal_renderer_pump_event_measured(uint64_t session, uint32_t timeoutMs
 // main-thread Present seam separately checks the FIFO and exact B dependency.
 uint32_t cjgui_internal_renderer_owner_pump_has_unconsumed_input(uint64_t session);
 
+// Records that the same pending acquisition request is holding a demanded
+// refresh. Its eventual empty completion enters the existing global work
+// revision/shared-wait wake exactly once. Idle polls do not record demand.
+// Atomic refresh-gate claim: 0 open, 1 pending acquisition (demand recorded
+// when demanded), 2 ready real event, 3 ready empty completion. The query and
+// demand record share one ticket lock so a publication cannot add a second
+// wake for the same completion.
+uint32_t cjgui_internal_renderer_owner_pump_claim_refresh_demand(uint64_t session,
+                                                                uint32_t demanded);
+
 CjguiInternalRendererStatus
 cjgui_internal_renderer_pump_event(uint64_t session,
                                    uint32_t timeoutMs,

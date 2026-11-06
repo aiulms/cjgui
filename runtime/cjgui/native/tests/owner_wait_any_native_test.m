@@ -20,6 +20,7 @@ static const uint64_t kReadyWaitNs = UINT64_C(16000000);
 static const uint64_t kStaleWaitNs = UINT64_C(6000000);
 static const uint32_t kHostAEvent = CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COLLECTION_SELECT;
 static const uint32_t kHostBEvent = CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COLLECTION_UNDO;
+static const uint32_t kHostCEvent = CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COLLECTION_CREATE;
 static _Atomic(bool) gEmptyPumpStarted = false;
 static _Atomic(uint32_t) gEmptyPumpFinished = 0;
 static _Atomic(bool) gReadyPumpFinished = false;
@@ -28,6 +29,8 @@ static _Atomic(bool) gReadyPumpReturnedExpected = false;
 @interface CjguiOwnerWaitAnyProbe : NSObject
 @property(nonatomic, assign) uint64_t hostA;
 @property(nonatomic, assign) uint64_t hostB;
+@property(nonatomic, assign) uint64_t hostC;
+@property(nonatomic) CjguiInternalRendererConfig config;
 @property(nonatomic, assign) uint64_t observedRevision;
 @property(nonatomic, assign) uint64_t staleGeneration;
 @property(nonatomic, assign) CjguiAsyncMultilineMeasureHandle measureHandle;
@@ -169,33 +172,112 @@ static _Atomic(bool) gReadyPumpReturnedExpected = false;
 
 - (void)startStaleGenerationCase {
     self.staleGeneration = CjguiOwnerPumpLiveSessionGeneration(self.hostB);
+    // Real close order: an owned READY event must be settled first.
     [self check:self.staleGeneration != 0 &&
-                cjgui_internal_renderer_destroy(self.hostB) == CJGUI_INTERNAL_RENDERER_OK
-        message:"could not retire the live second host while preserving its old READY ticket"];
+                cjgui_internal_renderer_destroy(self.hostB) ==
+                    CJGUI_INTERNAL_RENDERER_PENDING_SETTLEMENT_UNRESOLVED
+        message:"premature destroy was not rejected while a real READY event was owned"];
     NSUInteger index = CjguiOwnerPumpTicketIndex(self.hostB);
     BOOL oldReadyRetained = NO;
     if (index != NSNotFound) {
         pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
         CjguiOwnerPumpTicket *ticket = &gCjguiOwnerPumpTickets[index];
         oldReadyRetained = ticket->state == CjguiOwnerPumpTicketReady &&
-            ticket->sessionGeneration == self.staleGeneration && ticket->event.kind == kHostBEvent;
+            ticket->session == self.hostB &&
+            ticket->sessionGeneration == self.staleGeneration &&
+            ticket->event.kind == kHostBEvent;
         pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
     }
-    [self check:oldReadyRetained &&
-                CjguiOwnerPumpLiveSessionGeneration(self.hostB) == 0
-        message:"stale-generation fixture did not retain only the retired READY ticket"];
-    self.observedRevision = cjgui_internal_renderer_owner_work_revision();
-    [self waitFrom:self.observedRevision durationNs:kStaleWaitNs completion:
-        ^(int32_t status, uint64_t elapsed, uint64_t idle, uint64_t revisionAfter) {
-            [self check:status == CJGUI_INTERNAL_RENDERER_OK &&
-                        revisionAfter == self.observedRevision &&
-                        elapsed >= UINT64_C(4500000) && oldReadyRetained
-                message:"old-generation READY ticket incorrectly satisfied wait-any"];
-            printf("OWNER_WAIT_ANY_STALE status=%d elapsed_ns=%llu old_generation=%llu ignored=1\n",
-                status, (unsigned long long)elapsed,
-                (unsigned long long)self.staleGeneration);
-            [self startWorkerCompletionCase];
-        }];
+    [self check:oldReadyRetained
+        message:"rejected close did not retain the original READY ticket"];
+    // The owner pump is off-main in production; consume the retained event on
+    // the same serial pump queue used by the earlier cases.
+    dispatch_async(self.pumpQueue, ^{
+        CjguiInternalRendererEvent original = {0};
+        CjguiInternalRendererStatus consumed = cjgui_internal_renderer_pump_event(
+            self.hostB, 0, &original);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self check:consumed == CJGUI_INTERNAL_RENDERER_OK &&
+                        original.kind == kHostBEvent
+                message:"rejected close consumed or lost the original READY event"];
+            CjguiInternalRendererStatus retired =
+                cjgui_internal_renderer_destroy(self.hostB);
+            [self check:retired == CJGUI_INTERNAL_RENDERER_OK &&
+                        CjguiOwnerPumpLiveSessionGeneration(self.hostB) == 0
+                message:"legal retire after settling the READY event was rejected"];
+            // The replacement window must not inherit any late result from the
+            // old target. A new real event must wake on its own ticket.
+            CjguiInternalRendererStatus createStatus = CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
+            self.hostC = cjgui_internal_renderer_create(&self->_config, &createStatus);
+            CJGuiInternalSession *ctxC = self.hostC ? CjguiLookupSession(self.hostC) : nil;
+            [self check:createStatus == CJGUI_INTERNAL_RENDERER_OK && ctxC &&
+                        CjguiEnqueueInteraction(ctxC, kHostCEvent, 0, @"", 0, 0)
+                message:"replacement window or its real event could not be prepared"];
+            // Main is still inside this block while the replacement zero-timeout
+            // pump runs off-main, so the READY publication cannot land before
+            // the shared wait observes its starting revision.
+            atomic_store_explicit(&gReadyPumpFinished, false, memory_order_release);
+            atomic_store_explicit(&gReadyPumpReturnedExpected, false, memory_order_release);
+            dispatch_async(self.pumpQueue, ^{
+                CjguiInternalRendererEvent pending = {0};
+                CjguiInternalRendererStatus pendingStatus =
+                    cjgui_internal_renderer_pump_event(self.hostC, 0, &pending);
+                atomic_store_explicit(&gReadyPumpReturnedExpected,
+                    pendingStatus == CJGUI_INTERNAL_RENDERER_OK &&
+                    pending.kind == CJGUI_INTERNAL_RENDERER_EVENT_NONE, memory_order_release);
+                atomic_store_explicit(&gReadyPumpFinished, true, memory_order_release);
+            });
+            while (!atomic_load_explicit(&gReadyPumpFinished, memory_order_acquire)) usleep(100);
+            [self check:atomic_load_explicit(&gReadyPumpReturnedExpected, memory_order_acquire)
+                message:"replacement acquisition did not stay pending"];
+            self.observedRevision = cjgui_internal_renderer_owner_work_revision();
+            [self waitFrom:self.observedRevision durationNs:kReadyWaitNs completion:
+                ^(int32_t status, uint64_t elapsed, uint64_t idle,
+                  uint64_t revisionAfter) {
+                    NSUInteger replacementIndex = CjguiOwnerPumpTicketIndex(self.hostC);
+                    BOOL liveReady = NO;
+                    if (replacementIndex != NSNotFound) {
+                        pthread_mutex_lock(&gCjguiOwnerPumpTicketLock);
+                        CjguiOwnerPumpTicket *ticket =
+                            &gCjguiOwnerPumpTickets[replacementIndex];
+                        liveReady = ticket->state == CjguiOwnerPumpTicketReady &&
+                            ticket->session == self.hostC &&
+                            ticket->sessionGeneration ==
+                                CjguiOwnerPumpLiveSessionGeneration(self.hostC) &&
+                            ticket->event.kind == kHostCEvent;
+                        pthread_mutex_unlock(&gCjguiOwnerPumpTicketLock);
+                    }
+                    uint64_t replacementGeneration =
+                        CjguiOwnerPumpLiveSessionGeneration(self.hostC);
+                    [self check:status == CJGUI_INTERNAL_RENDERER_OK &&
+                                revisionAfter != self.observedRevision &&
+                                elapsed < kReadyWaitNs && liveReady &&
+                                replacementGeneration != 0 &&
+                                replacementGeneration != self.staleGeneration
+                        message:"replacement event did not wake on its own ticket or old generation answered"];
+                    printf("OWNER_WAIT_ANY_STALE status=%d elapsed_ns=%llu old_generation=%llu "
+                        "replacement_generation=%llu premature_reject=1 consumed=1 retired=1 "
+                        "replacement_ready=%d\n",
+                        status, (unsigned long long)elapsed,
+                        (unsigned long long)self.staleGeneration,
+                        (unsigned long long)replacementGeneration, liveReady ? 1 : 0);
+                    dispatch_async(self.pumpQueue, ^{
+                        CjguiInternalRendererEvent event = {0};
+                        CjguiInternalRendererStatus eventStatus =
+                            cjgui_internal_renderer_pump_event(self.hostC, 0, &event);
+                        dispatch_async(dispatch_get_main_queue(), ^{
+                            CjguiInternalRendererStatus destroyStatus =
+                                cjgui_internal_renderer_destroy(self.hostC);
+                            [self check:eventStatus == CJGUI_INTERNAL_RENDERER_OK &&
+                                        event.kind == kHostCEvent &&
+                                        destroyStatus == CJGUI_INTERNAL_RENDERER_OK
+                                message:"replacement cleanup did not settle before the worker case"];
+                            [self startWorkerCompletionCase];
+                        });
+                    });
+                }];
+        });
+    });
 }
 
 - (void)startWorkerCompletionCase {
@@ -229,6 +311,8 @@ static _Atomic(bool) gReadyPumpReturnedExpected = false;
 }
 
 - (void)finish {
+    if (self.hostC && CjguiLookupSession(self.hostC))
+        (void)cjgui_internal_renderer_destroy(self.hostC);
     if (self.hostB && CjguiLookupSession(self.hostB))
         (void)cjgui_internal_renderer_destroy(self.hostB);
     if (self.hostA && CjguiLookupSession(self.hostA))
@@ -262,6 +346,7 @@ int main(void) {
         CjguiOwnerWaitAnyProbe *probe = [CjguiOwnerWaitAnyProbe new];
         probe.hostA = hostA;
         probe.hostB = hostB;
+        probe.config = config;
         probe.waitQueue = dispatch_queue_create("cjgui.owner-wait-any.wait", DISPATCH_QUEUE_CONCURRENT);
         probe.pumpQueue = dispatch_queue_create("cjgui.owner-wait-any.pump", DISPATCH_QUEUE_SERIAL);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(100 * NSEC_PER_MSEC)),

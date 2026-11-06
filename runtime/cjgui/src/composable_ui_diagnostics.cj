@@ -50,6 +50,8 @@ public class CjguiComposableUiDiagnosticNode {
     public let actionName: String
     public let ownerTargetResourceId: Int64
     public let semanticIncarnation: Int64
+    /// Optional for compatibility with callers constructing older snapshots.
+    public let layout: ?CjguiComposableUiDiagnosticLayout
 
     public init(sceneIndex: Int64, nodeId: Int64, resourceId: Int64, nodeKind: Int64,
         identityKey: String, identityAvailable: Bool, bounds: CjguiComposableUiRect,
@@ -61,7 +63,7 @@ public class CjguiComposableUiDiagnosticNode {
         backdropCacheDisposition: String, semanticId!: String = "", parentSceneIndex!: Int64 = -1,
         parentIdentityKey!: String = "", depth!: Int64 = -1, styleSummary!: String = "",
         fieldId!: String = "", actionName!: String = "", ownerTargetResourceId!: Int64 = -1,
-        semanticIncarnation!: Int64 = -1) {
+        semanticIncarnation!: Int64 = -1, layout!: ?CjguiComposableUiDiagnosticLayout = None) {
         this.sceneIndex = sceneIndex
         this.nodeId = nodeId
         this.resourceId = resourceId
@@ -88,6 +90,7 @@ public class CjguiComposableUiDiagnosticNode {
         this.actionName = actionName
         this.ownerTargetResourceId = ownerTargetResourceId
         this.semanticIncarnation = semanticIncarnation
+        this.layout = layout
     }
 }
 

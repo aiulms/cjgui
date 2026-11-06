@@ -1,5 +1,10 @@
 # 公共布局原语（experimental，macOS 已验证）
 
+滚动区 `cjguiComposableScrollArea` 只接受零个或一个直接内容子节点；多项内容先
+放入普通 Vertical/Horizontal，再把该容器加入 ScrollArea。多个直接子节点会使
+整场候选以 `scroll_area_requires_at_most_one_child` 拒绝，保留上一 accepted 场景，
+不再静默只显示第一项。viewport 由调用方持久持有，内容容器通常按自然高度测量。
+
 本页说明手写树和运行时生成式界面共用的四个布局原语：`Stack`、横向
 `Wrap`、`AspectRatio`、`Spacer`。它们由仓颉核心的
 `CjguiComposableUiLayoutEngine` 统一测量、约束、布局、复用和命中，不另建
@@ -36,6 +41,74 @@ let actions = cjguiComposableHorizontal(3500, "draft-actions",
 actions.add(cjguiComposableSpacer(3501, "draft-actions-spacer"))
 actions.add(cjguiComposableButton(3502, "draft-apply", "应用草稿", "APPLY_DRAFT", -1))
 ```
+
+## 三栏工作区与剩余高度
+
+普通容器即可组合三栏：外层纵向依次声明标题、唯一 `growY` 工作区和按需
+出现的底面板；工作区横向声明左右栏与中间编辑区。以下片段中 `bodyText`、
+`showBottom`、`leftViewport` 和 `rightViewport` 由应用提供；viewport 应作为
+窗口的长期视图状态保存，不要在每次重建树时重置。每个节点 ID 在同一树中唯一。
+
+```cangjie
+let root = cjguiComposableVertical(100, "workspace", CjguiComposableUiStyle(gap: 8))
+root.add(cjguiComposableText(101, "title", "工作区", CjguiComposableUiStyle()))
+
+let columns = cjguiComposableHorizontal(102, "columns",
+    CjguiComposableUiStyle(growX: 1, growY: 1, gap: 8))
+let left = cjguiComposableScrollArea(103, "navigation", leftViewport,
+    CjguiComposableUiStyle(fixedWidth: 180, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH))
+let leftContent = cjguiComposableVertical(104, "navigation-content", CjguiComposableUiStyle(gap: 8))
+leftContent.add(cjguiComposableText(105, "navigation-label", "目录", CjguiComposableUiStyle()))
+left.add(leftContent)
+
+let editor = cjguiComposableVertical(106, "editor-column",
+    CjguiComposableUiStyle(growX: 1, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH, gap: 8))
+editor.add(cjguiComposableText(107, "editor-title", "正文", CjguiComposableUiStyle()))
+editor.add(cjguiComposableMultilineTextInput(108, "editor", "正文", bodyText, 108,
+    CjguiComposableUiStyle(growY: 1)))
+
+let right = cjguiComposableScrollArea(109, "inspector", rightViewport,
+    CjguiComposableUiStyle(fixedWidth: 180, alignY: CJGUI_COMPOSABLE_UI_ALIGN_STRETCH))
+let rightContent = cjguiComposableVertical(110, "inspector-content", CjguiComposableUiStyle(gap: 8))
+rightContent.add(cjguiComposableText(111, "inspector-label", "属性", CjguiComposableUiStyle()))
+right.add(rightContent)
+columns.add(left)
+columns.add(editor)
+columns.add(right)
+root.add(columns)
+
+if (showBottom) {
+    let bottom = cjguiComposableVertical(112, "bottom-panel", CjguiComposableUiStyle(padding: 8))
+    bottom.add(cjguiComposableText(113, "bottom-message", "消息", CjguiComposableUiStyle()))
+    root.add(bottom)
+}
+```
+
+把 `root` 交给正常窗口布局后，不需要用窗口高度手算编辑器高度；编辑器的
+正文、写入和焦点仍由应用现有 owner 与输入路径负责。可拖动分栏时，把对应
+子树交给现有 `cjguiComposableSplitView` / `cjguiComposableScopedSplitView`；
+它们不是新的三栏状态机。
+
+注意主轴与交叉轴：竖排用 `growY` 分配剩余高度，横排用 `growX` 分配剩余宽度。
+横排中的侧栏要铺满高度，显式设置侧栏自己的 `alignY: STRETCH`；只写 `growY`
+不能代替横排的交叉轴定位。上例三栏均已声明该伸展，容器的 align 不会自动传给孩子。
+
+- 普通纵向容器没有内部高度覆盖、且有**恰好一个**非固定高度的 `growY` 子项时，先测量其他兄弟的
+  自然高度及间距，再把剩余高度给该子项，并应用它的 `minHeight` / `maxHeight`。
+  因此长编辑正文不会挤掉标题或底面板；有多个 grow 子项时仍按既有自然尺寸、
+  增长和收缩规则分配，不应假定它们各占相同面积。
+- `fixedWidth` / `fixedHeight` 和显式最小尺寸不会因父容器太小而被悄悄缩小；
+  它们以及间距的总和超过可用区域时可能溢出。上例左右栏各 180 点，窗口太窄时
+  应由应用选择最小窗口尺寸、折叠栏或其他响应式组合；不要把溢出当作已适配。
+  非 stretch 的自然宽度受父宽约束，但显式固定宽和最小宽仍可能超过父宽。
+- `alignX` / `alignY` 描述**节点在父区域中的位置或伸展**，不是文字在控件
+  内的对齐。上例横向栏的 `alignY: STRETCH` 让它们使用行的高度。
+- 滚动区使用其首个内容子树的自然高度计算滚动范围；长内容放进该子树，复用
+  同一个 viewport 处理滚动与 reveal。可滚动内容超出视口是正常几何，不能仅凭
+  这一事实判为布局错误。需要填充余量的编辑器应放在有确定高度的普通容器中，
+  不靠滚动内容的自然高度模拟填充。
+- 没有底面板时不要创建固定高度的空占位节点；需要空状态时明确声明有内容的
+  空状态节点。空文本节点仍参与自己的尺寸和容器间距，不能自动视作不存在。
 
 ## 规则与约束
 

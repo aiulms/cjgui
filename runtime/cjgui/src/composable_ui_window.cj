@@ -3485,6 +3485,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return status == CJGUI_INTERNAL_RENDERER_OK
     }
 
+    /// Current drawable content allocation in logical points, excluding native
+    /// window chrome. Useful only when a public consumer needs a width before
+    /// building content (for example a width-aware editor surface). Ordinary
+    /// layouts should use grow/constraints. A read never accepts a scene or
+    /// requests a frame; None means closed or the viewport is unavailable.
+    public func contentBounds(): ?CjguiComposableUiRect {
+        if (!isWindowOpen) { return None }
+        let viewport = internalRendererComposableViewport(sessionToken)
+        if (viewport.status != CJGUI_INTERNAL_RENDERER_OK || viewport.width == 0u32 || viewport.height == 0u32) {
+            return None
+        }
+        return Some(CjguiComposableUiRect(0, 0, Int64(viewport.width), Int64(viewport.height)))
+    }
+
     /// The window's on-screen frame as (x, y, width, height) with a top-left
     /// origin, so a caller can place a synthetic pointer at a scene point.
     public func windowScreenFrame(): ?(Int64, Int64, Int64, Int64) {
@@ -4379,8 +4393,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (activationPrefixPending()) { this.traceProjectionGate("activation_prefix"); return false }
         // A Ready result owns an actual event removed from the FIFO. Pending
         // is only an acquisition request; Present rechecks the real FIFO and
-        // exact B dependency atomically on main before publication.
-        if (internalRendererOwnerPumpHasUnconsumedInput(sessionToken)) {
+        // exact B dependency atomically on main before publication. The gate
+        // decides and records demand in one ticket lock, so a completion
+        // published during this gate cannot be notified twice.
+        let ownerInputGate = internalRendererOwnerPumpClaimRefreshDemand(sessionToken,
+            refreshRequested || windowBackgroundRecoveryRequested || deferredEventWork ||
+            deferredInteractionPaint || hasRetainedSceneContinuation())
+        if (ownerInputGate == 1u32 || ownerInputGate == 2u32) {
             this.traceProjectionGate("owner_input"); return false
         }
         let nativeStateSpan = this.beginOwnerTracePhase(2u32)
@@ -8043,9 +8062,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// requires the same window session and accepted version on every page.
     /// A read never invokes controller/build/layout/present or waits for GPU.
     public func diagnosticSnapshot(startIndex!: Int64 = 0, maximumNodes!: Int64 = 128,
-        expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1): CjguiComposableUiDiagnosticSnapshot {
+        expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1,
+        includeNonVisible!: Bool = false): CjguiComposableUiDiagnosticSnapshot {
         return diagnosticSnapshotImpl(startIndex, maximumNodes, expectedSessionIdentity, expectedAcceptedSceneVersion,
-            false)
+            false, includeNonVisible: includeNonVisible)
     }
 
     /// Bounded read-only view of the accepted command declarations and their
@@ -8126,7 +8146,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     }
 
     private func diagnosticSnapshotImpl(startIndex: Int64, maximumNodes: Int64, expectedSessionIdentity: String,
-        expectedAcceptedSceneVersion: Int64, scalarOnly: Bool): CjguiComposableUiDiagnosticSnapshot {
+        expectedAcceptedSceneVersion: Int64, scalarOnly: Bool,
+        includeNonVisible!: Bool = false): CjguiComposableUiDiagnosticSnapshot {
         recordDiagnosticEnableTrace()
         let resultNodes = ArrayList<CjguiComposableUiDiagnosticNode>()
         let active = isWindowOpen && renderedScene.version > 0
@@ -8191,7 +8212,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 let output = node.effectOutputBounds()
                 let visible = node.bounds.intersect(node.clip).intersect(renderedScene.viewport)
                 let visibleOutput = output.intersect(renderedScene.viewport)
-                if (visible.width > 0 && visible.height > 0 || visibleOutput.width > 0 && visibleOutput.height > 0) {
+                if (includeNonVisible || visible.width > 0 && visible.height > 0 || visibleOutput.width > 0 && visibleOutput.height > 0) {
+                    let layoutDiagnostic = CjguiComposableUiDiagnosticLayout.fromNode(node,
+                        if (parentIndex >= 0) { Some(sceneNodes[parentIndex]) } else { None },
+                        renderedScene.viewport, interactionStateFor(node))
                     let keyAvailable = node.identityKey.size <= 256
                     let clips = ArrayList<CjguiComposableUiDiagnosticClip>()
                     let originalClips = node.clipConstraints()
@@ -8270,7 +8294,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                             styleSummary: "font=${if (node.style.fontFamily.size <= 80) { node.style.fontFamily } else { "unavailable" }}/${node.style.fontSize}; padding=${node.style.padding}; grow=${node.style.growX}/${node.style.growY}; align=${node.style.alignX}/${node.style.alignY}; textLines=${node.style.textMaxLines}/${node.style.textOverflow}; foreground=${node.style.textColor.red}/${node.style.textColor.green}/${node.style.textColor.blue}/${node.style.textColor.alpha}",
                             fieldId: if (node.fieldId.size <= 128) { node.fieldId } else { "unavailable" },
                             actionName: if (node.operationActionName.size <= 128) { node.operationActionName } else { "unavailable" },
-                            ownerTargetResourceId: node.operationResourceId, semanticIncarnation: node.semanticIncarnation))
+                            ownerTargetResourceId: node.operationResourceId, semanticIncarnation: node.semanticIncarnation,
+                            layout: Some(layoutDiagnostic)))
                 }
                 cursor += 1
             }
@@ -16707,7 +16732,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func refreshInteractionPaintIfNeeded(): Bool {
         if (this.closeStopsNewOwnerWork()) { return false }
         if (activationPrefixPending()) { deferredInteractionPaint = true; return false }
-        if (internalRendererOwnerPumpHasUnconsumedInput(sessionToken)) {
+        let interactionGate = internalRendererOwnerPumpClaimRefreshDemand(sessionToken, true)
+        if (interactionGate == 1u32 || interactionGate == 2u32) {
             deferredInteractionPaint = true
             return false
         }

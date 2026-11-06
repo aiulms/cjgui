@@ -45,9 +45,7 @@ class UiOnlyStarterController <: CjguiComposableUiController {
         // ONE role pick gives a component both its base paint and its
         // interaction states: the named style carries the theme's action
         // definition and the component consumes the pair together.
-        let action = CjguiComposableUiNamedStyle("ui-only-action",
-            theme.primaryAction, interaction: theme.primaryActionInteraction,
-            purpose: "主操作按钮")
+        let action = theme.actionStyle(primary: true)
         // This is ordinary public composition: the base card, image and a
         // normal status row share the one resolved scene and renderer.
         let root = cjguiComposableLayerHost(1, "ui-only-root", theme.page)
@@ -68,16 +66,16 @@ class UiOnlyStarterController <: CjguiComposableUiController {
         content.add(cjguiComposableImageResource(9, "ui-only-jpeg", jpegSwatch,
             CjguiComposableUiStyle(fixedWidth: 64, fixedHeight: 64, cornerRadius: 10,
                 clipsContent: true), contentMode: 1))
-        content.add(cjguiComposableTextInput(6, "ui-only-note", "短注释", work.note, 0, theme.input,
+        content.add(cjguiComposableTextInput(6, "ui-only-note", "短注释", work.note, 0, theme.fieldStyle().boundStyle(),
             fieldId: "note", operationActionName: "EDIT_TEXT", displayValueRole: "local"))
         content.add(cjguiComposableButton(7, "ui-only-increment", "计数 +1", "INCREMENT", 0,
-            action.localStyle(), interactionStyle: action.interaction))
+            action.boundStyle()))
         content.add(cjguiComposableText(8, "ui-only-status", "已点击 ${work.count} 次；注释：${work.note}", theme.body))
         if (let Some(session) <- workSession) {
             content.add(cjguiComposableButton(10, "ui-only-save-work-session", "保存工作会话",
-                "SAVE_WORK_SESSION", 0, action.localStyle(), interactionStyle: action.interaction))
+                "SAVE_WORK_SESSION", 0, action.boundStyle()))
             content.add(cjguiComposableButton(11, "ui-only-discard-work-session", "放弃会话更改并关闭",
-                "DISCARD_WORK_SESSION_CLOSE", 0, action.localStyle(), interactionStyle: action.interaction))
+                "DISCARD_WORK_SESSION_CLOSE", 0, theme.actionStyle().boundStyle()))
             let dirty = if (session.isDirty(work.payload())) { "未保存" } else { "已保存" }
             content.add(cjguiComposableText(12, "ui-only-work-session-status",
                 "${workStatus} · ${dirty} · 业务版本 ${work.revision}", theme.body))

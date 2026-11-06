@@ -6348,13 +6348,16 @@ public func cjguiComposableImageFromTransfer(nodeId: Int64, semanticId: String,
         imageTransferOffer: Some(offer), imageContentMode: contentMode)
 }
 
+/// A scroll area accepts zero or one direct content child. Put multiple rows
+/// inside a single ordinary container; multiple direct children reject the
+/// layout candidate with `scroll_area_requires_at_most_one_child`.
 public func cjguiComposableScrollArea(nodeId: Int64, semanticId: String, scrollOffset: Int64,
     style: CjguiComposableUiStyle, enabled!: Bool = true): CjguiComposableUiNode {
     return CjguiComposableUiNode(nodeId, semanticId, CJGUI_COMPOSABLE_UI_SCROLL_AREA, "", "", "SCROLL", -1, style,
         scrollOffset: scrollOffset, enabled: enabled, semanticRole: CJGUI_COMPOSABLE_UI_SEMANTIC_SCROLL_AREA)
 }
 
-/// The SAME public scroll container bound to a shared viewport state. The build
+/// The same zero-or-one-content container bound to a shared viewport state. The build
 /// reads the viewport's requested offset, and the layout reports the accepted
 /// extents back through the same object, so a wheel gesture, a reveal and a
 /// theme change all flow through ONE definition instead of each author computing
@@ -8559,11 +8562,13 @@ private class CjguiComposableUiWrapPlan {
 }
 
 public class CjguiComposableUiLayoutEngine {
-    // Per-node native shaping admission. The range-text seam may request a
-    // larger transport page, but one composable text value must stay within
-    // both the total and unbroken-paragraph work budgets. Native staging has
-    // the same guard for callers that bypass this layout entry point.
-    private static func textLayoutBudgetIssue(node: CjguiComposableUiNode): String {
+    // Validate declarations recursively before cached layout or virtual-list
+    // materialization can hide them. Text shaping admission also keeps one
+    // value within the native total and unbroken-paragraph work budgets.
+    private static func layoutDeclarationIssue(node: CjguiComposableUiNode): String {
+        if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA && node.children().size > 1) {
+            return "scroll_area_requires_at_most_one_child"
+        }
         if (let Some(issue) <- cjguiOrdinaryTextRunsRejection(node.value, node.textStyleRuns)) { return issue }
         let kind = node.nodeKind
         if (kind == CJGUI_COMPOSABLE_UI_TEXT || kind == CJGUI_COMPOSABLE_UI_BUTTON ||
@@ -8590,7 +8595,7 @@ public class CjguiComposableUiLayoutEngine {
             }
         }
         for (child in node.children()) {
-            let issue = textLayoutBudgetIssue(child)
+            let issue = layoutDeclarationIssue(child)
             if (issue.size > 0) {
                 return issue
             }
@@ -8690,10 +8695,10 @@ public class CjguiComposableUiLayoutEngine {
         let nodes = ArrayList<CjguiComposableUiLayoutNode>()
         let work = CjguiComposableUiLayoutWorkCounter()
         let layoutMeasurer = CjguiComposableUiLayoutMeasurer(measurer, reuseMeasurements: reuseMeasurements)
-        let textBudgetIssue = textLayoutBudgetIssue(root)
-        if (textBudgetIssue.size > 0) {
+        let declarationIssue = layoutDeclarationIssue(root)
+        if (declarationIssue.size > 0) {
             let refused = CjguiComposableUiScene(version, viewport, nodes, valid: false,
-                layoutError: textBudgetIssue)
+                layoutError: declarationIssue)
             return CjguiComposableUiLayoutResult(refused, layoutMeasurer.metrics(work, reuseCache: reuseCache),
                 viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
         }
@@ -8826,6 +8831,14 @@ public class CjguiComposableUiLayoutEngine {
             return
         }
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SCROLL_AREA) {
+            // A virtual-list source may have built this node after the initial
+            // declaration walk. Refuse before materialization can replace its
+            // children and conceal an invalid multi-content declaration.
+            if (node.children().size > 1) {
+                work.layoutIssue = "scroll_area_requires_at_most_one_child"
+                finishSubtreeNode(output, subtreeStartIndex)
+                return
+            }
             work.scrollAreaSolveCount += 1
             materializeVirtualList(node, inner, measurer, work, identityRegistry)
             if (work.dynamicIdentityIssue.size > 0) {
@@ -9613,13 +9626,11 @@ public class CjguiComposableUiLayoutEngine {
                 definiteAllocation = false
                 break
             }
-            if (child.style.fixedHeight > 0) {
-                fixedTotal += child.style.fixedHeight
-            } else if (flexibleIndex < 0 && child.style.growY > 0 && child.style.minHeight >= 0 && (child
+            if (child.style.fixedHeight <= 0 && child.style.growY > 0 && flexibleIndex < 0 && child.style.minHeight >= 0 && (child
                 .style
                 .maxHeight <= 0 || child.style.maxHeight >= child.style.minHeight)) {
                 flexibleIndex = index
-            } else {
+            } else if (child.style.fixedHeight <= 0 && child.style.growY > 0) {
                 definiteAllocation = false
                 break
             }
@@ -9629,16 +9640,22 @@ public class CjguiComposableUiLayoutEngine {
             index = 0
             while (index < children.size) {
                 let child = children[index]
-                heights.add(if (index == flexibleIndex) {
-                    // With one growable child and only fixed-height siblings,
-                    // growth or shrink always resolves to this bounded space.
-                    // Its intrinsic text height cannot affect the result.
-                    constrainedLength(inner.height - fixedTotal, 0, child.style.minHeight, child.style.maxHeight, 0)
+                if (index == flexibleIndex) {
+                    heights.add(0)
                 } else {
-                    child.style.fixedHeight
-                })
+                    // Inflexible siblings consume their natural heights even
+                    // when they do not declare a fixed height.
+                    let height = preferredHeight(child, widths[index], measurer)
+                    heights.add(height)
+                    fixedTotal += height
+                }
                 index += 1
             }
+            let flexible = children[flexibleIndex]
+            // A unique growable child consumes the remaining space; its
+            // intrinsic text height cannot displace siblings.
+            heights[flexibleIndex] = constrainedLength(inner.height - fixedTotal, 0, flexible.style.minHeight,
+                flexible.style.maxHeight, 0)
         } else {
             var total: Int64 = if (children.size > 1) {
                 gap * (children.size - 1)
@@ -10499,7 +10516,14 @@ public class CjguiComposableUiLayoutEngine {
             }
         }
         return if (horizontalAxis) {
-            preferredWidth(node, measurer)
+            let preferred = preferredWidth(node, measurer)
+            // A natural width may wrap within its parent. Explicit fixed and
+            // minimum widths remain authoritative even if they overflow.
+            if (node.style.fixedWidth <= 0 && preferred > crossAxisAvailable) {
+                maxValue(crossAxisAvailable, node.style.minWidth)
+            } else {
+                preferred
+            }
         } else {
             preferredHeight(node, textMeasurementWidth, measurer)
         }

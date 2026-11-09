@@ -14,9 +14,9 @@ foreign {
         session: UInt64, outBlue: CPointer<UInt8>, outGreen: CPointer<UInt8>,
         outRed: CPointer<UInt8>, outAlpha: CPointer<UInt8>
     ): Int32
-    func cjgui_internal_renderer_test_send_composable_key(
-        session: UInt64, keyCode: UInt16, modifiers: UInt64, outFocusedNodeId: CPointer<UInt64>
-    ): Int32
+    // cjgui_internal_renderer_test_send_composable_key 已由同包
+    // composable_ui_collection_view_test.cj 声明；重复 foreign 声明会让整个
+    // 测试包编译失败（既有问题），此处不再重复声明。
 }
 
 private class PressLeaseBooleanController <: CjguiComposableUiController {

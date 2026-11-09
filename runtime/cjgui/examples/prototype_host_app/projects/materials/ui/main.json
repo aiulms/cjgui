@@ -1,0 +1,31 @@
+{
+  "format": "cjgui.ui-document",
+  "format_version": 1,
+  "requirements": {
+    "actions": [
+      "APPLY_DRAFT",
+      "CANCEL_DRAFT",
+      "RESTORE_DEFAULTS"
+    ],
+    "components": [
+      "action",
+      "horizontal",
+      "label",
+      "select",
+      "textInput",
+      "vertical"
+    ],
+    "fields": [
+      "note",
+      "status",
+      "title"
+    ],
+    "fonts": [],
+    "image_resources": [],
+    "runtime_compositions": [],
+    "styles": []
+  },
+  "structure": "GENERATED_UI_STRUCTURE 1\nNODE 0 material-detail-root vertical\nPROPERTY 0 material-detail-root gap 12\nPROPERTY 0 material-detail-root padding 14\nPROPERTY 0 material-detail-root growX 1\nNODE 1 material-detail-title label\nPROPERTY 1 material-detail-title text 素材详情\nPROPERTY 1 material-detail-title style heading\nNODE 1 material-detail-card vertical\nPROPERTY 1 material-detail-card style card\nPROPERTY 1 material-detail-card gap 8\nPROPERTY 1 material-detail-card growX 1\nNODE 2 material-detail-card-title label\nPROPERTY 2 material-detail-card-title text 选中记录\nPROPERTY 2 material-detail-card-title style body\nNODE 2 material-detail-card-help label\nPROPERTY 2 material-detail-card-help text 值来自当前选中对象；应用后写入该 owner。\nPROPERTY 2 material-detail-card-help style caption\nNODE 2 title-row horizontal\nPROPERTY 2 title-row gap 16\nPROPERTY 2 title-row alignY center\nPROPERTY 2 title-row growX 1\nNODE 3 title-labelcol vertical\nPROPERTY 3 title-labelcol gap 2\nPROPERTY 3 title-labelcol fixedWidth 300\nPROPERTY 3 title-labelcol alignY start\nNODE 4 title-label label\nPROPERTY 4 title-label text 标题\nPROPERTY 4 title-label style body\nNODE 4 title-help label\nPROPERTY 4 title-help text 卡片与详情共用同一个标题值。\nPROPERTY 4 title-help style caption\nNODE 3 field-title textInput field=title\nPROPERTY 3 field-title style input\nPROPERTY 3 field-title label 标题\nPROPERTY 3 field-title labelVisible false\nPROPERTY 3 field-title growX 1\nNODE 2 status-row horizontal\nPROPERTY 2 status-row gap 16\nPROPERTY 2 status-row alignY center\nPROPERTY 2 status-row growX 1\nNODE 3 status-labelcol vertical\nPROPERTY 3 status-labelcol gap 2\nPROPERTY 3 status-labelcol fixedWidth 300\nPROPERTY 3 status-labelcol alignY start\nNODE 4 status-label label\nPROPERTY 4 status-label text 状态\nPROPERTY 4 status-label style body\nNODE 4 status-help label\nPROPERTY 4 status-help text 筛选工具栏中的状态条件。\nPROPERTY 4 status-help style caption\nNODE 3 field-status select field=status\nPROPERTY 3 field-status style input\nPROPERTY 3 field-status label 状态\nPROPERTY 3 field-status fixedWidth 220\nNODE 2 note-row horizontal\nPROPERTY 2 note-row gap 16\nPROPERTY 2 note-row alignY center\nPROPERTY 2 note-row growX 1\nNODE 3 note-labelcol vertical\nPROPERTY 3 note-labelcol gap 2\nPROPERTY 3 note-labelcol fixedWidth 300\nPROPERTY 3 note-labelcol alignY start\nNODE 4 note-label label\nPROPERTY 4 note-label text 备注\nPROPERTY 4 note-label style body\nNODE 4 note-help label\nPROPERTY 4 note-help text 可留空，最多 80 个字符。\nPROPERTY 4 note-help style caption\nNODE 3 field-note textInput field=note\nPROPERTY 3 field-note style input\nPROPERTY 3 field-note label 备注\nPROPERTY 3 field-note labelVisible false\nPROPERTY 3 field-note growX 1\nNODE 2 material-detail-detail-help label\nPROPERTY 2 material-detail-detail-help text 图片与列数来自卡片面板；缺失图片的卡片保持真实缺失占位。\nPROPERTY 2 material-detail-detail-help style caption\nNODE 2 material-detail-actions horizontal\nPROPERTY 2 material-detail-actions gap 8\nPROPERTY 2 material-detail-actions alignX end\nPROPERTY 2 material-detail-actions growX 0\nNODE 3 material-detail-action-restore action action=RESTORE_DEFAULTS\nPROPERTY 3 material-detail-action-restore label 恢复默认\nPROPERTY 3 material-detail-action-restore style quiet_action\nPROPERTY 3 material-detail-action-restore fixedWidth 96\nPROPERTY 3 material-detail-action-restore growX 0\nNODE 3 material-detail-action-cancel action action=CANCEL_DRAFT\nPROPERTY 3 material-detail-action-cancel label 取消草稿\nPROPERTY 3 material-detail-action-cancel style secondary_action\nPROPERTY 3 material-detail-action-cancel fixedWidth 96\nPROPERTY 3 material-detail-action-cancel growX 0\nNODE 3 material-detail-action-apply action action=APPLY_DRAFT\nPROPERTY 3 material-detail-action-apply label 应用草稿\nPROPERTY 3 material-detail-action-apply style primary_action\nPROPERTY 3 material-detail-action-apply fixedWidth 110\nPROPERTY 3 material-detail-action-apply growX 0\nEND",
+  "structure_format": 1,
+  "structure_sha256": "bcf3b1df2f95e737eb0ed46f67599b92ce3e333c29f3e96873496cee2f67305c"
+}

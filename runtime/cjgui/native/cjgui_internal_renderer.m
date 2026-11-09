@@ -9915,6 +9915,15 @@ static uint32_t CjguiPrepareComposableImageResourceOnMain(CJGuiInternalSession *
         resource.state = CjguiComposableImageResourceFailed;
         return resource.state;
     }
+    // A resource marked Ready whose texture is no longer reachable (cache
+    // eviction race, or the borrowing session that supplied the bound texture
+    // was destroyed) must not keep answering Ready forever: the caller would
+    // keep an empty accepted texture and re-arm a completion on every commit.
+    // Re-request the exact same key instead of inventing a texture or state.
+    if (resource.state == CjguiComposableImageResourceReady && !cached && !resource.texture &&
+        !domain.textureCache[cacheKey]) {
+        resource.state = CjguiComposableImageResourceUnrequested;
+    }
     resource.lastAccess = CjguiComposableImageNextAccess(domain);
     if (resource.state == CjguiComposableImageResourceUnrequested ||
         resource.state == CjguiComposableImageResourceBusy ||
@@ -12528,6 +12537,49 @@ static BOOL CjguiComposableNodeUsesLabelTextInset(uint32_t kind) {
         kind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TAB_TITLE;
 }
 
+// Buttons may opt into content alignment through the public style fact.
+// Node alignX/alignY place the node; these values place its text only.
+static BOOL CjguiComposableNodeAlignsContentVertically(CJGuiInternalComposableSceneNode *node) {
+    return node && node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON &&
+        (node.node.contentAlignY == 2 || node.node.contentAlignY == 3);
+}
+
+static NSTextAlignment CjguiComposableContentTextAlignment(CJGuiInternalComposableSceneNode *node) {
+    if (!node || node.node.nodeKind != CJGUI_INTERNAL_RENDERER_COMPOSABLE_BUTTON) return NSTextAlignmentLeft;
+    if (node.node.contentAlignX == 2) return NSTextAlignmentCenter;
+    if (node.node.contentAlignX == 3) return NSTextAlignmentRight;
+    return NSTextAlignmentLeft;
+}
+
+static CGFloat CjguiComposableContentLineHeight(CJGuiInternalComposableSceneNode *node) {
+    if (node.node.lineHeightPoints > 0.0) return (CGFloat)CjguiComposableLineHeight(node.node.lineHeightPoints);
+    NSFont *font = CjguiComposableFont(node);
+    return ceil([font ascender] - [font descender] + [font leading]);
+}
+
+// The ONE content rect consumed by prepared layout, the drawWithRect fallback
+// and the raster credential. START keeps the whole inset; CENTER and END place
+// a single-line button's line box inside it. END is the bottom of the content
+// box in the flipped scene space.
+static NSRect CjguiComposableContentTextRect(CJGuiInternalComposableSceneNode *node) {
+    NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
+    CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
+    NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
+    NSUInteger lineLimit = node.node.textMaxLines ?: (node.node.textOverflow == 1 ? 1 : 0);
+    if (CjguiComposableNodeAlignsContentVertically(node) && lineLimit <= 1) {
+        CGFloat lineHeight = CjguiComposableContentLineHeight(node);
+        if (lineHeight > 0.0 && lineHeight < textRect.size.height) {
+            if (node.node.contentAlignY == 2) {
+                textRect.origin.y += (textRect.size.height - lineHeight) / 2.0;
+            } else {
+                textRect.origin.y += textRect.size.height - lineHeight;
+            }
+            textRect.size.height = lineHeight;
+        }
+    }
+    return textRect;
+}
+
 // The rect the empty-text layout preparation would use. An empty result is the
 // named "no preparable geometry" state for a text node (zero-sized or thinner
 // than the text inset): it is NOT a change, so the caller must not clone and
@@ -12691,7 +12743,8 @@ static NSString *CjguiComposableTextTextureKey(CJGuiInternalComposableSceneNode 
             displayText ?: @"", CjguiComposableTextClipSignature(node),
             value.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
                 ? CjguiComposableRasterStyleSignature(node.styleRunsSignature) : (node.styleRunsSignature ?: @"")];
-    return [key stringByAppendingFormat:@":overflow:%u:%u:typography:%.17g:%.17g:font:%.17g", value.textMaxLines, value.textOverflow,
+    return [key stringByAppendingFormat:@":overflow:%u:%u:content:%lld:%lld:typography:%.17g:%.17g:font:%.17g",
+        value.textMaxLines, value.textOverflow, value.contentAlignX, value.contentAlignY,
         CjguiComposableLetterSpacing(value.letterSpacing), CjguiComposableLineHeight(value.lineHeightPoints), value.fontSize];
 }
 
@@ -12861,6 +12914,10 @@ static uint64_t CjguiComposableFreshTextTileBytes(CJGuiInternalComposableSceneNo
 @property(nonatomic, strong) NSLayoutManager *layoutManager;
 @property(nonatomic, strong) NSTextContainer *container;
 @property(nonatomic, assign) NSRect textRect;
+// Content alignment is part of the layout identity: the same text/size with a
+// different horizontal or vertical alignment is a different immutable layout.
+@property(nonatomic, assign) int64_t contentAlignX;
+@property(nonatomic, assign) int64_t contentAlignY;
 // TextKit does not supply a truncation token when the last visible paragraph
 // ends in a hard break. Shape that entire terminal paint line together, so
 // contextual fallback, kerning and fractional glyph positions remain coherent.
@@ -13468,8 +13525,7 @@ static CjguiTextRasterSourceCredential *CjguiCreateTextRasterSourceCredentialWit
     if (!temporaryRuns) { if (refusal) *refusal="temporary_attributes"; return nil; }
     if (![frozenBody.string isEqualToString:body]) { if (refusal) *refusal="body_mismatch"; return nil; }
     NSRect bounds = NSMakeRect(0, 0, node.node.width, node.node.height);
-    CGFloat insetY = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
-    NSRect textRect = NSInsetRect(bounds, 7.0, insetY);
+    NSRect textRect = CjguiComposableContentTextRect(node);
     NSAppearance *appearance = textView.effectiveAppearance;
     NSString *resolvedAppearanceName = appearanceName;
     if (!resolvedAppearanceName && appearance) resolvedAppearanceName = appearance.name;
@@ -13484,7 +13540,9 @@ static CjguiTextRasterSourceCredential *CjguiCreateTextRasterSourceCredentialWit
         @"node_id": @(node.node.nodeId), @"resource_id": @(node.node.resourceId),
         @"kind": @(node.node.nodeKind),
         @"body": body, @"bounds": [NSValue valueWithRect:bounds],
-        @"text_rect": [NSValue valueWithRect:textRect], @"coverage": [NSValue valueWithRect:coverage],
+        @"text_rect": [NSValue valueWithRect:textRect],
+        @"content_align_x": @(node.node.contentAlignX), @"content_align_y": @(node.node.contentAlignY),
+        @"coverage": [NSValue valueWithRect:coverage],
         @"origin": [NSValue valueWithPoint:origin], @"tiles": [tiles copy], @"scale": @(scale),
         @"scroll": @(scroll), @"line_height_points": @(node.node.lineHeightPoints),
         @"node_x": @(node.node.x), @"node_y": @(node.node.y),
@@ -13629,6 +13687,16 @@ static CjguiTextRasterSourceCredential *CjguiRetainedLayoutRasterSource(
     CjguiPreparedTextNodeLayout *layout = node.preparedTextLayout;
     CGFloat width = (CGFloat)node.node.width - 14.0;
     if (!layout.container || fabs(layout.container.size.width - width) >= 0.001) return nil;
+    if (layout.contentAlignX != node.node.contentAlignX ||
+        layout.contentAlignY != node.node.contentAlignY) return nil;
+    // Width alone does not describe the text box: CENTER/END change the
+    // vertical origin/height at the same width. A retained layout whose text
+    // rect no longer matches the current declaration must not source pixels.
+    NSRect expectedTextRect = CjguiComposableContentTextRect(node);
+    if (fabs(layout.textRect.origin.x - expectedTextRect.origin.x) >= 0.001 ||
+        fabs(layout.textRect.origin.y - expectedTextRect.origin.y) >= 0.001 ||
+        fabs(layout.textRect.size.width - expectedTextRect.size.width) >= 0.001 ||
+        fabs(layout.textRect.size.height - expectedTextRect.size.height) >= 0.001) return nil;
     return CjguiCreateTextRasterSourceCredential(node, layout.storage, layout.layoutManager, layout.container,
         nil, text, scale, coverage, tiles, NSMakePoint(node.node.x, node.node.y), 0.0, 0, 0);
 }
@@ -13710,6 +13778,8 @@ static CjguiPreparedTextNodeLayout *CjguiCreateSealedRasterLayout(
     prepared.layoutManager = layoutManager;
     prepared.container = container;
     prepared.textRect = textRectValue.rectValue;
+    prepared.contentAlignX = [description[@"content_align_x"] longLongValue];
+    prepared.contentAlignY = [description[@"content_align_y"] longLongValue];
     prepared.sourceScroll = [description[@"scroll"] doubleValue];
     prepared.positionLines = [NSMutableDictionary dictionary];
     prepared.defaultLineHeight = CjguiComposableLineHeight([description[@"line_height_points"] doubleValue]);
@@ -14886,9 +14956,7 @@ static CjguiPreparedTextNodeLayout *CjguiBuildPreparedAttributedLayout(
 #endif
     BOOL timing = diagnosticSession && diagnosticSession.diagnosticTimingEnabled;
     uint64_t timingStarted = timing ? CjguiDiagnosticMonotonicNanoseconds() : 0;
-    NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
-    CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
-    NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
+    NSRect textRect = CjguiComposableContentTextRect(node);
     if (NSIsEmptyRect(textRect) || textRect.size.width <= 0 || textRect.size.height <= 0) return nil;
     NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:frozenText];
     NSLayoutManager *layoutManager = [NSLayoutManager new];
@@ -14921,6 +14989,8 @@ static CjguiPreparedTextNodeLayout *CjguiBuildPreparedAttributedLayout(
     prepared.layoutManager = layoutManager;
     prepared.container = container;
     prepared.textRect = textRect;
+    prepared.contentAlignX = node.node.contentAlignX;
+    prepared.contentAlignY = node.node.contentAlignY;
     prepared.defaultLineHeight = CjguiComposableLineHeight(node.node.lineHeightPoints) > 0.0
         ? CjguiComposableLineHeight(node.node.lineHeightPoints) : ceil([layoutManager defaultLineHeightForFont:baseFont]);
     prepared.positionLease = positionLease;
@@ -14941,6 +15011,7 @@ static CjguiPreparedTextNodeLayout *CjguiBuildPreparedAttributedLayout(
 static NSAttributedString *CjguiFreezeTextAttributes(CJGuiInternalComposableSceneNode *node,
     NSString *displayText, NSData *styleRunData, NSFont **resolvedFont) {
     NSMutableParagraphStyle *paragraph = [[NSMutableParagraphStyle alloc] init];
+    paragraph.alignment = CjguiComposableContentTextAlignment(node);
     paragraph.lineBreakMode = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_TEXT
         ? NSLineBreakByWordWrapping : (node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
             ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail);
@@ -15001,7 +15072,8 @@ static NSString *CjguiReadonlyMetricSignature(CJGuiInternalComposableSceneNode *
 static CjguiPreparedTextNodeLayout *CjguiPaintLayout(CjguiPreparedTextNodeLayout *geometry,NSAttributedString *paint){
     CjguiPreparedTextNodeLayout *p=[CjguiPreparedTextNodeLayout new];
     p.storage=geometry.storage;p.layoutManager=geometry.layoutManager;p.container=geometry.container;
-    p.textRect=geometry.textRect;p.defaultLineHeight=geometry.defaultLineHeight;p.positionLease=geometry.positionLease;
+    p.textRect=geometry.textRect;p.contentAlignX=geometry.contentAlignX;p.contentAlignY=geometry.contentAlignY;
+    p.defaultLineHeight=geometry.defaultLineHeight;p.positionLease=geometry.positionLease;
     p.positionLines=geometry.positionLines;p.diagnosticSession=geometry.diagnosticSession;p.sourceScroll=geometry.sourceScroll;
     p.metricSignature=geometry.metricSignature;p.paintOverlay=paint;
     p.overflowPaintGlyphs=geometry.overflowPaintGlyphs;p.terminalEllipsisOrigin=geometry.terminalEllipsisOrigin;
@@ -15579,6 +15651,7 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
                 ? NSLineBreakByWordWrapping : NSLineBreakByTruncatingTail);
         paragraph.lineBreakStrategy = node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_MULTILINE_TEXT_INPUT
             ? NSLineBreakStrategyNone : NSLineBreakStrategyPushOut;
+        paragraph.alignment = CjguiComposableContentTextAlignment(node);
         // Glyph textures are rasterized with an OPAQUE colour and the node's text
         // alpha is re-applied as a per-draw multiplier (CjguiEncodeMetalTexture).
         // This keeps the cached texture and the prepared layout valid across an
@@ -15602,9 +15675,7 @@ static id<MTLTexture> CjguiRasterComposableTextTexture(CJGuiInternalMetalView *m
     [transform translateXBy:(NSMinX(textureRect) - (CGFloat)node.node.x) * -1.0
                        yBy:(NSMinY(textureRect) - (CGFloat)node.node.y) * -1.0];
     [transform concat];
-    NSRect bounds = NSMakeRect(0.0, 0.0, (CGFloat)node.node.width, (CGFloat)node.node.height);
-    CGFloat verticalInset = CjguiComposableNodeUsesLabelTextInset(node.node.nodeKind) ? 2.0 : 6.0;
-    NSRect textRect = NSInsetRect(bounds, 7.0, verticalInset);
+    NSRect textRect = CjguiComposableContentTextRect(node);
 #ifdef CJGUI_INTERNAL_TESTING
     // `drawWithRect` fuses layout and glyph drawing in one AppKit API, so this
     // interval is honest "draw-with-layout" work only. Splitting layout from
@@ -18656,9 +18727,41 @@ static BOOL CjguiComposableNodeIsAccessibilityElement(CJGuiInternalComposableSce
 @property(nonatomic, weak) CJGuiInternalComposableSceneOverlay *overlay;
 @property(nonatomic, strong) CJGuiInternalComposableSceneNode *node;
 @property(nonatomic, copy) NSString *identityKey;
-@property(nonatomic, weak) CJGuiInternalComposableAccessibilityAction *semanticParent;
+@property(nonatomic, weak) id semanticParent;
 @property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableAccessibilityAction *> *semanticChildren;
 - (instancetype)initWithOverlay:(CJGuiInternalComposableSceneOverlay *)overlay node:(CJGuiInternalComposableSceneNode *)node;
+- (CJGuiInternalComposableSceneNode *)currentNode;
+@end
+
+// In this machine's VoiceOver probes, NSScrollView received page scrolling
+// through its clip view while the attempted custom AX elements did not.
+// Use that narrow AppKit adapter here; this is not a universal restriction on
+// custom NSAccessibilityElement controls. Accepted viewport facts remain the
+// authority, and native changes only enqueue the existing bounded wheel intent.
+@class CJGuiInternalComposableAccessibilityProxyScroller;
+@interface CJGuiInternalComposableAccessibilityScrollAreaView : NSScrollView
+@property(nonatomic, weak) CJGuiInternalComposableSceneOverlay *overlay;
+@property(nonatomic, strong) CJGuiInternalComposableSceneNode *node;
+@property(nonatomic, copy) NSString *identityKey;
+@property(nonatomic, weak) id semanticParent;
+@property(nonatomic, strong) NSMutableArray<CJGuiInternalComposableAccessibilityAction *> *semanticChildren;
+@property(nonatomic, strong) NSView *acceptedDocumentView;
+@property(nonatomic, assign) BOOL syncingAcceptedScroll;
+@property(nonatomic, assign) BOOL scrollGestureActive;
+@property(nonatomic, assign) uint64_t scrollGestureGeneration;
+@property(nonatomic, assign) CGFloat lastProxyOffset;
+- (instancetype)initWithOverlay:(CJGuiInternalComposableSceneOverlay *)overlay
+                           node:(CJGuiInternalComposableSceneNode *)node;
+- (CJGuiInternalComposableSceneNode *)currentNode;
+- (void)cancelScrollGesture;
+- (void)syncAcceptedScrollFacts;
+- (void)notifyScrollValueChanged;
+@end
+
+// The standard NSScroller of the proxy. Its AX value is the accepted fraction
+// (never a second native offset) and writes enter the accepted wheel FIFO.
+@interface CJGuiInternalComposableAccessibilityProxyScroller : NSScroller
+@property(nonatomic, weak) CJGuiInternalComposableAccessibilityScrollAreaView *area;
 @end
 
 #ifdef CJGUI_INTERNAL_TESTING
@@ -19261,6 +19364,11 @@ static void CjguiAdvanceDragEdgeDemand(CjguiDragEdgeDemand *d,uint64_t now,
 - (NSString *)accessibilityCurrentTextForNode:(CJGuiInternalComposableSceneNode *)node;
 - (BOOL)accessibilityPerformPressForNode:(CJGuiInternalComposableSceneNode *)node;
 - (BOOL)accessibilityAdjustSliderForNode:(CJGuiInternalComposableSceneNode *)node increment:(BOOL)increment;
+- (BOOL)accessibilityScrollNodeByPage:(CJGuiInternalComposableSceneNode *)node direction:(NSInteger)direction;
+- (BOOL)accessibilityScrollNode:(CJGuiInternalComposableSceneNode *)node direction:(NSInteger)direction page:(BOOL)page;
+- (BOOL)accessibilitySetScrollBarFraction:(id)fraction forNode:(CJGuiInternalComposableSceneNode *)node;
+- (BOOL)accessibilityScrollNodeIsAdmitted:(CJGuiInternalComposableSceneNode *)node;
+- (BOOL)accessibilityEnqueueScrollDelta:(double)delta forNode:(CJGuiInternalComposableSceneNode *)node;
 - (void)accessibilitySetValue:(id)value forNode:(CJGuiInternalComposableSceneNode *)node;
 - (void)accessibilitySetSelectedTextRange:(NSRange)range forNode:(CJGuiInternalComposableSceneNode *)node;
 - (void)postAccessibilityValueChangedForNode:(CJGuiInternalComposableSceneNode *)node;
@@ -23217,8 +23325,7 @@ static void CjguiTraceSingleLinePlacement(CJGuiInternalSession *ctx,
 }
 
 @implementation CJGuiInternalComposableAccessibilityAction
-- (instancetype)initWithOverlay:(CJGuiInternalComposableSceneOverlay *)overlay node:(CJGuiInternalComposableSceneNode *)node {
-    self = [super init]; if (!self) return nil; self.overlay = overlay; self.node = node;
+- (instancetype)initWithOverlay:(CJGuiInternalComposableSceneOverlay *)overlay node:(CJGuiInternalComposableSceneNode *)node {    self = [super init]; if (!self) return nil; self.overlay = overlay; self.node = node;
     self.semanticChildren = [NSMutableArray array];
     return self;
 }
@@ -23377,7 +23484,8 @@ static void CjguiTraceSingleLinePlacement(CJGuiInternalSession *ctx,
 }
 - (NSArray<NSAccessibilityActionName> *)accessibilityActionNames {
     CJGuiInternalComposableSceneNode *node = [self currentNode];
-    if (!node || ![self.overlay accessibilityNodeIsActionable:node]) return @[];
+    if (!node) return @[];
+    if (![self.overlay accessibilityNodeIsActionable:node]) return @[];
     uint32_t kind = node.node.nodeKind;
     // A tab TITLE and a vector graphic are pressable exactly like a button: the
     // press enqueues the generic ACTIVATE interaction and Cangjie resolves it
@@ -23472,13 +23580,234 @@ static void CjguiTraceSingleLinePlacement(CJGuiInternalSession *ctx,
 - (void)setAccessibilityValue:(id)value { [self accessibilitySetValue:value]; }
 @end
 
-// Disclosure is a row capability, not a scene-wide one. AppKit projects an
-// optional AX getter onto every instance of the class that implements it; with
-// these methods on the shared element every scroll area and text node answered
-// AXExpanded=NO, so VoiceOver announced "collapsed" and stopped linear
-// navigation before entering the list.
+// A flipped document makes accepted offset 0 the top of the content.
+@interface CJGuiInternalComposableAccessibilityScrollDocument : NSView
+@end
+@implementation CJGuiInternalComposableAccessibilityScrollDocument
+- (BOOL)isFlipped { return YES; }
+@end
+
+@implementation CJGuiInternalComposableAccessibilityScrollAreaView
+- (instancetype)initWithOverlay:(CJGuiInternalComposableSceneOverlay *)overlay
+                           node:(CJGuiInternalComposableSceneNode *)node {
+    self = [super initWithFrame:NSZeroRect];
+    if (!self) return nil;
+    self.overlay = overlay;
+    self.node = node;
+    self.semanticChildren = [NSMutableArray array];
+    self.drawsBackground = NO;
+    self.borderType = NSNoBorder;
+    self.hasVerticalScroller = YES;
+    self.autohidesScrollers = YES;
+    self.scrollerStyle = NSScrollerStyleOverlay;
+    self.horizontalScrollElasticity = NSScrollElasticityNone;
+    self.verticalScrollElasticity = NSScrollElasticityNone;
+    CJGuiInternalComposableAccessibilityProxyScroller *scroller =
+        [[CJGuiInternalComposableAccessibilityProxyScroller alloc] initWithFrame:NSZeroRect];
+    scroller.area = self;
+    scroller.alphaValue = 0.0;
+    self.verticalScroller = scroller;
+    self.acceptedDocumentView =
+        [[CJGuiInternalComposableAccessibilityScrollDocument alloc] initWithFrame:NSZeroRect];
+    self.documentView = self.acceptedDocumentView;
+    self.contentView.postsBoundsChangedNotifications = YES;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(proxyBoundsDidChange:)
+        name:NSViewBoundsDidChangeNotification object:self.contentView];
+    return self;
+}
+- (void)dealloc {
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+- (CJGuiInternalComposableSceneNode *)currentNode {
+    if (self.identityKey.length > 0 && self.overlay.accessibilityActionsByIdentity[self.identityKey] != self) return nil;
+    return [self.overlay accessibilityLiveNodeForNode:self.node];
+}
+// Mouse input belongs to the self-drawn canvas underneath; the proxy exists
+// only as the platform scroll surface.
+- (NSView *)hitTest:(NSPoint)point { (void)point; return nil; }
+- (NSAccessibilityRole)accessibilityRole {
+    return [self currentNode] ? NSAccessibilityScrollAreaRole : NSAccessibilityGroupRole;
+}
+- (NSString *)accessibilityLabel {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    return node ? (node.semanticLabel.length > 0 ? node.semanticLabel :
+        (node.label.length > 0 ? node.label : node.value)) : @"";
+}
+- (NSString *)accessibilityIdentifier {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    return node.semanticId.length > 0 ? node.semanticId : nil;
+}
+- (id)accessibilityParent { return [self currentNode] ? (self.semanticParent ?: self.overlay) : nil; }
+- (NSArray *)accessibilityContents { return [self currentNode] ? [self.semanticChildren copy] : @[]; }
+- (NSArray *)accessibilityChildren {
+    NSMutableArray *children = [NSMutableArray arrayWithArray:[self accessibilityContents]];
+    if ([self currentNode] && self.verticalScroller) [children addObject:self.verticalScroller];
+    return children;
+}
+- (NSArray *)accessibilityChildrenInNavigationOrder { return [self accessibilityChildren]; }
+- (BOOL)isAccessibilityElement { return [self currentNode] != nil; }
+- (BOOL)isAccessibilityEnabled { return [self currentNode] != nil; }
+- (BOOL)accessibilityIsEnabled { return [self currentNode] != nil; }
+- (BOOL)accessibilityFocused { return [self.overlay accessibilityNodeIsFocused:[self currentNode]]; }
+- (BOOL)isAccessibilityFocused { return [self accessibilityFocused]; }
+- (void)setAccessibilityFocused:(BOOL)focused { [self accessibilitySetFocused:focused]; }
+- (void)accessibilitySetFocused:(BOOL)focused {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    if (!focused || !node || node.node.isInteractive == 0 ||
+        ![self.overlay accessibilityNodeIsInCurrentScope:node]) return;
+    [self.overlay focusNode:node enqueue:YES];
+}
+- (BOOL)isAccessibilitySelectorAllowed:(SEL)selector {
+    if (selector == @selector(setAccessibilityFocused:)) {
+        CJGuiInternalComposableSceneNode *node = [self currentNode];
+        return node && node.node.isInteractive != 0 &&
+            [self.overlay accessibilityNodeIsInCurrentScope:node];
+    }
+    return [super isAccessibilitySelectorAllowed:selector];
+}
+- (NSRect)accessibilityFrame {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    return node ? NSAccessibilityFrameInView(self.overlay,
+        NSIntersectionRect(CjguiComposableRect(node, self.overlay), CjguiComposableClipBounds(node))) : NSZeroRect;
+}
+- (NSRect)accessibilityFrameInParentSpace {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    if (!node) return NSZeroRect;
+    NSRect rect = NSIntersectionRect([self accessibilityFrame],
+        NSAccessibilityFrameInView(self.overlay, CjguiComposableRect(node, self.overlay)));
+    id parent = self.semanticParent;
+    if (!parent || ![parent respondsToSelector:@selector(currentNode)]) return rect;
+    CJGuiInternalComposableSceneNode *parentNode = [parent currentNode];
+    if (!parentNode) return rect;
+    NSRect parentRect = CjguiComposableRect(parentNode, self.overlay);
+    rect.origin.x -= parentRect.origin.x;
+    rect.origin.y -= parentRect.origin.y;
+    return rect;
+}
+- (void)notifyScrollValueChanged {
+    if (self.verticalScroller) {
+        NSAccessibilityPostNotification(self.verticalScroller, NSAccessibilityValueChangedNotification);
+    }
+}
+// Project the accepted viewport facts onto the native surface. This is the
+// only writer of the proxy geometry; the Cangjie viewport stays authoritative.
+- (void)cancelScrollGesture {
+    self.scrollGestureActive = NO;
+    ++self.scrollGestureGeneration;
+    [self.contentView.layer removeAllAnimations];
+}
+- (void)syncAcceptedScrollFacts {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    // Losing scope/range/identity cancels immediately, even during a native
+    // animation. Only a continuing admitted binding may defer synchronization.
+    if (!node || ![self.overlay accessibilityScrollNodeIsAdmitted:node]) [self cancelScrollGesture];
+    if (!node) return;
+    // A native scroll animation (VoiceOver page scroll, scroller drag) owns the
+    // clip position until it settles. Re-projecting the accepted offset during
+    // the animation would cancel it mid-flight, so the projection resumes once
+    // the gesture has been quiet for one settle interval.
+    if (self.scrollGestureActive) return;
+    self.syncingAcceptedScroll = YES;
+    NSRect frame = CjguiComposableRect(node, self.overlay);
+    if (!NSEqualRects(self.frame, frame)) self.frame = frame;
+    CGFloat viewport = MAX(1.0, (CGFloat)node.node.scrollViewportExtent);
+    CGFloat content = MAX(viewport, (CGFloat)node.node.scrollContentExtent);
+    NSRect document = NSMakeRect(0, 0, MAX(1.0, NSWidth(frame)), content);
+    if (!NSEqualRects(self.acceptedDocumentView.frame, document)) self.acceptedDocumentView.frame = document;
+    CGFloat maximum = content - viewport;
+    CGFloat offset = (CGFloat)(node.node.scrollOffset - node.node.scrollMinimum);
+    offset = MAX(0.0, MIN(maximum, offset));
+    if (fabs(self.lastProxyOffset - offset) > 0.01 ||
+        fabs(self.contentView.bounds.origin.y - offset) > 0.01) {
+        [self.contentView scrollToPoint:NSMakePoint(0, offset)];
+        [self reflectScrolledClipView:self.contentView];
+    }
+    self.lastProxyOffset = offset;
+    self.syncingAcceptedScroll = NO;
+}
+// A larger clip origin means the document moved toward its tail, which is the
+// negative of the accepted wheel sign (positive deltaY = toward the head).
+- (void)proxyBoundsDidChange:(NSNotification *)notification {
+    (void)notification;
+    if (self.syncingAcceptedScroll) return;
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    if (!node || ![self.overlay accessibilityScrollNodeIsAdmitted:node]) {
+        [self syncAcceptedScrollFacts];
+        return;
+    }
+    CGFloat offset = self.contentView.bounds.origin.y;
+    CGFloat delta = offset - self.lastProxyOffset;
+    if (!isfinite(offset) || !isfinite(delta) ||
+        (delta != 0 && ![self.overlay accessibilityEnqueueScrollDelta:-delta forNode:node])) {
+        // A refused FIFO write has not accepted any displacement. Cancel the
+        // native transient and restore facts, rather than consuming the delta.
+        [self cancelScrollGesture];
+        [self syncAcceptedScrollFacts];
+        return;
+    }
+    if (delta == 0) return;
+    self.lastProxyOffset = offset;
+    self.scrollGestureActive = YES;
+    uint64_t generation = ++self.scrollGestureGeneration;
+    __weak CJGuiInternalComposableAccessibilityScrollAreaView *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)),
+                   dispatch_get_main_queue(), ^{
+        CJGuiInternalComposableAccessibilityScrollAreaView *strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.scrollGestureGeneration != generation) return;
+        strongSelf.scrollGestureActive = NO;
+        [strongSelf syncAcceptedScrollFacts];
+    });
+}
+@end
+
+@implementation CJGuiInternalComposableAccessibilityProxyScroller
+- (CJGuiInternalComposableSceneNode *)currentNode { return [self.area currentNode]; }
+- (id)accessibilityValue {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    if (!node || node.node.scrollProjectionPresent == 0 || node.node.scrollRangePresent == 0) return nil;
+    int64_t span = node.node.scrollMaximum - node.node.scrollMinimum;
+    if (span <= 0) return nil;
+    double fraction = (double)(node.node.scrollOffset - node.node.scrollMinimum) / (double)span;
+    return @(MAX(0.0, MIN(1.0, fraction)));
+}
+- (void)accessibilitySetValue:(id)value {
+    [self.area.overlay accessibilitySetScrollBarFraction:value forNode:[self currentNode]];
+}
+- (void)setAccessibilityValue:(id)value { [self accessibilitySetValue:value]; }
+- (NSArray<NSAccessibilityActionName> *)accessibilityActionNames {
+    CJGuiInternalComposableSceneNode *node = [self currentNode];
+    return node && node.node.scrollRangePresent != 0
+        ? @[ NSAccessibilityIncrementAction, NSAccessibilityDecrementAction ] : @[];
+}
+- (BOOL)accessibilityPerformIncrement {
+    return [self.area.overlay accessibilityScrollNodeByPage:[self currentNode] direction:1];
+}
+- (BOOL)accessibilityPerformDecrement {
+    return [self.area.overlay accessibilityScrollNodeByPage:[self currentNode] direction:-1];
+}
+- (void)accessibilityPerformAction:(NSAccessibilityActionName)action {
+    if ([action isEqualToString:NSAccessibilityIncrementAction]) [self accessibilityPerformIncrement];
+    else if ([action isEqualToString:NSAccessibilityDecrementAction]) [self accessibilityPerformDecrement];
+    else [super accessibilityPerformAction:action];
+}
+- (BOOL)isAccessibilitySelectorAllowed:(SEL)selector {
+    if (selector == @selector(setAccessibilityValue:)) {
+        CJGuiInternalComposableSceneNode *node = [self currentNode];
+        return node && node.node.scrollRangePresent != 0 &&
+            [self.area.overlay accessibilityNodeIsInCurrentScope:node];
+    }
+    if (selector == @selector(accessibilityPerformIncrement) ||
+        selector == @selector(accessibilityPerformDecrement)) return [self currentNode] != nil;
+    return [super isAccessibilitySelectorAllowed:selector];
+}
+- (id)accessibilityMinValue { return [self currentNode] ? @0.0 : nil; }
+- (id)accessibilityMaxValue { return [self currentNode] ? @1.0 : nil; }
+- (id)accessibilityParent { return self.area; }
+- (NSAccessibilityOrientation)accessibilityOrientation { return NSAccessibilityOrientationVertical; }
+@end
+
+
 @interface CJGuiInternalComposableAccessibilityRowAction : CJGuiInternalComposableAccessibilityAction
-- (CJGuiInternalComposableSceneNode *)currentNode;
 @end
 @implementation CJGuiInternalComposableAccessibilityRowAction
 - (BOOL)isAccessibilityDisclosed {
@@ -27850,7 +28179,10 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
             CJGuiInternalComposableAccessibilityAction *action = self.accessibilityActionsByIdentity[key];
             Class actionClass = node.node.semanticRole == 5
                 ? [CJGuiInternalComposableAccessibilityRowAction class]
-                : [CJGuiInternalComposableAccessibilityAction class];
+                : ((node.node.nodeKind == CJGUI_INTERNAL_RENDERER_COMPOSABLE_SCROLL_AREA ||
+                    node.node.semanticRole == 3)
+                    ? [CJGuiInternalComposableAccessibilityScrollAreaView class]
+                    : [CJGuiInternalComposableAccessibilityAction class]);
             // The cache key excludes semanticRole: a stable node identity may
             // change role, and the optional AX getters are class capabilities.
             if (action && ![action isMemberOfClass:actionClass]) {
@@ -27879,6 +28211,13 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
                     prior.tabSelected != current.tabSelected || prior.isReadOnly != current.isReadOnly ||
                     prior.pointerControlMinimum != current.pointerControlMinimum ||
                     prior.pointerControlMaximum != current.pointerControlMaximum ||
+                    prior.scrollProjectionPresent != current.scrollProjectionPresent ||
+                    prior.scrollRangePresent != current.scrollRangePresent ||
+                    prior.scrollOffset != current.scrollOffset ||
+                    prior.scrollMinimum != current.scrollMinimum ||
+                    prior.scrollMaximum != current.scrollMaximum ||
+                    prior.scrollContentExtent != current.scrollContentExtent ||
+                    prior.scrollViewportExtent != current.scrollViewportExtent ||
                     prior.isInteractive != current.isInteractive) {
                     [valueChanges addObject:action];
                 }
@@ -27935,6 +28274,10 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
     }
     for (CJGuiInternalComposableAccessibilityAction *old in self.accessibilityActions) {
         if (nextByKey[old.identityKey] != old) {
+            if ([old isKindOfClass:[CJGuiInternalComposableAccessibilityScrollAreaView class]]) {
+                [(CJGuiInternalComposableAccessibilityScrollAreaView *)old cancelScrollGesture];
+                [(CJGuiInternalComposableAccessibilityScrollAreaView *)old removeFromSuperview];
+            }
             old.node = nil;
             old.semanticParent = nil;
             [old.semanticChildren removeAllObjects];
@@ -27943,6 +28286,17 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
     self.accessibilityActionsByIdentity = nextByKey;
     self.accessibilityActions = next;
     self.accessibilityRoots = roots;
+    // The scroll proxy exists only as the platform scroll surface for an
+    // accepted viewport; mouse input and drawing stay with the overlay.
+    for (id action in next) {
+        if (![action isKindOfClass:[CJGuiInternalComposableAccessibilityScrollAreaView class]]) continue;
+        CJGuiInternalComposableAccessibilityScrollAreaView *area =
+            (CJGuiInternalComposableAccessibilityScrollAreaView *)action;
+        if (area.superview != self) {
+            [self addSubview:area positioned:NSWindowBelow relativeTo:nil];
+        }
+        [area syncAcceptedScrollFacts];
+    }
     if (structureChanged) {
         NSAccessibilityPostNotification(self, NSAccessibilityLayoutChangedNotification);
 #ifdef CJGUI_INTERNAL_TESTING
@@ -27951,6 +28305,9 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
     }
     for (CJGuiInternalComposableAccessibilityAction *action in valueChanges) {
         NSAccessibilityPostNotification(action, NSAccessibilityValueChangedNotification);
+        if ([action isKindOfClass:[CJGuiInternalComposableAccessibilityScrollAreaView class]]) {
+            [(CJGuiInternalComposableAccessibilityScrollAreaView *)action notifyScrollValueChanged];
+        }
 #ifdef CJGUI_INTERNAL_TESTING
         self.session.testComposableAccessibilityNotificationCount += 1;
 #endif
@@ -28095,6 +28452,57 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
         CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_NAVIGATE,
         live.index, increment ? @"right" : @"left", NSMakeRange(0, 0));
 }
+- (BOOL)accessibilityScrollNodeIsAdmitted:(CJGuiInternalComposableSceneNode *)node {
+    CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
+    return self.session && !self.session.destroyed && live && live.node.isInteractive != 0 &&
+        live.node.scrollProjectionPresent != 0 && live.node.scrollRangePresent != 0 &&
+        live.node.scrollMaximum > live.node.scrollMinimum &&
+        [self accessibilityNodeIsInCurrentScope:live];
+}
+- (BOOL)accessibilityEnqueueScrollDelta:(double)delta forNode:(CJGuiInternalComposableSceneNode *)node {
+    CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
+    if (![self accessibilityScrollNodeIsAdmitted:live] || !isfinite(delta) || delta == 0) return NO;
+    if (delta > 1000000) delta = 1000000;
+    if (delta < -1000000) delta = -1000000;
+    NSString *payload = [NSString stringWithFormat:@"cjgui-wheel-v1|0|%.17f|1|0|0", (double)delta];
+    return CjguiEnqueueComposableInteraction(self.session,
+        CJGUI_INTERNAL_RENDERER_EVENT_HUMAN_COMPOSABLE_SCROLL, live.index, payload, NSMakeRange(0, 0));
+}
+- (BOOL)accessibilityScrollNodeByPage:(CJGuiInternalComposableSceneNode *)node direction:(NSInteger)direction {
+    return [self accessibilityScrollNode:node direction:direction page:YES];
+}
+- (BOOL)accessibilityScrollNode:(CJGuiInternalComposableSceneNode *)node direction:(NSInteger)direction page:(BOOL)page {
+    CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
+    if (![self accessibilityScrollNodeIsAdmitted:live]) return NO;
+    int64_t step = page ? (live.node.scrollViewportExtent > 0 ? live.node.scrollViewportExtent : 40) : 40;
+    int64_t current = live.node.scrollOffset;
+    int64_t target = direction > 0 ? current + step : current - step;
+    if (target < live.node.scrollMinimum) target = live.node.scrollMinimum;
+    if (target > live.node.scrollMaximum) target = live.node.scrollMaximum;
+    if (target == current) return NO;
+    // A positive wheel deltaY moves toward the document head, so a forward page
+    // (larger offset) enters the same precise-wheel FIFO as a negative delta.
+    return [self accessibilityEnqueueScrollDelta:current - target forNode:live];
+}
+- (BOOL)accessibilitySetScrollBarFraction:(id)fraction forNode:(CJGuiInternalComposableSceneNode *)node {
+    CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
+    if (![self accessibilityScrollNodeIsAdmitted:live]) return NO;
+    double value = 0.0;
+    if ([fraction isKindOfClass:[NSNumber class]]) value = [fraction doubleValue];
+    else if ([fraction isKindOfClass:[NSString class]]) value = [(NSString *)fraction doubleValue];
+    else return NO;
+    if (!isfinite(value)) return NO;
+    value = MAX(0.0, MIN(1.0, value));
+    int64_t span = live.node.scrollMaximum - live.node.scrollMinimum;
+    if (span <= 0) return NO;
+    int64_t target = live.node.scrollMinimum + (int64_t)llround(value * (double)span);
+    if (target < live.node.scrollMinimum) target = live.node.scrollMinimum;
+    if (target > live.node.scrollMaximum) target = live.node.scrollMaximum;
+    if (target == live.node.scrollOffset) return NO;
+    // The scroller value is only a request over the accepted facts; the
+    // Cangjie viewport clamps and publishes the next accepted offset.
+    return [self accessibilityEnqueueScrollDelta:live.node.scrollOffset - target forNode:live];
+}
 - (void)accessibilitySetValue:(id)value forNode:(CJGuiInternalComposableSceneNode *)node {
     CJGuiInternalComposableSceneNode *live = [self accessibilityLiveNodeForNode:node];
     if (!live || ![self accessibilityNodeIsActionable:live]) return;
@@ -28148,6 +28556,9 @@ static uint64_t CjguiCaretBlinkHalfPeriodMicros(void) {
     CJGuiInternalComposableAccessibilityAction *action = [self accessibilityActionForNode:node];
     if (action) {
         NSAccessibilityPostNotification(action, NSAccessibilityValueChangedNotification);
+        if ([action isKindOfClass:[CJGuiInternalComposableAccessibilityScrollAreaView class]]) {
+            [(CJGuiInternalComposableAccessibilityScrollAreaView *)action notifyScrollValueChanged];
+        }
 #ifdef CJGUI_INTERNAL_TESTING
         self.session.testComposableAccessibilityNotificationCount += 1;
 #endif
@@ -48872,6 +49283,34 @@ cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(ui
     return CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR;
 #endif
 }
+
+#ifdef CJGUI_INTERNAL_TESTING
+// Drive the actual NSClipView notification path, optionally through an AX
+// reference retained before scene replacement. No viewport or owner is written.
+CjguiInternalRendererStatus
+cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+    uint64_t session, uint64_t nodeId, double delta, uint32_t captured) {
+    return CjguiInstalledRangeRunOnMainNamed(session, __func__,
+        ^CjguiInternalRendererStatus(CJGuiInternalSession *ctx) {
+        id action = captured ? ctx.testCapturedComposableAccessibilityAction : nil;
+        if (!captured) for (id candidate in ctx.composableSceneOverlay.accessibilityActions) {
+            if (((CJGuiInternalComposableAccessibilityAction *)candidate).node.node.nodeId == nodeId) {
+                action = candidate; break;
+            }
+        }
+        if (![action isKindOfClass:CJGuiInternalComposableAccessibilityScrollAreaView.class])
+            return CJGUI_INTERNAL_RENDERER_VIEW_INVALIDATED;
+        CJGuiInternalComposableAccessibilityScrollAreaView *area = action;
+        // Suppress the automatic notification, then deliver exactly one real
+        // callback. This makes sub-point sequences deterministic under AppKit.
+        area.syncingAcceptedScroll = YES;
+        [area.contentView scrollToPoint:NSMakePoint(0, area.contentView.bounds.origin.y + delta)];
+        area.syncingAcceptedScroll = NO;
+        [area proxyBoundsDidChange:nil];
+        return CJGUI_INTERNAL_RENDERER_OK;
+    });
+}
+#endif
 
 CjguiInternalRendererStatus
 cjgui_internal_renderer_test_click_composable_point(uint64_t session, float pointX, float pointY) {

@@ -21,10 +21,15 @@ public class CjguiSharedFormFieldDescriptor {
     public let minimum: Int64
     public let maximum: Int64
     public let maximumLength: Int64
+    /// The application's DECLARED read-only fact for this field. It is a
+    /// declaration (the field can never be written), not the owner's current
+    /// availability: availability can be false for other transient reasons.
+    /// Default false keeps every existing construction compatible.
+    public let readOnly: Bool
 
     public init(resourceId: Int64, fieldId: String, label: String, editorKind: String,
                 required!: Bool = false, minimum!: Int64 = 0, maximum!: Int64 = 0,
-                maximumLength!: Int64 = 0) {
+                maximumLength!: Int64 = 0, readOnly!: Bool = false) {
         this.resourceId = resourceId
         this.fieldId = fieldId
         this.label = label
@@ -33,6 +38,7 @@ public class CjguiSharedFormFieldDescriptor {
         this.minimum = minimum
         this.maximum = maximum
         this.maximumLength = maximumLength
+        this.readOnly = readOnly
     }
 }
 

@@ -46,6 +46,19 @@ public class CjguiGeneratedUiAcceptedDocument {
 }
 
 public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProvider {
+    /// R9: the same physical step press may reach the region through more than
+    /// one event projection (AX press + activate). One input must step once, so
+    /// the region remembers the last (node, input sequence) it committed.
+    private var lastStepNodeId: Int64 = -1
+    // R9: dedup by EVENT IDENTITY, not by refresh generation. One physical
+    // press that reaches the region through two projections carries the same
+    // native input sequence; two independent presses carry different sequences
+    // and must each step, even when no refresh advanced any revision between
+    // them. Zero sequences (synthetic/AX input) have no native identity and are
+    // never merged.
+    private var lastStepSession: UInt64 = 0u64
+    private var lastStepSequence: UInt64 = 0u64
+
     private let documentSurfaceIdentityValue: Int64 = cjguiNextUiDocumentSurfaceIdentity()
     private let catalog: CjguiGeneratedUiCapabilityCatalog
     private let binding: CjguiGeneratedUiRegionBinding
@@ -375,7 +388,7 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
             return Some(result)
         }
         for (declaredSelect in binding.generatedSelectBindings()) {
-            if (let Some(result) <- declaredSelect.select.applyUiEvent(event)) {
+            if (let Some(result) <- declaredSelect.applyUiEvent(event)) {
                 var didApply = result.didApply
                 if (let Some(option) <- declaredSelect.takeConfirmed()) {
                     didApply = declaredSelect.commit(option)
@@ -387,6 +400,87 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 return Some(CjguiComposableUiDispatchResult(didApply))
             }
         }
+        // R9: the generated integer stepper's two buttons are dispatched by the
+        // region through the SAME field-intent route as a typed edit. The step
+        // is resolved against the field's declared bounds (never clamped), and
+        // the owner write stays the binding's single applyFieldIntent path.
+        let stepActionName = event.node.actionName
+        if (stepActionName.startsWith(CJGUI_GENERATED_STEP_DECREMENT_PREFIX) ||
+            stepActionName.startsWith(CJGUI_GENERATED_STEP_INCREMENT_PREFIX)) {
+            // One physical press reaches this branch twice — the pointer-end
+            // projection and the native activate command both carry the button's
+            // actionName. The framework's own action contract honours only
+            // ACTIVATE (resolveIntent answers event_not_an_activation for the
+            // rest); the step path follows the SAME rule, so one press steps
+            // exactly once and an activation is never double-applied.
+            if (event.eventKind != CJGUI_COMPOSABLE_UI_EVENT_ACTIVATE) {
+                return Some(CjguiComposableUiDispatchResult(false))
+            }
+            // A genuinely duplicated delivery of ONE physical press (the same
+            // native sequence through two projections) steps once; independent
+            // presses step independently.
+            if (event.node.nodeId == lastStepNodeId && event.inputSequence != 0u64 &&
+                event.inputSessionGeneration == lastStepSession &&
+                event.inputSequence == lastStepSequence) {
+                return Some(CjguiComposableUiDispatchResult(true))
+            }
+            let decrement = stepActionName.startsWith(CJGUI_GENERATED_STEP_DECREMENT_PREFIX)
+            let prefixSize = if (decrement) {
+                CJGUI_GENERATED_STEP_DECREMENT_PREFIX.size
+            } else {
+                CJGUI_GENERATED_STEP_INCREMENT_PREFIX.size
+            }
+            let stepFieldId = stepActionName[prefixSize..]
+            // R9: the step must target the CURRENT accepted stepper control,
+            // not merely carry a matching action prefix. A deleted, rebound or
+            // disabled old node is refused before any owner write.
+            let stepKey = holder.keyForNodeId(event.node.nodeId)
+            if (stepKey.isEmpty()) {
+                return Some(CjguiComposableUiDispatchResult(false))
+            }
+            let acceptedStep = match (holder.acceptedNodeForKey(stepKey)) {
+                case Some(value) => value
+                case None => return Some(CjguiComposableUiDispatchResult(false))
+            }
+            if (acceptedStep.fieldId != stepFieldId || acceptedStep.kind != "integerInput" ||
+                acceptedStep.property("stepper") != "true") {
+                return Some(CjguiComposableUiDispatchResult(false))
+            }
+            if (let Some(stepField) <- catalog.fieldFor(stepFieldId)) {
+                // Step buttons are ACTIONS, not field writers: their identity is
+                // the accepted stepper spec above plus the field resource and
+                // owner target they address (the writer check applies to the
+                // stepper's input node, which is verified by the same spec).
+                if (event.node.resourceId != stepField.resourceId ||
+                    event.node.operationResourceId != binding.fieldOperationResourceId(stepFieldId) ||
+                    !event.node.isEnabled) {
+                    return Some(CjguiComposableUiDispatchResult(false))
+                }
+                let stepAvailability = binding.fieldAvailability(stepFieldId)
+                if (stepAvailability.known && !stepAvailability.isAvailable) {
+                    return Some(CjguiComposableUiDispatchResult(false))
+                }
+                let current = binding.draftText(stepFieldId)
+                let stepResult = CjguiNumericStepper.resolve(current, if (decrement) { -1 } else { 1 },
+                    stepField.minimum, stepField.maximum, 1)
+                if (!stepResult.canWrite()) {
+                    return Some(CjguiComposableUiDispatchResult(false))
+                }
+                let stepIntent = CjguiGeneratedUiIntent(CJGUI_GENERATED_INTENT_FIELD_EDIT,
+                    "", "", fieldId: stepFieldId,
+                    writerOperation: stepField.writeActionName,
+                    ownerTargetResourceId: event.node.operationResourceId,
+                    argumentName: stepField.argumentName,
+                    value: CjguiSharedOperationValue.string(stepResult.text), nodeId: event.node.nodeId)
+                let applied = binding.applyFieldIntent(stepIntent)
+                revisionValue += 1
+                lastStepNodeId = event.node.nodeId
+                lastStepSession = event.inputSessionGeneration
+                lastStepSequence = event.inputSequence
+                return Some(applied)
+            }
+            return Some(CjguiComposableUiDispatchResult(false))
+        }
         if (event.node.nodeKind == CJGUI_COMPOSABLE_UI_SLIDER) {
             let current = synchronized(lock) { holder.matchesFieldSlider(event.node) }
             return if (current) { Some(fieldSliders.handle(event)) } else { None }
@@ -396,6 +490,14 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
         }
         let intent = synchronized(lock) { holder.resolveIntent(event.node, event.eventKind, event.text) }
         if (intent.isFieldEdit()) {
+            // B: a declared read-only field is not writable by any path
+            // (typing, stepper, replay of an old node). The owner enforces it
+            // again; this guard keeps the editor from even attempting a write.
+            if (let Some(field) <- catalog.fieldFor(intent.fieldId)) {
+                if (field.readOnly) {
+                    return Some(CjguiComposableUiDispatchResult(false))
+                }
+            }
             let observation = synchronized(lock) { wholeTextIsOwnedObservation(event, intent) }
             if (observation) {
                 if (getVariable("CJGUI_RANGE_ROUTE_TRACE").isSome()) {
@@ -789,7 +891,8 @@ public class CjguiGeneratedUiWindowRegion <: CjguiSharedOperationGeneratedUiProv
                 "APPLIED_HEX ${hexValue(applied)} ERROR ${legacyError} ${focusToken(spec.fieldId, instances)} " +
                 availabilityPayload(availability) + " DRAFT_SOURCE ${source} VERSION ${draftVersion} " +
                 "VALIDATION_STATE ${validation} VALIDATION_MESSAGE_HEX ${hexValue(message)} " +
-                "VALIDATION_VERSION ${validationVersion} FIELD_VERSION ${fieldVersion}\n")
+                "VALIDATION_VERSION ${validationVersion} FIELD_VERSION ${fieldVersion} " +
+                "READONLY ${if (spec.readOnly) { "1" } else { "0" }}\n")
         }
         for (name in catalog.actionNames()) {
             let state = match (feedback) {

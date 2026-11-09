@@ -73,3 +73,32 @@ for (role in theme.namedStyles()) {
 光影材质，也不宣称实现了整套 HDS。未引入 ArkUI/UI Design Kit 的运行时或依赖。
 
 组合见 [布局配方](LAYOUT_PRIMITIVES.md)，字段错误见 [字段与反馈](FIELD_CONTROLS.md)。
+
+## HIG 桌面主题（新增，experimental）
+
+`CjguiComposableUiTheme.higLight()` / `higDark()` / `hig(dark:)` 提供一套按 Apple macOS HIG
+方向校准的桌面角色；手写与生成式界面共用同一批 `namedStyles()`，不引入 SwiftUI/AppKit 依赖，
+也不改变既有 `paperLight()/beaconDark()/warmPaper()` 的默认外观。
+
+- 颜色取自本机 NSColor 语义色实测（light/dark，含 alpha 合成）：窗口背景、正文背景、
+  分隔线、主强调、键盘焦点环、禁用文字；取样脚本与逐项来源见阶段证据
+  `work/prototype-host-20261108/hig/`。
+- 控件高度 28pt（AppKit large 实测；自绘 + 中文正文选它而非 24pt regular）、正文 13pt、
+  标题 22pt、说明 11pt（HIG 内置文本样式）；间距 4/8/12/16 与圆角 7/10 属 CJGUI 项目决定，
+  不是 Apple 官方 token。
+- 交互态仍由既有引擎合成：悬停/按下用 label 6%/12% 叠加，焦点用键盘焦点指示色 3pt 环，
+  选中/勾选用 12% accent 底 + accent 文字；几何不随状态改变。亮/暗切换只重发同名角色调用
+  `catalog.namedStyles().update()`，不重新提交已接受结构。
+- 未做（如实差异）：标题栏跟随外观、玻璃/模糊/材质、完整原生控件外观。
+
+```cangjie
+let theme = CjguiComposableUiTheme.hig(dark: false)
+let form = CjguiGeneratedUiFormBinding(domain, ownerId)
+let catalog = form.capabilityCatalog()
+for (role in theme.namedStyles()) {
+    let _ = catalog.namedStyles().register(role)
+}
+// 生成式结构里字段写 style=input、主操作写 style=primary_action/次操作 secondary_action
+```
+
+实际消费：`examples/prototype_host_app`（三例：设置表单 / 资产列表详情 / 素材卡片面板）。

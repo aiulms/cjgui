@@ -1,6 +1,7 @@
 package cjgui
 
 import std.collection.*
+import std.time.*
 
 @Test
 func f11NestedTranslationKeepsIntegerLayoutAndClipOwners(): Unit {
@@ -105,6 +106,21 @@ func f11TranslationNamedPaintAndGeneratedAdmission(): Unit {
     @Assert(invalid.candidateAccepted, false)
     @Assert(invalid.reason, "translation_value_invalid")
     @Assert(holder.structureVersion(), priorVersion)
+}
+
+@Test
+func translatedVerticalSplitPointerUsesAcceptedTrackLocalPointOnce(): Unit {
+    // 纵向分隔条的 Y 等价映射：与横向同一“接受轨道局部点 + 一次量化”规则。
+    let visual = CjguiComposableUiVisualGeometry(0.0, 100.25,
+        ArrayList<Float64>(), ArrayList<Float64>())
+    let handle = CjguiComposableUiRect(0, 200, 40, 8)
+    let acceptedFirst: Int64 = 200
+    let same = visual.windowToSplitTrackPointY(handle, acceptedFirst, 303.25, 3.0)
+    @Assert(CjguiComposableUiSplitGeometry.firstSizeForPointer(same, 0, 400, 8, 40, 40), 200)
+    let moved = visual.windowToSplitTrackPointY(handle, acceptedFirst, 320.25, 3.0)
+    @Assert(CjguiComposableUiSplitGeometry.firstSizeForPointer(moved, 0, 400, 8, 40, 40), 217)
+    let restored = visual.windowToSplitTrackPointY(handle, acceptedFirst, 303.25, 3.0)
+    @Assert(restored, same)
 }
 
 @Test
@@ -319,19 +335,45 @@ func fPositionFocusUsesFinalAcceptedVisualClipOnBothAxes(): Unit {
     window.close()
 }
 
+// The normal window start/refresh is asynchronous and consumes owner turns.
+// Match the established collection test fixture: wait for accepted progression,
+// not the immediate return value of a single compatibility refresh attempt.
+private func fPositionAwaitAccepted(window: CjguiComposableUiWindow, budget: CjguiOwnerTurnBudget): Bool {
+    let before = window.windowProgress().acceptedSceneVersion
+    window.requestRefresh()
+    let deadline = MonoTime.now() + 5 * Duration.second
+    var turns: Int64 = 0
+    while (window.isOpen() && window.windowProgress().acceptedSceneVersion <= before &&
+        turns < 240 && MonoTime.now() < deadline) {
+        @Assert(budget.begin(), true)
+        try {
+            let _ = window.refreshIfNeeded()
+            let _ = window.pump(0u32)
+            let _ = budget.finishScheduling()
+        } finally { budget.end() }
+        turns += 1
+    }
+    return window.windowProgress().acceptedSceneVersion > before
+}
+
 private class FPositionSplitController <: CjguiComposableUiController {
     public let split = CjguiComposableUiSplitState(100, 40, 40)
     public var revision: Int64 = 1
     public var ancestorTranslateX: Float64 = 0.0
+    public var ancestorTranslateY: Float64 = 0.0
+    public var axis: Int64 = CjguiComposableUiSplitAxis.HORIZONTAL
+    public var containerWidth: Int64 = 300
+    public var containerHeight: Int64 = 80
     public func uiSceneVersion(): Int64 { return revision }
     public func buildUi(): CjguiComposableUiNode {
         let root = cjguiComposableVertical(9960, "f-position-split-root",
-            CjguiComposableUiStyle(translateX: ancestorTranslateX))
+            CjguiComposableUiStyle(translateX: ancestorTranslateX, translateY: ancestorTranslateY))
         let left = cjguiComposableVertical(9961, "f-position-split-left", CjguiComposableUiStyle())
         let right = cjguiComposableVertical(9962, "f-position-split-right", CjguiComposableUiStyle())
         root.add(cjguiComposableScopedSplitView(CjguiComposableUiIdentityScope("f-position-split"),
-            "f-position-split", left, right, CjguiComposableUiSplitAxis.HORIZONTAL,
-            split.firstSize(), 40, 40, CjguiComposableUiStyle(fixedWidth: 300, fixedHeight: 80),
+            "f-position-split", left, right, axis,
+            split.firstSize(), 40, 40,
+            CjguiComposableUiStyle(fixedWidth: containerWidth, fixedHeight: containerHeight),
             splitState: split))
         return root
     }
@@ -348,74 +390,312 @@ private class FPositionSplitController <: CjguiComposableUiController {
 
 private func fPositionLegacySplitEvent(kind: Int64, nodeId: Int64, version: Int64,
     pointX: Float64): InternalRendererPumpResult {
+    return fPositionSplitEventAt(kind, nodeId, version, pointX, 10.0)
+}
+
+private func fPositionSplitEventAt(kind: Int64, nodeId: Int64, version: Int64,
+    pointX: Float64, pointY: Float64): InternalRendererPumpResult {
     return InternalRendererPumpResult(CJGUI_INTERNAL_RENDERER_OK, UInt32(kind), 0u32, 0u32, 0u32,
-        UInt64(nodeId), UInt64(version), -1, UInt32(CJGUI_COMPOSABLE_UI_SPLIT_HANDLE), Int64(pointX), 10,
-        pointX, 10.0, 0.0, 0.0, true, 0, 0u32, -1, 0, -1, 0,
+        UInt64(nodeId), UInt64(version), -1, UInt32(CJGUI_COMPOSABLE_UI_SPLIT_HANDLE), Int64(pointX), Int64(pointY),
+        pointX, pointY, 0.0, 0.0, true, 0, 0u32, -1, 0, -1, 0,
         0u64, 77u64, 0u64, 0u64, 0u64, 0u64, -1, 0u64, 0u64)
 }
 
 @Test
 func fPositionLegacySplitQueuedUpdateAndEndSurviveOwnAcceptedRedraw(): Unit {
-    let controller = FPositionSplitController()
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
-    @Assert(window.refresh(), true)
-    var handle = CjguiComposableUiLayoutNode.missing()
-    for (node in window.acceptedSceneNodes()) {
-        if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) { handle = node }
-    }
-    @Assert(handle.nodeId >= 0, true)
-    let oldVersion = window.windowProgress().acceptedSceneVersion
-    let start = Float64(handle.bounds.x) + 4.0
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, start)).didApply, true)
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 10.0)).didApply, true)
-    let firstSize = controller.split.firstSize()
-    @Assert(firstSize > 100, true)
-    controller.revision += 1
-    @Assert(window.refresh(), true)
-    @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
-    @Assert(window.pointerCaptureActiveForTest(), true)
-    @Assert(window.pointerCaptureSplitStartVersionForTest(), oldVersion)
-    @Assert(window.pointerCaptureSplitContinuousVersionForTest(), window.windowProgress().acceptedSceneVersion)
-    // Both are already in the native FIFO under N. N+1 is this capture's own redraw.
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 20.0)).didApply, true)
-    @Assert(controller.split.firstSize() > firstSize, true)
-    let _ = window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, start + 20.0))
-    let settled = controller.split.firstSize()
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 30.0)).didApply, false)
-    @Assert(controller.split.firstSize(), settled)
-    window.close()
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        var handle = CjguiComposableUiLayoutNode.missing()
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) { handle = node }
+        }
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let start = Float64(handle.bounds.x) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, start)).didApply, true)
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 10.0)).didApply, true)
+        let firstSize = controller.split.firstSize()
+        @Assert(firstSize > 100, true)
+        controller.revision += 1
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
+        @Assert(window.pointerCaptureActiveForTest(), true)
+        @Assert(window.pointerCaptureSplitStartVersionForTest(), oldVersion)
+        @Assert(window.pointerCaptureSplitContinuousVersionForTest(), window.windowProgress().acceptedSceneVersion)
+        // Both are already in the native FIFO under N. N+1 is this capture's own redraw.
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 20.0)).didApply, true)
+        @Assert(controller.split.firstSize() > firstSize, true)
+        let _ = window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, start + 20.0))
+        let settled = controller.split.firstSize()
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 30.0)).didApply, false)
+        @Assert(controller.split.firstSize(), settled)
+        } finally { budget.end(); window.close() }
+    })
 }
 
 @Test
 func fPositionSplitCaptureCancelsAfterIndependentAncestorMotion(): Unit {
-    let controller = FPositionSplitController()
-    let window = CjguiComposableUiWindow(controller)
-    @Assert(window.start(), true)
-    @Assert(window.refresh(), true)
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        var handle = CjguiComposableUiLayoutNode.missing()
+        for (node in window.acceptedSceneNodes()) {
+            if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) { handle = node }
+        }
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let start = Float64(handle.bounds.x) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, start)).didApply, true)
+        @Assert(window.pointerCaptureActiveForTest(), true)
+        let originalSize = controller.split.firstSize()
+        controller.ancestorTranslateX = 16.0
+        controller.revision += 1
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
+        @Assert(window.pointerCaptureActiveForTest(), false)
+        @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 24.0)).didApply, false)
+        @Assert(controller.split.firstSize(), originalSize)
+        } finally { budget.end(); window.close() }
+    })
+}
+
+// ——— 纵向 splitState 拖动（axis=VERTICAL 的主轴 Y 路径） ———
+
+private func fPositionVerticalSplitHandle(window: CjguiComposableUiWindow): CjguiComposableUiLayoutNode {
     var handle = CjguiComposableUiLayoutNode.missing()
     for (node in window.acceptedSceneNodes()) {
         if (node.nodeKind == CJGUI_COMPOSABLE_UI_SPLIT_HANDLE) { handle = node }
     }
-    @Assert(handle.nodeId >= 0, true)
-    let oldVersion = window.windowProgress().acceptedSceneVersion
-    let start = Float64(handle.bounds.x) + 4.0
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, start)).didApply, true)
-    @Assert(window.pointerCaptureActiveForTest(), true)
-    let originalSize = controller.split.firstSize()
-    controller.ancestorTranslateX = 16.0
-    controller.revision += 1
-    @Assert(window.refresh(), true)
-    @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
-    @Assert(window.pointerCaptureActiveForTest(), false)
-    @Assert(window.dispatchPointerEventForTest(fPositionLegacySplitEvent(
-        CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, start + 24.0)).didApply, false)
-    @Assert(controller.split.firstSize(), originalSize)
-    window.close()
+    return handle
+}
+
+@Test
+func fPositionVerticalSplitPointerDragFollowsPointerY(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        // The accepted solve keeps the declared 100 on the real 300-track.
+        @Assert(controller.split.firstSize(), 100)
+        @Assert(handle.bounds.y, 100)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let startX = Float64(handle.bounds.x) + 40.0
+        let startY = Float64(handle.bounds.y) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, startY)).didApply, true)
+        // Drag DOWN along Y with X unchanged: a vertical divider must follow.
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 30.0)).didApply, true)
+        @Assert(controller.split.firstSize(), 130)
+        let _ = window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, startX, startY + 30.0))
+        let settled = controller.split.firstSize()
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 40.0)).didApply, false)
+        @Assert(controller.split.firstSize(), settled)
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func fPositionVerticalSplitPressAtDifferentGrabPointDoesNotJumpOnRelease(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let originalSize = controller.split.firstSize()
+        // Press near the divider's far edge and release at the SAME point: the
+        // grab offset must cancel the track mapping, not jump the divider.
+        let startX = Float64(handle.bounds.x) + 10.0
+        let pressY = Float64(handle.bounds.y) + 6.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, pressY)).didApply, true)
+        let _ = window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, startX, pressY))
+        @Assert(controller.split.firstSize(), originalSize)
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func fPositionVerticalSplitClampsAtMinimumsThenRecovers(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let startX = Float64(handle.bounds.x) + 40.0
+        let startY = Float64(handle.bounds.y) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, startY)).didApply, true)
+        // Far above the track: the framework's one rule clamps to minFirst=40.
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY - 400.0)).didApply, true)
+        @Assert(controller.split.firstSize(), 40)
+        // Dragging back into the legal range moves again.
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 40.0)).didApply, true)
+        @Assert(controller.split.firstSize(), 140)
+        let _ = window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, startX, startY + 40.0))
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func fPositionVerticalSplitMapsThroughAncestorTranslate(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        controller.ancestorTranslateY = 20.0
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        // The accepted visual position includes the ancestor translate; the drag
+        // must map window Y back through the SAME accepted geometry.
+        if (let Some(bounds) <- window.acceptedNodeVisualBounds("f-position-split-handle")) {
+            @Assert(bounds.y, 120.0)
+        } else { @Assert(false) }
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let startX = Float64(handle.bounds.x) + 40.0
+        let visualStartY = 124.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, visualStartY)).didApply, true)
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, visualStartY + 30.0)).didApply, true)
+        @Assert(controller.split.firstSize(), 130)
+        let _ = window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, startX, visualStartY + 30.0))
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func fPositionVerticalSplitQueuedUpdateAndEndSurviveOwnAcceptedRedraw(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let startX = Float64(handle.bounds.x) + 40.0
+        let startY = Float64(handle.bounds.y) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, startY)).didApply, true)
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 10.0)).didApply, true)
+        let firstSize = controller.split.firstSize()
+        @Assert(firstSize > 100, true)
+        controller.revision += 1
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
+        @Assert(window.pointerCaptureActiveForTest(), true)
+        @Assert(window.pointerCaptureSplitStartVersionForTest(), oldVersion)
+        @Assert(window.pointerCaptureSplitContinuousVersionForTest(), window.windowProgress().acceptedSceneVersion)
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 20.0)).didApply, true)
+        @Assert(controller.split.firstSize() > firstSize, true)
+        let _ = window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_END, handle.nodeId, oldVersion, startX, startY + 20.0))
+        let settled = controller.split.firstSize()
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 30.0)).didApply, false)
+        @Assert(controller.split.firstSize(), settled)
+        } finally { budget.end(); window.close() }
+    })
+}
+
+@Test
+func fPositionVerticalSplitCaptureCancelsAfterIndependentAncestorMotion(): Unit {
+    cjguiMacosOwnerTest({ =>
+        let controller = FPositionSplitController()
+        controller.axis = CjguiComposableUiSplitAxis.VERTICAL
+        controller.containerWidth = 80
+        controller.containerHeight = 300
+        let window = CjguiComposableUiWindow(controller)
+        let budget = CjguiOwnerTurnBudget()
+        try {
+            window.useOwnerTurnBudget(budget)
+        @Assert(window.start(), true)
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        let handle = fPositionVerticalSplitHandle(window)
+        @Assert(handle.nodeId >= 0, true)
+        let oldVersion = window.windowProgress().acceptedSceneVersion
+        let startX = Float64(handle.bounds.x) + 40.0
+        let startY = Float64(handle.bounds.y) + 4.0
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_BEGIN, handle.nodeId, oldVersion, startX, startY)).didApply, true)
+        @Assert(window.pointerCaptureActiveForTest(), true)
+        let originalSize = controller.split.firstSize()
+        controller.ancestorTranslateY = 16.0
+        controller.revision += 1
+        @Assert(fPositionAwaitAccepted(window, budget), true)
+        @Assert(window.windowProgress().acceptedSceneVersion > oldVersion, true)
+        @Assert(window.pointerCaptureActiveForTest(), false)
+        @Assert(window.dispatchPointerEventForTest(fPositionSplitEventAt(
+            CJGUI_COMPOSABLE_UI_EVENT_POINTER_UPDATE, handle.nodeId, oldVersion, startX, startY + 24.0)).didApply, false)
+        @Assert(controller.split.firstSize(), originalSize)
+        } finally { budget.end(); window.close() }
+    })
 }

@@ -1,0 +1,1608 @@
+{
+  "case": "B",
+  "initialSelectedId": "asset-0001",
+  "recordCount": 200,
+  "records": [
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0001",
+      "note": "备注 001：会议纪要",
+      "quantity": 8,
+      "title": "归档会议纪要 001"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0002",
+      "note": "备注 002：交付清单",
+      "quantity": 15,
+      "title": "内部交付清单 002"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0003",
+      "note": "备注 003：报告汇编",
+      "quantity": 22,
+      "title": "季度报告汇编 003"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0004",
+      "note": "",
+      "quantity": 29,
+      "title": "精选工程截图 004"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0005",
+      "note": "备注 005：素材合集",
+      "quantity": 36,
+      "title": "复核素材合集 005"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0006",
+      "note": "备注 006：品牌手册",
+      "quantity": 43,
+      "title": "临时品牌手册 006"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0007",
+      "note": "备注 007：封面图",
+      "quantity": 50,
+      "title": "对外封面图 007"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0008",
+      "note": "",
+      "quantity": 57,
+      "title": "年度资料包 008"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0009",
+      "note": "备注 009：会议纪要",
+      "quantity": 64,
+      "title": "归档会议纪要 009"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0010",
+      "note": "备注 010：交付清单",
+      "quantity": 71,
+      "title": "内部交付清单 010"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0011",
+      "note": "备注 011：报告汇编",
+      "quantity": 78,
+      "title": "季度报告汇编 011"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0012",
+      "note": "",
+      "quantity": 85,
+      "title": "精选工程截图 012"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0013",
+      "note": "备注 013：素材合集",
+      "quantity": 92,
+      "title": "复核素材合集 013"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0014",
+      "note": "备注 014：品牌手册",
+      "quantity": 99,
+      "title": "临时品牌手册 014"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0015",
+      "note": "备注 015：封面图",
+      "quantity": 106,
+      "title": "对外封面图 015"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0016",
+      "note": "",
+      "quantity": 113,
+      "title": "年度资料包 016"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0017",
+      "note": "备注 017：会议纪要",
+      "quantity": 120,
+      "title": "归档会议纪要·跨部门联合复核与对外发布前最终确认清单（第17批，含中英混排 Brand Kit v9）"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0018",
+      "note": "备注 018：交付清单",
+      "quantity": 127,
+      "title": "内部交付清单 018"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0019",
+      "note": "备注 019：报告汇编",
+      "quantity": 134,
+      "title": "季度报告汇编 019"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0020",
+      "note": "",
+      "quantity": 141,
+      "title": "精选工程截图 020"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0021",
+      "note": "备注 021：素材合集",
+      "quantity": 148,
+      "title": "复核素材合集 021"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0022",
+      "note": "备注 022：品牌手册",
+      "quantity": 155,
+      "title": "临时品牌手册 022"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0023",
+      "note": "备注 023：封面图",
+      "quantity": 162,
+      "title": "对外封面图 023"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0024",
+      "note": "",
+      "quantity": 169,
+      "title": "年度资料包 024"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0025",
+      "note": "备注 025：会议纪要",
+      "quantity": 176,
+      "title": "归档会议纪要 025"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0026",
+      "note": "备注 026：交付清单",
+      "quantity": 183,
+      "title": "内部交付清单 026"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0027",
+      "note": "备注 027：报告汇编",
+      "quantity": 190,
+      "title": "季度报告汇编 027"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0028",
+      "note": "",
+      "quantity": 197,
+      "title": "精选工程截图 028"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0029",
+      "note": "备注 029：素材合集",
+      "quantity": 204,
+      "title": "复核素材合集 029"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0030",
+      "note": "备注 030：品牌手册",
+      "quantity": 211,
+      "title": "临时品牌手册 030"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0031",
+      "note": "备注 031：封面图",
+      "quantity": 218,
+      "title": "对外封面图 031"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0032",
+      "note": "",
+      "quantity": 225,
+      "title": "年度资料包 032"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0033",
+      "note": "备注 033：会议纪要",
+      "quantity": 232,
+      "title": "归档会议纪要 033"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0034",
+      "note": "备注 034：交付清单",
+      "quantity": 239,
+      "title": "内部交付清单·跨部门联合复核与对外发布前最终确认清单（第34批，含中英混排 Brand Kit v8）"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0035",
+      "note": "备注 035：报告汇编",
+      "quantity": 246,
+      "title": "季度报告汇编 035"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0036",
+      "note": "",
+      "quantity": 253,
+      "title": "精选工程截图 036"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0037",
+      "note": "备注 037：素材合集",
+      "quantity": 260,
+      "title": "复核素材合集 037"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0038",
+      "note": "备注 038：品牌手册",
+      "quantity": 267,
+      "title": "临时品牌手册 038"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0039",
+      "note": "备注 039：封面图",
+      "quantity": 274,
+      "title": "对外封面图 039"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0040",
+      "note": "",
+      "quantity": 281,
+      "title": "年度资料包 040"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0041",
+      "note": "备注 041：会议纪要",
+      "quantity": 288,
+      "title": "归档会议纪要 041"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0042",
+      "note": "备注 042：交付清单",
+      "quantity": 295,
+      "title": "内部交付清单 042"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0043",
+      "note": "备注 043：报告汇编",
+      "quantity": 302,
+      "title": "季度报告汇编 043"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0044",
+      "note": "",
+      "quantity": 309,
+      "title": "精选工程截图 044"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0045",
+      "note": "备注 045：素材合集",
+      "quantity": 316,
+      "title": "复核素材合集 045"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0046",
+      "note": "备注 046：品牌手册",
+      "quantity": 323,
+      "title": "临时品牌手册 046"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0047",
+      "note": "备注 047：封面图",
+      "quantity": 330,
+      "title": "对外封面图 047"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0048",
+      "note": "",
+      "quantity": 337,
+      "title": "年度资料包 048"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0049",
+      "note": "备注 049：会议纪要",
+      "quantity": 344,
+      "title": "归档会议纪要 049"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0050",
+      "note": "备注 050：交付清单",
+      "quantity": 351,
+      "title": "内部交付清单 050"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0051",
+      "note": "备注 051：报告汇编",
+      "quantity": 358,
+      "title": "季度报告汇编·跨部门联合复核与对外发布前最终确认清单（第51批，含中英混排 Brand Kit v7）"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0052",
+      "note": "",
+      "quantity": 365,
+      "title": "精选工程截图 052"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0053",
+      "note": "备注 053：素材合集",
+      "quantity": 372,
+      "title": "复核素材合集 053"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0054",
+      "note": "备注 054：品牌手册",
+      "quantity": 379,
+      "title": "临时品牌手册 054"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0055",
+      "note": "备注 055：封面图",
+      "quantity": 386,
+      "title": "对外封面图 055"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0056",
+      "note": "",
+      "quantity": 393,
+      "title": "年度资料包 056"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0057",
+      "note": "备注 057：会议纪要",
+      "quantity": 400,
+      "title": "归档会议纪要 057"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0058",
+      "note": "备注 058：交付清单",
+      "quantity": 407,
+      "title": "内部交付清单 058"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0059",
+      "note": "备注 059：报告汇编",
+      "quantity": 414,
+      "title": "季度报告汇编 059"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0060",
+      "note": "",
+      "quantity": 421,
+      "title": "精选工程截图 060"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0061",
+      "note": "备注 061：素材合集",
+      "quantity": 428,
+      "title": "复核素材合集 061"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0062",
+      "note": "备注 062：品牌手册",
+      "quantity": 435,
+      "title": "临时品牌手册 062"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0063",
+      "note": "备注 063：封面图",
+      "quantity": 442,
+      "title": "对外封面图 063"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0064",
+      "note": "",
+      "quantity": 449,
+      "title": "年度资料包 064"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0065",
+      "note": "备注 065：会议纪要",
+      "quantity": 456,
+      "title": "归档会议纪要 065"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0066",
+      "note": "备注 066：交付清单",
+      "quantity": 463,
+      "title": "内部交付清单 066"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0067",
+      "note": "备注 067：报告汇编",
+      "quantity": 470,
+      "title": "季度报告汇编 067"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0068",
+      "note": "",
+      "quantity": 477,
+      "title": "精选工程截图·跨部门联合复核与对外发布前最终确认清单（第68批，含中英混排 Brand Kit v6）"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0069",
+      "note": "备注 069：素材合集",
+      "quantity": 484,
+      "title": "复核素材合集 069"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0070",
+      "note": "备注 070：品牌手册",
+      "quantity": 491,
+      "title": "临时品牌手册 070"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0071",
+      "note": "备注 071：封面图",
+      "quantity": 498,
+      "title": "对外封面图 071"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0072",
+      "note": "",
+      "quantity": 505,
+      "title": "年度资料包 072"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0073",
+      "note": "备注 073：会议纪要",
+      "quantity": 512,
+      "title": "归档会议纪要 073"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0074",
+      "note": "备注 074：交付清单",
+      "quantity": 519,
+      "title": "内部交付清单 074"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0075",
+      "note": "备注 075：报告汇编",
+      "quantity": 526,
+      "title": "季度报告汇编 075"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0076",
+      "note": "",
+      "quantity": 533,
+      "title": "精选工程截图 076"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0077",
+      "note": "备注 077：素材合集",
+      "quantity": 540,
+      "title": "复核素材合集 077"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0078",
+      "note": "备注 078：品牌手册",
+      "quantity": 547,
+      "title": "临时品牌手册 078"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0079",
+      "note": "备注 079：封面图",
+      "quantity": 554,
+      "title": "对外封面图 079"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0080",
+      "note": "",
+      "quantity": 561,
+      "title": "年度资料包 080"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0081",
+      "note": "备注 081：会议纪要",
+      "quantity": 568,
+      "title": "归档会议纪要 081"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0082",
+      "note": "备注 082：交付清单",
+      "quantity": 575,
+      "title": "内部交付清单 082"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0083",
+      "note": "备注 083：报告汇编",
+      "quantity": 582,
+      "title": "季度报告汇编 083"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0084",
+      "note": "",
+      "quantity": 589,
+      "title": "精选工程截图 084"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0085",
+      "note": "备注 085：素材合集",
+      "quantity": 596,
+      "title": "复核素材合集·跨部门联合复核与对外发布前最终确认清单（第85批，含中英混排 Brand Kit v5）"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0086",
+      "note": "备注 086：品牌手册",
+      "quantity": 603,
+      "title": "临时品牌手册 086"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0087",
+      "note": "备注 087：封面图",
+      "quantity": 610,
+      "title": "对外封面图 087"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0088",
+      "note": "",
+      "quantity": 617,
+      "title": "年度资料包 088"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0089",
+      "note": "备注 089：会议纪要",
+      "quantity": 624,
+      "title": "归档会议纪要 089"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0090",
+      "note": "备注 090：交付清单",
+      "quantity": 631,
+      "title": "内部交付清单 090"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0091",
+      "note": "备注 091：报告汇编",
+      "quantity": 638,
+      "title": "季度报告汇编 091"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0092",
+      "note": "",
+      "quantity": 645,
+      "title": "精选工程截图 092"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0093",
+      "note": "备注 093：素材合集",
+      "quantity": 652,
+      "title": "复核素材合集 093"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0094",
+      "note": "备注 094：品牌手册",
+      "quantity": 659,
+      "title": "临时品牌手册 094"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0095",
+      "note": "备注 095：封面图",
+      "quantity": 666,
+      "title": "对外封面图 095"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0096",
+      "note": "",
+      "quantity": 673,
+      "title": "年度资料包 096"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0097",
+      "note": "备注 097：会议纪要",
+      "quantity": 680,
+      "title": "归档会议纪要 097"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0098",
+      "note": "备注 098：交付清单",
+      "quantity": 687,
+      "title": "内部交付清单 098"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0099",
+      "note": "备注 099：报告汇编",
+      "quantity": 694,
+      "title": "季度报告汇编 099"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0100",
+      "note": "",
+      "quantity": 701,
+      "title": "精选工程截图 100"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0101",
+      "note": "备注 101：素材合集",
+      "quantity": 708,
+      "title": "复核素材合集 101"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0102",
+      "note": "备注 102：品牌手册",
+      "quantity": 715,
+      "title": "临时品牌手册·跨部门联合复核与对外发布前最终确认清单（第102批，含中英混排 Brand Kit v4）"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0103",
+      "note": "备注 103：封面图",
+      "quantity": 722,
+      "title": "对外封面图 103"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0104",
+      "note": "",
+      "quantity": 729,
+      "title": "年度资料包 104"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0105",
+      "note": "备注 105：会议纪要",
+      "quantity": 736,
+      "title": "归档会议纪要 105"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0106",
+      "note": "备注 106：交付清单",
+      "quantity": 743,
+      "title": "内部交付清单 106"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0107",
+      "note": "备注 107：报告汇编",
+      "quantity": 750,
+      "title": "季度报告汇编 107"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0108",
+      "note": "",
+      "quantity": 757,
+      "title": "精选工程截图 108"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0109",
+      "note": "备注 109：素材合集",
+      "quantity": 764,
+      "title": "复核素材合集 109"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0110",
+      "note": "备注 110：品牌手册",
+      "quantity": 771,
+      "title": "临时品牌手册 110"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0111",
+      "note": "备注 111：封面图",
+      "quantity": 778,
+      "title": "对外封面图 111"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0112",
+      "note": "",
+      "quantity": 785,
+      "title": "年度资料包 112"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0113",
+      "note": "备注 113：会议纪要",
+      "quantity": 792,
+      "title": "归档会议纪要 113"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0114",
+      "note": "备注 114：交付清单",
+      "quantity": 799,
+      "title": "内部交付清单 114"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0115",
+      "note": "备注 115：报告汇编",
+      "quantity": 806,
+      "title": "季度报告汇编 115"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0116",
+      "note": "",
+      "quantity": 813,
+      "title": "精选工程截图 116"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0117",
+      "note": "备注 117：素材合集",
+      "quantity": 820,
+      "title": "复核素材合集 117"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0118",
+      "note": "备注 118：品牌手册",
+      "quantity": 827,
+      "title": "临时品牌手册 118"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0119",
+      "note": "备注 119：封面图",
+      "quantity": 834,
+      "title": "对外封面图·跨部门联合复核与对外发布前最终确认清单（第119批，含中英混排 Brand Kit v3）"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0120",
+      "note": "",
+      "quantity": 841,
+      "title": "年度资料包 120"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0121",
+      "note": "备注 121：会议纪要",
+      "quantity": 848,
+      "title": "归档会议纪要 121"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0122",
+      "note": "备注 122：交付清单",
+      "quantity": 855,
+      "title": "内部交付清单 122"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0123",
+      "note": "备注 123：报告汇编",
+      "quantity": 862,
+      "title": "季度报告汇编 123"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0124",
+      "note": "",
+      "quantity": 869,
+      "title": "精选工程截图 124"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0125",
+      "note": "备注 125：素材合集",
+      "quantity": 876,
+      "title": "复核素材合集 125"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0126",
+      "note": "备注 126：品牌手册",
+      "quantity": 883,
+      "title": "临时品牌手册 126"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0127",
+      "note": "备注 127：封面图",
+      "quantity": 890,
+      "title": "对外封面图 127"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0128",
+      "note": "",
+      "quantity": 897,
+      "title": "年度资料包 128"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0129",
+      "note": "备注 129：会议纪要",
+      "quantity": 904,
+      "title": "归档会议纪要 129"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0130",
+      "note": "备注 130：交付清单",
+      "quantity": 911,
+      "title": "内部交付清单 130"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0131",
+      "note": "备注 131：报告汇编",
+      "quantity": 918,
+      "title": "季度报告汇编 131"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0132",
+      "note": "",
+      "quantity": 925,
+      "title": "精选工程截图 132"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0133",
+      "note": "备注 133：素材合集",
+      "quantity": 932,
+      "title": "复核素材合集 133"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0134",
+      "note": "备注 134：品牌手册",
+      "quantity": 939,
+      "title": "临时品牌手册 134"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0135",
+      "note": "备注 135：封面图",
+      "quantity": 946,
+      "title": "对外封面图 135"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0136",
+      "note": "",
+      "quantity": 953,
+      "title": "年度资料包·跨部门联合复核与对外发布前最终确认清单（第136批，含中英混排 Brand Kit v2）"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0137",
+      "note": "备注 137：会议纪要",
+      "quantity": 960,
+      "title": "归档会议纪要 137"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0138",
+      "note": "备注 138：交付清单",
+      "quantity": 967,
+      "title": "内部交付清单 138"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0139",
+      "note": "备注 139：报告汇编",
+      "quantity": 974,
+      "title": "季度报告汇编 139"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0140",
+      "note": "",
+      "quantity": 981,
+      "title": "精选工程截图 140"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0141",
+      "note": "备注 141：素材合集",
+      "quantity": 988,
+      "title": "复核素材合集 141"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0142",
+      "note": "备注 142：品牌手册",
+      "quantity": 995,
+      "title": "临时品牌手册 142"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0143",
+      "note": "备注 143：封面图",
+      "quantity": 3,
+      "title": "对外封面图 143"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0144",
+      "note": "",
+      "quantity": 10,
+      "title": "年度资料包 144"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0145",
+      "note": "备注 145：会议纪要",
+      "quantity": 17,
+      "title": "归档会议纪要 145"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0146",
+      "note": "备注 146：交付清单",
+      "quantity": 24,
+      "title": "内部交付清单 146"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0147",
+      "note": "备注 147：报告汇编",
+      "quantity": 31,
+      "title": "季度报告汇编 147"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0148",
+      "note": "",
+      "quantity": 38,
+      "title": "精选工程截图 148"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0149",
+      "note": "备注 149：素材合集",
+      "quantity": 45,
+      "title": "复核素材合集 149"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0150",
+      "note": "备注 150：品牌手册",
+      "quantity": 52,
+      "title": "临时品牌手册 150"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0151",
+      "note": "备注 151：封面图",
+      "quantity": 59,
+      "title": "对外封面图 151"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0152",
+      "note": "",
+      "quantity": 66,
+      "title": "年度资料包 152"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0153",
+      "note": "备注 153：会议纪要",
+      "quantity": 73,
+      "title": "归档会议纪要·跨部门联合复核与对外发布前最终确认清单（第153批，含中英混排 Brand Kit v1）"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0154",
+      "note": "备注 154：交付清单",
+      "quantity": 80,
+      "title": "内部交付清单 154"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0155",
+      "note": "备注 155：报告汇编",
+      "quantity": 87,
+      "title": "季度报告汇编 155"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0156",
+      "note": "",
+      "quantity": 94,
+      "title": "精选工程截图 156"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0157",
+      "note": "备注 157：素材合集",
+      "quantity": 101,
+      "title": "复核素材合集 157"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0158",
+      "note": "备注 158：品牌手册",
+      "quantity": 108,
+      "title": "临时品牌手册 158"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0159",
+      "note": "备注 159：封面图",
+      "quantity": 115,
+      "title": "对外封面图 159"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0160",
+      "note": "",
+      "quantity": 122,
+      "title": "年度资料包 160"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0161",
+      "note": "备注 161：会议纪要",
+      "quantity": 129,
+      "title": "归档会议纪要 161"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0162",
+      "note": "备注 162：交付清单",
+      "quantity": 136,
+      "title": "内部交付清单 162"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0163",
+      "note": "备注 163：报告汇编",
+      "quantity": 143,
+      "title": "季度报告汇编 163"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0164",
+      "note": "",
+      "quantity": 150,
+      "title": "精选工程截图 164"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0165",
+      "note": "备注 165：素材合集",
+      "quantity": 157,
+      "title": "复核素材合集 165"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0166",
+      "note": "备注 166：品牌手册",
+      "quantity": 164,
+      "title": "临时品牌手册 166"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0167",
+      "note": "备注 167：封面图",
+      "quantity": 171,
+      "title": "对外封面图 167"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0168",
+      "note": "",
+      "quantity": 178,
+      "title": "年度资料包 168"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0169",
+      "note": "备注 169：会议纪要",
+      "quantity": 185,
+      "title": "归档会议纪要 169"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0170",
+      "note": "备注 170：交付清单",
+      "quantity": 192,
+      "title": "内部交付清单·跨部门联合复核与对外发布前最终确认清单（第170批，含中英混排 Brand Kit v9）"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0171",
+      "note": "备注 171：报告汇编",
+      "quantity": 199,
+      "title": "季度报告汇编 171"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0172",
+      "note": "",
+      "quantity": 206,
+      "title": "精选工程截图 172"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0173",
+      "note": "备注 173：素材合集",
+      "quantity": 213,
+      "title": "复核素材合集 173"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0174",
+      "note": "备注 174：品牌手册",
+      "quantity": 220,
+      "title": "临时品牌手册 174"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0175",
+      "note": "备注 175：封面图",
+      "quantity": 227,
+      "title": "对外封面图 175"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0176",
+      "note": "",
+      "quantity": 234,
+      "title": "年度资料包 176"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0177",
+      "note": "备注 177：会议纪要",
+      "quantity": 241,
+      "title": "归档会议纪要 177"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0178",
+      "note": "备注 178：交付清单",
+      "quantity": 248,
+      "title": "内部交付清单 178"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0179",
+      "note": "备注 179：报告汇编",
+      "quantity": 255,
+      "title": "季度报告汇编 179"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0180",
+      "note": "",
+      "quantity": 262,
+      "title": "精选工程截图 180"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0181",
+      "note": "备注 181：素材合集",
+      "quantity": 269,
+      "title": "复核素材合集 181"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0182",
+      "note": "备注 182：品牌手册",
+      "quantity": 276,
+      "title": "临时品牌手册 182"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0183",
+      "note": "备注 183：封面图",
+      "quantity": 283,
+      "title": "对外封面图 183"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0184",
+      "note": "",
+      "quantity": 290,
+      "title": "年度资料包 184"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0185",
+      "note": "备注 185：会议纪要",
+      "quantity": 297,
+      "title": "归档会议纪要 185"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0186",
+      "note": "备注 186：交付清单",
+      "quantity": 304,
+      "title": "内部交付清单 186"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0187",
+      "note": "备注 187：报告汇编",
+      "quantity": 311,
+      "title": "季度报告汇编·跨部门联合复核与对外发布前最终确认清单（第187批，含中英混排 Brand Kit v8）"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0188",
+      "note": "",
+      "quantity": 318,
+      "title": "精选工程截图 188"
+    },
+    {
+      "enabled": false,
+      "group": "音视频",
+      "id": "asset-0189",
+      "note": "备注 189：素材合集",
+      "quantity": 325,
+      "title": "复核素材合集 189"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0190",
+      "note": "备注 190：品牌手册",
+      "quantity": 332,
+      "title": "临时品牌手册 190"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0191",
+      "note": "备注 191：封面图",
+      "quantity": 339,
+      "title": "对外封面图 191"
+    },
+    {
+      "enabled": false,
+      "group": "图片",
+      "id": "asset-0192",
+      "note": "",
+      "quantity": 346,
+      "title": "年度资料包 192"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0193",
+      "note": "备注 193：会议纪要",
+      "quantity": 353,
+      "title": "归档会议纪要 193"
+    },
+    {
+      "enabled": true,
+      "group": "文档",
+      "id": "asset-0194",
+      "note": "备注 194：交付清单",
+      "quantity": 360,
+      "title": "内部交付清单 194"
+    },
+    {
+      "enabled": false,
+      "group": "归档",
+      "id": "asset-0195",
+      "note": "备注 195：报告汇编",
+      "quantity": 367,
+      "title": "季度报告汇编 195"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0196",
+      "note": "",
+      "quantity": 374,
+      "title": "精选工程截图 196"
+    },
+    {
+      "enabled": true,
+      "group": "音视频",
+      "id": "asset-0197",
+      "note": "备注 197：素材合集",
+      "quantity": 381,
+      "title": "复核素材合集 197"
+    },
+    {
+      "enabled": false,
+      "group": "文档",
+      "id": "asset-0198",
+      "note": "备注 198：品牌手册",
+      "quantity": 388,
+      "title": "临时品牌手册 198"
+    },
+    {
+      "enabled": true,
+      "group": "归档",
+      "id": "asset-0199",
+      "note": "备注 199：封面图",
+      "quantity": 395,
+      "title": "对外封面图 199"
+    },
+    {
+      "enabled": true,
+      "group": "图片",
+      "id": "asset-0200",
+      "note": "",
+      "quantity": 402,
+      "title": "年度资料包 200"
+    }
+  ],
+  "title": "资产库"
+}

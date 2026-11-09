@@ -57,6 +57,7 @@ public class CjguiComposableUiNamedStyle {
         gap!: ?Int64 = None, fixedWidth!: ?Int64 = None, fixedHeight!: ?Int64 = None, growX!: ?Int64 = None,
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
+        contentAlignX!: ?Int64 = None, contentAlignY!: ?Int64 = None,
         fontFamily!: ?String = None, translateX!: ?Float64 = None, translateY!: ?Float64 = None,
         textMaxLines!: ?Int64 = None, textOverflow!: ?String = None,
         letterSpacing!: ?Float64 = None, lineHeight!: ?Float64 = None): CjguiComposableUiStyle {
@@ -105,6 +106,12 @@ public class CjguiComposableUiNamedStyle {
             }, alignY: match (alignY) {
                 case Some(value) => value
                 case None => base.alignY
+            }, contentAlignX: match (contentAlignX) {
+                case Some(value) => value
+                case None => base.contentAlignX
+            }, contentAlignY: match (contentAlignY) {
+                case Some(value) => value
+                case None => base.contentAlignY
             }, cornerRadius: match (cornerRadius) {
                 case Some(value) => value
                 case None => base.cornerRadius
@@ -135,6 +142,7 @@ public class CjguiComposableUiNamedStyle {
         gap!: ?Int64 = None, fixedWidth!: ?Int64 = None, fixedHeight!: ?Int64 = None, growX!: ?Int64 = None,
         growY!: ?Int64 = None, minWidth!: ?Int64 = None, maxWidth!: ?Int64 = None, minHeight!: ?Int64 = None,
         maxHeight!: ?Int64 = None, alignX!: ?Int64 = None, alignY!: ?Int64 = None, cornerRadius!: ?Int64 = None,
+        contentAlignX!: ?Int64 = None, contentAlignY!: ?Int64 = None,
         fontFamily!: ?String = None, translateX!: ?Float64 = None, translateY!: ?Float64 = None,
         textMaxLines!: ?Int64 = None, textOverflow!: ?String = None,
         letterSpacing!: ?Float64 = None, lineHeight!: ?Float64 = None): CjguiComposableUiBoundStyle {
@@ -142,6 +150,7 @@ public class CjguiComposableUiNamedStyle {
             localStyle(fontSize: fontSize, fontWeight: fontWeight, padding: padding, gap: gap, fixedWidth: fixedWidth,
                 fixedHeight: fixedHeight, growX: growX, growY: growY, minWidth: minWidth, maxWidth: maxWidth,
                 minHeight: minHeight, maxHeight: maxHeight, alignX: alignX, alignY: alignY, cornerRadius: cornerRadius,
+                contentAlignX: contentAlignX, contentAlignY: contentAlignY,
                 fontFamily: fontFamily, translateX: translateX, translateY: translateY, textMaxLines: textMaxLines,
                 textOverflow: textOverflow, letterSpacing: letterSpacing, lineHeight: lineHeight), interaction)
     }

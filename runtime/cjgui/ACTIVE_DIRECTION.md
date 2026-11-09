@@ -35,9 +35,13 @@
 
 ### E · macOS
 
-**2026-11-06 E当前（Sol 6.1主执行，Terra 6.1/Luna 6实际分包）** 布局/样式/只读诊断已交付macOS experimental候选：单grow剩余高度、自然横排限宽、scroll单内容校验，暖纸及公共角色，Inspector约束/裁剪/状态与真实contentBounds。隔离小说1280/1080/1396窗、输入保存重启v5，包外普通工具和通知错误/禁用/亮暗主题已验；相关定向测试和skip-script构建通过，根全套仍受既有foreign重复声明阻挡。锁定SDK621文件/596输入，未发布。原小说源码持续并行修改，另交UI重放补丁（dry-run通过、未编译/未应用），不覆盖原件。自有实例/重复包已收尾；详见[阶段结果与边界](../../docs/plans/2026-11-06-layout-theme-usability.md)。正式05b（App `59cca9dc…`、SDK锁 `e375f1d8…`、renderer `1d260dfc…`）及旧16/32ms未过门保留；accepted换槽成本门退役，H/W/Linux状态不变，不恢复旧专项。
+**2026-11-09 E当前（AI原型工作流待转交执行）** 用户已确定下一阶段，指导已整理[完整实施任务](../../docs/ai/2026-11-09-ai-prototype-workflow-prompt.md)，由用户另行启动执行AI，尚未开始开发。唯一目标：预构建宿主无参打开、新建/打开项目、交给AI连接说明、公开生成与续改、主动质量检查、保存重开和可搬移交付；以独立书籍/章节管理原型及有限HTML对照验证。目标内新发现允许自主归因修复，仍须skill反馈；不修改skill或现有小说工作台。H1–H5已验范围保留，H5-B接受依据见[报告§53.2](../../docs/plans/2026-11-08-prototype-host-delivery.md#532)：宿主fefd5b72、SDKec9237f6/锁a630a7e6、包外70bf07ad，反馈29 issue/127 event为历史基线。只补受影响验证；涉及公共分发变更再同源导出并包外消费。整体仍experimental，未提交/发布，不重开旧收口或无关矩阵。
 
 **旧线状态（2026-10-28）：**Sol 01a16db2-14c6-7540-bf23-0048536bc8cd已由用户暂停（idle/interrupted）；DS 01a17bea-9bcd-7872-a89b-2e357baf2311已完成冻结并结束（idle/completed），源写集/前台已释放。[DS交接](artifacts/ds51-normal-workspace-delivery-20261024/section-18-20261028/mixed-routing/README.md)及旧Sol原件由上方新整包线接管；旧两线不再分派、不自动恢复，转交不等于最终验收完成。
+
+### CJGUI 应用开发技能
+
+**2026-11-09 当前：** `cjgui-app-dev` v7 增加不可省略的独立只读显示审查：主入口触发，diagnostics 给五步流程，layout-theme 给证据类型判断（裁字行框/clip+像素、对齐实测盒内余量、留白不按面积比），正常留白/左对齐/显式省略/滚动边缘半行不得误报；scripts/schema 未改。同 kit 独立盲测：v6 命中 2/3（按钮对齐漏检并反断居中）、对照误报 0/4；v7 命中 3/3、误报 0/4、约 10 分钟，确认/疑似分列。诊断缺口 issue a9c7b065…（事件 53b8be6d…）；自动裁字检测因缺行框/clip 字段未实现。Codex/agents 同源 v7；新 SDK skill-v7 候选已同步完整16文件，通过四模板创建、637文件/612闭包、独立安装识别及21链接检查，其余630个交付文件不变；旧 review-2 仍 v4，未构建/运行 GUI。证据见[SDK同步](../../docs/ai/CJGUI_SKILLIZATION_PLAN.md#2026-11-09-sdk-内置-skill-v7-同步)；v6及更早边界保留。
 
 ### C · 公共运行时界面编辑入口（2026-10-23 当前）
 

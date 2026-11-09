@@ -742,6 +742,15 @@ struct CjguiInternalRendererComposableNode {
     var iconTintAlpha: Float64 = 0.0
     var pointerControlMinimum: Int64 = 0
     var pointerControlMaximum: Int64 = 0
+    var scrollProjectionPresent: UInt32 = 0
+    var scrollRangePresent: UInt32 = 0
+    var scrollOffset: Int64 = 0
+    var scrollMinimum: Int64 = 0
+    var scrollMaximum: Int64 = 0
+    var scrollContentExtent: Int64 = 0
+    var scrollViewportExtent: Int64 = 0
+    var contentAlignX: Int64 = 0
+    var contentAlignY: Int64 = 0
     init(nodeId!: UInt64, projectionVersion!: UInt64, resourceId!: Int64, x!: Int64, y!: Int64, width!: Int64,
         height!: Int64, clipX!: Int64, clipY!: Int64, clipWidth!: Int64, clipHeight!: Int64, nodeKind!: UInt32,
         isInteractive!: UInt32, isReadOnly!: UInt32, tabInsertsText!: UInt32, preservesActiveLocalText!: UInt32 = 0u32,
@@ -786,9 +795,22 @@ struct CjguiInternalRendererComposableNode {
         cornerBottomRight!: Float64 = 0.0, cornerBottomLeft!: Float64 = 0.0, zIndex!: Int64 = 0,
         rotateDegrees!: Float64 = 0.0, iconTintRed!: Float64 = 0.0, iconTintGreen!: Float64 = 0.0,
         iconTintBlue!: Float64 = 0.0, iconTintAlpha!: Float64 = 0.0,
-        pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0) {
+        pointerControlMinimum!: Int64 = 0, pointerControlMaximum!: Int64 = 0,
+        scrollProjectionPresent!: UInt32 = 0u32, scrollRangePresent!: UInt32 = 0u32,
+        scrollOffset!: Int64 = 0, scrollMinimum!: Int64 = 0, scrollMaximum!: Int64 = 0,
+        scrollContentExtent!: Int64 = 0, scrollViewportExtent!: Int64 = 0,
+        contentAlignX!: Int64 = 0, contentAlignY!: Int64 = 0) {
         this.pointerControlMinimum = pointerControlMinimum
         this.pointerControlMaximum = pointerControlMaximum
+        this.scrollProjectionPresent = scrollProjectionPresent
+        this.scrollRangePresent = scrollRangePresent
+        this.scrollOffset = scrollOffset
+        this.scrollMinimum = scrollMinimum
+        this.scrollMaximum = scrollMaximum
+        this.scrollContentExtent = scrollContentExtent
+        this.scrollViewportExtent = scrollViewportExtent
+        this.contentAlignX = contentAlignX
+        this.contentAlignY = contentAlignY
         this.textMaxLines = textMaxLines
         this.textOverflow = textOverflow
         this.letterSpacing = letterSpacing

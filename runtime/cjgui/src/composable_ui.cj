@@ -969,6 +969,12 @@ public class CjguiComposableUiStyle {
     public let idealHeight: Int64
     public let alignX: Int64
     public let alignY: Int64
+    /// Placement of a button's own text inside its content box. This is not
+    /// the node's `alignX`/`alignY` (those place the node itself). Defaults
+    /// keep the legacy top/start text position; action recipes opt in to
+    /// centered content without moving the control or its hit area.
+    public let contentAlignX: Int64
+    public let contentAlignY: Int64
     /// Post-layout translation of this node's whole subtree, in logical
     /// points. Applied after the parent assigns the rect and before children
     /// are laid out, so descendants, hit testing and clipping follow the same
@@ -1071,6 +1077,8 @@ public class CjguiComposableUiStyle {
         idealHeight!: Int64 = 0,
         alignX!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_STRETCH,
         alignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
+        contentAlignX!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
+        contentAlignY!: Int64 = CJGUI_COMPOSABLE_UI_ALIGN_START,
         offsetX!: Int64 = 0,
         offsetY!: Int64 = 0,
         translateX!: Float64 = 0.0,
@@ -1213,6 +1221,18 @@ public class CjguiComposableUiStyle {
         this.alignY = if (alignY == CJGUI_COMPOSABLE_UI_ALIGN_START || alignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
             alignY == CJGUI_COMPOSABLE_UI_ALIGN_END || alignY == CJGUI_COMPOSABLE_UI_ALIGN_STRETCH) {
             alignY
+        } else {
+            CJGUI_COMPOSABLE_UI_ALIGN_START
+        }
+        this.contentAlignX = if (contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
+            contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_END) {
+            contentAlignX
+        } else {
+            CJGUI_COMPOSABLE_UI_ALIGN_START
+        }
+        this.contentAlignY = if (contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER ||
+            contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END) {
+            contentAlignY
         } else {
             CJGUI_COMPOSABLE_UI_ALIGN_START
         }
@@ -1369,8 +1389,9 @@ public func cjguiComposableUiStyleWithPaint(base: CjguiComposableUiStyle, backgr
         fontSize: base.fontSize, fontWeight: base.fontWeight, fontFamily: base.fontFamily, textMaxLines: base.textMaxLines, textOverflow: base.textOverflow, minWidth: base.minWidth,
         letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
         maxWidth: base.maxWidth, idealWidth: base.idealWidth, minHeight: base.minHeight, maxHeight: base.maxHeight,
-        idealHeight: base.idealHeight, alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX,
-        offsetY: base.offsetY, translateX: base.translateX, translateY: base.translateY,
+        idealHeight: base.idealHeight, alignX: base.alignX, alignY: base.alignY,
+        contentAlignX: base.contentAlignX, contentAlignY: base.contentAlignY,
+        offsetX: base.offsetX, offsetY: base.offsetY, translateX: base.translateX, translateY: base.translateY,
         scaleX: base.scaleX, scaleY: base.scaleY,
         wheelScrollable: base.wheelScrollable,
         scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
@@ -1392,7 +1413,9 @@ public func cjguiComposableUiStyleWithTranslation(base: CjguiComposableUiStyle,
         letterSpacing: base.letterSpacing, lineHeight: base.lineHeight,
         minWidth: base.minWidth, maxWidth: base.maxWidth, idealWidth: base.idealWidth,
         minHeight: base.minHeight, maxHeight: base.maxHeight, idealHeight: base.idealHeight,
-        alignX: base.alignX, alignY: base.alignY, offsetX: base.offsetX, offsetY: base.offsetY,
+        alignX: base.alignX, alignY: base.alignY,
+        contentAlignX: base.contentAlignX, contentAlignY: base.contentAlignY,
+        offsetX: base.offsetX, offsetY: base.offsetY,
         translateX: translateX, translateY: translateY, scaleX: base.scaleX, scaleY: base.scaleY,
         wheelScrollable: base.wheelScrollable,
         scrollContentAlignY: base.scrollContentAlignY, cornerRadius: base.cornerRadius,
@@ -2478,6 +2501,22 @@ public class CjguiComposableUiScrollViewport {
     }
     public func contentExtent(): Int64 {
         return contentExtentValue
+    }
+    /// Candidate facts frozen by the layout solve in flight. They become the
+    /// accepted facts when this scene commits; a rejected candidate is never
+    /// observable through the installed scene, so the accessibility projection
+    /// can carry them without becoming a second state owner.
+    func projectedOffset(): Int64 {
+        return if (stagedSolvedValue) { stagedOffsetValue } else { acceptedOffsetValue }
+    }
+    func projectedContentExtent(): Int64 {
+        return if (stagedSolvedValue) { stagedContentExtentValue } else { contentExtentValue }
+    }
+    func projectedViewportExtent(): Int64 {
+        return if (stagedSolvedValue) { stagedViewportExtentValue } else { viewportExtentValue }
+    }
+    func projectedMinimumOffset(): Int64 {
+        return if (originStagePendingValue) { stagedOriginOffsetValue } else { acceptedOriginOffsetValue }
     }
     /// Smallest absolute request represented by the currently accepted local
     /// coordinate window.
@@ -6229,11 +6268,18 @@ public func cjguiComposableBoundFormField(
     booleanOperationActionName!: String = "EDIT_DRAFT_BOOLEAN",
     interactionStyle!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
     editorLabel!: String = "",
-    helpText!: String = "", unavailableReason!: String = ""
+    helpText!: String = "", unavailableReason!: String = "",
+    // R7: explicit visible-label control for the editor. False renders the
+    // editor WITHOUT its own label and does NOT fall back to the descriptor
+    // label (an external label column already draws it); the accessible name
+    // stays the caller's semantic-label assignment. Default true keeps the
+    // historical behaviour: an empty editorLabel falls back to descriptor.label.
+    editorLabelVisible!: Bool = true
 ): CjguiComposableUiNode {
     if (descriptor.resourceId != field.resourceId || descriptor.fieldId != field.fieldId) {
         throw IllegalArgumentException("composable_bound_form_field_identity_mismatch")
     }
+    let effectiveReadOnly = descriptor.readOnly || readOnly
     let group = cjguiComposableVertical(containerNodeId, containerSemanticId, CjguiComposableUiStyle(gap: 3, growX: 1))
     let resolvedEditorSemanticId = if (editorSemanticId.size > 0) {
         editorSemanticId
@@ -6245,26 +6291,32 @@ public func cjguiComposableBoundFormField(
     } else {
         "${containerSemanticId}-validation"
     }
-    let label = if (editorLabel.isEmpty()) { descriptor.label } else { editorLabel }
+    let label = if (!editorLabelVisible) {
+        ""
+    } else if (editorLabel.isEmpty()) {
+        descriptor.label
+    } else {
+        editorLabel
+    }
     if (descriptor.editorKind == "BOOLEAN") {
         // A boolean has no separate read-only platform role.  Keep it visible
         // but non-interactive rather than allowing a visually read-only
         // switch to dispatch an edit intent.
         group.add(
             cjguiComposableBooleanInput(editorNodeId, resolvedEditorSemanticId, label,
-                field.draftText == "true", descriptor.resourceId, editorStyle, enabled: enabled && !readOnly,
+                field.draftText == "true", descriptor.resourceId, editorStyle, enabled: enabled && !effectiveReadOnly,
                 fieldId: descriptor.fieldId, operationActionName: booleanOperationActionName,
                 operationResourceId: operationResourceId, displayValueRole: "draft", interactionStyle: interactionStyle))
     } else if (descriptor.editorKind == "INTEGER") {
         group.add(
             cjguiComposableIntegerInput(editorNodeId, resolvedEditorSemanticId, label, field.draftText,
-                descriptor.resourceId, editorStyle, enabled: enabled, readOnly: readOnly, fieldId: descriptor.fieldId,
+                descriptor.resourceId, editorStyle, enabled: enabled, readOnly: effectiveReadOnly, fieldId: descriptor.fieldId,
                 operationActionName: textOperationActionName, operationResourceId: operationResourceId,
                 displayValueRole: "draft", interactionStyle: interactionStyle))
     } else if (descriptor.editorKind == "TEXT") {
         group.add(
             cjguiComposableTextInput(editorNodeId, resolvedEditorSemanticId, label, field.draftText,
-                descriptor.resourceId, editorStyle, enabled: enabled, readOnly: readOnly, fieldId: descriptor.fieldId,
+                descriptor.resourceId, editorStyle, enabled: enabled, readOnly: effectiveReadOnly, fieldId: descriptor.fieldId,
                 operationActionName: textOperationActionName, operationResourceId: operationResourceId,
                 displayValueRole: "draft", interactionStyle: interactionStyle))
     } else {
@@ -6283,7 +6335,7 @@ public func cjguiComposableBoundFormField(
     let editor = group.children()[0]
     editor.semanticHelp = cjguiComposableFormFieldHelp(descriptor, field,
         validationDisplayMessage: validationDisplayMessage, helpText: helpText,
-        readOnly: readOnly, enabled: enabled, unavailableReason: unavailableReason)
+        readOnly: effectiveReadOnly, enabled: enabled, unavailableReason: unavailableReason)
 
     return group
 }
@@ -6958,6 +7010,16 @@ public class CjguiComposableUiVisualGeometry {
         if (local >= 1000000000.0) { return 1000000000 }
         return Int64(if (local >= 0.0) { floor(local + 0.5) } else { ceil(local - 0.5) })
     }
+    /// The vertical split's counterpart on the main-axis Y: the same accepted
+    /// track-local rule, the same single quantization, so a vertical divider
+    /// drag maps through the geometry exactly like the horizontal one.
+    public func windowToSplitTrackPointY(divider: CjguiComposableUiRect, acceptedFirst: Int64,
+        windowY: Float64, grabOffset: Float64): Int64 {
+        let local = windowToLayoutY(windowY) - Float64(divider.y) + Float64(acceptedFirst) - grabOffset
+        if (local <= -1000000000.0) { return -1000000000 }
+        if (local >= 1000000000.0) { return 1000000000 }
+        return Int64(if (local >= 0.0) { floor(local + 0.5) } else { ceil(local - 0.5) })
+    }
     /// Each clip retains the translation of its creator, independently of a
     /// descendant node's own translation.
     public func visualClipAt(constraints: ArrayList<CjguiComposableUiClipConstraint>,
@@ -7138,10 +7200,11 @@ public class CjguiComposableUiScene {
     private let resolvedVisualGeometry: ArrayList<CjguiComposableUiVisualGeometry>
     private let validValue: Bool
     private let layoutErrorValue: String
+    private let layoutDiagnosticValue: String
     let hasSelectionBackground: Bool
     let hasPlatformSelectionBackground: Bool
     public init(version: Int64, viewport: CjguiComposableUiRect, nodes: ArrayList<CjguiComposableUiLayoutNode>,
-        valid!: Bool = true, layoutError!: String = "") {
+        valid!: Bool = true, layoutError!: String = "", layoutDiagnostic!: String = "") {
         this.version = version
         this.viewport = viewport
         this.resolvedNodes = ArrayList<CjguiComposableUiLayoutNode>(nodes)
@@ -7218,6 +7281,7 @@ public class CjguiComposableUiScene {
         this.hasPlatformSelectionBackground = platformSelectionBackground
         this.validValue = valid && geometryError.size == 0
         this.layoutErrorValue = if (layoutError.size > 0) { layoutError } else { geometryError }
+        this.layoutDiagnosticValue = layoutDiagnostic
     }
     public func nodes(): ArrayList<CjguiComposableUiLayoutNode> {
         return ArrayList<CjguiComposableUiLayoutNode>(resolvedNodes)
@@ -7227,6 +7291,13 @@ public class CjguiComposableUiScene {
     }
     public func layoutError(): String {
         return layoutErrorValue
+    }
+
+    /// Bounded, additive location detail for a layout refusal. Empty when the
+    /// scene is valid or the failure has no structured detail. `layoutError()`
+    /// keeps its exact machine token, so existing consumers are unaffected.
+    public func layoutDiagnostic(): String {
+        return layoutDiagnosticValue
     }
     public func visualGeometryAt(index: Int64): CjguiComposableUiVisualGeometry {
         return resolvedVisualGeometry[index]
@@ -7601,6 +7672,9 @@ private class CjguiComposableUiLayoutWorkCounter {
     /// Hidden tab pages this solve presented WITHOUT measuring or drawing them.
     var hiddenTabPageCount: Int64 = 0
     var clipConstraintCapacityExceeded: Bool = false
+    /// 定位信息：第一个超出裁剪约束容量的节点、当前深度/上限与约束链。
+    /// 只用于诊断，不改变拒绝语义或容量。
+    var clipCapacityDiagnostic: String = ""
     var dynamicIdentityIssue: String = ""
     /// Named fatal layout declaration issue (for example an invalid aspect
     /// ratio). It invalidates the whole candidate scene, never a zero-size
@@ -8140,6 +8214,8 @@ public class CjguiComposableUiLayoutReuseCache {
         appendInt(builder, byteCount, cacheable, style.idealHeight)
         appendInt(builder, byteCount, cacheable, style.alignX)
         appendInt(builder, byteCount, cacheable, style.alignY)
+        appendInt(builder, byteCount, cacheable, style.contentAlignX)
+        appendInt(builder, byteCount, cacheable, style.contentAlignY)
         // Declaration completeness (B, 2026-09-28): a displacement, wheel
         // eligibility, short-content alignment or pointer-delivery change is a
         // real declaration change. Leaving them out made a cached region replay
@@ -8613,7 +8689,8 @@ public class CjguiComposableUiLayoutEngine {
             a.padding != b.padding || a.fixedWidth != b.fixedWidth || a.fixedHeight != b.fixedHeight ||
             a.minWidth != b.minWidth || a.maxWidth != b.maxWidth || a.idealWidth != b.idealWidth ||
             a.minHeight != b.minHeight || a.maxHeight != b.maxHeight || a.idealHeight != b.idealHeight ||
-            a.alignX != b.alignX || a.alignY != b.alignY || a.offsetX != b.offsetX || a.offsetY != b.offsetY ||
+            a.alignX != b.alignX || a.alignY != b.alignY || a.contentAlignX != b.contentAlignX ||
+            a.contentAlignY != b.contentAlignY || a.offsetX != b.offsetX || a.offsetY != b.offsetY ||
             a.translateX != b.translateX || a.translateY != b.translateY ||
             a.scaleX != b.scaleX || a.scaleY != b.scaleY) {
             return false
@@ -8742,7 +8819,8 @@ public class CjguiComposableUiLayoutEngine {
                 cache.discardPass()
             }
         }
-        let scene = CjguiComposableUiScene(version, viewport, nodes, valid: error.size == 0, layoutError: error)
+        let scene = CjguiComposableUiScene(version, viewport, nodes, valid: error.size == 0, layoutError: error,
+            layoutDiagnostic: if (error.size > 0) { work.clipCapacityDiagnostic } else { "" })
         return CjguiComposableUiLayoutResult(scene, layoutMeasurer.metrics(work, reuseCache: reuseCache),
             viewports: work.stagedViewports, splitTracks: work.stagedSplitTracks)
         } catch (failure: Exception) {
@@ -8818,6 +8896,16 @@ public class CjguiComposableUiLayoutEngine {
             }
             if (childClipConstraints.size >= CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS) {
                 work.clipConstraintCapacityExceeded = true
+                if (work.clipCapacityDiagnostic.isEmpty()) {
+                    var chain = ""
+                    for (constraint in childClipConstraints) {
+                        if (chain.size > 0) { chain += " > " }
+                        chain += constraint.ownerIdentity
+                    }
+                    work.clipCapacityDiagnostic = "node=${node.semanticId};depth=" +
+                        "${childClipConstraints.size + 1};limit=${CJGUI_COMPOSABLE_UI_MAX_CLIP_CONSTRAINTS};chain=" +
+                        (if (chain.size > 0) { "${chain} > " } else { "" }) + node.semanticId
+                }
             } else {
                 childClipConstraints.add(
                     CjguiComposableUiClipConstraint(inner, cornerRadius: radius,
@@ -10286,13 +10374,30 @@ public class CjguiComposableUiLayoutEngine {
         }
         let mode = node.layoutMode()
         if (mode == CJGUI_COMPOSABLE_UI_LAYOUT_STACK || mode == CJGUI_COMPOSABLE_UI_LAYOUT_WRAP ||
-            mode == CJGUI_COMPOSABLE_UI_LAYOUT_ASPECT_RATIO) {
+            mode == CJGUI_COMPOSABLE_UI_LAYOUT_ASPECT_RATIO || node.nodeKind == CJGUI_COMPOSABLE_UI_VERTICAL) {
             var maximum: Int64 = 0
             for (child in node.children()) {
                 maximum = maxValue(maximum, preferredWidth(child, measurer))
             }
             return constrainedLength(maximum + node.style.padding * 2, node.style.fixedWidth, node.style.minWidth,
                 node.style.maxWidth, node.style.idealWidth)
+        }
+        // R5: a horizontal container's natural width is its children plus the
+        // inter-child gaps and padding. Without this, an action row of
+        // fixed-width buttons measured as a bare 24pt fallback and overflowed
+        // the viewport. The same calculation serves handwritten and generated
+        // trees because both go through this one measurement.
+        if (node.nodeKind == CJGUI_COMPOSABLE_UI_HORIZONTAL) {
+            var total: Int64 = 0
+            let children = node.children()
+            for (child in children) {
+                total += preferredWidth(child, measurer)
+            }
+            let gaps = if (children.size > 1) { (children.size - 1) * node.style.gap } else {
+                0
+            }
+            return constrainedLength(total + gaps + node.style.padding * 2, node.style.fixedWidth,
+                node.style.minWidth, node.style.maxWidth, node.style.idealWidth)
         }
         let labelWidth = measurer.measure(node.label, node.style, 0).width
         let valueWidth = measureNodeText(node, 0, measurer).width

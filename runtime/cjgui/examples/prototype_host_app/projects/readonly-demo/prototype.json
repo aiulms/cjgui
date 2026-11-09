@@ -1,0 +1,78 @@
+{
+  "schema": "cjgui.prototype-project.v1",
+  "id": "readonly-demo",
+  "title": "只读字段演示",
+  "view": "form",
+  "theme": "hig",
+  "window": {
+    "width": 900,
+    "height": 640,
+    "minimumWidth": 640
+  },
+  "groups": [
+    {
+      "id": "readonly",
+      "title": "只读信息",
+      "help": "来自数据文件，只读字段用于查看。"
+    },
+    {
+      "id": "editable",
+      "title": "可编辑信息",
+      "help": "默认字段与只读字段对照。"
+    }
+  ],
+  "fields": [
+    {
+      "id": "code",
+      "label": "只读编号",
+      "kind": "text",
+      "group": "readonly",
+      "value": "A-001",
+      "readonly": true,
+      "help": "由数据文件决定，不能在此修改。"
+    },
+    {
+      "id": "quota",
+      "label": "只读额度",
+      "kind": "integer",
+      "group": "readonly",
+      "value": 10,
+      "minimum": 1,
+      "maximum": 999,
+      "readonly": true,
+      "help": "只读整数，仅用于查看。"
+    },
+    {
+      "id": "title",
+      "label": "标题",
+      "kind": "text",
+      "group": "editable",
+      "value": "可写标题",
+      "help": "可写字段，用于对照。"
+    },
+    {
+      "id": "quantity",
+      "label": "数量",
+      "kind": "integer",
+      "group": "editable",
+      "value": 8,
+      "minimum": 1,
+      "maximum": 999,
+      "help": "可写整数。"
+    }
+  ],
+  "actions": [
+    {
+      "name": "APPLY_DRAFT",
+      "label": "应用草稿"
+    },
+    {
+      "name": "CANCEL_DRAFT",
+      "label": "取消草稿"
+    },
+    {
+      "name": "RESTORE_DEFAULTS",
+      "label": "恢复默认"
+    }
+  ]
+}

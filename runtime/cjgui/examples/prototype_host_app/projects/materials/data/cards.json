@@ -1,0 +1,142 @@
+{
+  "cards": [
+    {
+      "id": "card-01",
+      "image": "assets/card-01.png",
+      "note": "第 01 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "可用",
+        "高优先"
+      ],
+      "title": "素材卡片 01"
+    },
+    {
+      "id": "card-02",
+      "image": "assets/card-02.png",
+      "note": "第 02 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "待审",
+        "外部"
+      ],
+      "title": "素材卡片 02"
+    },
+    {
+      "id": "card-03",
+      "image": "assets/card-03.png",
+      "note": "第 03 号素材说明，供对外发布前复核。",
+      "status": "draft",
+      "tags": [
+        "高优先",
+        "可用"
+      ],
+      "title": "素材卡片 03"
+    },
+    {
+      "id": "card-04",
+      "image": "assets/card-04.png",
+      "note": "第 04 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "历史",
+        "历史",
+        "历史"
+      ],
+      "title": "素材卡片 · 品牌主视觉候选"
+    },
+    {
+      "id": "card-05",
+      "image": "assets/card-05.png",
+      "note": "第 05 号素材说明，供对外发布前复核。",
+      "status": "blocked",
+      "tags": [
+        "新版",
+        "内部"
+      ],
+      "title": "素材卡片 05"
+    },
+    {
+      "id": "card-06",
+      "image": "assets/card-06.png",
+      "note": "",
+      "status": "draft",
+      "tags": [
+        "外部",
+        "待审"
+      ],
+      "title": "素材卡片 06"
+    },
+    {
+      "id": "card-07",
+      "image": "assets/missing-card.png",
+      "note": "第 07 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "内部",
+        "新版"
+      ],
+      "title": "素材卡片 07"
+    },
+    {
+      "id": "card-08",
+      "image": "assets/card-08.png",
+      "note": "第 08 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "品牌",
+        "品牌",
+        "品牌"
+      ],
+      "title": "素材卡片 08"
+    },
+    {
+      "id": "card-09",
+      "image": "assets/card-09.png",
+      "note": "第 09 号素材说明，供对外发布前复核。",
+      "status": "draft",
+      "tags": [
+        "可用",
+        "高优先"
+      ],
+      "title": "素材卡片 09"
+    },
+    {
+      "id": "card-10",
+      "image": "assets/card-10.png",
+      "note": "第 10 号素材说明，供对外发布前复核。",
+      "status": "blocked",
+      "tags": [
+        "待审",
+        "外部"
+      ],
+      "title": "素材卡片 10"
+    },
+    {
+      "id": "card-11",
+      "image": "assets/card-11.png",
+      "note": "第 11 号素材说明，供对外发布前复核。",
+      "status": "ready",
+      "tags": [
+        "高优先",
+        "可用"
+      ],
+      "title": "素材卡片 11"
+    },
+    {
+      "id": "card-12",
+      "image": "assets/card-12.png",
+      "note": "",
+      "status": "draft",
+      "tags": [
+        "历史",
+        "历史",
+        "历史"
+      ],
+      "title": "素材卡片 12"
+    }
+  ],
+  "case": "C",
+  "columns": 3,
+  "title": "素材面板"
+}

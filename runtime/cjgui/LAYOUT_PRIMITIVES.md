@@ -204,11 +204,15 @@ owner，也不推进业务版本；选择/编辑仍走已有行操作和业务 w
 ## 构建与运行
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
-cd runtime/cjgui/examples/rule_set_window_app
-cjpm build --skip-script
-./target/release/bin/main --retention-range 1 100 --open <rules.json>
+source "$CANGJIE_HOME/envsetup.sh"
+cd "$RULE_SET_APP"
+./run.sh --open /path/to/existing-rules.cjgui-rules
 ```
+
+`CANGJIE_HOME` 指向使用者的同版工具链；`RULE_SET_APP` 在导出 SDK 中为
+`SDK/consumers/rule_set_window_app`，开发 checkout 中为
+`FRAMEWORK/examples/rule_set_window_app`。普通应用使用随包 runner 固定源码与 native
+来源；只有编译时使用 `./run.sh --build-only`。不依赖作者机器的路径或预先存在的 target。
 
 样例窗口即 `rule_set_window_app`：详情头部使用 `Wrap` 标签栏和
 `Stack`/`AspectRatio` 图片卡（含真实 `OPEN_EDIT_DIALOG` 角标），草稿操作行

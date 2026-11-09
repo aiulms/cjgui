@@ -406,6 +406,20 @@ class InstanceTests(unittest.TestCase):
 
 
 class FieldAndSubmitTests(unittest.TestCase):
+    def test_read_only_fact_is_typed_and_old_producer_stays_unknown(self) -> None:
+        old = generated.parse_generated_fields(response(FIELDS))[0]
+        self.assertTrue(hasattr(old, "read_only"), "typed client must expose the read-only fact")
+        self.assertIsNone(old.read_only)
+        for token, expected in (("0", False), ("1", True)):
+            body = FIELDS.replace("\nEND", f" READONLY {token}\nEND")
+            self.assertIs(generated.parse_generated_fields(response(body))[0].read_only, expected)
+
+    def test_invalid_read_only_token_is_rejected_by_name(self) -> None:
+        for token in ("true", "2", "-1", "unknown"):
+            body = FIELDS.replace("\nEND", f" READONLY {token}\nEND")
+            with self.assertRaisesRegex(generated.GeneratedUiError, "FIELD READONLY"):
+                generated.parse_generated_fields(response(body))
+
     def test_old_error_none_does_not_confirm_validation(self) -> None:
         field = generated.parse_generated_fields(response(FIELDS))[0]
         self.assertEqual(getattr(field, "validation_state", "missing"), "unknown")

@@ -249,3 +249,71 @@ private class DiagnosticCommandController <: CjguiComposableUiController &
         return CjguiComposableUiDispatchResult(true, shouldClose: true)
     }
 }
+
+// R6：layoutDiagnostic 必须属于“当前”候选尝试。前一次裁剪超限失败留下
+// 诊断链后，下一次在布局之前就失败（participant_begin 拒绝）的候选不能再
+// 把旧裁剪链当成自己的原因；随后的正常候选诊断为空。
+private class DiagnosticClipThenRefuseController <: CjguiComposableUiController &
+    CjguiComposableUiSceneRefreshParticipant {
+    // mode 0 健康（窗口以健康树启动），1 裁剪超限，2 participant 拒绝，3 恢复健康。
+    public var mode: Int64 = 0
+    public var revision: Int64 = 1
+    public func uiSceneVersion(): Int64 { return revision }
+    public func buildUi(): CjguiComposableUiNode {
+        if (mode == 1) {
+            var node = cjguiComposableText(8181, "diag-clip-leaf", "leaf", CjguiComposableUiStyle())
+            var level: Int64 = 0
+            while (level < 5) {
+                let parent = cjguiComposableVertical(8190 + level, "diag-clip-${level}",
+                    CjguiComposableUiStyle(growX: 1, fixedHeight: 60, clipsContent: true))
+                parent.add(node)
+                node = parent
+                level += 1
+            }
+            return node
+        }
+        let root = cjguiComposableVertical(8170, "diag-plain-root", CjguiComposableUiStyle())
+        root.add(cjguiComposableText(8171, "diag-plain-text", "ok", CjguiComposableUiStyle()))
+        return root
+    }
+    public func beginSceneRefresh(): Bool { return mode != 2 }
+    public func prepareSceneRefresh(): Bool { return true }
+    public func candidateSceneCommands(): ArrayList<CjguiComposableUiCommand> {
+        return ArrayList<CjguiComposableUiCommand>()
+    }
+    public func commitSceneRefresh(): Unit {}
+    public func rollbackSceneRefresh(): Unit {}
+    public func applyUiEvent(event: CjguiComposableUiEvent): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func rejectUiEvent(eventKind: Int64, nodeId: Int64): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(false)
+    }
+    public func requestWindowClose(): CjguiComposableUiDispatchResult {
+        return CjguiComposableUiDispatchResult(true, shouldClose: true)
+    }
+}
+
+@Test
+func layoutDiagnosticBelongsToCurrentCandidateAttempt(): Unit {
+    let controller = DiagnosticClipThenRefuseController()
+    let window = CjguiComposableUiWindow(controller)
+    @Assert(window.start(), true)
+    // 尝试 1：裁剪链超过容量，场景回滚并发布本候选的裁剪诊断。
+    controller.mode = 1
+    controller.revision += 1
+    @Assert(window.refresh(), false)
+    @Assert(window.lastCandidateLayoutDiagnostic().size > 0, true)
+    // 尝试 2：participant_begin 在布局之前拒绝。当前失败没有布局诊断，
+    // 旧裁剪链不能作为本次失败的原因被重复报告。
+    controller.mode = 2
+    controller.revision += 1
+    @Assert(window.refresh(), false)
+    @Assert(window.lastCandidateLayoutDiagnostic(), "")
+    // 尝试 3：正常候选通过，诊断保持为空。
+    controller.mode = 3
+    controller.revision += 1
+    @Assert(window.refresh(), true)
+    @Assert(window.lastCandidateLayoutDiagnostic(), "")
+    window.close()
+}

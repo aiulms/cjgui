@@ -123,6 +123,7 @@ class ExportPreviewTest(unittest.TestCase):
             shutil.copy2(RUNTIME / "native/scripts/verify_cjpm_mac_testing_link.py",
                          runtime / "native/scripts/verify_cjpm_mac_testing_link.py")
             shutil.copytree(RUNTIME / "templates/macos_application", runtime / "templates/macos_application", ignore=IGNORED)
+            shutil.copytree(RUNTIME / "skills/cjgui-app-dev", runtime / "skills/cjgui-app-dev", ignore=IGNORED)
             for package in [runtime, runtime / "shared_operation_core"]:
                 shutil.copy2(RUNTIME / ("shared_operation_core/cjpm.toml" if package.name == "shared_operation_core" else "cjpm.toml"), package / "cjpm.toml")
                 (package / "src/current.cj").write_text("package fixture\n")
@@ -144,7 +145,7 @@ class ExportPreviewTest(unittest.TestCase):
                 "[consumer](../examples/shared_document_window_app/README.md)\n")
             for p in (RUNTIME / "preview").glob("*.md"):
                 shutil.copy2(p, runtime / "preview" / p.name)
-            for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md", "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md"]:
+            for name in ["README.md", "MACOS_APPLICATION_HOST.md", "LAYOUT_PRIMITIVES.md", "FIELD_CONTROLS.md", "CARD_GRID.md", "ACCESSIBILITY.md", "FONT_RESOURCES.md", "STYLED_TEXT.md", "STYLE_ROLES.md"]:
                 (runtime / name).write_text("# Fixture\n")
             (runtime / "FIELD_CONTROLS.md").write_text(
                 '[consumer](examples/generated_collection/README.md)\n'
@@ -185,6 +186,8 @@ class ExportPreviewTest(unittest.TestCase):
                 exported = subprocess.run(args, capture_output=True, text=True)
                 self.assertEqual(exported.returncode, 0, exported.stderr)
                 framework = destination / "framework/cjgui"
+                self.assertTrue((destination / "MACOS-CANDIDATE-SUBSET.md").is_file())
+                self.assertTrue((framework / "preview/MACOS_CANDIDATE_SUBSET.md").is_file())
                 self.assertTrue((framework / "src/future_public.cj").is_file())
                 self.assertFalse((framework / "src/current_test.cj").exists())
                 self.assertTrue((framework / "native/cjgui_async_multiline_bridge.m").is_file())
@@ -194,6 +197,22 @@ class ExportPreviewTest(unittest.TestCase):
                 self.assertIn("package cjgui_mixed_form_starter", fixture.read_text())
                 self.assertNotIn("package cjgui\n", fixture.read_text())
                 self.assertTrue((framework / "scripts/macos_build_config.py").is_file())
+                skill = framework / "skills/cjgui-app-dev"
+                self.assertEqual((skill / "SKILL.md").read_bytes(), (runtime / "skills/cjgui-app-dev/SKILL.md").read_bytes())
+                installed_root = root / ("Installed " + profile)
+                installed = subprocess.run(["python3", "-B", str(skill / "scripts/install.py"),
+                                            "--skills-dir", str(installed_root), "--mode", "copy"],
+                                           capture_output=True, text=True)
+                self.assertEqual(installed.returncode, 0, installed.stderr)
+                portable = installed_root / "cjgui-app-dev"
+                identified = subprocess.run(["python3", "-B", str(portable / "scripts/identify.py"),
+                                             "--app", str(framework / "templates/macos_application/mixed_form")],
+                                            capture_output=True, text=True)
+                self.assertEqual(identified.returncode, 0, identified.stderr)
+                template = subprocess.run(["python3", "-B", str(portable / "scripts/feedback.py"), "template"],
+                                          capture_output=True, text=True)
+                self.assertEqual(template.returncode, 0, template.stderr)
+                self.assertEqual(json.loads(template.stdout)["source_fix"], "unknown")
                 self.assertTrue((framework / "native/scripts/verify_cjpm_mac_testing_link.py").is_file(),
                                 "SDK must carry its consumer test entry point")
                 self.assertTrue((framework / "LAYOUT_PRIMITIVES.md").is_file())
@@ -324,6 +343,7 @@ class ExportPreviewTest(unittest.TestCase):
             shutil.copy2(RUNTIME / "build.cj", runtime / "build.cj")
             shutil.copytree(RUNTIME / "templates/macos_application", runtime / "templates/macos_application",
                             ignore=IGNORED)
+            shutil.copytree(RUNTIME / "skills/cjgui-app-dev", runtime / "skills/cjgui-app-dev", ignore=IGNORED)
             for package in [runtime, runtime / "shared_operation_core"]:
                 shutil.copy2(RUNTIME / ("shared_operation_core/cjpm.toml" if package.name == "shared_operation_core"
                                         else "cjpm.toml"), package / "cjpm.toml")
@@ -379,6 +399,9 @@ class ExportPreviewTest(unittest.TestCase):
             self.assertIn("src/macos_owner_fixture_test.cj", inputs)
             self.assertEqual(payload["categories"]["src/macos_owner_fixture_test.cj"], "test-fixture")
             self.assertIn("resources/composable-beacon.png", inputs)
+            self.assertIn("skills/cjgui-app-dev/SKILL.md", inputs)
+            self.assertIn("skills/cjgui-app-dev/references/development.md", inputs)
+            self.assertEqual(payload["categories"]["skills/cjgui-app-dev/SKILL.md"], "skill")
             self.assertNotIn("README.md", inputs)
             manifest_a = json.loads((root / "SDK A" / "source-manifest.json").read_text())
             # A lock-driven export also SHIPS the lock, so two lock-driven exports
@@ -421,6 +444,12 @@ class ExportPreviewTest(unittest.TestCase):
             result, destination = mutated("script-drift.json", break_script)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("(script)", result.stderr)
+            self.assertFalse(destination.exists())
+
+            result, destination = mutated("skill-drift.json", lambda value:
+                value["inputs"].__setitem__("skills/cjgui-app-dev/SKILL.md", "0" * 64))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("source lock changed: skills/cjgui-app-dev/SKILL.md (skill)", result.stderr)
             self.assertFalse(destination.exists())
 
             def drop_template(value):

@@ -105,11 +105,22 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
             }
         }
         for (kind in ["textInput", "integerInput", "booleanInput"]) {
+            let leafProperties = ArrayList<CjguiGeneratedUiPropertySpec>()
+            leafProperties.add(CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 80))
+            // R7: explicit visible-label control while the declared label stays
+            // the accessible name. Default true keeps every existing
+            // declaration rendering exactly as before.
+            leafProperties.add(
+                CjguiGeneratedUiPropertySpec("labelVisible", "BOOLEAN", defaultValue: "true"))
+            if (kind == "integerInput") {
+                // R9: opt-in numeric stepper presentation over the SAME field,
+                // draft and Apply/Cancel path (CjguiNumericStepper is reused).
+                leafProperties.add(
+                    CjguiGeneratedUiPropertySpec("stepper", "BOOLEAN", defaultValue: "false"))
+            }
             let _ = catalog.registerComponent(
                 CjguiGeneratedUiComponentSpec(kind,
-                    cjguiGeneratedFormLeafProperties(
-                        ArrayList<CjguiGeneratedUiPropertySpec>(
-                            [CjguiGeneratedUiPropertySpec("label", "STRING", maxLength: 80)]), false), false))
+                    cjguiGeneratedFormLeafProperties(leafProperties, false), false))
         }
         let _ = catalog.registerComponent(
             CjguiGeneratedUiComponentSpec("action",
@@ -248,10 +259,15 @@ public class CjguiGeneratedUiFormBinding <: CjguiGeneratedUiRegionBinding {
         return fieldAvailabilityForSnapshot(fieldId, domain.formSnapshot())
     }
     private func fieldAvailabilityForSnapshot(fieldId: String, snapshot: CjguiSharedFormSnapshot): CjguiSharedAvailability {
-        return if (fieldSpec(fieldId).isSome() && ownerResourceId >= 0) {
-            CjguiSharedAvailability.allowed(ownerResourceId, snapshot.contextVersion)
+        if (ownerResourceId < 0) { return CjguiSharedAvailability.unknown() }
+        let field = match (fieldSpec(fieldId)) {
+            case Some(value) => value
+            case None => return CjguiSharedAvailability.unknown()
+        }
+        return if (field.readOnly) {
+            CjguiSharedAvailability.blocked("field_read_only", ownerResourceId, snapshot.contextVersion)
         } else {
-            CjguiSharedAvailability.unknown()
+            CjguiSharedAvailability.allowed(ownerResourceId, snapshot.contextVersion)
         }
     }
     public func actionAvailability(actionName: String): CjguiSharedAvailability {

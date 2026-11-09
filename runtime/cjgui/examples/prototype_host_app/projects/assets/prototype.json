@@ -1,0 +1,55 @@
+{
+  "schema": "cjgui.prototype-project.v1",
+  "id": "assets",
+  "title": "资产库",
+  "view": "list",
+  "theme": "hig",
+  "window": { "width": 1280, "height": 820, "minimumWidth": 720 },
+  "records": {
+    "file": "data/records.json",
+    "titleField": "title",
+    "filterField": "title"
+  },
+  "fields": [
+    {
+      "id": "title",
+      "label": "资产标题",
+      "kind": "text",
+      "required": true,
+      "maximumLength": 60,
+      "sourceField": "title",
+      "help": "列表行标题与详情共用同一字段。",
+      "error": "标题不能为空，最多 60 个字符"
+    },
+    {
+      "id": "quantity",
+      "label": "数量",
+      "kind": "integer",
+      "required": true,
+      "minimum": 1,
+      "maximum": 999,
+      "sourceField": "quantity",
+      "help": "1–999 的整数。",
+      "error": "数量需为 1–999 的整数"
+    },
+    {
+      "id": "enabled",
+      "label": "启用",
+      "kind": "boolean",
+      "sourceField": "enabled",
+      "help": "停用的记录仍保留草稿。"
+    },
+    {
+      "id": "note",
+      "label": "备注",
+      "kind": "text",
+      "maximumLength": 120,
+      "sourceField": "note",
+      "help": "可选备注，最多 120 个字符。",
+      "error": "备注最多 120 个字符"
+    }
+  ],
+  "actions": [
+    { "name": "RESTORE_DEFAULTS", "label": "恢复该记录默认值", "emphasis": "quiet" }
+  ]
+}

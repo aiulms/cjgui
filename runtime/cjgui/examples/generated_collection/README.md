@@ -3,7 +3,7 @@
 macOS 薄消费者；业务直接使用 `rule_set_application` 的现有 owner、草稿、动作与读取接口，不复制规则或保存引擎。初始手写列表和外部生成列表／表格调用同一个 `CjguiGeneratedUiCollection` 声明。注册的列、表格排序／筛选、稳定 key 选择仍使用现有公共组件。
 
 ```sh
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
+source <cangjie-toolchain>/envsetup.sh
 ./run.sh --build-only
 ./run.sh
 # 另一个终端，使用上方 COLLECTION_READY 输出的 descriptor：

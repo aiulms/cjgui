@@ -1,0 +1,596 @@
+package cjgui
+
+import std.overflow.*
+import std.env.*
+import std.collection.*
+import std.time.*
+
+// Observation only for ordinary serialized hosts that have no active shared
+// allowance. Reuses the original outer boundary/cost sink; it never attaches a
+// budget, admits work, changes a wait or retains a window/controller.
+class CjguiOrdinaryOwnerCostObservation {
+    let enabled = getVariable("CJGUI_OWNER_TURN_COST") == Some("1")
+    private var active = false
+    private var turn: UInt64 = 0x4000000000000000u64
+    private var idleNs: UInt64 = 0u64
+
+    func begin(): Bool {
+        if (!enabled || active || turn == UInt64.Max) { return false }
+        turn += 1u64
+        idleNs = 0u64
+        active = true
+        cjguiOwnerTraceSetTurn(turn)
+        cjguiOwnerTraceBoundary(0u64, turn, 144u32, 0u32, 0u32, 0u64, UInt64.Max)
+        return true
+    }
+
+    func creditIdle(nanoseconds: UInt64): Unit {
+        if (active) { idleNs = idleNs.saturatingAdd(nanoseconds) }
+    }
+
+    func identity(): UInt64 { return if (active) { turn } else { UInt64.Max } }
+
+    func finish(): Unit {
+        if (!active) { return }
+        cjguiOwnerTraceBoundary(0u64, turn, 400u32, 0u32, 0u32, idleNs, UInt64.Max)
+        cjguiOwnerTraceBoundary(0u64, turn, 145u32, 0u32, 0u32, 0u64, UInt64.Max)
+        active = false
+        cjguiOwnerTraceSetTurn(0u64)
+    }
+}
+
+let cjguiOrdinaryOwnerCostObservation = CjguiOrdinaryOwnerCostObservation()
+
+@When[os == "macOS"]
+func cjguiSchedulingWorkRevision(): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_work_revision() }
+}
+
+// Linux uses the same native revision/notify/wait contract as macOS, backed by
+// the existing self-pipe + X11 poll. Windows remains a no-op here.
+@When[os == "Windows"]
+func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
+
+@When[os == "Linux"]
+func cjguiSchedulingWorkRevision(): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_work_revision_linux() }
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiSchedulingWorkRevision(): UInt64 { return 0u64 }
+
+@When[os == "macOS"]
+func cjguiCommonSchedulingEnabled(): Bool { return true }
+
+@When[os == "Windows"]
+func cjguiCommonSchedulingEnabled(): Bool { return false }
+
+@When[os == "Linux"]
+func cjguiCommonSchedulingEnabled(): Bool { return true }
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiCommonSchedulingEnabled(): Bool { return false }
+
+@When[os == "macOS"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_work(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+// Normal event-driven waiting uses the same native revision/predicate, without
+// changing the original budgeted wait's 16ms bound. No window is captured by
+// the transport wake callback, including after endpoint or window retirement.
+@When[os == "macOS"]
+func cjguiNotifySchedulingWork(): Unit {
+    unsafe { cjgui_internal_renderer_owner_notify_work() }
+}
+
+@When[os == "Linux"]
+func cjguiNotifySchedulingWork(): Unit {
+    unsafe { cjgui_internal_renderer_owner_notify_work_linux() }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiNotifySchedulingWork(): Unit {}
+
+@When[os == "macOS"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_idle_work(revision, deadline, inout idle) }
+    cjguiOrdinaryOwnerCostObservation.creditIdle(idle)
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os == "Linux"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_idle_work_linux(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiWaitIdleSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "macOS"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 {
+    return if (waitMs == UInt32.Max) { UInt64.Max } else {
+        unsafe { cjgui_internal_renderer_owner_clock_ns() } + UInt64(waitMs) * 1000000u64
+    }
+}
+
+@When[os == "Linux"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 {
+    return if (waitMs == UInt32.Max) { UInt64.Max } else {
+        unsafe { cjgui_internal_renderer_owner_clock_ns() } + UInt64(waitMs) * 1000000u64
+    }
+}
+
+@When[os != "macOS" && os != "Linux"]
+func cjguiIdleSchedulingDeadline(waitMs: UInt32): UInt64 { return 0u64 }
+
+@When[os == "Windows"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "Linux"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 {
+    var idle: UInt64 = 0u64
+    let _ = unsafe { cjgui_internal_renderer_owner_wait_work_linux(revision, deadline, inout idle) }
+    return if (idle > UInt64(Int64.Max)) { Int64.Max } else { Int64(idle) }
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiWaitSchedulingWork(revision: UInt64, deadline: UInt64): Int64 { return 0 }
+
+@When[os == "macOS"]
+func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
+    value: UInt64, managedId: UInt64): Unit {
+    unsafe { cjgui_internal_renderer_owner_trace_boundary(session, turn, stage, relatedKind, relatedPhase, value,
+        managedId) }
+}
+
+// Linux 本阶段没有 owner trace 原生通道（审计文档 §3.8）：显式 no-op，
+// 不伪造已记录。接通需 native 实现 owner_trace_boundary/managed_record。
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
+    value: UInt64, managedId: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiOwnerTraceBoundary(session: UInt64, turn: UInt64, stage: UInt32, relatedKind: UInt32, relatedPhase: UInt32,
+    value: UInt64, managedId: UInt64): Unit {}
+
+// Platform diagnostics retain the same owner budget. Windows records fixed
+// native-clock spans only; it does not register the macOS sampler watches.
+@When[os == "macOS"]
+func cjguiOwnerTraceElapsedValue(nanoseconds: Int64): UInt64 {
+    // A diagnostic clock anomaly is unknown, not zero elapsed time. The
+    // existing native record formatter renders this sentinel as "unknown".
+    // Never let an optional timing observation terminate the owner loop.
+    if (nanoseconds < 0) {
+        println("CJGUI_OWNER_TRACE_INVALID_ELAPSED signed_ns=${nanoseconds} span=unknown")
+        return UInt64.Max
+    }
+    return UInt64(nanoseconds)
+}
+
+@When[os == "macOS"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    // Only the disputed return/turn path needs these extra fixed records.
+    // Native timestamps share one clock; Cj values are elapsed durations,
+    // never absolute timestamps implicitly joined to that clock.
+    let boundary = kind == 2u32 || phase == 88u32 || phase == 18u32
+    if (boundary) {
+        cjguiOwnerTraceBoundary(session, turn, 132u32, kind, phase, 0u64, UInt64.Max)
+        cjguiOwnerTraceBoundary(session, turn, 133u32, kind, phase, 0u64, UInt64.Max)
+    }
+    let enabled = unsafe { cjgui_internal_renderer_owner_trace_ns() } != 0u64
+    if (!enabled) {
+        return 0u64
+    }
+    var localStart: ?MonoTime = None
+    if (boundary) {
+        cjguiOwnerTraceBoundary(session, turn, 134u32, kind, phase, 0u64, UInt64.Max)
+        localStart = Some(MonoTime.now())
+        cjguiOwnerTraceBoundary(session, turn, 135u32, kind, phase, 0u64, UInt64.Max)
+    }
+    let current = Thread.currentThread.id
+    let managedId = if (current >= 0) {
+        UInt64(current)
+    } else {
+        UInt64.Max
+    }
+    if (let Some(started) <- localStart) {
+        cjguiOwnerTraceBoundary(session, turn, 136u32, kind, phase, cjguiOwnerTraceElapsedValue((MonoTime.now() - started).toNanoseconds()),
+            managedId)
+        localStart = Some(MonoTime.now())
+        cjguiOwnerTraceBoundary(session, turn, 137u32, kind, phase, 0u64, managedId)
+    }
+    // Narrow attribution boundaries must not add a sampler watch whose own
+    // synchronous reclamation could become the wait being diagnosed.
+    let withWatch: UInt8 = if ((phase >= 83u32 && phase <= 90u32) || (phase >= 97u32 && phase <= 112u32)) {
+        0u8
+    } else {
+        1u8
+    }
+    let result = unsafe { cjgui_internal_renderer_owner_trace_managed_record(kind, session, turn, request, dispatch,
+        generation, phase, span, managedId, withWatch) }
+    if (let Some(started) <- localStart) {
+        cjguiOwnerTraceBoundary(session, turn, 139u32, kind, phase, cjguiOwnerTraceElapsedValue((MonoTime.now() - started).toNanoseconds()),
+            managedId)
+    }
+    return result
+}
+
+@When[os == "macOS"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {
+    unsafe { cjgui_internal_renderer_owner_trace_legacy_span(session, turn, request, generation, phase, startedNs) }
+}
+
+@When[os == "Windows"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {
+    let _ = unsafe { cjgui_internal_renderer_owner_trace_managed_record(17u32, session, turn, request,
+        0u64, generation, phase, startedNs, UInt64.Max, 0u8) }
+}
+
+@When[os == "Linux"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiOwnerTraceLegacySpan(session: UInt64, turn: UInt64, request: UInt64, generation: UInt64, phase: UInt32,
+    startedNs: UInt64): Unit {}
+
+@When[os == "Windows"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    return unsafe { cjgui_internal_renderer_owner_trace_managed_record(kind, session, turn, request, dispatch,
+        generation, phase, span, UInt64.Max, 0u8) }
+}
+
+@When[os == "Linux"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    return 0u64
+}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiOwnerTraceRecord(kind: UInt32, session: UInt64, turn: UInt64, request: UInt64, dispatch: UInt64,
+    generation: UInt64, phase: UInt32, span: UInt64): UInt64 {
+    return 0u64
+}
+
+@When[os == "macOS"]
+func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {
+    unsafe { cjgui_internal_renderer_owner_trace_set_turn(turn) }
+}
+
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiOwnerTraceSetTurn(turn: UInt64): Unit {}
+
+@When[os == "macOS"]
+func cjguiOwnerTraceExport(): Unit {
+    unsafe { cjgui_internal_renderer_owner_trace_export() }
+}
+
+@When[os == "Windows" || os == "Linux"]
+func cjguiOwnerTraceExport(): Unit {}
+
+@When[os != "macOS" && os != "Windows" && os != "Linux"]
+func cjguiOwnerTraceExport(): Unit {}
+
+/// Experimental owner pacing. All windows on one serialized owner loop share
+/// this object. Only measured waits made by their event pumps are credited;
+/// dispatch, callbacks, accepted publication and resource preparation count.
+public class CjguiOwnerTurnBudget {
+    private let completeCostObservation: Bool = getVariable("CJGUI_OWNER_TURN_COST") == Some("1")
+    private var active: Bool = false
+    private var startedNs: Int64 = 0
+    private var limitNs: Int64 = 0
+    private var idleNs: Int64 = 0
+    private var turn: Int64 = 0
+    private var schedulingRevision: UInt64 = 0u64
+    private var schedulingWaitFinished: Bool = false
+    private var nextSchedulingWakeNs: Int64 = Int64.Max
+    private var readyContinuation: Bool = false
+    private var schedulingWait: (UInt64, UInt64) -> Int64 = cjguiWaitSchedulingWork
+    private let preparedOwners = ArrayList<UInt64>()
+    // A window deferred behind an earlier sibling keeps its turn in this
+    // bounded queue. Input is still drained against each accepted scene;
+    // only beginning another expensive refresh is ordered here.
+    private let refreshWaiters = ArrayList<UInt64>()
+    private var refreshPriority: UInt64 = 0u64
+    private var priorityVisited: Bool = false
+    private var now: () -> Int64 = {=> Int64(unsafe { cjgui_internal_renderer_owner_clock_ns() })}
+
+    public init() {}
+
+    /// Experimental observation. CPU is separate from the wall/idle budget.
+    public func observationThreadCpuNanoseconds(): Int64 {
+        return Int64(unsafe { cjgui_internal_renderer_owner_thread_cpu_ns() })
+    }
+
+    /// Nested callbacks cannot open a second allowance.
+    public func begin(budgetMicroseconds!: Int64 = 16000): Bool {
+        if (active || budgetMicroseconds <= 0) {
+            return false
+        }
+        startedNs = now()
+        limitNs = budgetMicroseconds.saturatingMul(1000)
+        idleNs = 0
+        schedulingRevision = cjguiSchedulingWorkRevision()
+        schedulingWaitFinished = false
+        nextSchedulingWakeNs = Int64.Max
+        readyContinuation = false
+        turn += 1
+        refreshPriority = if (refreshWaiters.size > 0) {
+            refreshWaiters[0]
+        } else {
+            0u64
+        }
+        priorityVisited = false
+        active = true
+        cjguiOwnerTraceSetTurn(UInt64(turn))
+        return true
+    }
+
+    public func end(): Unit {
+        // Only the common allowance owns these measured idle credits. This
+        // diagnostic fact is matched to the original outer boundary; it never
+        // extends a budget, changes a wait or supplies input authority.
+        if (active && completeCostObservation) {
+            cjguiOwnerTraceBoundary(0u64, UInt64(turn), 400u32, 0u32, 0u32,
+                UInt64(idleNs), UInt64.Max)
+        }
+        // A closed/detached window cannot strand live siblings. Its priority
+        // is retired after exactly one turn in which it made no admission call.
+        if (refreshPriority != 0u64 && !priorityVisited) {
+            removeRefreshWaiter(refreshPriority)
+        }
+        active = false
+        cjguiOwnerTraceSetTurn(0u64)
+    }
+
+    public func remainingMicroseconds(): Int64 {
+        if (!active) {
+            return Int64.Max
+        }
+        let current = now()
+        let elapsed = if (current > startedNs) {
+            current - startedNs
+        } else {
+            0
+        }
+        let idle = if (idleNs < elapsed) {
+            idleNs
+        } else {
+            elapsed
+        }
+        let work = elapsed - idle
+        return if (work >= limitNs) {
+            0
+        } else {
+            (limitNs - work) / 1000
+        }
+    }
+
+    /// Experimental scheduling wall clock. Idle credit belongs only to the
+    /// resource allowance above; it never extends this round's deadline.
+    public func remainingSchedulingMicroseconds(): Int64 {
+        if (!active) { return 0 }
+        let elapsed = max(0, now() - startedNs)
+        return if (elapsed >= limitNs) { 0 } else { (limitNs - elapsed) / 1000 }
+    }
+
+    func schedulingDeadlineNs(): UInt64 {
+        return if (active) { UInt64(startedNs.saturatingAdd(limitNs)) } else { 0u64 }
+    }
+
+    func needsReadyContinuation(): Unit { readyContinuation = true }
+
+    // Each live host contributes its existing animation/activity deadline to
+    // the one outer wait. Later siblings cannot extend an earlier deadline.
+    func limitSchedulingWait(microseconds: Int64): Unit {
+        if (!active || microseconds < 0) { return }
+        nextSchedulingWakeNs = min(nextSchedulingWakeNs, now().saturatingAdd(microseconds.saturatingMul(1000)))
+    }
+
+    /// Complete the serialized consumer round after every host and owner job.
+    /// One common condition wakes for any live host or resource completion.
+    /// Reentry and sibling hosts cannot renew the absolute deadline.
+    public func finishScheduling(): Int64 {
+        if (!active || schedulingWaitFinished) { return 0 }
+        schedulingWaitFinished = true
+        if (readyContinuation || remainingSchedulingMicroseconds() <= 0) { return 0 }
+        let wake = min(schedulingDeadlineNs(), UInt64(max(0, nextSchedulingWakeNs)))
+        let idle = schedulingWait(schedulingRevision, wake)
+        creditPumpIdle(idle)
+        return max(0, idle) / 1000
+    }
+
+    // Only a framework-owned outer turn uses the ordinary event-driven
+    // wait. Caller-owned rounds retain finishScheduling's existing deadline.
+    // Work is bounded before sleeping; measured idle is still credited once.
+    func finishFrameworkScheduling(maximumIdleWaitMs: UInt32): Int64 {
+        if (!active || schedulingWaitFinished) { return 0 }
+        schedulingWaitFinished = true
+        // The frozen scheduling revision can already include a completion
+        // delivered during this turn. Consume its retained result next turn;
+        // pending native work remains asleep until its real notification.
+        if (maximumIdleWaitMs == 0u32 || readyContinuation || remainingMicroseconds() <= 0) { return 0 }
+        for (owner in preparedOwners) {
+            // The high-bit source-install holder keeps its existing policy.
+            if (owner < 0x8000000000000000u64 && !internalRendererPreparationOperationWaiting(owner)) { return 0 }
+        }
+        let deadline = if (maximumIdleWaitMs == UInt32.Max) { UInt64.Max }
+            else { UInt64(max(0, now())).saturatingAdd(UInt64(maximumIdleWaitMs) * 1000000u64) }
+        let wake = min(deadline, UInt64(max(0, nextSchedulingWakeNs)))
+        let idle = cjguiWaitIdleSchedulingWork(schedulingRevision, wake)
+        creditPumpIdle(idle)
+        return max(0, idle) / 1000
+    }
+
+    func hasReadyContinuation(): Bool { return readyContinuation }
+
+    // Owner-only scalar observation; never called unless the bounded Host
+    // no-progress diagnostic is enabled. It does not consume queue entries.
+    func observedIdleNanoseconds(): Int64 { return idleNs }
+    func schedulingObservation(): String {
+        var queue = ""
+        for (owner in refreshWaiters) { queue += "${owner}," }
+        var prepared = ""
+        for (owner in preparedOwners) { prepared += "${owner}," }
+        return "ready=${readyContinuation} wait_finished=${schedulingWaitFinished} " +
+            "wake_us=${if (nextSchedulingWakeNs == Int64.Max) { -1 } else { (nextSchedulingWakeNs-now())/1000 }} " +
+            "priority=${refreshPriority} waiters=${queue} prepared=${prepared}"
+    }
+
+
+
+    // Admission is between whole external actions, not inside business code.
+    // Leave the existing preparation/submit reserve for a retained owner.
+    func admitsAnotherExternalAction(): Bool {
+        return admits(if (preparedOwners.size > 0 || refreshWaiters.size > 0) { 12000 } else { 1000 })
+    }
+
+    /// Diagnostic elapsed owner work for the active turn, excluding only
+    /// pump idle time that was explicitly credited by this budget.
+    func elapsedWorkMicroseconds(): Int64 {
+        if (!active) { return 0 }
+        let current = now()
+        let elapsed = if (current > startedNs) { current - startedNs } else { 0 }
+        let idle = if (idleNs < elapsed) { idleNs } else { elapsed }
+        return (elapsed - idle) / 1000
+    }
+
+    func admits(reserveMicroseconds: Int64): Bool {
+        return !active || remainingMicroseconds() >= reserveMicroseconds
+    }
+
+    func isActive(): Bool {
+        return active
+    }
+    /// Read-only identity for correlating traces and prepared work with the
+    /// currently allocated (or most recently allocated) owner turn.
+    public func turnIdentity(): Int64 {
+        return turn
+    }
+    func hasPreparedWork(): Bool {
+        // Source installation has a separate bounded holder from a scene
+        // candidate. Native close clears its scalar gate, so no H close or
+        // terminal function needs to own this E pacing cleanup.
+        var runnable = false
+        var i: Int64 = 0
+        while (i < preparedOwners.size) {
+            let owner = preparedOwners[i]
+            if (owner >= 0x8000000000000000u64 &&
+                unsafe { cjgui_internal_renderer_source_install_pending_scalar(owner - 0x8000000000000000u64) } == 0u8) {
+                preparedOwners.remove(at: i)
+            } else {
+                if (owner >= 0x8000000000000000u64 || !internalRendererPreparationOperationWaiting(owner)) {
+                    runnable = true
+                }
+                i += 1
+            }
+        }
+        return runnable
+    }
+
+    func retainPreparedOwner(owner: UInt64): Bool {
+        for (value in preparedOwners) {
+            if (value == owner) {
+                return true
+            }
+        }
+        if (owner == 0u64 || preparedOwners.size >= 32) {
+            return false
+        }
+        preparedOwners.add(owner)
+        return true
+    }
+
+    func releasePreparedOwner(owner: UInt64): Unit {
+        var index: Int64 = 0
+        while (index < preparedOwners.size) {
+            if (preparedOwners[index] == owner) {
+                preparedOwners.remove(at: index);
+                return
+            }
+            index += 1
+        }
+    }
+
+    private func enqueueRefreshWaiter(owner: UInt64): Unit {
+        for (item in refreshWaiters) {
+            if (item == owner) {
+                return
+            }
+        }
+        if (owner != 0u64 && refreshWaiters.size < 32) {
+            refreshWaiters.add(owner)
+        }
+    }
+
+    private func removeRefreshWaiter(owner: UInt64): Unit {
+        var i: Int64 = 0
+        while (i < refreshWaiters.size) {
+            if (refreshWaiters[i] == owner) {
+                refreshWaiters.remove(at: i);
+                return
+            }
+            i += 1
+        }
+    }
+
+    // The accepted scene proves that this owner's earlier admission request
+    // no longer names work. Retire only that demand; another owner's ready
+    // continuation, input or prepared candidate is never cleared here.
+    func retireRefreshDemand(owner: UInt64): Unit {
+        removeRefreshWaiter(owner)
+        if (refreshPriority == owner) { refreshPriority = 0u64 }
+    }
+
+    func admitsRefresh(owner: UInt64, reserveMicroseconds: Int64): Bool {
+        if (!active) {
+            return true
+        }
+        if (owner == refreshPriority) {
+            priorityVisited = true
+        }
+        if ((refreshPriority != 0u64 && owner != refreshPriority) || !admits(reserveMicroseconds)) {
+            enqueueRefreshWaiter(owner)
+            return false
+        }
+        removeRefreshWaiter(owner)
+        if (owner == refreshPriority) {
+            refreshPriority = 0u64
+        }
+        return true
+    }
+
+    func creditPumpIdle(nanoseconds: Int64): Unit {
+        if (active && nanoseconds > 0) {
+            idleNs = idleNs.saturatingAdd(nanoseconds)
+        }
+    }
+
+    func deadlineNs(): UInt64 {
+        if (!active) {
+            return 0u64
+        }
+        return UInt64(startedNs.saturatingAdd(limitNs).saturatingAdd(idleNs))
+    }
+
+    func testUseClock(clock: () -> Int64): Unit {
+        now = clock
+    }
+
+    func testUseSchedulingWait(wait: (UInt64, UInt64) -> Int64): Unit {
+        schedulingWait = wait
+    }
+}

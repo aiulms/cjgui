@@ -101,7 +101,7 @@ macOS 的公共预览滑块通过 AX 发布“预览字节上限”、整数当�
 启动带连接的短时实际窗口：
 
 ```zsh
-cd /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/examples/shared_document_window_app
+cd <repo>/runtime/cjgui/examples/shared_document_window_app
 zsh run.sh --with-connection --measurement-warmup-ms 0 --measurement-duration-ms 5000
 ```
 

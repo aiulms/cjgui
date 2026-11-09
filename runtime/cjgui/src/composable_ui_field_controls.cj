@@ -176,7 +176,8 @@ public class CjguiNumericStepper {
             CjguiComposableUiStyle(gap: style.rowGap))
         let row = cjguiComposableHorizontal(binding.rowNodeId, "${binding.rootSemanticId}-row",
             CjguiComposableUiStyle(gap: style.rowGap))
-        let inputEnabled = binding.enabled && !binding.readOnly && binding.ownerTargetResourceId >= 0
+        // Read-only text remains viewable/selectable; only stepping needs write permission.
+        let inputEnabled = binding.enabled && binding.ownerTargetResourceId >= 0
         row.add(cjguiComposableIntegerInput(binding.inputNodeId, binding.inputSemanticId, binding.label,
             binding.value, binding.bindingResourceId, style.input, enabled: inputEnabled,
             readOnly: binding.readOnly, fieldId: binding.fieldId,

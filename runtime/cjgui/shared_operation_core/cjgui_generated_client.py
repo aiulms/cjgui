@@ -2120,6 +2120,8 @@ class GeneratedFieldValue:
     validation_state: str = "unknown"
     validation_version: int | None = None
     field_version: int | None = None
+    #: Declared business read-only fact. None only for older producers that omit READONLY.
+    read_only: bool | None = None
 
 
 def _parse_field_focus(token: tuple[str, ...] | None) -> bool | None:
@@ -2160,6 +2162,16 @@ def parse_generated_fields(response: SharedOperationResponse) -> tuple[Generated
             tokens[key] = (parts[index + 1],)
             index += 2
         selection = tokens.get("SELECTION")
+        read_only_token = tokens.get("READONLY")
+        if read_only_token is None:
+            read_only: bool | None = None
+        elif read_only_token[0] == "1":
+            read_only = True
+        elif read_only_token[0] == "0":
+            read_only = False
+        else:
+            raise GeneratedUiError(
+                f"FIELD READONLY carries unsupported value {read_only_token[0]!r}")
         available_token = tokens.get("AVAILABLE", ("unknown",))[0]
         if available_token == "unknown":
             available: bool | None = None
@@ -2198,7 +2210,8 @@ def parse_generated_fields(response: SharedOperationResponse) -> tuple[Generated
             _token_int(tokens["STATE_VERSION"][0], "FIELD STATE_VERSION") if "STATE_VERSION" in tokens else None,
             validation,
             None if validation_version < 0 else validation_version,
-            None if field_version < 0 else field_version))
+            None if field_version < 0 else field_version,
+            read_only))
     return tuple(values)
 
 

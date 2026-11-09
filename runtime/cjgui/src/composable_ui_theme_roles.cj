@@ -135,10 +135,13 @@ extend CjguiComposableUiTheme {
         }
         let base = if (quiet && !primary) {
             CjguiComposableUiStyle(fixedHeight: 32, padding: 8, cornerRadius: 8, textColor: heading.textColor,
-                fontSize: 12.0, textMaxLines: 1, textOverflow: "ellipsis")
+                fontSize: 12.0, textMaxLines: 1, textOverflow: "ellipsis",
+                contentAlignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER, contentAlignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
         } else {
             CjguiComposableUiNamedStyle(name, authored).localStyle(fixedHeight: Some(32), padding: Some(8),
-                cornerRadius: Some(8), fontSize: Some(12.0), textMaxLines: Some(1), textOverflow: Some("ellipsis"))
+                cornerRadius: Some(8), fontSize: Some(12.0), textMaxLines: Some(1), textOverflow: Some("ellipsis"),
+                contentAlignX: Some(CJGUI_COMPOSABLE_UI_ALIGN_CENTER),
+                contentAlignY: Some(CJGUI_COMPOSABLE_UI_ALIGN_CENTER))
         }
         return CjguiComposableUiNamedStyle(name, base,
             interaction: themeRoleInteraction(base, if (primary) {

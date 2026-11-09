@@ -1,0 +1,53 @@
+{
+  "schema": "cjgui.prototype-project.v1",
+  "id": "materials",
+  "title": "素材面板",
+  "view": "cards",
+  "theme": "hig",
+  "window": { "width": 1280, "height": 820, "minimumWidth": 720 },
+  "records": {
+    "file": "data/cards.json",
+    "titleField": "title",
+    "filterField": "title",
+    "imageProperty": "image",
+    "tagsProperty": "tags",
+    "statusProperty": "status"
+  },
+  "fields": [
+    {
+      "id": "title",
+      "label": "素材标题",
+      "kind": "text",
+      "required": true,
+      "maximumLength": 40,
+      "sourceField": "title",
+      "help": "卡片标题与详情共用同一字段。",
+      "error": "标题不能为空，最多 40 个字符"
+    },
+    {
+      "id": "status",
+      "label": "状态",
+      "kind": "select",
+      "sourceField": "status",
+      "options": [
+        { "value": "ready", "label": "可用" },
+        { "value": "draft", "label": "草稿" },
+        { "value": "blocked", "label": "阻塞" }
+      ],
+      "value": "ready",
+      "help": "状态只影响呈现，不改变图片加载。"
+    },
+    {
+      "id": "note",
+      "label": "备注",
+      "kind": "text",
+      "maximumLength": 60,
+      "sourceField": "note",
+      "help": "供对外发布前复核，最多 60 个字符。",
+      "error": "备注最多 60 个字符"
+    }
+  ],
+  "actions": [
+    { "name": "RESTORE_DEFAULTS", "label": "恢复该卡片默认值", "emphasis": "quiet" }
+  ]
+}

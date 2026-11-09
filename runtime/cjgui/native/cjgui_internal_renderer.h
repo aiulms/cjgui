@@ -829,12 +829,31 @@ typedef struct CjguiInternalRendererComposableNode {
     // as NAVIGATE; native neither owns the slider value nor applies its step.
     int64_t pointerControlMinimum;
     int64_t pointerControlMaximum;
+    // ---- Accepted scroll-area projection (ABI 6, append-only) ----
+    // Present only when this node owns a Cangjie ScrollViewport. These are the
+    // candidate facts the accepted scene was laid out with; the accessibility
+    // layer reads them but never stores a second offset. AX scrolling enters
+    // the same bounded wheel FIFO a physical gesture uses, and the Cangjie
+    // viewport remains the sole owner of offset/extents.
+    uint32_t scrollProjectionPresent;
+    uint32_t scrollRangePresent; // 1 = maximum > minimum
+    int64_t scrollOffset;
+    int64_t scrollMinimum;
+    int64_t scrollMaximum;
+    int64_t scrollContentExtent;
+    int64_t scrollViewportExtent;
+    // Button-only text placement inside the content box (0/1=start, 2=center,
+    // 3=end). Node alignX/alignY place the node itself; these place its text.
+    int64_t contentAlignX;
+    int64_t contentAlignY;
 } CjguiInternalRendererComposableNode;
 _Static_assert(offsetof(CjguiInternalRendererComposableNode, pointerControlMinimum) ==
                offsetof(CjguiInternalRendererComposableNode, iconTintAlpha) + 8 &&
-               offsetof(CjguiInternalRendererComposableNode, pointerControlMaximum) + 8 ==
+               offsetof(CjguiInternalRendererComposableNode, scrollOffset) ==
+               offsetof(CjguiInternalRendererComposableNode, pointerControlMaximum) + 16 &&
+               offsetof(CjguiInternalRendererComposableNode, contentAlignY) + 8 ==
                sizeof(CjguiInternalRendererComposableNode),
-               "CjguiInternalRendererComposableNode slider range tail drifted");
+               "CjguiInternalRendererComposableNode scroll/content projection tail drifted");
 
 typedef struct CjguiInternalRendererViewport {
     uint32_t width;

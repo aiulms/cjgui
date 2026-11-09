@@ -1,0 +1,75 @@
+{
+  "schema": "cjgui.prototype-project.v1",
+  "id": "settings",
+  "title": "偏好设置",
+  "view": "form",
+  "theme": "hig",
+  "window": { "width": 980, "height": 760, "minimumWidth": 720 },
+  "groups": [
+    { "id": "appearance", "title": "外观", "help": "外观改变窗口配色；系统表示跟随本机设置。" },
+    { "id": "notifications", "title": "通知", "help": "提示音在提交后生效。" }
+  ],
+  "fields": [
+    {
+      "id": "appearance",
+      "label": "外观",
+      "kind": "select",
+      "group": "appearance",
+      "options": [
+        { "value": "light", "label": "浅色" },
+        { "value": "dark", "label": "深色" },
+        { "value": "system", "label": "系统" }
+      ],
+      "value": "system",
+      "help": "外观改变窗口配色；系统表示跟随本机设置。"
+    },
+    {
+      "id": "accent",
+      "label": "强调色",
+      "kind": "select",
+      "group": "appearance",
+      "options": [
+        { "value": "blue", "label": "蓝" },
+        { "value": "purple", "label": "紫" },
+        { "value": "pink", "label": "粉" },
+        { "value": "graphite", "label": "石墨" }
+      ],
+      "value": "blue",
+      "help": "强调色用于选中与主操作。"
+    },
+    {
+      "id": "notificationSound",
+      "label": "播放提示音",
+      "kind": "boolean",
+      "group": "notifications",
+      "value": true,
+      "help": "提示音在提交后生效。"
+    },
+    {
+      "id": "reminderMinutes",
+      "label": "提醒间隔（分钟）",
+      "kind": "integer",
+      "group": "notifications",
+      "required": true,
+      "minimum": 1,
+      "maximum": 60,
+      "value": 15,
+      "help": "提醒间隔 1–60 分钟。",
+      "error": "需要 1–60 之间的整数"
+    },
+    {
+      "id": "signature",
+      "label": "签名",
+      "kind": "text",
+      "group": "notifications",
+      "required": true,
+      "maximumLength": 24,
+      "value": "团队周报",
+      "help": "签名最多 24 个字符。",
+      "error": "签名不能为空，最多 24 个字符"
+    }
+  ],
+  "actions": [
+    { "name": "RESTORE_DEFAULTS", "label": "恢复默认", "emphasis": "quiet" }
+  ]
+}

@@ -1,6 +1,101 @@
 package cjgui
 
 import std.collection.*
+import std.time.*
+
+private let QUEUED_WHEEL_ROOT_ID: Int64 = 9300
+private let QUEUED_WHEEL_NODE_ID: Int64 = 9301
+
+foreign {
+    func cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+        session: UInt64, nodeId: UInt64, delta: Float64, captured: UInt32): Int32
+}
+
+@Test
+func h1AxScrollProxyPreservesFractionalDisplacement(): Unit {
+    cjguiMacosOwnerTest({ => h1AxScrollProxyPreservesFractionalDisplacementBody() })
+}
+
+private func settleH1Scroll(window: CjguiComposableUiWindow): Unit {
+    let deadline = MonoTime.now() + 5 * Duration.second
+    var turns = 0
+    while (turns < 240 && MonoTime.now() < deadline) {
+        let _ = CjguiComposableUiWindowTurnScheduler.pumpWithoutExternal(window)
+        if (window.windowProgress().acceptedSceneVersion >= 1 &&
+            window.ownerIdleWaitAllowance(UInt32.Max) == UInt32.Max) { return }
+        turns += 1
+    }
+    throw IllegalStateException("h1_scroll_fixture_did_not_settle")
+}
+
+private func h1AxScrollProxyPreservesFractionalDisplacementBody(): Unit {
+    let controller = QueuedWheelBindingController()
+    let viewport = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(viewport))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        settleH1Scroll(window)
+        let _ = viewport.requestOffset(40)
+        let _ = window.refresh()
+        settleH1Scroll(window)
+        @Assert(viewport.acceptedOffset(), 40)
+        for (delta in [0.25, -0.25, 0.5, -0.5]) {
+            let before = viewport.acceptedOffset()
+            for (_ in 0..8) {
+                @Assert(unsafe { cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+                    window.testSessionToken(), UInt64(QUEUED_WHEEL_NODE_ID), delta, 0u32) }, 0)
+                @Assert(window.pump(0u32).isOpen, true)
+                settleH1Scroll(window)
+            }
+            @Assert(viewport.acceptedOffset(), before + Int64(delta * 8.0))
+        }
+    } finally { window.close() }
+}
+
+@Test
+func h1AxScrollOldAnimationCannotFollowSameNodeToNewViewport(): Unit {
+    cjguiMacosOwnerTest({ => h1AxScrollOldAnimationCannotFollowSameNodeToNewViewportBody() })
+}
+
+private func h1AxScrollOldAnimationCannotFollowSameNodeToNewViewportBody(): Unit {
+    let controller = QueuedWheelBindingController()
+    let first = CjguiComposableUiScrollViewport()
+    let second = CjguiComposableUiScrollViewport()
+    controller.bindViewport(Some(first))
+    controller.setConsumesDelta(false)
+    let window = queuedWheelWindow(controller)
+    try {
+        @Assert(window.start(), true)
+        settleH1Scroll(window)
+        let session = window.testSessionToken()
+        @Assert(unsafe { cjgui_internal_renderer_test_capture_composable_accessibility_action_for_node(
+            session, UInt64(QUEUED_WHEEL_NODE_ID)) }, 0)
+        @Assert(unsafe { cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+            session, UInt64(QUEUED_WHEEL_NODE_ID), 5.0, 1u32) }, 0)
+        // Keep A's animation and its first packet in flight across the public
+        // same-node rebind. Both the queued packet and later old callbacks fail.
+        controller.bindViewport(Some(second))
+        settleH1Scroll(window)
+        @Assert(unsafe { cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+            session, UInt64(QUEUED_WHEEL_NODE_ID), 5.0, 1u32) }, 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        settleH1Scroll(window)
+        @Assert(second.acceptedOffset(), 0)
+        @Assert(unsafe { cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+            session, UInt64(QUEUED_WHEEL_NODE_ID), 10.0, 0u32) }, 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        settleH1Scroll(window)
+        @Assert(second.acceptedOffset(), 10)
+        controller.setPresent(false)
+        settleH1Scroll(window)
+        @Assert(unsafe { cjgui_internal_renderer_test_move_accessibility_scroll_proxy(
+            session, UInt64(QUEUED_WHEEL_NODE_ID), 5.0, 1u32) }, 0)
+        @Assert(window.pump(0u32).isOpen, true)
+        @Assert(second.acceptedOffset(), 10)
+    } finally { window.close() }
+}
 
 @Test
 func composableQueuedEdgeWheelPointsKeepMagnitudeAndStationaryFraction(): Unit {
@@ -33,8 +128,6 @@ foreign {
     ): Int32
 }
 
-private let QUEUED_WHEEL_ROOT_ID: Int64 = 9300
-private let QUEUED_WHEEL_NODE_ID: Int64 = 9301
 
 /// A deliberately ordinary HORIZONTAL container: it is wheel eligible by
 /// declaration, but it owns no scroll viewport, click target or focus scope.

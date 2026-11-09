@@ -3082,9 +3082,21 @@ def apply_saved_plan_document(session: GeneratedUiSession, text: str,
                             poll_ms=poll_ms, total_timeout_ms=total_timeout_ms)
 
 
-def write_json_file(path: str | Path, value: Mapping[str, Any]) -> None:
+def write_json_file(path: str | Path, value: Mapping[str, Any], *,
+                    sort_keys: bool = False) -> None:
+    """Write one plan/receipt/import document without losing authored order.
+
+    Saved plans are re-encoded from their JSON operations and their sha256 is
+    checked against the preview again.  The generated-structure grammar keeps
+    property order (an insert's `PROPERTY` lines), so serializing the plan with
+    `sort_keys=True` would reorder an insert node's property object and make the
+    reloaded plan fail its own digest.  Python's dict order is the authored
+    order here; callers that need a canonical display form can pass
+    `sort_keys=True`, but plan persistence must preserve order.
+    """
     target = Path(path)
-    target.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    target.write_text(json.dumps(value, ensure_ascii=False, indent=2,
+                                 sort_keys=sort_keys) + "\n",
                       encoding="utf-8")
 
 

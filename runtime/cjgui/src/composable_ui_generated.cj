@@ -43,6 +43,10 @@ public class CjguiGeneratedUiFieldSpec {
     /// default input. The override is the selection's own declaration, not a
     /// second component list.
     public let declaredInputKind: String
+    /// The application's declared read-only fact, derived from the SAME shared
+    /// form binding as every other constraint. Generated structures cannot
+    /// override it: no candidate property sets this, the declaration wins.
+    public let readOnly: Bool
 
     /// `writeActionName` may be given explicitly by an application whose owner
     /// writes immediately (for example SET_TITLE) instead of through the
@@ -50,8 +54,9 @@ public class CjguiGeneratedUiFieldSpec {
     /// consumer re-derives the writer from a field name.
     public init(fieldId: String, label: String, editorKind: String, resourceId: Int64, minimum!: Int64 = 0,
         maximum!: Int64 = 0, writeActionName!: String = "", required!: Bool = false, maximumLength!: Int64 = 0,
-        argumentName!: String = "", declaredInputKind!: String = "") {
+        argumentName!: String = "", declaredInputKind!: String = "", readOnly!: Bool = false) {
         this.declaredInputKind = declaredInputKind
+        this.readOnly = readOnly
         this.fieldId = fieldId
         this.label = label
         this.editorKind = editorKind
@@ -154,7 +159,8 @@ public class CjguiGeneratedUiFieldSpec {
                 CjguiGeneratedUiFieldSpec(descriptor.fieldId, descriptor.label, descriptor.editorKind,
                     descriptor.resourceId, minimum: descriptor.minimum, maximum: descriptor.maximum,
                     required: descriptor.required, maximumLength: descriptor.maximumLength,
-                    argumentName: declaredArgument, declaredInputKind: declaredInput))
+                    argumentName: declaredArgument, declaredInputKind: declaredInput,
+                    readOnly: descriptor.readOnly))
         }
         return result
     }
@@ -686,7 +692,16 @@ public class CjguiGeneratedUiPresentation {
             return false
         }
         if (presentation == "FIELD_TEXT" || presentation == "FIELD_INTEGER" || presentation == "FIELD_BOOLEAN") {
-            return name == "label" && valueType == "STRING"
+            if (name == "label" && valueType == "STRING") {
+                return true
+            }
+            // R7: visible-label control; the declared label is still the AX name.
+            if (name == "labelVisible" && valueType == "BOOLEAN") {
+                return true
+            }
+            // R9: stepper presentation reuses CjguiNumericStepper over the SAME
+            // integer field; only integer leaves accept it.
+            return presentation == "FIELD_INTEGER" && name == "stepper" && valueType == "BOOLEAN"
         }
         return false
     }
@@ -2344,6 +2359,13 @@ public class CjguiGeneratedUiCapabilityCatalog {
 }
 
 /// Structure value model: one node of a candidate description.
+/// Action family of the generated integer stepper's two buttons. The region
+/// resolves the step against the field's declared bounds and commits through
+/// the SAME `applyFieldIntent` path as a typed integer edit; no second owner
+/// state machine exists. The field id is appended after the colon.
+public let CJGUI_GENERATED_STEP_DECREMENT_PREFIX: String = "cjgui-step-decrement:"
+public let CJGUI_GENERATED_STEP_INCREMENT_PREFIX: String = "cjgui-step-increment:"
+
 public class CjguiGeneratedUiNodeSpec {
     public let key: String
     public let kind: String
@@ -5081,6 +5103,107 @@ public class CjguiGeneratedUiStructureHolder {
     /// explicit render failure - it never degrades into a label. `nodeIdToKey`
     /// is updated for whichever table this render targets (accepted or
     /// candidate), so a candidate never mutates the accepted identity table.
+    /// R9: build the existing CjguiNumericStepper for one integer field. Every
+    /// node keeps the field's declared writer/owner route; the two buttons
+    /// dispatch the public step family handled by the region, so the step and a
+    /// typed edit share the same draft/validation/Apply path.
+    private func generatedFieldReadOnly(fieldId: String): Bool {
+        return match (catalog.fieldFor(fieldId)) {
+            case Some(value) => value.readOnly
+            case None => false
+        }
+    }
+
+    /// The stepper's ± buttons keep a real named-style base. The field's
+    /// `input` role intentionally has an EMPTY normal paint (the base supplies
+    /// it), so handing only the input interaction to the buttons leaves them
+    /// with a geometry-only base and no normal foreground/background in dark
+    /// appearance. Reuse the existing `secondary_action` named style (same
+    /// HIG role the generated action path uses), override only geometry, and
+    /// keep that role's interaction for hover/pressed/focused/disabled.
+    private func generatedNumericStepperStyle(editorStyle: CjguiComposableUiStyle,
+        editorInteraction: CjguiComposableUiInteractionStyle, controlHeight: Int64): CjguiNumericStepperStyle {
+        let fallback = CjguiComposableUiStyle(fixedWidth: 30, fixedHeight: controlHeight)
+        let (buttonBase, buttonInteraction) = match (catalog.namedStyles().forName("secondary_action")) {
+            case Some(named) => (named.localStyle(fixedWidth: 30, fixedHeight: controlHeight), named.interaction)
+            case None => (fallback, editorInteraction)
+        }
+        return CjguiNumericStepperStyle(input: editorStyle, button: buttonBase,
+            feedback: cjguiComposableFormValidationStyle(), buttonInteraction: buttonInteraction)
+    }
+
+    private func generatedIntegerStepperNode(spec: CjguiGeneratedUiNodeSpec, instance: CjguiComposableUiComponentInstance,
+        nodeId: Int64, semanticId: String, valueText: String, bindingResourceId: Int64, ownerTarget: Int64,
+        enabled: Bool, accessibleLabel: String, editorLabelVisible!: Bool = true,
+        intoAcceptedTable!: Bool = true, validationError!: String = "",
+        editorStyle!: CjguiComposableUiStyle = CjguiComposableUiStyle(),
+        editorInteraction!: CjguiComposableUiInteractionStyle = CjguiComposableUiInteractionStyle(),
+        readOnly!: Bool = false): CjguiComposableUiNode {
+        let field = match (catalog.fieldFor(spec.fieldId)) {
+            case Some(value) => value
+            case None => return cjguiComposableIntegerInput(nodeId, semanticId, "", valueText, bindingResourceId,
+                CjguiComposableUiStyle(), enabled: false, fieldId: spec.fieldId)
+        }
+        let rowNodeId = allocatedElementNodeId(instance, "stepper-row")
+        let inputNodeId = allocatedElementNodeId(instance, "stepper-input")
+        let decrementNodeId = allocatedElementNodeId(instance, "stepper-decrement")
+        let incrementNodeId = allocatedElementNodeId(instance, "stepper-increment")
+        let presetsNodeId = allocatedElementNodeId(instance, "stepper-presets")
+        let feedbackNodeId = allocatedElementNodeId(instance, "stepper-feedback")
+        let controlHeight = if (editorStyle.fixedHeight > 0) { editorStyle.fixedHeight } else { 28 }
+        let stepperStyle = generatedNumericStepperStyle(editorStyle, editorInteraction, controlHeight)
+        // R7: the visible label and the accessible name are separate facts. A
+        // hidden label renders the stepper without its own text while the
+        // declared label remains the AX name below.
+        let visibleLabel = if (editorLabelVisible) { accessibleLabel } else { "" }
+        let binding = CjguiNumericStepperBinding(nodeId, semanticId, rowNodeId, presetsNodeId, inputNodeId,
+            instance.semanticId("stepper-input"), decrementNodeId, instance.semanticId("stepper-decrement"),
+            incrementNodeId, instance.semanticId("stepper-increment"), visibleLabel, valueText, field.minimum,
+            field.maximum, 1, spec.fieldId, field.writeActionName, bindingResourceId, ownerTarget,
+            "${CJGUI_GENERATED_STEP_DECREMENT_PREFIX}${spec.fieldId}",
+            "${CJGUI_GENERATED_STEP_INCREMENT_PREFIX}${spec.fieldId}", feedbackNodeId: feedbackNodeId,
+            enabled: enabled, readOnly: readOnly, feedback: validationError)
+        let built = CjguiNumericStepper.build(binding, style: stepperStyle)
+        // R9: the stepper's INTERNAL input node carries the field's declared
+        // writer/owner route; registering its node id under the SAME spec key
+        // routes a typed edit through the ordinary generated field path instead
+        // of dying as unknown_node.
+        // R9: the two step buttons are part of the SAME accepted stepper control
+        // identity, so an event's node id must resolve back to this spec for the
+        // accepted-identity check (input node alone is not enough).
+        for (identityNodeId in [inputNodeId, decrementNodeId, incrementNodeId]) {
+            if (intoAcceptedTable) {
+                nodeIdToKey.add(identityNodeId, spec.key)
+            } else {
+                candidateNodeIdToKey.add(identityNodeId, spec.key)
+            }
+        }
+        assignHiddenLeafAxLabel(built, accessibleLabel)
+        return built
+    }
+
+    /// R7: after hiding a control's own label, keep the declared label as its
+    /// accessible name so the field stays locatable (AX name, not visual text).
+    private func assignHiddenLeafAxLabel(node: CjguiComposableUiNode, accessibleLabel: String): Unit {
+        if (accessibleLabel.size == 0) {
+            return
+        }
+        var stack = ArrayList<CjguiComposableUiNode>()
+        stack.add(node)
+        while (stack.size > 0) {
+            let current = stack.remove(at: stack.size - 1)
+            if (current.nodeKind == CJGUI_COMPOSABLE_UI_TEXT_INPUT ||
+                current.nodeKind == CJGUI_COMPOSABLE_UI_INTEGER_INPUT ||
+                current.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
+                current.semanticLabel = accessibleLabel
+                return
+            }
+            for (child in current.children()) {
+                stack.add(child)
+            }
+        }
+    }
+
     private func nodeFor(spec: CjguiGeneratedUiNodeSpec, provider: CjguiGeneratedUiBindingProvider,
         intoAcceptedTable: Bool, feedback: ?CjguiGeneratedUiFormFeedback): CjguiComposableUiNode {
         let declared = match (catalog.componentFor(spec.kind)) {
@@ -5464,7 +5587,7 @@ public class CjguiGeneratedUiStructureHolder {
                 // constructor declaration; a style declared on the node reaches
                 // the trigger the same way a handwritten style does.
                 declaredChoice.declare(frozenValue,
-                    enabled: frozenEnabled,
+                    enabled: frozenEnabled && !field.readOnly,
                     placeholder: if (spec.property("placeholder").size > 0) { spec.property("placeholder") } else { label },
                     style: if (specDeclaresStyleProperties(spec)) {
                         Some(CjguiSelectStyle(trigger: style))
@@ -5489,7 +5612,7 @@ public class CjguiGeneratedUiStructureHolder {
             // group over the SAME frozen facts the select projection derived;
             // the binding registers the action family for event routing.
             let declaresStyle = specDeclaresStyleProperties(spec)
-            declaredChoice.declare(frozenValue, enabled: frozenEnabled,
+            declaredChoice.declare(frozenValue, enabled: frozenEnabled && !field.readOnly,
                 style: if (declaresStyle) { Some(CjguiSelectStyle(trigger: style)) } else { None },
                 error: frozenError)
             // The declared style must reach the REAL group container/rows, not
@@ -5516,10 +5639,37 @@ public class CjguiGeneratedUiStructureHolder {
                 if (let Some(value) <- state.fieldFor(spec.fieldId)) {
                     if (value.resourceId == bindingResourceId && state.ownerResourceId == ownerTarget) {
                         let availability = state.fieldAvailability(spec.fieldId)
-                        let enabled = availability.known && availability.isAvailable && ownerTarget >= 0
+                        // Read-only denies writes, while text viewing/selection stays enabled.
+                        // Other unavailable reasons still disable the control.
+                        let enabled = availability.known && ownerTarget >= 0 &&
+                            (availability.isAvailable || (descriptor.readOnly && availability.reason == "field_read_only"))
+                        // R7: same visible-label / accessible-name split as the
+                        // unbound leaf path. The bound field keeps the owner's
+                        // exact validation fact; only its editor label differs.
+                        let declaredLabel = spec.property("label")
+                        let labelHidden = spec.property("labelVisible") == "false"
+                        // R7: an omitted label keeps the existing declaration
+                        // fallback for BOTH the visible text (when not hidden)
+                        // and the accessible name; explicit hiding never
+                        // restores the visible default label.
+                        let resolvedLabel = if (declaredLabel.size > 0) {
+                            declaredLabel
+                        } else {
+                            field.label
+                        }
+                        // R9: the stepper presentation replaces only the editor,
+                        // not the field/owner/validation facts.
+                        if (presentation == "FIELD_INTEGER" && spec.property("stepper") == "true") {
+                            return generatedIntegerStepperNode(spec, instance, nodeId, semanticId,
+                                value.draftText, bindingResourceId, ownerTarget, enabled, resolvedLabel,
+                                editorLabelVisible: !labelHidden, intoAcceptedTable: intoAcceptedTable,
+                                validationError: value.validationError, editorStyle: style,
+                                editorInteraction: interactionStyleFor(spec, intoAcceptedTable),
+                                readOnly: descriptor.readOnly)
+                        }
                         // Reserve stable local slots even while no error is visible.
                         // The original editor identity remains the input/event target.
-                        return cjguiComposableBoundFormField(
+                        let built = cjguiComposableBoundFormField(
                             allocatedElementNodeId(instance, "form-feedback"), instance.semanticId("form-feedback"),
                             nodeId, allocatedElementNodeId(instance, "form-validation"), descriptor, value, ownerTarget,
                             style, cjguiComposableFormValidationStyle(), editorSemanticId: semanticId,
@@ -5530,10 +5680,16 @@ public class CjguiGeneratedUiStructureHolder {
                             // projections disagree about the same object.
                             validationDisplayMessage: value.validationError,
                             enabled: enabled,
-                            editorLabel: spec.property("label"),
+                            readOnly: descriptor.readOnly,
+                            editorLabel: resolvedLabel,
+                            editorLabelVisible: !labelHidden,
                             textOperationActionName: field.writeActionName,
                             booleanOperationActionName: field.writeActionName,
                             interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+                        if (labelHidden) {
+                            assignHiddenLeafAxLabel(built, resolvedLabel)
+                        }
+                        return built
                     }
                 }
             }
@@ -5541,24 +5697,83 @@ public class CjguiGeneratedUiStructureHolder {
         // The declared field value comes from the application's live draft,
         // exactly like the handwritten form: a legally empty draft is a draft
         // and must not be replaced by the applied value.
+        // R7: the visible label and the accessible name are separate facts.
+        // `labelVisible=false` hides the control's own label (an external label
+        // column draws it) while the declared label remains the AX name, so the
+        // control is still locatable. Default behaviour is unchanged.
+        let declaredLabel = spec.property("label")
+        let labelVisible = spec.property("labelVisible") != "false"
+        // R7: omitted label falls back to the field declaration for the visible
+        // text (unless explicitly hidden) and for the accessible name.
+        let resolvedLabel = if (declaredLabel.size > 0) { declaredLabel } else { field.label }
+        let visibleLabel = if (labelVisible) { resolvedLabel } else { "" }
         if (presentation == "FIELD_BOOLEAN") {
             let draft = provider.draftBoolean(spec.fieldId) ?? false
-            return cjguiComposableBooleanInput(nodeId, semanticId, spec.property("label"), draft, bindingResourceId,
-                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+            let built = cjguiComposableBooleanInput(nodeId, semanticId, visibleLabel, draft, bindingResourceId,
+                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget) && !generatedFieldReadOnly(spec.fieldId),
+                fieldId: spec.fieldId,
                 operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            built.semanticLabel = resolvedLabel
+            return built
         }
         let value = provider.draftText(spec.fieldId)
+        if (presentation == "FIELD_INTEGER" && spec.property("stepper") == "true") {
+            // R9: reuse the existing CjguiNumericStepper. Its input node keeps
+            // the declared writer/owner route; the two buttons dispatch the
+            // public step action family handled by the region.
+            let rowNodeId = allocatedElementNodeId(instance, "stepper-row")
+            let inputNodeId = allocatedElementNodeId(instance, "stepper-input")
+            let decrementNodeId = allocatedElementNodeId(instance, "stepper-decrement")
+            let incrementNodeId = allocatedElementNodeId(instance, "stepper-increment")
+            let presetsNodeId = allocatedElementNodeId(instance, "stepper-presets")
+            let feedbackNodeId = allocatedElementNodeId(instance, "stepper-feedback")
+            let controlHeight = if (style.fixedHeight > 0) { style.fixedHeight } else { 28 }
+            let stepperStyle = generatedNumericStepperStyle(style,
+                interactionStyleFor(spec, intoAcceptedTable), controlHeight)
+            let stepperBinding = CjguiNumericStepperBinding(nodeId, semanticId, rowNodeId, presetsNodeId,
+                inputNodeId, instance.semanticId("stepper-input"), decrementNodeId,
+                instance.semanticId("stepper-decrement"), incrementNodeId,
+                instance.semanticId("stepper-increment"), visibleLabel, value, field.minimum, field.maximum, 1,
+                spec.fieldId, field.writeActionName, bindingResourceId, ownerTarget,
+                "${CJGUI_GENERATED_STEP_DECREMENT_PREFIX}${spec.fieldId}",
+                "${CJGUI_GENERATED_STEP_INCREMENT_PREFIX}${spec.fieldId}",
+                feedbackNodeId: feedbackNodeId, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget),
+                readOnly: generatedFieldReadOnly(spec.fieldId))
+            let built = CjguiNumericStepper.build(stepperBinding, style: stepperStyle)
+            // R9: register the internal input node under the SAME spec key so a
+            // typed edit resolves through the ordinary field path.
+            for (identityNodeId in [inputNodeId, decrementNodeId, incrementNodeId]) {
+                if (intoAcceptedTable) {
+                    nodeIdToKey.add(identityNodeId, spec.key)
+                } else {
+                    candidateNodeIdToKey.add(identityNodeId, spec.key)
+                }
+            }
+            let rows = built.children()
+            if (rows.size > 0) {
+                let inputRow = rows[0]
+                let inputs = inputRow.children()
+                if (inputs.size > 0) { inputs[0].semanticLabel = resolvedLabel }
+            }
+            return built
+        }
         if (presentation == "FIELD_INTEGER") {
-            return cjguiComposableIntegerInput(nodeId, semanticId, spec.property("label"), value, bindingResourceId,
-                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+            let built = cjguiComposableIntegerInput(nodeId, semanticId, visibleLabel, value, bindingResourceId,
+                style, enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget),
+                readOnly: generatedFieldReadOnly(spec.fieldId), fieldId: spec.fieldId,
                 operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
                 interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+            built.semanticLabel = resolvedLabel
+            return built
         }
-        return cjguiComposableTextInput(nodeId, semanticId, spec.property("label"), value, bindingResourceId, style,
-            enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget), fieldId: spec.fieldId,
+        let built = cjguiComposableTextInput(nodeId, semanticId, visibleLabel, value, bindingResourceId, style,
+            enabled: fieldEnabledFor(provider, spec.fieldId, ownerTarget),
+            readOnly: generatedFieldReadOnly(spec.fieldId), fieldId: spec.fieldId,
             operationActionName: field.writeActionName, operationResourceId: ownerTarget, displayValueRole: "draft",
             interactionStyle: interactionStyleFor(spec, intoAcceptedTable))
+        built.semanticLabel = resolvedLabel
+        return built
     }
 
     private func noteRenderFailure(reason: String, key: String): Unit {
@@ -5612,7 +5827,8 @@ public class CjguiGeneratedUiStructureHolder {
             // The enabled state is the projection of the owner's answer AND the
             // visible-control constraint (with no owner target there is nothing
             // to edit), never a permission of its own.
-            return availability.isAvailable && ownerTarget >= 0
+            return ownerTarget >= 0 && (availability.isAvailable ||
+                (generatedFieldReadOnly(fieldId) && availability.reason == "field_read_only"))
         }
         return ownerTarget >= 0
     }
@@ -6804,7 +7020,8 @@ public class CjguiGeneratedUiStructureHolder {
             } else {
                 base.textOverflow
             }, minWidth: minWidth, maxWidth: maxWidth, minHeight: minHeight, maxHeight: maxHeight, alignX: alignX,
-            alignY: alignY, cornerRadius: base.cornerRadius, cornerRadii: base.cornerRadii, offsetX: base.offsetX, offsetY: base.offsetY,
+            alignY: alignY, contentAlignX: base.contentAlignX, contentAlignY: base.contentAlignY,
+            cornerRadius: base.cornerRadius, cornerRadii: base.cornerRadii, offsetX: base.offsetX, offsetY: base.offsetY,
             translateX: translateX, translateY: translateY, wheelScrollable: base.wheelScrollable,
             scrollContentAlignY: base.scrollContentAlignY, pointerInteractive: interactive || base.pointerInteractive,
             clipsContent: base.clipsContent, shadow: declaredShadowOf(properties, base.shadow),
@@ -7374,7 +7591,7 @@ public class CjguiGeneratedUiEncoding {
                         "writer=${if (field.writeActionName.size > 0) { field.writeActionName } else { "none" }} " +
                         "required=${if (field.required) { 1 } else { 0 }} " +
                         "min=${field.minimum} max=${field.maximum} " + "maxlen=${field.maximumLength} " +
-                        "callable=${if (field.isWritable()) { 1 } else { 0 }} " +
+                        "callable=${if (field.isWritable() && !field.readOnly) { 1 } else { 0 }} " +
                         "argument=${if (field.argumentName.size > 0) { field.argumentName } else { "none" }} " +
                         "input=${field.inputKind()} label=${field.label}\n")
             } else {

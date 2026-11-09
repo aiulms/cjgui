@@ -14,7 +14,8 @@ private func declarationBaseStyle(): CjguiComposableUiStyle {
         border: CjguiComposableUiColor(0.7, 0.7, 0.7, 1.0), padding: 4, gap: 2,
         fixedWidth: 120, fixedHeight: 40, offsetX: 6, offsetY: -9, wheelScrollable: true,
         scrollContentAlignY: CJGUI_COMPOSABLE_UI_ALIGN_CENTER, pointerInteractive: true, clipsContent: true,
-        cornerRadius: 3)
+        cornerRadius: 3, contentAlignX: CJGUI_COMPOSABLE_UI_ALIGN_CENTER,
+        contentAlignY: CJGUI_COMPOSABLE_UI_ALIGN_END)
 }
 
 @Test
@@ -33,6 +34,8 @@ func paintOnlyRebuildsPreserveEveryNonPaintDeclaration(): Unit {
     @Assert(overlay.scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
     @Assert(overlay.pointerInteractive)
     @Assert(overlay.clipsContent && overlay.cornerRadius == 3)
+    @Assert(overlay.contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    @Assert(overlay.contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END)
     // 2) interaction-state resolution (hover only declares a background)
     let interaction = CjguiComposableUiInteractionStyle(hover: CjguiComposableUiPaintStyle(
         background: Some(CjguiComposableUiColor(0.2, 0.2, 0.2, 1.0))))
@@ -42,10 +45,19 @@ func paintOnlyRebuildsPreserveEveryNonPaintDeclaration(): Unit {
     @Assert(hovered.wheelScrollable)
     @Assert(hovered.scrollContentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
     @Assert(hovered.pointerInteractive)
+    @Assert(hovered.contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    @Assert(hovered.contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END)
     // 3) the shared copy entry itself
     let copied = cjguiComposableUiStyleWithPaint(base, base.background, base.border, base.textColor,
         base.borderWidth, base.shadow, base.gradient, base.effectGroup)
     @Assert(copied.offsetY == -9 && copied.wheelScrollable && copied.pointerInteractive)
+    @Assert(copied.contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    @Assert(copied.contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END)
+    // 4) the translation copy used by accepted presentation/transitions
+    let translated = cjguiComposableUiStyleWithTranslation(base, 3.0, 4.0)
+    @Assert(translated.translateX == 3.0 && translated.translateY == 4.0)
+    @Assert(translated.contentAlignX == CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    @Assert(translated.contentAlignY == CJGUI_COMPOSABLE_UI_ALIGN_END)
 }
 
 /// 透明 VERTICAL/HORIZONTAL 的“视觉中性”快路径只有在不携带输入/位移时才允许跳过；
@@ -413,4 +425,42 @@ func directKeyedRegionDoesNotReuseOldClipOwner(): Unit {
     @Assert(got[got.size - 1].ownerIdentity, expected[expected.size - 1].ownerIdentity)
     @Assert(changed.metrics.subtreeReuseHitCount, 0)
     assertWrappedCanonicalScene(changed.scene, canonical.scene)
+}
+
+private func contentAlignmentRegionRoot(contentAlignX: Int64, contentAlignY: Int64): CjguiComposableUiNode {
+    let root = cjguiComposableVertical(7310, "b-content-root", CjguiComposableUiStyle(gap: 0))
+    let region = cjguiComposableVertical(7311, "b-content-region", CjguiComposableUiStyle())
+    region.add(cjguiComposableButton(7312, "b-content-button", "深色", "NOOP_ACTION", 0,
+        CjguiComposableUiStyle(fixedWidth: 96, fixedHeight: 32, contentAlignX: contentAlignX,
+            contentAlignY: contentAlignY)))
+    root.add(region)
+    return root
+}
+
+/// 按钮内容对齐是真实声明：同一 cache 下只改 contentAlignX/Y，重放必须失效，
+/// 交回的布局节点必须带本次对齐，而不是上一笔的起始对齐。
+@Test
+func keyedRegionReplayNeverServesStaleButtonContentAlignment(): Unit {
+    // Structural signatures walk every declaration; a keyed region would trust
+    // the caller's key and intentionally not look at descendant styles.
+    let cache = CjguiComposableUiLayoutReuseCache(allowStructuralSignatures: true)
+    let measurer = CjguiComposableUiFallbackTextMeasurer()
+    let viewport = CjguiComposableUiRect(0, 0, 200, 100)
+    let first = CjguiComposableUiLayoutEngine.layoutWithMetrics(contentAlignmentRegionRoot(
+        CJGUI_COMPOSABLE_UI_ALIGN_START, CJGUI_COMPOSABLE_UI_ALIGN_START), viewport, 1, measurer, reuseCache: cache)
+    @Assert(first.scene.isValid(), true)
+    @Assert(first.scene.nodeForId(7312).style.contentAlignX, CJGUI_COMPOSABLE_UI_ALIGN_START)
+    // Control: an unchanged declaration DOES replay, so the changed case below
+    // really exercises the replay path.
+    let repeated = CjguiComposableUiLayoutEngine.layoutWithMetrics(contentAlignmentRegionRoot(
+        CJGUI_COMPOSABLE_UI_ALIGN_START, CJGUI_COMPOSABLE_UI_ALIGN_START), viewport, 2, measurer, reuseCache: cache)
+    @Assert(repeated.scene.isValid(), true)
+    @Assert(repeated.metrics.subtreeReuseReplayedNodeCount > 0, true)
+    // Alignment-only change: a replayed region would keep start alignment.
+    let centered = CjguiComposableUiLayoutEngine.layoutWithMetrics(contentAlignmentRegionRoot(
+        CJGUI_COMPOSABLE_UI_ALIGN_CENTER, CJGUI_COMPOSABLE_UI_ALIGN_CENTER), viewport, 3, measurer, reuseCache: cache)
+    @Assert(centered.scene.isValid(), true)
+    @Assert(centered.metrics.subtreeReuseReplayedNodeCount, 0)
+    @Assert(centered.scene.nodeForId(7312).style.contentAlignX, CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
+    @Assert(centered.scene.nodeForId(7312).style.contentAlignY, CJGUI_COMPOSABLE_UI_ALIGN_CENTER)
 }

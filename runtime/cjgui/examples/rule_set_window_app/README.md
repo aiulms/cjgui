@@ -3,7 +3,7 @@
 这是可用预览的正常 macOS 应用：左侧分页显示任意数量的规则，右侧编辑当前规则的草稿。新增、删除、撤销、重做、保存和应用草稿都经由同一份 `CjguiRuleSetEditingDomain`；窗口行号只是视口位置，不是记录 ID。它使用框架拥有的 [macOS 应用宿主](../../MACOS_APPLICATION_HOST.md)，不再编译 sample launcher 或声明 finish FFI。
 
 ```zsh
-cd /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/examples/rule_set_window_app
+cd <repo>/runtime/cjgui/examples/rule_set_window_app
 zsh run.sh --save-as /tmp/rules.cjgui-rules
 ```
 

@@ -19,7 +19,7 @@
 - 非法当前值、非法 step、低于下限、高于上限和目标越过 Int64 表示范围都返回
   明确 issue；`step_overflow` 保留当前文本，不做饱和后成功。边界点击会交给
   owner 拒绝并显示反馈，或由调用方在步进前自行处理。
-- `enabled`/`readOnly`/owner 缺失会禁用输入或按钮；组件不自行保存值。
+- `enabled=false` 或 owner 缺失会禁用输入与按钮。`readOnly=true` 保留输入的查看/文本选择，禁止编辑并禁用 ±/预设按钮；组件不自行保存值。
 
 最小用法：
 
@@ -115,7 +115,7 @@ let node = CjguiNumericStepper.build(binding,
 ## 构建与启动
 
 ```bash
-source /Users/jiangxuanyang/cangjie-toolchains/cangjie-1.1.3/envsetup.sh
+source <cangjie-toolchain>/envsetup.sh
 cd runtime/cjgui/examples/rule_set_window_app
 cjpm build --skip-script
 ./target/release/bin/main --retention-range 1 100 --open <rules.json>
@@ -141,3 +141,20 @@ zsh run.sh --build-only
 未包含：下拉窗口、搜索选择器、新原生 Radio ABI、Toast 队列、后台任务框架、
 进度动画、自定义重试策略、全平台验证。单次 GET 的零计数只描述该次观测，不能
 据此宣称整个空闲期无轮询。既有原生窗口生成测试失败保留，不冒充通过。
+
+## 共同字段只读声明（本候选，experimental）
+
+`CjguiSharedFormFieldDescriptor(..., readOnly!: Bool = false)` 是业务只读事实来源；
+`CjguiGeneratedUiFieldSpec.fromFormBinding` 直接继承。手写
+`cjguiComposableBoundFormField(..., readOnly!: Bool = false)` 的实际只读为
+`descriptor.readOnly || readOnly`，调用方可收紧但不能解除声明；默认构造继续可写。
+Boolean/选择控件没有可编辑只读状态，保持可见并禁止切换。
+
+标准表单 binding 对只读字段发布已知 `available=false, reason=field_read_only`；
+文本输入仍可查看/选择，其他不可用原因继续按禁用处理。catalog 的 `callable=0`
+描述声明只读，而 writer 路由仍存在，`isWritable()` 仍仅检查是否声明 writer，
+以便只读字段继续参与组合注册。动态可用性以同快照 fields 为准。
+
+公开 `FIELD ... READONLY 0|1` 与 typed `GeneratedFieldValue.read_only` 对应。
+旧生产方缺 token 时客户端保留 `None`，不会推断可写；非法 READONLY 值具名拒绝。
+生成结构不能覆盖该事实。真实 owner 的 writer 必须验证只读，不能只靠 UI 禁用。

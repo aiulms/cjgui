@@ -45,9 +45,9 @@ DESTINATION="$DESTINATION_PARENT/$(basename "$DESTINATION")"
 FRAMEWORK_ROOT="$(cd "$FRAMEWORK_ROOT" && pwd)"
 RELATIVE_FRAMEWORK="$(python3 -c 'import os, sys; print(os.path.relpath(os.path.realpath(sys.argv[2]), os.path.realpath(sys.argv[1])))' "$DESTINATION" "$FRAMEWORK_ROOT")"
 
-python3 - "$TEMPLATE_DIR" "$DESTINATION" "$RELATIVE_FRAMEWORK" <<'PY'
+python3 - "$TEMPLATE_DIR" "$DESTINATION" "$RELATIVE_FRAMEWORK" "$FRAMEWORK_ROOT" <<'PY'
 from pathlib import Path
-import json, shutil, sys
+import json, shutil, subprocess, sys
 
 source, destination = map(Path, sys.argv[1:3])
 relative = sys.argv[3]
@@ -76,6 +76,15 @@ try:
         path = destination / name
         if path.exists():
             path.chmod(path.stat().st_mode | 0o111)
+    activation = Path(sys.argv[4]) / 'skills/cjgui-app-dev/scripts/activate.py'
+    if activation.is_file():
+        result = subprocess.run([sys.executable, '-B', str(activation), '--project', str(destination)],
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise ValueError('project skill activation failed: ' + result.stderr.strip())
+    else:
+        print('cjgui create: selected framework has no project skill activation helper; '
+              'existing SDK creation remains available, configure its project rules separately', file=sys.stderr)
 except BaseException:
     shutil.rmtree(destination)  # Only this invocation's newly created directory.
     raise

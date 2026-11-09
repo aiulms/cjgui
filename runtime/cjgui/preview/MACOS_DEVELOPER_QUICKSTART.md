@@ -1,5 +1,15 @@
 # CJGUI macOS 开发预览
 
+开发 AI 可使用随包的 [cjgui-app-dev 技能](framework/cjgui/skills/cjgui-app-dev/SKILL.md)：
+按应用实际依赖检索同版文档/声明，分别记录参考源、构建与运行身份。可直接读取技能文件，
+或在包根运行 `python3 framework/cjgui/skills/cjgui-app-dev/scripts/install.py --host codex`；
+DSH 可选 `--host dsh`，确认扫描共享目录的工具可选 `--host agents`，其他发现目录用 `--skills-dir`。
+上述配置任选其一；`--dry-run` 查看目标，独立快照用 `--mode copy`。安装不代表宿主已经发现/加载。
+目标已存在会拒绝覆盖（同源链接除外）。反馈默认写应用本地，不写回 SDK、不自动上传；
+后续按证据筛选框架缺陷、易用性改进与无需框架处理的误用，具体见技能按需指南。
+本版创建器为新应用生成 AGENTS.md，接入技能的任务触发入口；已有项目可用技能的
+`scripts/activate.py --project APP` 追加入口。宿主须实际加载该项目规则，文件存在不代表模型已使用。
+
 这是 experimental 源码开发包，面向 Apple Silicon（arm64）macOS。需要自行安装 **Cangjie 1.1.3 cjnative、Xcode Command Line Tools 和 Python 3.11+（本轮3.14，使用标准库 tomllib）**；`xcrun` 应能找到有效的 macOS SDK。runner 声明最低部署目标12.0，实际交付只按本次宿主系统验收，未验证全部旧版macOS。包中没有整套SDK或预编译CJO／BC／对象。
 
 解压后在本目录打开终端，创建自己的应用（父目录须存在、目的目录须不存在）：
@@ -232,6 +242,12 @@ mixed-form 不传 `--commands` 仍是原简洁手写表单。各模板默认均�
 mixed-form 使用公共 Wrap、整数步进和状态反馈；字段标签、范围及 writer 来自 `src/domain.cj` 的同一声明。更换字段名、范围、动作或显示标签时修改应用声明和自己的业务操作，`src/main.cj` 按声明画字段，`client.py` 按实际目录发现，不需要改 native。按⌘K打开说明，Esc回到原字段／选区；⌘S只应用内存草稿，不保存文件。
 
 Inspector 默认关闭，点击“开发：Inspector”才打开同一应用的只读副窗。普通运行不依赖它。示例不持续采样成本，需要诊断时显式使用 `inspector.open(collectCosts: true)`，关闭由原生命周期恢复。
+
+本版布局诊断可用 `window.diagnosticSnapshot(maximumNodes: 128, includeNonVisible: true)`
+定位零尺寸或屏幕外节点：节点 `layout` 含原约束、grow/对齐、父区域、溢出/裁剪和交互态，
+`constraintSummary()` / `stateSummary()` 提供短解释。快照只读且有界，按同一 session/accepted
+version 分页；过期返回 `stale_accepted`，不能拼接成同一场景。滚动内容超出视口本身不等于布局错误，
+矩形候选不等于无遮挡像素，accepted/submitted/GPU completed 也不能混读。
 
 集合／键盘示例已经随包放在 `consumers/generated_collection`：
 

@@ -1,0 +1,9 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+CJGUI_MACOS_APP_BUNDLE_NAME='CJGUIPrototypeHost'
+CJGUI_MACOS_APP_EXECUTABLE_NAME='CJGUIPrototypeHost'
+CJGUI_MACOS_APP_IDENTIFIER='org.cjgui.prototype-host'
+CJGUI_MACOS_APP_DISPLAY_NAME='CJGUI 通用原型宿主'
+CJGUI_MACOS_APP_RESOURCES=(
+)

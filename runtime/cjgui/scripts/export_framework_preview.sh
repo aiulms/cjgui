@@ -88,6 +88,8 @@ def source_category(source):
     relative = source.relative_to(runtime).as_posix() if source.is_relative_to(runtime) else 'repository/' + source.name
     if relative.startswith('repository/'):
         return 'license'
+    if relative.startswith('skills/cjgui-app-dev/'):
+        return 'skill'
     if relative == 'src/macos_owner_fixture_test.cj':
         return 'test-fixture'
     if relative == 'build.cj':
@@ -182,6 +184,10 @@ add(runtime / 'shared_operation_core/GENERATED_EDITING.md',
 add(runtime / 'shared_operation_core/DOCUMENT_CLIENT.md',
     framework / 'shared_operation_core/DOCUMENT_CLIENT.md')
 tree(runtime / 'resources', framework / 'resources')
+skill = runtime / 'skills/cjgui-app-dev'
+if not (skill / 'SKILL.md').is_file():
+    raise ValueError('required application development skill is missing: skills/cjgui-app-dev/SKILL.md')
+tree(skill, framework / 'skills/cjgui-app-dev')
 tree(runtime / 'templates/macos_application', framework / 'templates/macos_application', require_application_sources=True)
 # Mixed template tests call this framework-owned AppKit fixture. Ship a
 # package-renamed copy beside the tests so an extracted SDK is test-closed.
@@ -210,6 +216,8 @@ add(runtime / 'native/scripts/verify_cjpm_mac_testing_link.py',
 add(runtime / 'MACOS_APPLICATION_HOST.md', framework / 'MACOS_APPLICATION_HOST.md')
 for name in ['LAYOUT_PRIMITIVES.md', 'FIELD_CONTROLS.md', 'CARD_GRID.md', 'ACCESSIBILITY.md', 'FONT_RESOURCES.md', 'STYLED_TEXT.md', 'STYLE_ROLES.md']:
     add(runtime / name, framework / name)
+add(runtime / 'preview/MACOS_CANDIDATE_SUBSET.md', 'MACOS-CANDIDATE-SUBSET.md')
+add(runtime / 'preview/MACOS_CANDIDATE_SUBSET.md', framework / 'preview/MACOS_CANDIDATE_SUBSET.md')
 add(runtime / 'preview/MACOS_CANDIDATE.md', 'MACOS-CANDIDATE.md',
     (runtime / 'preview/MACOS_CANDIDATE.md').read_text())
 add(runtime / 'preview/FRAMEWORK_PREVIEW_MANIFEST.md', 'preview-manifest.md',
@@ -312,7 +320,10 @@ def relocate_document(source, relative):
         return '[' + label + '](<' + relocated + '>)'
     return re.sub(r'\[([^\]]+)\]\((<[^>]+>|[^)]+)\)', link, source.read_text())
 for relative, (source, replacement) in list(plan.items()):
-    if source.suffix == '.md' and replacement is None:
+    # The application skill is an independent snapshot: its relative links
+    # remain inside the same preserved directory. Keep every byte (and copy
+    # identity) instead of running the general documentation relocator over it.
+    if source.suffix == '.md' and replacement is None and not source.is_relative_to(skill):
         plan[relative] = (source, relocate_document(source, relative))
 
 original = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source, _ in plan.values()}
@@ -321,8 +332,9 @@ original = {source: hashlib.sha256(source.read_bytes()).hexdigest() for source, 
 # (source, native/ABI, build.cj, scripts, config, templates, assets, license),
 # keyed by its raw source path and SHA-256. Documentation is deliberately out of
 # the closure: it is relocated/rewritten on export and is not an input contract.
-# These public client guides are exceptions: consumer code and its usage
-# contract are pinned together.
+# Public client guides and the entire application skill are exceptions:
+# consumer code, version interpretation and usage contract are pinned together
+# (skill has its own category, including its Markdown references).
 essential_closure_docs = {
     runtime / 'shared_operation_core/GENERATED_EDITING.md',
     runtime / 'shared_operation_core/DOCUMENT_CLIENT.md',

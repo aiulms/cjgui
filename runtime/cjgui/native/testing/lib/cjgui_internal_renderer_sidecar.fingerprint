@@ -1,6 +1,6 @@
 mode=testing sdk=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk flags=-O2 -fobjc-arc -fno-objc-msgsend-selector-stubs -fmodules -fstack-protector-strong -mmacosx-version-min=12.0 -DCJGUI_INTERNAL_TESTING
-59d2db6de45cab13bbc19fa0fac0eee2ebe82a60c64d9b44c9afc31fc4cbf23d  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m
-c3ecca954b48171fa93afdffb48d019b2015b739d1b6343a2d15f0cfa8c5e405  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.h
+700087bd3a19b8dd44d3dd1ac0e628e87e8852c649295d2d7cf2118503724e47  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.m
+f63dcab94249db64a48bec2690bdfe2162c857f5348cae2a9622ca76e1bf9987  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_internal_renderer.h
 cba2267d65cd26a71f0b29f8e913932fd14ca54b7db16e8ac7cf76cdbb3fc1cb  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_native_bridge.m
 e0b6646a51cfbb8cdaac556ca87827ce4ba8ab04c33debf6342acab501f6bed4  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_native_bridge.h
 d4e7a0b538d91aae319295d3d70aae86d1dd4c81c76c6acb256e80279a0e87f2  /Users/jiangxuanyang/Desktop/cangjie/runtime/cjgui/native/cjgui_async_multiline_measure.m

@@ -165,6 +165,29 @@ func cjguiFocusScrollViewportTargetFacts(viewport: CjguiComposableUiScrollViewpo
         "requested=${viewport.offset()} accepted=${viewport.acceptedOffset()} pending=${viewport.hasPendingRequest()}"
 }
 
+// The accessibility projection reads the scroll facts this candidate scene was
+// laid out with. The native wrapper never stores a second offset: it only
+// reports accepted geometry and enqueues the same bounded wheel intent a
+// physical gesture uses.
+func cjguiNativeScrollProjection(node: CjguiComposableUiLayoutNode,
+    nativeNode: CjguiInternalRendererComposableNode): CjguiInternalRendererComposableNode {
+    var projected = nativeNode
+    if (let Some(viewport) <- node.scrollViewport) {
+        let content = viewport.projectedContentExtent()
+        let extent = viewport.projectedViewportExtent()
+        let minimum = viewport.projectedMinimumOffset()
+        let maximum = if (content - extent > minimum) { content - extent } else { minimum }
+        projected.scrollProjectionPresent = 1u32
+        projected.scrollRangePresent = if (maximum > minimum) { 1u32 } else { 0u32 }
+        projected.scrollOffset = viewport.projectedOffset()
+        projected.scrollMinimum = minimum
+        projected.scrollMaximum = maximum
+        projected.scrollContentExtent = content
+        projected.scrollViewportExtent = extent
+    }
+    return projected
+}
+
 private class CjguiStaticLayoutViewportBasis {
     let viewport: CjguiComposableUiScrollViewport
     let generation: Int64
@@ -3123,6 +3146,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// 最近一次因手写非法效果被拒的声明路径；与 lastNativeFailure 的具名 reason
     /// 一起构成完整的拒绝证据。空串 = 无。
     private var lastRefusedEffectPathValue: String
+    /// R6: additive location detail of the last rejected candidate layout
+    /// (offending node / depth / limit / clip chain). Empty when the last
+    /// candidate was accepted or has no structured layout detail. The machine
+    /// reason (`layoutError`) is unchanged.
+    private var lastCandidateLayoutDiagnosticValue: String = ""
     private var submittedFrameIndex: Int64
     private var lastGeometry: CjguiSharedOperationWindowGeometry = CjguiSharedOperationWindowGeometry.unavailable()
     private var observedMetalCompletionFrameIndex: Int64
@@ -3251,8 +3279,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private var pointerCaptureSplitHandle: Int64 = 0
     private var pointerCaptureSplitFirstMinimum: Int64 = 0
     private var pointerCaptureSplitSecondMinimum: Int64 = 0
-    private var pointerCaptureSplitOriginX: Float64 = 0.0
-    private var pointerCaptureSplitVisualY: Float64 = 0.0
+    // Main-axis track origin and cross-axis visual of the captured divider,
+    // named by ROLE: for a vertical split the main axis is Y and the cross is X.
+    private var pointerCaptureSplitTrackOriginMain: Float64 = 0.0
+    private var pointerCaptureSplitCrossVisual: Float64 = 0.0
     private var pointerCaptureSplitTranslateX: Float64 = 0.0
     private var pointerCaptureSplitTranslateY: Float64 = 0.0
     private var pointerCaptureSplitStartVersion: Int64 = -1
@@ -8061,6 +8091,14 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     /// Bounded immutable values from the currently accepted scene. Pagination
     /// requires the same window session and accepted version on every page.
     /// A read never invokes controller/build/layout/present or waits for GPU.
+    /// Bounded, read-only location detail of the last REJECTED candidate
+    /// layout. Returns "" when the last candidate was accepted. This is an
+    /// additive observation path: it never refreshes, retries or changes the
+    /// accepted scene, and `layoutError`/rollback reasons keep their tokens.
+    public func lastCandidateLayoutDiagnostic(): String {
+        return lastCandidateLayoutDiagnosticValue
+    }
+
     public func diagnosticSnapshot(startIndex!: Int64 = 0, maximumNodes!: Int64 = 128,
         expectedSessionIdentity!: String = "", expectedAcceptedSceneVersion!: Int64 = -1,
         includeNonVisible!: Bool = false): CjguiComposableUiDiagnosticSnapshot {
@@ -10663,6 +10701,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         // Reset at the exact real-refresh boundary. Unreached phases retain
         // -1 on a rejection rather than borrowing a prior successful pass.
         lastRefreshTiming = CjguiComposableUiRefreshTiming()
+        // R6: a layout diagnostic belongs to ONE candidate attempt. Clearing it
+        // at the attempt boundary keeps the published diagnostic tied to the
+        // CURRENT failure: a candidate that dies before layout (participant
+        // preparation, ownership, capacity) has no layout diagnostic at all and
+        // must not re-report the previous attempt's clip chain as its cause.
+        lastCandidateLayoutDiagnosticValue = ""
         beginWorkloadAttempt()
         // A resize generation also advances for a same-point backing-scale
         // transition. AppKit text metrics may legitimately differ while the
@@ -10935,6 +10979,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             lastNativeStageAndSubmitElapsedMs = 0
             layoutPassCount += 1
             if (!scene.isValid()) {
+                lastCandidateLayoutDiagnosticValue = scene.layoutDiagnostic()
                 return rejectParticipantCandidate(participant, CJGUI_INTERNAL_RENDERER_INTERNAL_ERROR,
                     reason: if (scene.layoutError().size > 0) {
                         scene.layoutError()
@@ -10942,6 +10987,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                         "invalid_scene"
                     })
             }
+            lastCandidateLayoutDiagnosticValue = ""
             let selectionBackgroundVersion = if (scene.hasSelectionBackground) {
                 internalRendererSelectionBackgroundVersion()
             } else { 0u32 }
@@ -11535,6 +11581,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 (if ((node.ownerInteractionState & CjguiComposableUiInteractionState.CHECKED) != 0) { 16u32 } else { 0u32 }),
             semanticLevel: node.semanticLevel, semanticIncarnation: node.semanticIncarnation,
             pointerControlMinimum: node.pointerControlMinimum, pointerControlMaximum: node.pointerControlMaximum,
+            contentAlignX: style.contentAlignX, contentAlignY: style.contentAlignY,
             shadowPresent: effect.shadowPresent, shadowOffsetX: effect.shadowOffsetX,
             shadowOffsetY: effect.shadowOffsetY, shadowBlurRadius: effect.shadowBlurRadius,
             shadowSpread: effect.shadowSpread, shadowRed: effect.shadowRed,
@@ -11564,6 +11611,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             effectBackdropBlurRadiusPoints: effect.effectBackdropBlurRadiusPoints,
             effectBackdropBlurFallback: effect.effectBackdropBlurFallback)
         nativeNode.wheelScrollable = if (style.wheelScrollable) { 1u32 } else { 0u32 }
+        nativeNode = cjguiNativeScrollProjection(node, nativeNode)
         nativeNode.acceptedBindingEpoch = preparedCandidateBindingEpoch(candidate, node)
         let geometrySource = candidate.paintScene.visualGeometryAt(index)
         let clipCount = geometrySource.clipCount()
@@ -11580,9 +11628,11 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         if (clipCount > 3) { geometry.clip3X = geometrySource.clipTranslateX(3); geometry.clip3Y = geometrySource.clipTranslateY(3) }
         var encodedRuns = ""
         if (let Some(value) <- candidate.packet.runsByNodeId.get(node.nodeId)) { encodedRuns = value }
-        let label = if (node.label.size > 0 || node.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
-            node.label
-        } else { node.semanticId }
+        // R7: this packet feeds the native staging label (the VISIBLE text).
+        // It must be only what the widget declares as visible text - never a
+        // semanticId fallback, which would draw internal ids. The accessible
+        // name is carried separately in the packet's semanticLabel field.
+        let label = node.label
         let packetValue = internalRendererComposableDisplayValue(node.value, preservesActiveLocalText)
         this.traceSmallDisplayTransport("freeze", candidate.preparationId, candidate.paintScene.version,
             candidate.businessOwnerRevision, node, packetValue, preservesActiveLocalText)
@@ -12859,6 +12909,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     semanticIncarnation: node.semanticIncarnation,
                     pointerControlMinimum: node.pointerControlMinimum,
                     pointerControlMaximum: node.pointerControlMaximum,
+            contentAlignX: style.contentAlignX,
+            contentAlignY: style.contentAlignY,
                     shadowPresent: effectProjection.shadowPresent,
                     shadowOffsetX: effectProjection.shadowOffsetX,
                     shadowOffsetY: effectProjection.shadowOffsetY,
@@ -12920,15 +12972,15 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 } else {
                     0u32
                 }
+                nativeNode = cjguiNativeScrollProjection(node, nativeNode)
                 nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, paintScene.version)
-                // An icon-only BooleanInput has an intentionally empty display
-                // label. Its accessible name travels in semantic metadata.
-                let semanticLabel = if (node.label.size > 0 ||
-                    node.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
-                    node.label
-                } else {
-                    node.semanticId
-                }
+                // R7: the visible label and the accessible name are separate
+                // native channels. A hidden label (an external label column
+                // draws it) must leave the native label empty - never fall back
+                // to semanticLabel/semanticId, which would draw internal IDs.
+                // The accessible name travels in the semanticLabel metadata
+                // parameter (`metadataLabel` below), not in the visible label.
+                let visibleLabel = node.label
                 startupPhase = "native_node_${index}"
                 let transportValue = internalRendererComposableDisplayValue(node.value, preservesActiveLocalText)
                 this.traceSmallDisplayTransport("sync", 0u64, paintScene.version,
@@ -12946,7 +12998,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     UInt64(node.imageResourceVersion)
                 }
                 lastNativeStatus = nativeBatch.addStagedNode(nativeNode, nativeGeometry.value, boundedImageVersion,
-                    semanticLabel, transportValue, node.imageResourcePath, node.imageResourceId, node.semanticId,
+                    visibleLabel, transportValue, node.imageResourcePath, node.imageResourceId, node.semanticId,
                     bindingKey, rowKey, parentRowKey, metadataLabel, semanticHelp, node.imageTransferOffer)
                 if (lastNativeStatus == CJGUI_NATIVE_SCENE_BATCH_CHUNK_FULL) {
                     lastNativeStatus = CJGUI_INTERNAL_RENDERER_OK
@@ -14346,7 +14398,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         return false
     }
 
-    private func applySplitStatePointerDrag(node: CjguiComposableUiLayoutNode, windowX: Float64,        grabOffset: Float64, expectedRevision: Int64): ?Bool {
+    private func applySplitStatePointerDrag(node: CjguiComposableUiLayoutNode, windowX: Float64,
+        windowY: Float64, grabOffset: Float64, expectedRevision: Int64): ?Bool {
         if (let Some(state) <- splitStateForDivider(node)) {
             let track = state.acceptedTrack()
             if (track <= 0) {
@@ -14358,9 +14411,9 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 node.pointerControlHandleThickness
             }
             // The origin comes from the ACCEPTED geometry: the divider's own
-            // accepted x minus the width the accepted scene really allocated.
-            // Deriving it from a possibly-unsolved request shifted the whole
-            // mapping after the first oversized drag.
+            // accepted main-axis position minus the size the accepted scene
+            // really allocated. Deriving it from a possibly-unsolved request
+            // shifted the whole mapping after the first oversized drag.
             let acceptedFirst = if (state.acceptedTrack() > 0) {
                 state.acceptedFirstSize()
             } else {
@@ -14370,7 +14423,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                 case Some(value) => value
                 case None => return None
             }
-            let trackPoint = geometry.windowToSplitTrackPointX(node.bounds, acceptedFirst, windowX, grabOffset)
+            // The declared axis picks the main coordinate and its mapping. A
+            // vertical split drags along Y with the same accepted-track rule.
+            let trackPoint = if (node.pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL) {
+                geometry.windowToSplitTrackPointY(node.bounds, acceptedFirst, windowY, grabOffset)
+            } else {
+                geometry.windowToSplitTrackPointX(node.bounds, acceptedFirst, windowX, grabOffset)
+            }
             let requested = CjguiComposableUiSplitGeometry.firstSizeForPointer(trackPoint, 0, track, handleSize,
                 state.firstMinimum(), state.secondMinimum())
             let before = state.firstSize()
@@ -14439,6 +14498,13 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     private func nativeSemanticBindingKey(node: CjguiComposableUiLayoutNode): String {
         // Length-prefix each caller-controlled part. Equal numeric node ids
         // cannot make an old AX object follow a different field or operation.
+        // A scroll animation belongs to the same viewport identity as wheel
+        // admission. Rebinding the node retires its old native AX proxy now,
+        // without treating each accepted scene version as a new binding.
+        let viewportBinding = match (node.scrollViewport) {
+            case Some(viewport) => ":viewport:${viewport.viewStateIdentity()}"
+            case None => ""
+        }
         return "${node.identityKey.size}:${node.identityKey}" +
             "${node.semanticId.size}:${node.semanticId}" +
             "${node.semanticKey.size}:${node.semanticKey}" +
@@ -14446,7 +14512,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             "${node.fieldId.size}:${node.fieldId}" +
             "${node.operationActionName.size}:${node.operationActionName}" +
             "${node.resourceId}:${node.operationResourceId}:${node.nodeKind}:${node.semanticIncarnation}" +
-            ":${node.tabsState.isSome()}:${tabsBindingOwner(node.tabsState)}:${node.tabsPageKey.size}:${node.tabsPageKey}"
+            ":${node.tabsState.isSome()}:${tabsBindingOwner(node.tabsState)}:${node.tabsPageKey.size}:${node.tabsPageKey}" +
+            viewportBinding
     }
 
     // Epochs are derived against the last accepted scene and published only
@@ -16579,6 +16646,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             semanticIncarnation: node.semanticIncarnation,
             pointerControlMinimum: node.pointerControlMinimum,
             pointerControlMaximum: node.pointerControlMaximum,
+            contentAlignX: style.contentAlignX,
+            contentAlignY: style.contentAlignY,
             shadowPresent: effectProjection.shadowPresent,
             shadowOffsetX: effectProjection.shadowOffsetX,
             shadowOffsetY: effectProjection.shadowOffsetY,
@@ -16640,13 +16709,12 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         } else {
             0u32
         }
+        nativeNode = cjguiNativeScrollProjection(node, nativeNode)
         nativeNode.acceptedBindingEpoch = candidateBindingEpoch(node, projectionVersion)
-        let semanticLabel = if (node.label.size > 0 ||
-            node.nodeKind == CJGUI_COMPOSABLE_UI_BOOLEAN_INPUT) {
-            node.label
-        } else {
-            node.semanticId
-        }
+        // R7: same separation as the ordinary sync path - the native label is
+        // only what the widget declares as visible text; the accessible name
+        // stays in the semanticLabel metadata channel.
+        let visibleLabel = node.label
         let transportValue = internalRendererComposableDisplayValue(node.value, preservesActiveLocalText)
         this.traceSmallDisplayTransport("interaction", 0u64, projectionVersion,
             candidateBusinessOwnerRevision, node, transportValue, preservesActiveLocalText)
@@ -16658,7 +16726,7 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         } else {
             UInt64(node.imageResourceVersion)
         }
-        return batch.addStagedNode(nativeNode, geometry, boundedImageVersion, semanticLabel, transportValue,
+        return batch.addStagedNode(nativeNode, geometry, boundedImageVersion, visibleLabel, transportValue,
             node.imageResourcePath, node.imageResourceId, node.semanticId, bindingKey, rowKey, parentRowKey,
             metadataLabel, semanticHelp, node.imageTransferOffer)
     }
@@ -17095,6 +17163,18 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
     }
 
     private func sameLayoutNode(left: CjguiComposableUiLayoutNode, right: CjguiComposableUiLayoutNode): Bool {
+        // Both native packet paths may reuse a visually identical scroll
+        // node. Its viewport binding must still be restaged so native receives
+        // the new semantic binding key and retires the old animated AX proxy.
+        let leftViewport = match (left.scrollViewport) {
+            case Some(viewport) => viewport.viewStateIdentity()
+            case None => 0
+        }
+        let rightViewport = match (right.scrollViewport) {
+            case Some(viewport) => viewport.viewStateIdentity()
+            case None => 0
+        }
+        if (leftViewport != rightViewport) { return false }
         let sameIdentity = left.nodeId == right.nodeId && left.semanticId == right.semanticId && left.nodeKind == right
             .nodeKind && left.label == right.label && left.value == right.value && left.actionName == right.actionName &&
             left.resourceId == right.resourceId && left.fieldId == right.fieldId && left.operationActionName == right
@@ -17233,7 +17313,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             left.textMaxLines == right.textMaxLines && left.textOverflow == right.textOverflow && left.minWidth == right
             .minWidth && left.maxWidth == right.maxWidth && left.idealWidth == right.idealWidth && left.minHeight == right
             .minHeight && left.maxHeight == right.maxHeight && left.idealHeight == right.idealHeight && left.alignX == right
-            .alignX && left.alignY == right.alignY && left.offsetX == right.offsetX && left.offsetY == right.offsetY &&
+            .alignX && left.alignY == right.alignY && left.contentAlignX == right.contentAlignX &&
+            left.contentAlignY == right.contentAlignY && left.offsetX == right.offsetX && left.offsetY == right.offsetY &&
             left.translateX == right.translateX && left.translateY == right.translateY &&
             left.wheelScrollable == right.wheelScrollable && left.scrollContentAlignY == right.scrollContentAlignY &&
             left.pointerInteractive == right.pointerInteractive && sameShadow(left.shadow, right.shadow) && sameGradient(
@@ -18853,8 +18934,8 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pointerCaptureSplitHandle = 0
         pointerCaptureSplitFirstMinimum = 0
         pointerCaptureSplitSecondMinimum = 0
-        pointerCaptureSplitOriginX = 0.0
-        pointerCaptureSplitVisualY = 0.0
+        pointerCaptureSplitTrackOriginMain = 0.0
+        pointerCaptureSplitCrossVisual = 0.0
         pointerCaptureSplitTranslateX = 0.0
         pointerCaptureSplitTranslateY = 0.0
         pointerCaptureSplitStartVersion = -1
@@ -20083,8 +20164,20 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
         pointerCaptureSplitSecondMinimum = state.secondMinimum()
         pointerCaptureSplitTranslateX = geometry.translateX
         pointerCaptureSplitTranslateY = geometry.translateY
-        pointerCaptureSplitOriginX = geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize()))
-        pointerCaptureSplitVisualY = geometry.layoutToWindowY(Float64(node.bounds.y))
+        // The track origin is the divider's accepted MAIN-axis position minus
+        // the accepted first size; the cross visual pins the other axis. Which
+        // coordinate plays which role follows the divider's declared axis.
+        let splitVertical = node.pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL
+        pointerCaptureSplitTrackOriginMain = if (splitVertical) {
+            geometry.layoutToWindowY(Float64(node.bounds.y - state.acceptedFirstSize()))
+        } else {
+            geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize()))
+        }
+        pointerCaptureSplitCrossVisual = if (splitVertical) {
+            geometry.layoutToWindowX(Float64(node.bounds.x))
+        } else {
+            geometry.layoutToWindowY(Float64(node.bounds.y))
+        }
         pointerCaptureSplitClips = ArrayList<CjguiComposableUiVisualRect>()
         var index: Int64 = 0
         while (index < clips.size) {
@@ -20117,15 +20210,33 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             state.acceptedHandleSize() != pointerCaptureSplitHandle ||
             state.firstMinimum() != pointerCaptureSplitFirstMinimum ||
             state.secondMinimum() != pointerCaptureSplitSecondMinimum ||
-            node.bounds.height != original.bounds.height) { return false }
+            // The cross-axis extent must not change: height for a horizontal
+            // divider, width for a vertical one. The main-axis position is
+            // EXPECTED to move while the drag itself is being applied.
+            (if (node.pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL) {
+                node.bounds.width != original.bounds.width
+            } else {
+                node.bounds.height != original.bounds.height
+            })) { return false }
         let geometry = match (nativeInputScene.visualGeometryForId(node.nodeId)) {
             case Some(value) => value
             case None => return false
         }
         if (geometry.translateX != pointerCaptureSplitTranslateX ||
-            geometry.translateY != pointerCaptureSplitTranslateY ||
-            geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize())) != pointerCaptureSplitOriginX ||
-            geometry.layoutToWindowY(Float64(node.bounds.y)) != pointerCaptureSplitVisualY) { return false }
+            geometry.translateY != pointerCaptureSplitTranslateY) { return false }
+        let splitVertical = node.pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL
+        let trackOriginMain = if (splitVertical) {
+            geometry.layoutToWindowY(Float64(node.bounds.y - state.acceptedFirstSize()))
+        } else {
+            geometry.layoutToWindowX(Float64(node.bounds.x - state.acceptedFirstSize()))
+        }
+        let crossVisual = if (splitVertical) {
+            geometry.layoutToWindowX(Float64(node.bounds.x))
+        } else {
+            geometry.layoutToWindowY(Float64(node.bounds.y))
+        }
+        if (trackOriginMain != pointerCaptureSplitTrackOriginMain ||
+            crossVisual != pointerCaptureSplitCrossVisual) { return false }
         let clips = node.clipConstraints()
         let originalClips = original.clipConstraints()
         if (clips.size != originalClips.size || clips.size != pointerCaptureSplitClips.size ||
@@ -20238,18 +20349,35 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
                     clearPointerCapture()
                     return rejectPointerBegin(nativeEvent)
                 }
-                let visualX = if (nativeEvent.pointerGeometryAccepted) {
-                    nativeEvent.pointerVisualX
-                } else { Float64(x) }
                 let geometry = match (nativeInputScene.visualGeometryForId(resolved.nodeId)) {
                     case Some(value) => value
                     case None => return rejectPointerBegin(nativeEvent)
                 }
-                let handleLeft = geometry.layoutToWindowX(Float64(resolved.bounds.x))
+                // The grab offset is measured on the divider's declared MAIN
+                // axis: X for a horizontal split, Y for a vertical one.
+                let splitVertical = resolved.pointerControlAxis == CjguiComposableUiSplitAxis.VERTICAL
+                let visualMain = if (splitVertical) {
+                    if (nativeEvent.pointerGeometryAccepted) {
+                        nativeEvent.pointerVisualY
+                    } else {
+                        Float64(y)
+                    }
+                } else {
+                    if (nativeEvent.pointerGeometryAccepted) {
+                        nativeEvent.pointerVisualX
+                    } else {
+                        Float64(x)
+                    }
+                }
+                let handleStart = if (splitVertical) {
+                    geometry.layoutToWindowY(Float64(resolved.bounds.y))
+                } else {
+                    geometry.layoutToWindowX(Float64(resolved.bounds.x))
+                }
                 let handleSize = if (resolved.pointerControlHandleThickness > 0) {
                     Float64(resolved.pointerControlHandleThickness)
                 } else { 1.0 }
-                let rawGrab = visualX - handleLeft
+                let rawGrab = visualMain - handleStart
                 pointerCaptureSplitGrabOffset = if (rawGrab < 0.0) { 0.0 } else if (rawGrab > handleSize) {
                     handleSize
                 } else { rawGrab }
@@ -20511,7 +20639,10 @@ public class CjguiComposableUiWindow <: CjguiSharedOperationWindowProjectionProv
             let visualX = if (nativeEvent.pointerGeometryAccepted) {
                 nativeEvent.pointerVisualX
             } else { Float64(x) }
-            let splitDragChanged = match (applySplitStatePointerDrag(current, visualX,
+            let visualY = if (nativeEvent.pointerGeometryAccepted) {
+                nativeEvent.pointerVisualY
+            } else { Float64(y) }
+            let splitDragChanged = match (applySplitStatePointerDrag(current, visualX, visualY,
                 pointerCaptureSplitGrabOffset, pointerCaptureOwnerVersion)) {
                 case Some(changed) => changed
                 case None => return cancelPointerCapture()

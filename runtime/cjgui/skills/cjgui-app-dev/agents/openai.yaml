@@ -1,0 +1,5 @@
+interface:
+  display_name: "CJGUI 应用开发"
+  short_description: "按实际 SDK 开发布局、主题与业务接入，诊断应用并保留版本相关反馈"
+policy:
+  allow_implicit_invocation: true

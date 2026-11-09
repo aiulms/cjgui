@@ -1,0 +1,32 @@
+{
+  "format": "cjgui.ui-document",
+  "format_version": 1,
+  "requirements": {
+    "actions": [
+      "APPLY_DRAFT",
+      "CANCEL_DRAFT",
+      "RESTORE_DEFAULTS"
+    ],
+    "components": [
+      "action",
+      "horizontal",
+      "integerInput",
+      "label",
+      "textInput",
+      "vertical"
+    ],
+    "fields": [
+      "code",
+      "quota",
+      "title",
+      "quantity"
+    ],
+    "fonts": [],
+    "image_resources": [],
+    "runtime_compositions": [],
+    "styles": []
+  },
+  "structure": "GENERATED_UI_STRUCTURE 1\nNODE 0 ro-root vertical\nPROPERTY 0 ro-root gap 16\nPROPERTY 0 ro-root padding 16\nPROPERTY 0 ro-root growX 1\nNODE 1 ro-title label\nPROPERTY 1 ro-title text 只读字段演示\nPROPERTY 1 ro-title style heading\nNODE 1 ro-help label\nPROPERTY 1 ro-help text 只读字段可查看但不能键入或步进；可写字段保持正常。\nPROPERTY 1 ro-help style body\nNODE 1 ro-card-readonly vertical\nPROPERTY 1 ro-card-readonly gap 8\nPROPERTY 1 ro-card-readonly padding 12\nPROPERTY 1 ro-card-readonly growX 1\nNODE 2 ro-card-readonly-title label\nPROPERTY 2 ro-card-readonly-title text 只读信息\nPROPERTY 2 ro-card-readonly-title style body\nNODE 2 code-row horizontal\nPROPERTY 2 code-row gap 16\nPROPERTY 2 code-row alignY center\nPROPERTY 2 code-row growX 1\nNODE 3 code-labelcol vertical\nPROPERTY 3 code-labelcol gap 2\nPROPERTY 3 code-labelcol fixedWidth 220\nPROPERTY 3 code-labelcol alignY start\nNODE 4 code-label label\nPROPERTY 4 code-label text 只读编号\nPROPERTY 4 code-label style body\nNODE 3 field-code textInput field=code\nPROPERTY 3 field-code label 只读编号\nPROPERTY 3 field-code labelVisible false\nPROPERTY 3 field-code style input\nPROPERTY 3 field-code growX 1\nNODE 2 quota-row horizontal\nPROPERTY 2 quota-row gap 16\nPROPERTY 2 quota-row alignY center\nPROPERTY 2 quota-row growX 1\nNODE 3 quota-labelcol vertical\nPROPERTY 3 quota-labelcol gap 2\nPROPERTY 3 quota-labelcol fixedWidth 220\nPROPERTY 3 quota-labelcol alignY start\nNODE 4 quota-label label\nPROPERTY 4 quota-label text 只读额度\nPROPERTY 4 quota-label style body\nNODE 3 field-quota integerInput field=quota\nPROPERTY 3 field-quota label 只读额度\nPROPERTY 3 field-quota labelVisible false\nPROPERTY 3 field-quota style input\nPROPERTY 3 field-quota stepper true\nPROPERTY 3 field-quota fixedWidth 220\nNODE 1 ro-card-editable vertical\nPROPERTY 1 ro-card-editable gap 8\nPROPERTY 1 ro-card-editable padding 12\nPROPERTY 1 ro-card-editable growX 1\nNODE 2 ro-card-editable-title label\nPROPERTY 2 ro-card-editable-title text 可编辑信息\nPROPERTY 2 ro-card-editable-title style body\nNODE 2 title-row horizontal\nPROPERTY 2 title-row gap 16\nPROPERTY 2 title-row alignY center\nPROPERTY 2 title-row growX 1\nNODE 3 title-labelcol vertical\nPROPERTY 3 title-labelcol gap 2\nPROPERTY 3 title-labelcol fixedWidth 220\nPROPERTY 3 title-labelcol alignY start\nNODE 4 title-label label\nPROPERTY 4 title-label text 标题\nPROPERTY 4 title-label style body\nNODE 3 field-title textInput field=title\nPROPERTY 3 field-title label 标题\nPROPERTY 3 field-title labelVisible false\nPROPERTY 3 field-title style input\nPROPERTY 3 field-title growX 1\nNODE 2 quantity-row horizontal\nPROPERTY 2 quantity-row gap 16\nPROPERTY 2 quantity-row alignY center\nPROPERTY 2 quantity-row growX 1\nNODE 3 quantity-labelcol vertical\nPROPERTY 3 quantity-labelcol gap 2\nPROPERTY 3 quantity-labelcol fixedWidth 220\nPROPERTY 3 quantity-labelcol alignY start\nNODE 4 quantity-label label\nPROPERTY 4 quantity-label text 数量\nPROPERTY 4 quantity-label style body\nNODE 3 field-quantity integerInput field=quantity\nPROPERTY 3 field-quantity label 数量\nPROPERTY 3 field-quantity labelVisible false\nPROPERTY 3 field-quantity style input\nPROPERTY 3 field-quantity stepper true\nPROPERTY 3 field-quantity fixedWidth 220\nNODE 1 ro-actions horizontal\nPROPERTY 1 ro-actions gap 8\nPROPERTY 1 ro-actions alignY center\nPROPERTY 1 ro-actions growX 1\nNODE 2 ro-actions-spacer vertical\nPROPERTY 2 ro-actions-spacer growX 1\nNODE 2 ro-restore action action=RESTORE_DEFAULTS\nPROPERTY 2 ro-restore label 恢复默认\nPROPERTY 2 ro-restore style quiet_action\nNODE 2 ro-cancel action action=CANCEL_DRAFT\nPROPERTY 2 ro-cancel label 取消草稿\nPROPERTY 2 ro-cancel style secondary_action\nNODE 2 ro-apply action action=APPLY_DRAFT\nPROPERTY 2 ro-apply label 应用草稿\nPROPERTY 2 ro-apply style primary_action\nEND",
+  "structure_format": 1,
+  "structure_sha256": "61ded1c4c529d669c6558b512b088f3d857ec086cd4c3e14ba3a5818d5cca92e"
+}
